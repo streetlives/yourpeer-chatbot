@@ -194,7 +194,7 @@ export function ServiceCard({ service, isActive, index, total }: ServiceCardProp
             {service.also_available.map((cat) => (
               <span
                 key={cat}
-                className="inline-block text-[0.68rem] font-medium px-2 py-0.5 rounded-md bg-neutral-50 border border-neutral-150 text-neutral-600"
+                className="inline-block text-[0.68rem] font-medium px-2 py-0.5 rounded-md bg-neutral-50 border border-neutral-200 text-neutral-600"
               >
                 {ALSO_EMOJI[cat] || "\u2022"} {cat}
               </span>

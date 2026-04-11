@@ -113,7 +113,7 @@ export const useChatStore = create<ChatStore>()(
           messages: state.messages.filter((m) => m.id !== id),
         })),
 
-      setLoading: (v) => set({ isLoading: v, error: v ? null : undefined }),
+      setLoading: (v) => set(v ? { isLoading: true, error: null } : { isLoading: false }),
 
       setError: (msg) => set({ error: msg }),
 

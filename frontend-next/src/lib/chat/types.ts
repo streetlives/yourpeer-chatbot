@@ -29,6 +29,7 @@ export interface ServiceResult {
   yourpeer_url?: string;
   last_validated_at?: string;
   also_available?: string[];
+  accessibility?: string;
 }
 
 export interface ChatResponse {
@@ -71,7 +72,7 @@ export interface ConfirmationBreakdown {
 
 export interface DataFreshnessDetail {
   cards_served: number;
-  cards_with_date: number;
+  cards_with_date?: number;
   cards_fresh: number;
 }
 
@@ -91,20 +92,14 @@ export interface ConversationQuality {
 export interface RoutingDistribution {
   category_distribution: Record<string, number>;
   total_categorized: number;
-  general_turns: number;
   general_rate: number | null;
-  safe_service_turns: number;
-  conversational_safe_turns: number;
-  emotional_turns: number;
-  safety_turns: number;
   buckets: {
     service_flow: number;
     conversational: number;
     emotional: number;
     safety: number;
     recovery: number;
-    general_llm: number;
-    other: number;
+    general: number;
   };
 }
 
