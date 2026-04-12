@@ -3,8 +3,9 @@
 
 "use client";
 
-import { MapPin, Phone, Mail, Clock, CheckCircle } from "lucide-react";
+import { MapPin, Phone, Mail, Clock, CheckCircle, AlertTriangle } from "lucide-react";
 import type { ServiceResult } from "@/lib/chat/types";
+import { LocationFeedbackRow } from "./location-feedback-row";
 
 interface ServiceCardProps {
   service: ServiceResult;
@@ -36,7 +37,14 @@ function StatusBadge({ status }: { status?: string }) {
 }
 
 function ValidatedBadge({ dateStr }: { dateStr?: string }) {
-  if (!dateStr) return null;
+  if (!dateStr) {
+    return (
+      <span className="inline-flex items-center gap-1 text-xs font-medium text-amber-600">
+        <AlertTriangle size={12} aria-hidden="true" />
+        Unverified — call to confirm
+      </span>
+    );
+  }
 
   const validated = new Date(dateStr);
   if (isNaN(validated.getTime())) return null;
@@ -60,6 +68,16 @@ function ValidatedBadge({ dateStr }: { dateStr?: string }) {
   }
 
   const isRecent = diffDays <= 90;
+  const isStale = diffDays > 180;
+
+  if (isStale) {
+    return (
+      <span className="inline-flex items-center gap-1 text-xs font-medium text-amber-600">
+        <AlertTriangle size={12} aria-hidden="true" />
+        Not recently verified — call ahead
+      </span>
+    );
+  }
 
   return (
     <span className={`inline-flex items-center gap-1 text-xs font-medium ${
@@ -73,30 +91,53 @@ function ValidatedBadge({ dateStr }: { dateStr?: string }) {
 
 // Emoji map for co-located service categories
 const ALSO_EMOJI: Record<string, string> = {
+  // Shelter & Housing
   "Shelter": "\u{1F6CF}\uFE0F",
-  "Shower": "\u{1F6BF}",
-  "Clothing Pantry": "\u{1F455}",
-  "Clothing": "\u{1F455}",
-  "Health": "\u{1F3E5}",
-  "General Health": "\u{1F3E5}",
-  "Mental Health": "\u{1F9E0}",
-  "Laundry": "\u{1F9FC}",
-  "Legal Services": "\u2696\uFE0F",
-  "Benefits": "\u{1F4CB}",
-  "Education": "\u{1F4DA}",
-  "Employment": "\u{1F4BC}",
+  "Drop-in Center": "\u{1F3E0}",
+  "Warming Center": "\u{1F525}",
+  "Crisis": "\u{1F198}",
+  // Food
   "Food": "\u{1F37D}\uFE0F",
   "Food Pantry": "\u{1F37D}\uFE0F",
   "Soup Kitchen": "\u{1F372}",
+  "Farmers Market": "\u{1F966}",
+  "Food Benefits (SNAP)": "\u{1F4CB}",
+  "Hot Meals": "\u{1F372}",
+  // Clothing
+  "Clothing": "\u{1F455}",
+  "Interview Clothing": "\u{1F454}",
+  // Personal Care
+  "Shower": "\u{1F6BF}",
+  "Laundry": "\u{1F9FC}",
   "Toiletries": "\u{1F9F4}",
+  "Haircut": "\u{1F487}",
+  "Restrooms": "\u{1F6BB}",
+  // Health
+  "Health": "\u{1F3E5}",
+  "Harm Reduction": "\u{1F48A}",
+  "Syringe Exchange": "\u{1F489}",
+  "Overdose Prevention": "\u{1F489}",
+  "Substance Use Help": "\u{1F49A}",
+  // Mental Health
+  "Mental Health": "\u{1F9E0}",
+  // Legal
+  "Legal Services": "\u2696\uFE0F",
+  "Immigration Services": "\u{1F30D}",
+  // Employment & Education
+  "Employment": "\u{1F4BC}",
+  "Education": "\u{1F4DA}",
+  // Benefits & Support
+  "Benefits": "\u{1F4CB}",
+  "Case Management": "\u{1F4C2}",
+  "Referral": "\u{1F517}",
+  "Support Groups": "\u{1F91D}",
   "Mail": "\u{1F4EC}",
   "Free Wifi": "\u{1F4F6}",
-  "Haircut": "\u{1F487}",
-  "Support Groups": "\u{1F91D}",
-  "Drop-in Center": "\u{1F3E0}",
-  "Crisis": "\u{1F198}",
-  "Restrooms": "\u{1F6BB}",
-  "Warming Center": "\u{1F525}",
+  "Financial Help": "\u{1F4B0}",
+  "Intake": "\u{1F4DD}",
+  // Family & Youth
+  "Baby Supplies": "\u{1F476}",
+  "Senior Center": "\u{1F9D3}",
 };
 
 export function ServiceCard({ service, isActive, index, total }: ServiceCardProps) {
@@ -147,6 +188,14 @@ export function ServiceCard({ service, isActive, index, total }: ServiceCardProp
         </div>
       )}
 
+      {/* Accessibility */}
+      {service.accessibility && (
+        <div className="flex items-start gap-2 text-sm text-neutral-500 leading-snug">
+          <span className="mt-0.5 flex-shrink-0 text-sm" aria-hidden="true">♿</span>
+          <span>{service.accessibility}</span>
+        </div>
+      )}
+
       {/* Phone */}
       {service.phone && (
         <div className="flex items-start gap-2 text-sm text-neutral-500">
@@ -170,6 +219,16 @@ export function ServiceCard({ service, isActive, index, total }: ServiceCardProp
         </div>
       )}
 
+      {/* Review highlight */}
+      {service.review_highlight && (
+        <div className="text-xs text-neutral-500 leading-relaxed bg-neutral-50 border border-neutral-100 rounded-lg px-3 py-2 italic">
+          <span aria-hidden="true">💬 </span>
+          {service.review_highlight.length > 120
+            ? service.review_highlight.slice(0, 117) + "…"
+            : service.review_highlight}
+        </div>
+      )}
+
       {/* Fee badge */}
       {service.fees && (
         <span className="self-start inline-block text-xs font-semibold text-green-800 bg-green-100 px-2.5 py-0.5 rounded-lg">
@@ -184,6 +243,29 @@ export function ServiceCard({ service, isActive, index, total }: ServiceCardProp
         </span>
       )}
 
+      {/* Eligibility badge */}
+      {service.eligibility_summary && (
+        <span className="self-start inline-block text-xs font-semibold text-blue-800 bg-blue-50 px-2.5 py-0.5 rounded-lg">
+          👤 {service.eligibility_summary}
+        </span>
+      )}
+
+      {/* Required documents */}
+      {service.required_documents && service.required_documents.length > 0 && (
+        <div className="flex items-start gap-2 text-xs text-neutral-500 leading-snug">
+          <span className="mt-0.5 flex-shrink-0" aria-hidden="true">📄</span>
+          <span>Bring: {service.required_documents.join(", ")}</span>
+        </div>
+      )}
+
+      {/* Languages spoken */}
+      {service.languages && service.languages.length > 0 && !(service.languages.length === 1 && service.languages[0] === "English") && (
+        <div className="flex items-start gap-2 text-xs text-neutral-500 leading-snug">
+          <span className="mt-0.5 flex-shrink-0" aria-hidden="true">🗣️</span>
+          <span>{service.languages.join(", ")}</span>
+        </div>
+      )}
+
       {/* Also available at this location */}
       {service.also_available && service.also_available.length > 0 && (
         <div className="pt-1 border-t border-neutral-100">
@@ -194,7 +276,7 @@ export function ServiceCard({ service, isActive, index, total }: ServiceCardProp
             {service.also_available.map((cat) => (
               <span
                 key={cat}
-                className="inline-block text-[0.68rem] font-medium px-2 py-0.5 rounded-md bg-neutral-50 border border-neutral-150 text-neutral-600"
+                className="inline-block text-[0.68rem] font-medium px-2 py-0.5 rounded-md bg-neutral-50 border border-neutral-200 text-neutral-600"
               >
                 {ALSO_EMOJI[cat] || "\u2022"} {cat}
               </span>
@@ -220,7 +302,7 @@ export function ServiceCard({ service, isActive, index, total }: ServiceCardProp
       <div className="flex gap-1.5 pt-1" role="group" aria-label={`Actions for ${name}`}>
         {service.phone && (
           <a
-            href={`tel:${service.phone.replace(/\D/g, "")}`}
+            href={`tel:${service.phone.split(/\s*ext/i)[0].replace(/\D/g, "")}`}
             aria-label={`Call ${name}`}
             className="flex-1 py-2 rounded-lg border border-neutral-900 bg-neutral-900 text-center text-xs font-semibold text-white transition hover:bg-neutral-700"
           >
@@ -250,6 +332,14 @@ export function ServiceCard({ service, isActive, index, total }: ServiceCardProp
           </a>
         )}
       </div>
+
+      {/* Per-location feedback */}
+      {service.service_id && (
+        <LocationFeedbackRow
+          serviceId={service.service_id}
+          locationName={name}
+        />
+      )}
     </div>
   );
 }

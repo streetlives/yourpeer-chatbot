@@ -166,6 +166,17 @@ _EXTRACT_SLOTS_TOOL = {
                     "Omit if not mentioned."
                 ),
             },
+            "org_name": {
+                "type": "string",
+                "description": (
+                    "The name of a specific organization the user is asking about. "
+                    "For example: 'tell me about Covenant House' → 'Covenant House', "
+                    "'where is Safe Horizon in Harlem' → 'Safe Horizon'. "
+                    "Only extract when the user is asking about a specific organization "
+                    "by name, not when they mention an org in passing. "
+                    "Use the canonical name (e.g. 'Ali Forney Center' not 'ali forney')."
+                ),
+            },
         },
         "required": [],
     },
@@ -324,6 +335,7 @@ def extract_slots_llm(message: str, conversation_history: list = None) -> dict:
                     "_gender": raw.get("gender"),
                     "family_status": raw.get("family_status"),
                     "_populations": raw.get("populations") or [],
+                    "org_name": raw.get("org_name"),
                 }
 
         logger.warning("Claude did not return a tool call")
@@ -344,6 +356,7 @@ def _empty_slots() -> dict:
         "_gender": None,
         "family_status": None,
         "_populations": [],
+        "org_name": None,
     }
 
 

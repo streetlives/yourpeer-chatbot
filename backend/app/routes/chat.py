@@ -6,7 +6,7 @@ import uuid
 
 from app.models.chat_models import ChatRequest, ChatResponse
 from app.services.chatbot import generate_reply
-from app.services.audit_log import log_feedback
+from app.services.audit_log import log_feedback, log_location_feedback
 from app.services.session_token import generate_session_id, validate_session_id
 
 router = APIRouter(prefix="/chat", tags=["chat"])
@@ -15,6 +15,18 @@ router = APIRouter(prefix="/chat", tags=["chat"])
 class FeedbackRequest(BaseModel):
     session_id: str
     rating: str = Field(..., pattern="^(up|down)$")
+    comment: Optional[str] = Field(None, max_length=500)
+
+
+class LocationFeedbackRequest(BaseModel):
+    """Per-location feedback with binary ratings per dimension."""
+    session_id: str
+    location_id: str
+    location_name: Optional[str] = None
+    safety: Optional[bool] = None
+    friendliness: Optional[bool] = None
+    cleanliness: Optional[bool] = None
+    queer_friendly: Optional[bool] = None
     comment: Optional[str] = Field(None, max_length=500)
 
 
@@ -51,6 +63,23 @@ async def feedback(request: FeedbackRequest):
     log_feedback(
         session_id=request.session_id,
         rating=request.rating,
+        comment=request.comment,
+    )
+    return {"ok": True}
+
+
+@router.post("/location-feedback")
+async def location_feedback(request: LocationFeedbackRequest):
+    if not validate_session_id(request.session_id):
+        raise HTTPException(status_code=403, detail="Invalid session token")
+    log_location_feedback(
+        session_id=request.session_id,
+        location_id=request.location_id,
+        location_name=request.location_name,
+        safety=request.safety,
+        friendliness=request.friendliness,
+        cleanliness=request.cleanliness,
+        queer_friendly=request.queer_friendly,
         comment=request.comment,
     )
     return {"ok": True}

@@ -98,7 +98,7 @@ def admin_conversation_detail(session_id: str):
 @router.get("/api/events")
 def admin_events(
     limit: int = Query(100, ge=1, le=500),
-    event_type: str = Query(None, pattern="^(conversation_turn|query_execution|crisis_detected|session_reset|feedback)$"),
+    event_type: str = Query(None, pattern="^(conversation_turn|query_execution|crisis_detected|session_reset|feedback|location_feedback)$"),
 ):
     """Get recent events, optionally filtered by type."""
     return get_recent_events(limit=limit, event_type=event_type)

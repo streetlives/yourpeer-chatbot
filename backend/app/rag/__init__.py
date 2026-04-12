@@ -40,6 +40,8 @@ def query_services(
     colocated_service_types: list = None,
     service_detail: str = None,
     populations: list = None,
+    org_name: str = None,
+    no_requirements: bool = False,
 ) -> dict:
     """
     High-level entry point: go from intake slots to service results.
@@ -66,24 +68,28 @@ def query_services(
                         params_applied, relaxed, execution_ms
         On error: dict with error key and empty services list.
     """
-    # Map slot value to template key
-    template_key = resolve_template_key(service_type)
-    if not template_key:
-        return {
-            "services": [],
-            "result_count": 0,
-            "template_used": None,
-            "params_applied": {"service_type": service_type},
-            "relaxed": False,
-            "execution_ms": 0,
-            "error": (
-                f"I don't have a search template for '{service_type}' yet. "
-                f"I can help with: {', '.join(sorted(TEMPLATES.keys()))}."
-            ),
-        }
-
-    # Normalize location to DB-compatible value and build query params
-    user_params = {}
+    # Organization name search: when user asks about a specific org,
+    # use the OrgNameQuery template regardless of service_type.
+    if org_name:
+        template_key = "org_name"
+        user_params = {"org_name_pattern": f"%{org_name}%"}
+    else:
+        # Map slot value to template key
+        template_key = resolve_template_key(service_type)
+        if not template_key:
+            return {
+                "services": [],
+                "result_count": 0,
+                "template_used": None,
+                "params_applied": {"service_type": service_type},
+                "relaxed": False,
+                "execution_ms": 0,
+                "error": (
+                    f"I don't have a search template for '{service_type}' yet. "
+                    f"I can help with: {', '.join(sorted(TEMPLATES.keys()))}."
+                ),
+            }
+        user_params = {}
 
     # Direct browser geolocation: use lat/lng for proximity search
     if latitude is not None and longitude is not None:
@@ -147,6 +153,8 @@ def query_services(
         user_params["weekday"] = weekday
     if current_time:
         user_params["current_time"] = current_time
+    if no_requirements:
+        user_params["no_requirements"] = True
 
     # Shelter taxonomy enrichment based on user profile.
     # The DB has shelter sub-categories as separate taxonomy names with

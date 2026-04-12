@@ -37,6 +37,8 @@ SERVICE_KEYWORDS = {
         # Vernacular (Phase 1 audit)
         "place to crash", "got put out", "somewhere warm",
         "need a cot", "sleeping in my car", "couch surfing",
+        # Foster care / aging out (Run 24 eval gap)
+        "aging out", "aged out", "foster care", "aging out of foster",
     ],
 
     # --- Clothing (taxonomy: Clothing) ---
@@ -75,6 +77,9 @@ SERVICE_KEYWORDS = {
         # Pregnancy / Maternal health (Phase 1 audit — 41 services)
         "prenatal care", "prenatal", "maternity", "ob-gyn", "obgyn",
         "postpartum",
+        # Chronic conditions / medications (Run 24 eval gaps)
+        "insulin", "diabetic", "diabetes", "inhaler", "asthma",
+        "dialysis", "blood sugar", "epipen",
     ],
 
     # --- Mental Health (taxonomy: Mental Health) ---
@@ -502,15 +507,50 @@ def _extract_gender(text: str) -> Optional[str]:
     return None
 
 
+# ---------------------------------------------------------------------------
+# Negation detection for service keywords (Fix 2)
+# ---------------------------------------------------------------------------
+
+_NEGATION_PREFIXES = [
+    "not ", "no ", "don't want ", "dont want ", "don't need ", "dont need ",
+    "forget ", "skip ", "instead of ", "rather than ", "no more ",
+    "not looking for ", "don't want ", "not interested in ",
+]
+
+
+def _is_negated(text: str, match_pos: int) -> bool:
+    """Check if a keyword match at match_pos is preceded by a negation.
+
+    Looks at the 25 characters before the match position for negation
+    prefixes. Only triggers when the negation immediately precedes the
+    keyword (with optional whitespace/punctuation between).
+
+    Examples:
+        "not food, shelter" → _is_negated("not food, shelter", 4) → True
+        "I need food" → _is_negated("i need food", 7) → False
+        "forget food, I need shelter" → _is_negated(..., 7) → True
+    """
+    # Look at the 25 chars before the match
+    window_start = max(0, match_pos - 25)
+    prefix = text[window_start:match_pos].lower().rstrip()
+
+    return any(prefix.endswith(neg.rstrip()) for neg in _NEGATION_PREFIXES)
+
+
 def _extract_all_service_types(text: str) -> list[tuple[str, Optional[str]]]:
     """Extract ALL service type categories from a message.
 
     Returns a list of (service_type, service_detail) tuples, deduplicated
     by category. Order reflects first appearance in text.
 
+    Negation-aware: keywords preceded by "not", "forget", "don't want",
+    "instead of", "skip" are excluded. This prevents "not food, shelter"
+    from extracting "food" as the primary service.
+
     Examples:
         "I need food and shelter" → [("food", None), ("shelter", None)]
         "dental care in Brooklyn" → [("medical", "dental care")]
+        "not food, shelter" → [("shelter", None)]
         "hello" → []
     """
     lower = text.lower()
@@ -547,6 +587,12 @@ def _extract_all_service_types(text: str) -> list[tuple[str, Optional[str]]]:
                    for ms_start, ms_end in matched_spans):
                 search_start = pos + 1
                 continue
+
+            # Skip if this keyword is negated
+            if _is_negated(lower, pos):
+                matched_spans.append((pos, end))  # block sub-matches
+                search_start = end
+                break
 
             # Record the span (even for already-seen categories, to block
             # sub-matches at this position)
@@ -918,6 +964,16 @@ _POPULATION_PHRASES = {
     "on parole": "reentry",
     "on probation": "reentry",
     "formerly incarcerated": "reentry",
+    # Run 24 eval gaps — felon/criminal record terminology
+    "felon": "reentry",
+    "felony": "reentry",
+    "ex-felon": "reentry",
+    "criminal record": "reentry",
+    "have a record": "reentry",
+    "been to prison": "reentry",
+    "was in prison": "reentry",
+    "got out of prison": "reentry",
+    "did time": "reentry",
 
     # DV survivor — domestic violence
     "escaped abuse": "dv_survivor",
@@ -1044,6 +1100,126 @@ def _extract_all_locations(text: str) -> list[tuple[int, str]]:
     return found
 
 
+# ---------------------------------------------------------------------------
+# Organization name extraction (Gap 3)
+# ---------------------------------------------------------------------------
+# Curated list of well-known NYC social service organizations that users
+# commonly ask about by name. This handles the regex path; the LLM extractor
+# catches orgs not on this list.
+
+_KNOWN_ORGS = {
+    # Shelter & Housing
+    "covenant house": "Covenant House",
+    "safe horizon": "Safe Horizon",
+    "ali forney": "Ali Forney Center",
+    "ali forney center": "Ali Forney Center",
+    "bowery residents": "Bowery Residents' Committee",
+    "project renewal": "Project Renewal",
+    "breaking ground": "Breaking Ground",
+    "women in need": "Women In Need",
+    "urban pathways": "Urban Pathways",
+    "goddard riverside": "Goddard Riverside",
+    # Food
+    "city harvest": "City Harvest",
+    "food bank for new york": "Food Bank For New York City",
+    "food bank nyc": "Food Bank For New York City",
+    # Health & Mental Health
+    "mount sinai": "Mount Sinai",
+    "beth israel": "Beth Israel",
+    "realization center": "Realization Center",
+    "ryan health": "Ryan Health",
+    # Legal & Immigration
+    "legal aid society": "Legal Aid Society",
+    "unlocal": "UnLocal",
+    "make the road": "Make the Road New York",
+    "cabrini immigrant": "Cabrini Immigrant Services",
+    # Multi-service
+    "catholic charities": "Catholic Charities",
+    "catholic worker": "Catholic Worker",
+    "salvation army": "Salvation Army",
+    "riseboro": "RiseBoro",
+    "boom health": "BOOM! Health",
+    "boom! health": "BOOM! Health",
+    # Youth
+    "the door a center": "The Door",
+    # DV
+    "family justice center": "Family Justice Center",
+    # Government
+    "department of homeless services": "Department of Homeless Services",
+}
+
+# Short org abbreviations that need word-boundary matching to avoid
+# false positives (e.g., "win" in "I need to win", "path" in "on the path").
+_KNOWN_ORG_ABBREVIATIONS = {
+    "ymca": "YMCA",
+    "ywca": "YWCA",
+    "mrny": "Make the Road New York",
+    "camba": "CAMBA",
+    "dycd": "DYCD",
+}
+
+import re as _re
+
+_ORG_ABBREV_PATTERN = _re.compile(
+    r"\b(" + "|".join(_re.escape(k) for k in _KNOWN_ORG_ABBREVIATIONS) + r")\b",
+    _re.IGNORECASE,
+)
+
+
+def _extract_org_name(text: str) -> str | None:
+    """Extract a known organization name from user message.
+
+    Returns the canonical org name if found, None otherwise.
+    Uses exact substring match for multi-word names and word-boundary
+    match for abbreviations to avoid false positives.
+    """
+    lower = text.lower()
+
+    # Check multi-word org names (longest match first to avoid partial matches)
+    for phrase, canonical in sorted(_KNOWN_ORGS.items(), key=lambda x: -len(x[0])):
+        if phrase in lower:
+            return canonical
+
+    # Check abbreviations with word boundaries
+    m = _ORG_ABBREV_PATTERN.search(lower)
+    if m:
+        return _KNOWN_ORG_ABBREVIATIONS[m.group(1).lower()]
+
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Requirement preference extraction (Gap 10)
+# ---------------------------------------------------------------------------
+
+_NO_REQUIREMENTS_PHRASES = [
+    "walk-in only", "walk in only", "walkin only",
+    "no referral", "no referral needed", "without referral",
+    "no appointment", "no appointment needed", "without appointment",
+    "don't need a referral", "dont need a referral",
+    "don't need an appointment", "dont need an appointment",
+    "no membership", "no registration",
+    "walk-in welcome", "walk in welcome",
+    "open to anyone", "open to all",
+    "no requirements",
+]
+
+
+def _extract_no_requirements(text: str) -> bool:
+    """Detect if user wants walk-in / no-referral services only.
+
+    Returns True if the user explicitly asks for services without
+    referral or appointment requirements. Returns False otherwise
+    (default — don't filter).
+
+    Note: "drop-in" and "walk-in clinic" are already SERVICE KEYWORDS
+    (shelter and medical respectively). This extractor catches the
+    REQUIREMENT preference, not the service type.
+    """
+    lower = text.lower()
+    return any(phrase in lower for phrase in _NO_REQUIREMENTS_PHRASES)
+
+
 def extract_slots(message: str) -> dict:
     all_types = _extract_all_service_types(message)
     all_locations = _extract_all_locations(message)
@@ -1103,6 +1279,8 @@ def extract_slots(message: str) -> dict:
         "family_status": _extract_family_status(message),
         "_gender": _extract_gender(message),
         "_populations": _extract_populations(message),
+        "org_name": _extract_org_name(message),
+        "no_requirements": _extract_no_requirements(message),
     }
 
 
@@ -1142,7 +1320,10 @@ def merge_slots(existing: dict, new_values: dict) -> dict:
 
 
 def is_enough_to_answer(slots: dict) -> bool:
-    # Need service type + a real location (not the "near me" sentinel)
+    # Org name search: org_name alone is sufficient (location optional)
+    if slots.get("org_name"):
+        return True
+    # Service type search: need service type + a real location
     has_service = bool(slots.get("service_type"))
     has_location = bool(
         slots.get("location")

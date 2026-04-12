@@ -399,6 +399,10 @@ _CONFIRM_CHANGE_SERVICE = [
     "change service", "different service",
     "wrong service", "change what i need",
     "change service type",
+    # Run 24 eval fix — patterns that name the specific new service
+    "change to", "switch to", "i'd rather have",
+    "let me change", "can i change to", "can we do",
+    "i want to switch",
 ]
 
 _CONFIRM_CHANGE_LOCATION = [
@@ -424,6 +428,7 @@ _CONFIRM_DENY_PHRASES = [
     # Informal declines (multi_decline_with_different_phrasing)
     "i'm good", "im good", "nah i'm good", "nah im good",
     "all good", "no need",
+    "i'm fine", "im fine", "no i'm fine", "no im fine",
 ]
 
 

@@ -60,6 +60,7 @@ SELECT
     pa.postal_code    AS zip_code,
 
     best_phone.number     AS phone,
+    best_phone.extension  AS phone_extension,
 
     today_sched.opens_at   AS today_opens,
     today_sched.closes_at  AS today_closes,
@@ -92,7 +93,51 @@ SELECT
      FROM accessibility_for_disabilities afd
      WHERE afd.location_id = l.id
      LIMIT 1
-    ) AS accessibility_info
+    ) AS accessibility_info,
+
+    -- Eligibility summary: aggregated eligibility rules for display on cards.
+    -- Returns JSON array of {param, values} for each eligibility rule.
+    (SELECT json_agg(json_build_object(
+         'param', ep.name,
+         'values', e.eligible_values
+     ))
+     FROM eligibility e
+     JOIN eligibility_parameters ep ON e.parameter_id = ep.id
+     WHERE e.service_id = s.id
+       AND ep.name != 'membership'
+    ) AS eligibility_rules,
+
+    -- Review highlight: top positive peer comment for this location.
+    -- Extracted from the LLM sentiment analysis in location_comment_highlights.
+    -- 35 locations currently have highlights (~1.5% of 2,414 locations).
+    -- Uses the most informative positive comment (array is pre-sorted by
+    -- informativeness_score in the OpenAI pipeline).
+    (SELECT lch.openai_output_json->'top_positive_comments'->0->>'comment'
+     FROM location_comment_highlights lch
+     WHERE lch.location_id = l.id
+       AND lch.openai_output_json->'top_positive_comments' IS NOT NULL
+       AND jsonb_array_length(lch.openai_output_json->'top_positive_comments') > 0
+     ORDER BY lch.updated_at DESC
+     LIMIT 1
+    ) AS review_highlight,
+
+    -- Required documents: what users need to bring (e.g. "State ID", "Proof of address").
+    -- Filtered to exclude null/empty/'None' entries.
+    (SELECT ARRAY_AGG(rd.document)
+     FROM required_documents rd
+     WHERE rd.service_id = s.id
+       AND rd.document IS NOT NULL
+       AND rd.document != ''
+       AND rd.document != 'None'
+    ) AS required_documents,
+
+    -- Languages spoken at this service.
+    -- Helps non-English speakers choose the right location.
+    (SELECT ARRAY_AGG(DISTINCT lang.language ORDER BY lang.language)
+     FROM languages lang
+     JOIN service_languages sl ON lang.id = sl.language_id
+     WHERE sl.service_id = s.id
+    ) AS languages_spoken
 
 FROM services s
     JOIN service_at_locations sal  ON s.id = sal.service_id
@@ -100,7 +145,7 @@ FROM services s
     LEFT JOIN organizations o      ON s.organization_id = o.id
     LEFT JOIN physical_addresses pa ON l.id = pa.location_id
     LEFT JOIN LATERAL (
-        SELECT ph.number
+        SELECT ph.number, ph.extension
         FROM phones ph
         WHERE ph.location_id = l.id
            OR ph.service_id = s.id
@@ -312,6 +357,28 @@ FILTER_NOT_HIDDEN = (
 FILTER_BY_DESCRIPTION_KEYWORDS = (
     "s.description ~* :description_pattern",
     ["description_pattern"],
+)
+
+# Organization name filter — ILIKE match against the org name.
+# Used by OrgNameQuery when users ask about a specific org by name.
+FILTER_BY_ORG_NAME = (
+    "o.name ILIKE :org_name_pattern",
+    ["org_name_pattern"],
+)
+
+# Walk-in / no-requirements filter — excludes services that require
+# referrals or registered membership. Used when user says "walk-in only",
+# "no referral needed", "drop-in", etc.
+FILTER_BY_NO_REQUIREMENTS = (
+    """NOT EXISTS (
+        SELECT 1 FROM eligibility e
+        JOIN eligibility_parameters ep ON e.parameter_id = ep.id
+        WHERE e.service_id = s.id
+          AND ep.name = 'membership'
+          AND (e.eligible_values = '["true"]'::jsonb
+               OR e.eligible_values = '[true]'::jsonb)
+    )""",
+    ["no_requirements"],
 )
 
 # ---------------------------------------------------------------------------
@@ -694,6 +761,20 @@ TEMPLATES = {
             "Families", "Youth", "Senior", "Veterans", "LGBTQ Young Adult", "Intake",
         ],
     },
+    "org_name": {
+        "name": "OrgNameQuery",
+        "description": "Find all services at a specific organization by name",
+        "required_filters": [FILTER_BY_ORG_NAME, FILTER_NOT_HIDDEN, FILTER_BY_STATE_NY],
+        "optional_filters": [
+            FILTER_BY_BOROUGH,
+            FILTER_BY_CITY,
+            FILTER_BY_CITY_IN_BOROUGH,
+            FILTER_BY_CITY_LIKE,
+            FILTER_BY_PROXIMITY,
+        ],
+        "default_params": {},
+        "taxonomy_aliases": [],
+    },
 }
 
 
@@ -743,7 +824,7 @@ def build_query(template_key: str, user_params: dict) -> tuple[str, dict]:
     # Universal optional filters — apply to any template when params present.
     # Co-location filter: when user asked for multiple services, restrict
     # results to locations that also have the additional service(s).
-    _UNIVERSAL_OPTIONAL = [FILTER_BY_COLOCATED_TAXONOMY]
+    _UNIVERSAL_OPTIONAL = [FILTER_BY_COLOCATED_TAXONOMY, FILTER_BY_NO_REQUIREMENTS]
     for sql_fragment, required_keys in _UNIVERSAL_OPTIONAL:
         if all(k in params for k in required_keys):
             where_clauses.append(sql_fragment)
@@ -763,6 +844,9 @@ def build_query(template_key: str, user_params: dict) -> tuple[str, dict]:
     # combinatorial explosion of variants for each boost combination).
     _lgbtq_boost = params.pop("lgbtq_boost", False)
     _veteran_boost = params.pop("veteran_boost", False)
+    # no_requirements is a control flag (triggers a NOT EXISTS filter)
+    # with no SQL bind variable — pop it so SQLAlchemy doesn't error.
+    params.pop("no_requirements", None)
     _has_distance = "lat" in params and "lon" in params
     _has_pop_boost = "pop_boost_pattern" in params
 
@@ -859,6 +943,83 @@ def _normalize_url(url: str | None) -> str | None:
     return url
 
 
+def _format_eligibility(rules) -> str | None:
+    """Format eligibility rules into a human-readable summary.
+
+    Args:
+        rules: JSON array of {param, values} from the eligibility subquery,
+               or None if no eligibility rules exist.
+
+    Returns:
+        A concise string like "Ages 18–24 · Women only" or None.
+    """
+    if not rules:
+        return None
+
+    parts = []
+    for rule in rules:
+        param = rule.get("param", "")
+        values = rule.get("values")
+        if not values:
+            continue
+
+        if param == "age":
+            # values: [{"age_min": 18, "age_max": 24}] or [{"all_ages": true}]
+            if isinstance(values, list) and values:
+                v = values[0] if isinstance(values[0], dict) else {}
+                if v.get("all_ages"):
+                    continue  # open to all ages — nothing to display
+                age_min = v.get("age_min")
+                age_max = v.get("age_max")
+                if age_min and age_max:
+                    parts.append(f"Ages {age_min}–{age_max}")
+                elif age_min:
+                    parts.append(f"Ages {age_min}+")
+                elif age_max:
+                    parts.append(f"Ages up to {age_max}")
+
+        elif param == "gender":
+            # values: ["male"] or ["female"] or ["male", "female"]
+            if isinstance(values, list):
+                genders = [str(g).capitalize() for g in values if g]
+                if len(genders) == 1:
+                    parts.append(f"{genders[0]} only")
+                # If both genders listed, skip — it's open to all
+
+        elif param == "familySize":
+            # values: [{"min": 2}] or similar
+            if isinstance(values, list) and values:
+                v = values[0] if isinstance(values[0], dict) else {}
+                if v.get("min") and int(v["min"]) > 1:
+                    parts.append("Families")
+
+    if not parts:
+        return None
+    return " · ".join(parts)
+
+
+def _clean_list(values) -> list | None:
+    """Return a cleaned list or None if empty/null.
+
+    Filters out None, empty strings, and 'None' from DB array results.
+    Returns None instead of [] so the frontend can use simple truthiness checks.
+    """
+    if not values:
+        return None
+    cleaned = [v for v in values if v and str(v).strip() not in ("", "None")]
+    return cleaned if cleaned else None
+
+
+def _format_phone(number: str | None, extension: str | None) -> str | None:
+    """Format a phone number with optional extension."""
+    if not number:
+        return None
+    ext = (extension or "").strip()
+    if ext and ext.lower() not in ("none", "n/a", ""):
+        return f"{number} ext. {ext}"
+    return number
+
+
 def format_service_card(row: dict) -> dict:
     """
     Format a raw query result row into a structured service card.
@@ -884,18 +1045,61 @@ def format_service_card(row: dict) -> dict:
     today_closes = row.get("today_closes")
     schedule_status = _compute_schedule_status(today_opens, today_closes)
 
-    # Co-located services — filter to user-relevant categories
+    # Co-located services — show granular taxonomy names, not just top-level.
+    # Matches what yourpeer.nyc displays under each location.
     _DISPLAY_CATEGORIES = {
-        "Shelter", "Shower", "Clothing Pantry", "Clothing",
-        "Health", "Mental Health", "General Health",
-        "Laundry", "Legal Services", "Benefits", "Education",
-        "Employment", "Food", "Food Pantry", "Soup Kitchen",
-        "Toiletries", "Mail", "Free Wifi", "Haircut",
-        "Support Groups", "Drop-in Center", "Crisis",
-        "Restrooms", "Warming Center",
+        # Shelter & Housing
+        "Shelter", "Drop-in Center", "Warming Center", "Crisis",
+        "Families", "Single Adult", "Youth", "Senior",
+        # Food
+        "Food", "Food Pantry", "Soup Kitchen", "Mobile Pantry",
+        "Mobile Soup Kitchen", "Mobile Market", "Food Benefits",
+        "Farmer's Markets",
+        # Clothing
+        "Clothing", "Clothing Pantry", "Interview-Ready Clothing",
+        # Personal Care
+        "Shower", "Laundry", "Toiletries", "Haircut", "Restrooms",
+        # Health
+        "Health", "General Health",
+        "Harm Reduction", "Needle Exchange", "Overdose Prevention",
+        "Substance Use Treatment",
+        # Mental Health
+        "Mental Health",
+        # Legal
+        "Legal Services", "Immigration Services",
+        # Employment & Education
+        "Employment", "Education",
+        # Benefits & Support
+        "Benefits", "Case Workers", "Referral",
+        "Support Groups", "Mail", "Free Wifi",
+        # Other specific
+        "Baby", "Baby Supplies", "Senior Center",
+        "Financial Help", "Intake",
     }
+
+    # User-friendly labels for DB-internal taxonomy names
+    _TAXONOMY_DISPLAY_LABELS = {
+        "General Health": "Health",
+        "Substance Use Treatment": "Substance Use Help",
+        "Case Workers": "Case Management",
+        "Clothing Pantry": "Clothing",
+        "Interview-Ready Clothing": "Interview Clothing",
+        "Mobile Soup Kitchen": "Soup Kitchen",
+        "Mobile Pantry": "Food Pantry",
+        "Mobile Market": "Farmers Market",
+        "Farmer's Markets": "Farmers Market",
+        "Food Benefits": "Food Benefits (SNAP)",
+        "Needle Exchange": "Syringe Exchange",
+        "Overdose Prevention": "Overdose Prevention",
+        "Baby Supplies": "Baby Supplies",
+    }
+
     raw_also = row.get("also_available") or []
-    also_available = sorted(set(raw_also) & _DISPLAY_CATEGORIES)
+    also_available = sorted({
+        _TAXONOMY_DISPLAY_LABELS.get(name, name)
+        for name in raw_also
+        if name in _DISPLAY_CATEGORIES
+    })
 
     return {
         "service_id": str(row.get("service_id", "")),
@@ -904,7 +1108,7 @@ def format_service_card(row: dict) -> dict:
         "description": row.get("service_description"),
         "address": full_address or None,
         "city": row.get("city"),
-        "phone": row.get("phone"),
+        "phone": _format_phone(row.get("phone"), row.get("phone_extension")),
         "email": row.get("service_email"),
         "website": _normalize_url(row.get("service_url") or row.get("organization_url")),
         "fees": row.get("fees"),
@@ -920,6 +1124,10 @@ def format_service_card(row: dict) -> dict:
         ),
         "also_available": also_available if also_available else None,
         "accessibility": row.get("accessibility_info"),
+        "eligibility_summary": _format_eligibility(row.get("eligibility_rules")),
+        "review_highlight": row.get("review_highlight"),
+        "required_documents": _clean_list(row.get("required_documents")),
+        "languages": _clean_list(row.get("languages_spoken")),
     }
 
 

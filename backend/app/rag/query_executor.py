@@ -577,3 +577,60 @@ def get_neighborhood_center(location: str) -> tuple[float, float] | None:
     if not location:
         return None
     return NEIGHBORHOOD_CENTERS.get(location.lower().strip())
+
+
+# ---------------------------------------------------------------------------
+# SCHEDULE LOOKUP (Gap 15)
+# ---------------------------------------------------------------------------
+
+_SCHEDULE_FOR_DAY_SQL = """
+SELECT
+    hs.service_id::text,
+    hs.opens_at,
+    hs.closes_at
+FROM holiday_schedules hs
+WHERE hs.service_id = ANY(:service_ids)
+  AND hs.weekday = :weekday
+  AND LOWER(hs.occasion) = 'covid19'
+ORDER BY hs.service_id, hs.opens_at
+"""
+
+
+def fetch_schedule_for_day(
+    service_ids: list[str], weekday: int
+) -> dict[str, list[dict]]:
+    """Fetch schedule data for specific service IDs on a given weekday.
+
+    Args:
+        service_ids: List of service UUID strings.
+        weekday: ISO day of week (1=Monday, 7=Sunday), matching
+            PostgreSQL EXTRACT(ISODOW ...) used in holiday_schedules.
+
+    Returns:
+        Dict mapping service_id → list of {opens_at, closes_at} dicts.
+        Services with no schedule data are omitted from the dict.
+    """
+    if not service_ids:
+        return {}
+
+    try:
+        engine = _get_engine()
+        with engine.connect() as conn:
+            result = conn.execute(
+                text(_SCHEDULE_FOR_DAY_SQL),
+                {"service_ids": service_ids, "weekday": weekday},
+            )
+            rows = [dict(r._mapping) for r in result]
+
+        schedule: dict[str, list[dict]] = {}
+        for row in rows:
+            sid = row["service_id"]
+            schedule.setdefault(sid, []).append({
+                "opens_at": row["opens_at"],
+                "closes_at": row["closes_at"],
+            })
+        return schedule
+
+    except Exception as e:
+        logger.error(f"Schedule lookup failed: {e}")
+        return {}
