@@ -428,6 +428,7 @@ _CONFIRM_DENY_PHRASES = [
     # Informal declines (multi_decline_with_different_phrasing)
     "i'm good", "im good", "nah i'm good", "nah im good",
     "all good", "no need",
+    "i'm fine", "im fine", "no i'm fine", "no im fine",
 ]
 
 
