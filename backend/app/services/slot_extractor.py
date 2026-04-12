@@ -552,16 +552,18 @@ def _extract_gender(text: str) -> Optional[str]:
 
 _NEGATION_PREFIXES = [
     "not ", "no ", "don't want ", "dont want ", "don't need ", "dont need ",
-    "forget ", "skip ", "instead of ", "rather than ", "no more ",
-    "not looking for ", "don't want ", "not interested in ",
+    "forget ", "forget about ", "skip ", "instead of ", "rather than ",
+    "no more ", "not looking for ", "not interested in ",
 ]
 
-# Articles, determiners, and possessives that can appear between a
-# negation word and the keyword it negates.  "forget the food" and
-# "skip my shelter" should still negate the keyword.
+# Only articles and close determiners/possessives are safe as fillers.
+# Quantifiers ("all", "any", "some") and prepositions ("about") are
+# excluded because they create too much distance between the negation
+# word and the keyword, causing false negatives like:
+#   "not all food is free"  →  strip "all" → "not" → false negation
+#   "there is not a shelter" → strip "a" → "is not" → false negation
 _NEGATION_FILLER_WORDS = frozenset({
-    "the", "my", "this", "that", "those", "all", "any", "about",
-    "the", "a", "an",
+    "the", "my", "this", "that",
 })
 
 
@@ -569,8 +571,12 @@ def _is_negated(text: str, match_pos: int) -> bool:
     """Check if a keyword match at match_pos is preceded by a negation.
 
     Looks at the 25 characters before the match position for negation
-    prefixes. Handles both direct adjacency ("forget food") and
-    intervening filler words ("forget the food", "not my shelter").
+    prefixes. Handles both direct adjacency ("forget food") and a
+    single intervening article or determiner ("forget the food").
+
+    Only strips ONE filler word to avoid chaining through multiple
+    words and exposing coincidental negation prefixes (e.g.,
+    "is not about the food" → strip "the" → strip "about" → "not").
 
     Examples:
         "not food, shelter"           → True  (direct)
@@ -578,7 +584,9 @@ def _is_negated(text: str, match_pos: int) -> bool:
         "forget food, I need shelter" → True  (direct)
         "forget the food"             → True  (filler word "the")
         "skip my shelter"             → True  (filler word "my")
-        "actually forget the food"    → True  (filler word "the")
+        "forget about the food"       → True  (filler "the", prefix "forget about")
+        "not all food is free"        → False ("all" not a filler)
+        "there is not a shelter"      → False ("a" not a filler)
     """
     # Look at the 25 chars before the match
     window_start = max(0, match_pos - 25)
@@ -588,20 +596,11 @@ def _is_negated(text: str, match_pos: int) -> bool:
     if any(prefix.endswith(neg.rstrip()) for neg in _NEGATION_PREFIXES):
         return True
 
-    # Strip trailing filler words and re-check.
+    # Strip ONE trailing filler word and re-check.
     # Handles "forget the food", "not my shelter", "skip that food".
-    stripped = prefix
-    while True:
-        parts = stripped.rsplit(None, 1)
-        if len(parts) < 2:
-            break
-        last_word = parts[1]
-        if last_word in _NEGATION_FILLER_WORDS:
-            stripped = parts[0].rstrip()
-        else:
-            break
-
-    if stripped != prefix:
+    parts = prefix.rsplit(None, 1)
+    if len(parts) == 2 and parts[1] in _NEGATION_FILLER_WORDS:
+        stripped = parts[0].rstrip()
         if any(stripped.endswith(neg.rstrip()) for neg in _NEGATION_PREFIXES):
             return True
 
@@ -613,13 +612,19 @@ def _is_negated(text: str, match_pos: int) -> bool:
 # ---------------------------------------------------------------------------
 
 # Phrases that signal the user is explicitly changing their mind.
-# Sorted longest-first so that "i changed my mind" matches before "actually".
+# Only STRONG, unambiguous signals are included.  Common English
+# words like "actually", "instead", and "wait" are excluded because
+# they appear in non-contradicting multi-service messages:
+#   "I actually need food and shelter"  — not a switch
+#   "I need food instead of cooking"    — not a service switch
+#   "Wait, I need food and shelter"     — not a switch
+# The improved negation ("forget the food") and the existing
+# confirm_change_service / confirm_deny handlers cover those cases.
 _CONTRADICTION_SIGNALS = [
     "i changed my mind", "changed my mind",
     "never mind the", "never mind that", "nevermind the", "nevermind that",
     "forget that", "forget about", "scratch that",
     "no wait", "hold on",
-    "actually", "instead", "wait,", "wait ",
 ]
 
 

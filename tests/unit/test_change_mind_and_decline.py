@@ -306,18 +306,15 @@ class TestContradictionSignalExtraction:
     """Contradiction signals should reorder services so the new intent is primary."""
 
     @pytest.mark.parametrize("msg,expected_service", [
-        # "actually" promotes post-signal service
-        ("I said food but actually I need shelter", "shelter"),
-        ("food... actually shelter", "shelter"),
-        # "instead" promotes post-signal service
-        ("not food, shelter instead", "shelter"),
-        ("I want shelter instead", "shelter"),
-        # "I changed my mind" promotes post-signal service
+        # Strong contradiction signals promote post-signal service
         ("I changed my mind, I need medical", "medical"),
-        # "wait" promotes post-signal service
-        ("wait, I need clothing not food", "clothing"),
-        # No contradiction signal — first-mentioned wins
-        ("I need food and shelter", "food"),
+        ("never mind that, I need shelter", "shelter"),
+        ("scratch that, I need clothing", "clothing"),
+        # "actually" is NOT a contradiction signal (too common in normal speech)
+        # — "I actually need food and shelter" would false-positive
+        # These rely on negation or the confirm_change_service handler instead
+        ("I need food and shelter", "food"),            # no signal — first wins
+        ("I actually need food and shelter", "food"),   # "actually" not a signal
     ])
     def test_contradiction_reordering(self, msg, expected_service):
         s = extract_slots(msg)
@@ -325,7 +322,7 @@ class TestContradictionSignalExtraction:
             f'"{msg}" → {s["service_type"]}, expected {expected_service}'
 
     def test_contradiction_flag_set(self):
-        s = extract_slots("actually I need shelter")
+        s = extract_slots("I changed my mind, I need shelter")
         assert s["_contradiction"] is True
 
     def test_no_contradiction_flag_for_normal(self):
