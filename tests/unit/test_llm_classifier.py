@@ -11,28 +11,6 @@ import pytest
 from unittest.mock import patch, MagicMock
 
 # Import validation directly (no LLM needed)
-import sys
-import os
-import types
-
-# Add parent dir to path so 'app' is importable
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-
-# Stub out app modules for import
-_base = os.path.join(os.path.dirname(__file__), "..")
-for mod_name in ["app", "app.llm", "app.services"]:
-    if mod_name not in sys.modules:
-        m = types.ModuleType(mod_name)
-        sys.modules[mod_name] = m
-for p in ["app", "app.services", "app.llm"]:
-    sys.modules[p].__path__ = [os.path.join(_base, p.replace(".", "/"))]
-
-# Stub claude_client with real attributes the classifier imports
-cc = types.ModuleType("app.llm.claude_client")
-cc.get_client = lambda: None
-cc.CLASSIFICATION_MODEL = "claude-haiku-4-5-20251001"
-sys.modules["app.llm.claude_client"] = cc
-
 from app.services.llm_classifier import _validate_result, classify_unified
 
 

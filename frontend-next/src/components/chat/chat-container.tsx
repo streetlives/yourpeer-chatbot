@@ -9,6 +9,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useChat } from "@/hooks/use-chat";
 import { useOnlineStatus } from "@/hooks/use-online-status";
+import { useBackendHealth } from "@/hooks/use-backend-health";
 import { useChatStore } from "@/lib/chat/store";
 import { ChatMessage } from "./chat-message";
 import { ChatMessageBoundary } from "./chat-message-boundary";
@@ -18,19 +19,38 @@ import { ChatStatus } from "./chat-status";
 export function ChatContainer() {
   const { messages, isLoading, error, send, retry, submitFeedback } = useChat();
   const isOnline = useOnlineStatus();
+  const { backendStatus, statusDetail } = useBackendHealth();
   const chatRef = useRef<HTMLDivElement>(null);
 
+  // Combine browser online status with backend health into a single state.
+  //   "connected" — browser online AND backend healthy
+  //   "degraded"  — browser online AND backend up but reduced capability
+  //   "offline"   — browser offline OR backend unreachable/unhealthy
+  const connectionState = !isOnline
+    ? "offline"
+    : backendStatus === "unreachable"
+      ? "offline"
+      : backendStatus;
+
+  const dotColor = {
+    connected: "bg-green-500 animate-glow-pulse",
+    degraded: "bg-amber-400 animate-pulse",
+    offline: "bg-red-500 animate-pulse",
+  }[connectionState];
+
+  const dotLabel = {
+    connected: "Connected",
+    degraded: statusDetail,
+    offline: !isOnline ? "Offline" : statusDetail,
+  }[connectionState];
+
   // Wait for Zustand persist to finish rehydrating from localStorage.
-  // On SSR and first client render this is false; it flips to true once
-  // the store has loaded (or determined there's nothing to load).
   const [hydrated, setHydrated] = useState(false);
   useEffect(() => {
-    // Already done (e.g. empty localStorage — synchronous)
     if (useChatStore.persist.hasHydrated()) {
       setHydrated(true);
       return;
     }
-    // Async case — wait for the callback
     const unsub = useChatStore.persist.onFinishHydration(() => setHydrated(true));
     return unsub;
   }, []);
@@ -51,9 +71,9 @@ export function ChatContainer() {
           YourPeer AI Chat
         </h1>
         <span
-          title={isOnline ? "Connected" : "Offline"}
-          aria-label={isOnline ? "Connected" : "Offline"}
-          className={`inline-block w-2 h-2 rounded-full shrink-0 ${isOnline ? "bg-green-500 animate-glow-pulse" : "bg-red-500 animate-pulse"}`}
+          title={dotLabel}
+          aria-label={dotLabel}
+          className={`inline-block w-2 h-2 rounded-full shrink-0 ${dotColor}`}
         />
         <span className="text-sm text-neutral-400">
           Find services near you
@@ -85,18 +105,29 @@ export function ChatContainer() {
         )}
       </div>
 
-      {!isOnline && (
+      {connectionState === "offline" && (
         <div
           role="alert"
           className="mx-1 my-2 px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-800"
         >
-          You appear to be offline. Messages will fail until your connection is restored.
+          {!isOnline
+            ? "You appear to be offline. Messages will fail until your connection is restored."
+            : "The chat service is temporarily unavailable. Please try again in a moment."}
+        </div>
+      )}
+
+      {connectionState === "degraded" && (
+        <div
+          role="status"
+          className="mx-1 my-2 px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-700"
+        >
+          Running in basic mode — try simple phrases like &ldquo;food in Brooklyn&rdquo; for best results.
         </div>
       )}
 
       <ChatStatus isLoading={isLoading} error={error} />
 
-      <ChatInput onSend={send} disabled={isLoading || !isOnline} />
+      <ChatInput onSend={send} disabled={isLoading || connectionState === "offline"} />
     </div>
   );
 }

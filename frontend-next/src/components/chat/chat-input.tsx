@@ -22,6 +22,9 @@ export function ChatInput({ onSend, disabled }: ChatInputProps) {
   const [voiceError, setVoiceError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const stopListeningRef = useRef<(() => void) | null>(null);
+  // Snapshot of any text typed before the mic button was pressed,
+  // so voice transcript replaces only the voice portion, not the typed prefix.
+  const preVoiceTextRef = useRef("");
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -39,12 +42,15 @@ export function ChatInput({ onSend, disabled }: ChatInputProps) {
     if (!disabled) inputRef.current?.focus();
   }, [disabled]);
 
+  // Replace (not append) the input value with the full transcript.
+  // The speech recognition hook already accumulates text internally —
+  // each `transcript` update is the complete voice text so far.
+  // We prepend any text the user typed before pressing mic.
   const handleTranscript = useCallback((transcript: string) => {
     setVoiceError(null);
-    setValue((prev) => {
-      const sep = prev.length > 0 ? " " : "";
-      return (prev + sep + transcript).slice(0, MAX_MESSAGE_LENGTH);
-    });
+    const pre = preVoiceTextRef.current;
+    const sep = pre ? " " : "";
+    setValue((pre + sep + transcript).slice(0, MAX_MESSAGE_LENGTH));
   }, []);
 
   const handleVoiceError = useCallback((error: string) => {
@@ -52,7 +58,11 @@ export function ChatInput({ onSend, disabled }: ChatInputProps) {
   }, []);
 
   const handleListeningChange = useCallback((listening: boolean) => {
-    if (listening) setVoiceError(null);
+    if (listening) {
+      setVoiceError(null);
+      // Capture whatever the user typed before pressing the mic button
+      preVoiceTextRef.current = inputRef.current?.value.trim() || "";
+    }
   }, []);
 
   return (

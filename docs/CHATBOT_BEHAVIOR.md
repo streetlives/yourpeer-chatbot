@@ -8,13 +8,27 @@ For crisis detection details, see [CRISIS_DETECTION.md](CRISIS_DETECTION.md). Fo
 
 ## Message Routing Pipeline
 
-Every incoming message passes through four stages: slot extraction, unified LLM classification (when regex fails), split classification, and combined routing. Slots are always extracted first so service intent is known before routing decisions.
+Every incoming message passes through five stages: slot extraction, semantic routing (when regex misses), unified LLM classification (when both miss), split classification, and combined routing. Slots are always extracted first so service intent is known before routing decisions.
 
 ### Stage 1 — Slot Extraction (always runs first)
 
 Regex-based slot extraction runs on every message before classification. This extracts service type(s), location, age, urgency, family status, and service detail. The result determines `has_service_intent` — whether the message contains a service request.
 
+The regex keyword set has been audited for collision risk (see `REGEX_AUDIT.md`). The 384 remaining keywords are split into 208 multi-word phrases (safe from substring collisions), 151 domain-specific single words, and 25 collision-prone keywords protected by `\b` word-boundary matching. Context-dependent keywords (e.g., "court", "bail", "vision") were retired — the semantic routing layer handles them instead.
+
 When multiple services are detected with different locations (e.g. "food in Brooklyn and shelter in Manhattan"), per-service location binding matches each service to its nearest location by text position. The primary service gets the first-mentioned location; queued services get their bound locations stored as 3-tuples `(service_type, detail, location)`.
+
+### Stage 1a — Semantic Routing (when regex finds no service_type)
+
+When regex finds no `service_type`, the semantic router (`semantic_router.py`) embeds the user's message using `all-MiniLM-L6-v2` (a 22M-parameter sentence embedding model running locally on CPU) and compares it against pre-embedded example utterances for each service category. The closest match above a confidence threshold (default 0.75, with per-route overrides) determines the service type.
+
+This eliminates the "missing keyword" class of failures. "I ran out of insulin" has no keyword overlap with the medical phrase list, but its embedding is semantically close to "I need my medication" and "where can I get a prescription filled." The semantic router also detects population context (veteran, reentry, disabled, etc.) at a lower threshold (0.70) and merges it with regex-detected populations.
+
+For short messages (≤8 words), a semantic match skips the LLM entirely (~2-5ms total). For longer messages, the semantic router sets the `service_type` and the LLM still runs to extract location, age, urgency, and other slots — with the semantic service type preserved by the regex-override logic.
+
+Route definitions live in `semantic_routes.py` — 10–20 example utterances per service category. Adding new utterances requires no code changes, no model retraining, and no deployment — just edit the file and restart. The model generalizes immediately from examples.
+
+Runtime cost: ~2-5ms per message (embedding + cosine similarity). Model load: ~1-2 seconds at startup (amortized). Memory: ~100 MB. The semantic layer handles ~15% of messages — those where regex misses but the intent is clearly within a known category.
 
 ### Stage 1b — Unified LLM Classification Gate (Run 23+)
 
@@ -302,12 +316,15 @@ Every routing decision is tagged with a confidence level, stored in the audit lo
 
 | Confidence | When it's set | What it means |
 |---|---|---|
-| `high` | Regex classification match, service keyword extracted, confirmation action | The system is confident about the user's intent — standard handling |
-| `medium` | LLM classification | The system used the LLM to determine intent — correct in most cases but may misinterpret indirect language |
+| `high` | Regex keyword match, confirmation action | Deterministic match — the system is certain about intent |
+| `semantic` | Semantic embedding match (Tier 2) | Local model matched the message to a service category above the confidence threshold (~0.75). High reliability but not deterministic |
+| `medium` | LLM classification (unified gate or fallback) | The system used the LLM to determine intent — correct in most cases but may misinterpret indirect language |
 | `low` | General fallback, unrecognized service redirect, correction handler | The system is uncertain — the response may not match what the user wanted |
 | `disambiguated` | Disambiguation prompt shown | The system detected ambiguity and asked the user to clarify |
 
 When confidence is `medium` or `low`, the response includes a "❌ Not what I meant" quick reply button so the user can recover immediately if the system misinterpreted their message.
+
+The `_extraction_source` variable tracks which tier determined the service type: `"regex"`, `"semantic"`, or `"llm_gate"`. This maps directly to the confidence label and is logged with every audit event. The audit log aggregates these into `high_rate`, `semantic_rate`, and `low_rate` metrics per session.
 
 The post-results handler has its own ambiguity detection: when a message pattern-matches as a post-results question (e.g., "What about X?") but the extracted name doesn't match any displayed result, the system presents a disambiguation prompt rather than guessing. This prevents users from getting trapped in the post-results flow when they're trying to start a new search.
 
@@ -472,6 +489,26 @@ Based on this research, the following principles govern emotional handling in th
 4. Add routing in `generate_reply`
 5. Add the category to `_CLASSIFY_SYSTEM_PROMPT` and the `valid` set in `claude_client.py`
 6. Add tests: classification tests, routing tests, false-positive guards
+
+### Adding a new service category
+
+1. Add keywords to `SERVICE_KEYWORDS` in `slot_extractor.py`
+2. Add 10–20 example utterances to `SERVICE_ROUTES` in `semantic_routes.py` — use full phrases representing how real users describe this need, not single keywords
+3. Add a SQL template in `query_templates.py`
+4. Add a service label in `phrase_lists.py`
+5. Verify route alignment: the key in `SERVICE_ROUTES` must match the key in `SERVICE_KEYWORDS`
+6. Add tests: keyword extraction, semantic route matching, query template, end-to-end routing
+
+### Expanding semantic route coverage
+
+To improve classification for a specific scenario (e.g., a user phrasing that currently misroutes):
+
+1. Review Tier 3 (LLM) fallback logs — any message that reached the LLM but should have been Tier 2 is a candidate utterance
+2. Add the message as an utterance to the appropriate route in `semantic_routes.py`
+3. Restart — re-embedding is automatic (<2 seconds), no code changes needed
+4. Run the eval suite to verify the improvement and check for regressions
+
+**Do not** add the same utterance to multiple routes (causes nondeterministic routing). **Do not** use single keywords as utterances — use full phrases (≥3 words) that represent natural user language.
 
 ### Adding new emotional phrases
 

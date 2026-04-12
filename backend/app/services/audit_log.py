@@ -548,8 +548,11 @@ def _compute_confidence(turns: list) -> dict:
     """Aggregate confidence levels across all turns.
 
     Confidence is logged as a kwarg on every _log_turn() call:
-    high = regex matched clearly, medium = LLM classified,
-    low = fallback, disambiguated = user chose from options.
+    high = regex matched clearly (deterministic keyword),
+    semantic = semantic embedding match (Tier 2, local model),
+    medium = LLM classified (unified gate or fallback),
+    low = no classification succeeded (fallback),
+    disambiguated = user chose from options.
     """
     dist: dict[str, int] = {}
     total = 0
@@ -562,6 +565,7 @@ def _compute_confidence(turns: list) -> dict:
         "distribution": dist,
         "total_with_confidence": total,
         "high_rate": round(dist.get("high", 0) / total, 2) if total else None,
+        "semantic_rate": round(dist.get("semantic", 0) / total, 2) if total else None,
         "low_rate": round(dist.get("low", 0) / total, 2) if total else None,
     }
 

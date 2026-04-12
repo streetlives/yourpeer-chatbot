@@ -76,6 +76,8 @@ ANTHROPIC_API_KEY="your-anthropic-api-key"
 
 **Anthropic API key:** Required for all LLM features (conversational responses, slot extraction, crisis detection). Get a key at [console.anthropic.com](https://console.anthropic.com/). Without this key, the chatbot falls back to regex-only slot extraction, regex-only crisis detection, and static fallback responses.
 
+**Semantic routing model:** The `sentence-transformers` package (included in `requirements.txt`) downloads the `all-MiniLM-L6-v2` model (~80 MB) on first startup. This requires internet access to `huggingface.co`. After the first download, the model is cached locally. If the model cannot be downloaded, the system degrades gracefully — Tier 2 semantic routing is disabled and messages fall through from regex (Tier 1) directly to LLM (Tier 3).
+
 **Optional (local dev):** The following security variables are required in production but default to open/disabled for local development:
 
 ```
@@ -94,7 +96,7 @@ cd backend
 uvicorn app.main:app --reload
 ```
 
-Verify it's running: `curl http://localhost:8000/api/health` should return `{"status": "ok"}`.
+Verify it's running: `curl http://localhost:8000/api/health` should return a JSON response with `"status": "healthy"` (or `"degraded"` if `ANTHROPIC_API_KEY` is not set).
 
 ## 2. Frontend Setup
 

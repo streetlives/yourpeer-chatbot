@@ -159,7 +159,7 @@ def test_smart_llm_adds_service_regex_missed(mock_anthropic):
         "I need food and a place to crash in Brooklyn"
     )
     assert result["service_type"] == "food"
-    additional_types = [svc for svc, _ in result.get("additional_services", [])]
+    additional_types = [svc for svc, *_ in result.get("additional_services", [])]
     assert "shelter" in additional_types
 
 
@@ -186,7 +186,7 @@ def test_smart_merges_llm_and_regex_additional(mock_anthropic):
         "I need food and shelter and someone to talk to in Brooklyn"
     )
     assert result["service_type"] == "food"
-    additional_types = [svc for svc, _ in result.get("additional_services", [])]
+    additional_types = [svc for svc, *_ in result.get("additional_services", [])]
     assert "shelter" in additional_types
     assert "mental_health" in additional_types
     # No duplicates
@@ -208,7 +208,7 @@ def test_smart_no_duplicate_primary_in_additional(mock_anthropic):
 
     from app.services.llm_slot_extractor import extract_slots_smart
     result = extract_slots_smart("I need food and shelter in Brooklyn")
-    additional_types = [svc for svc, _ in result.get("additional_services", [])]
+    additional_types = [svc for svc, *_ in result.get("additional_services", [])]
     assert "food" not in additional_types  # primary excluded
     assert "shelter" in additional_types
 
@@ -269,5 +269,5 @@ def test_smart_llm_failure_preserves_regex_additional(mock_anthropic):
     # LLM failed → regex fallback. Regex should still have additional_services
     assert result["service_type"] in ("food", "shelter")
     # The other service should be in additional_services from regex
-    additional_types = [svc for svc, _ in result.get("additional_services", [])]
+    additional_types = [svc for svc, *_ in result.get("additional_services", [])]
     assert len(additional_types) >= 1

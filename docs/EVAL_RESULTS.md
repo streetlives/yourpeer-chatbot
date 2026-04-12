@@ -3789,7 +3789,9 @@ Three of four below-4.0 scenarios are keyword brittleness failures — exactly t
  
 ## What's Next
  
-**Semantic routing layer (Tier 2):** The three keyword-brittleness failures (`peer_diabetic_insulin`, `peer_felon_employment`, `multiturn_change_mind`) will be addressed by inserting `all-MiniLM-L6-v2` between regex and LLM. Design document approved — implementation estimated at 1-2 days.
+**Semantic routing layer (Tier 2) — IMPLEMENTED:** The `all-MiniLM-L6-v2` semantic router is now integrated between regex and LLM in `extract_slots_smart()`. The three keyword-brittleness failures (`peer_diabetic_insulin`, `peer_felon_employment`, `peer_aging_out_foster`) are expected to improve in Run 27. See `semantic_router.py`, `semantic_routes.py`, and `SEMANTIC_ROUTING_DESIGN.md`. 54 tests in `test_semantic_router.py` cover route definitions, classification, thresholds, integration, and graceful degradation.
+
+**Regex keyword cleanup — IMPLEMENTED:** Per `REGEX_AUDIT.md`, 11 collision-prone keywords moved from substring matching to word-boundary patterns (mail, soap, pads, wic, visa, meal, pants, and 4 from prior audits), 11 context-dependent keywords retired entirely to the semantic layer (formula, physical, vision, intake, court, bail, job, sick, room, snap, transit), 4 false-positive population phrases removed (have a record, did time, senior, navy), and 3 collision-prone word-boundary patterns removed (prep, parole, probation). The remaining 379 keywords have zero known collision risks. All proven false-positive patterns identified in the audit are eliminated.
  
 **Shame/stigma tone detection:** `multi_shame_single_service` (3.88) needs shame-specific phrases ("hard for me to say", "embarrassed to ask") added to the emotional classifier with an empathetic prefix.
  

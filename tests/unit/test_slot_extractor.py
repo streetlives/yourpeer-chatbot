@@ -132,7 +132,8 @@ def test_legal_keywords():
 def test_employment_keywords():
     """Employment phrases should extract service_type=employment."""
     phrases = [
-        "I need a job",
+        # "I need a job" retired from regex — "good job" false positive (REGEX_AUDIT).
+        # Now handled by semantic routing (Tier 2).
         "Where can I find work?",
         "Job training programs",
         "Help with my resume",
@@ -203,7 +204,7 @@ def test_service_detail_none_for_generic():
         ("I need clothing", "clothing"),
         ("I need medical help", "medical"),
         ("I need legal help", "legal"),
-        ("I need a job", "employment"),
+        ("I need employment help", "employment"),
     ]
     for phrase, expected_type in cases:
         slots = extract_slots(phrase)
@@ -745,7 +746,8 @@ def test_new_personal_care_keywords():
 def test_new_medical_keywords():
     """Newly added medical keywords should match."""
     phrases = [
-        "I'm sick and need help",
+        # "I'm sick and need help" retired from regex — "sick of this" false positive
+        # (REGEX_AUDIT). Now handled by semantic routing (Tier 2).
         "I have a wound that won't heal",
         "Can I see a nurse?",
         "I need medication",
@@ -790,7 +792,8 @@ def test_new_legal_keywords():
     phrases = [
         "My landlord is threatening me",
         "I need help with custody",
-        "I need bail money",
+        # "I need bail money" retired from regex — "bail out" collision (REGEX_AUDIT).
+        # Now handled by semantic routing (Tier 2).
         "I'm facing discrimination",
     ]
     for phrase in phrases:

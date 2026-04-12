@@ -40,6 +40,12 @@ collect_ignore = ["eval_llm_judge.py"]
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "backend"))
 
+# Make conftest itself importable as a regular module.
+# Many test files use `from conftest import send, send_multi` instead of
+# pytest fixtures. This works only when tests/ is on sys.path, which is
+# not guaranteed when running `pytest` from the project root.
+sys.path.insert(0, os.path.dirname(__file__))
+
 
 # ---------------------------------------------------------------------------
 # MOCK SERVICE DATA
@@ -59,7 +65,6 @@ MOCK_SERVICE_CARD = {
     "email": "info@testpantry.org",
     "website": "https://testpantry.org",
     "fees": "Free",
-    "additional_info": None,
     "yourpeer_url": "https://yourpeer.nyc/locations/test-food-pantry",
     "hours_today": "9:00 AM – 5:00 PM",
     "is_open": "open",

@@ -104,7 +104,9 @@ class TestPopulationExtraction:
         assert "pregnant" in _extract_populations("having a baby in two months")
 
     def test_senior_phrases(self):
-        assert "senior" in _extract_populations("I'm a senior and need meals")
+        # "senior" standalone retired from regex — "senior developer" false positive
+        # (REGEX_AUDIT). Standalone "senior" is now handled by semantic routing
+        # (Tier 2). Multi-word phrases and age-based detection still work via regex.
         assert "senior" in _extract_populations("elderly woman looking for help")
         assert "senior" in _extract_populations("I'm an older adult")
         assert "senior" in _extract_populations("senior citizen needing shelter")
@@ -480,7 +482,6 @@ class TestAccessibilityOnCards:
             "service_url": None,
             "service_email": None,
             "fees": None,
-            "additional_info": None,
             "organization_url": None,
             "today_opens": None,
             "today_closes": None,
@@ -678,7 +679,8 @@ class TestDisabledServiceKeywordOverlap:
         """'reentry' keywords appear in both SERVICE_KEYWORDS['other'] and
         _POPULATION_PHRASES. 'on parole' is only a population phrase;
         'reentry' is both."""
-        slots = extract_slots("I need a job, I'm on parole")
+        # Uses "find work" instead of "need a job" — "job" retired from regex (REGEX_AUDIT)
+        slots = extract_slots("I need to find work, I'm on parole")
         assert slots["service_type"] == "employment"
         assert "reentry" in slots["_populations"]
 

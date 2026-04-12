@@ -45,7 +45,6 @@ SELECT
     s.fees            AS fees,
     s.url             AS service_url,
     s.email           AS service_email,
-    s.additional_info AS additional_info,
 
     o.name            AS organization_name,
     o.url             AS organization_url,
@@ -1112,7 +1111,6 @@ def format_service_card(row: dict) -> dict:
         "email": row.get("service_email"),
         "website": _normalize_url(row.get("service_url") or row.get("organization_url")),
         "fees": row.get("fees"),
-        "additional_info": row.get("additional_info"),
         "yourpeer_url": yourpeer_url,
         "hours_today": schedule_status["hours_today"],
         "is_open": schedule_status["is_open"],

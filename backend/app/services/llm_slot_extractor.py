@@ -629,6 +629,39 @@ def extract_slots_smart(message: str, conversation_history: list = None) -> dict
         logger.debug("Simple message — using regex results")
         return regex_result
 
+    # Step 2b: Semantic routing (Tier 2) — try before LLM if regex
+    # missed the service type. The semantic router embeds the message
+    # and compares against pre-embedded route utterances. This catches
+    # novel phrasings ("I ran out of insulin" → medical) without paying
+    # LLM latency. ~2-5ms, free, no external calls.
+    if regex_result.get("service_type") is None:
+        from app.services.semantic_router import classify_service, is_available
+
+        if is_available():
+            semantic_match = classify_service(message)
+            if semantic_match is not None:
+                logger.info(
+                    f"Semantic router matched: {semantic_match.service_type} "
+                    f"(confidence={semantic_match.confidence:.3f})"
+                    f"{f', pop={semantic_match.population}' if semantic_match.population else ''}"
+                )
+                regex_result["service_type"] = semantic_match.service_type
+
+                # Merge population from semantic router with regex populations
+                if semantic_match.population:
+                    existing_pops = set(regex_result.get("_populations") or [])
+                    existing_pops.add(semantic_match.population)
+                    regex_result["_populations"] = sorted(existing_pops)
+
+                # If semantic routing filled the service_type and the message
+                # is short enough (≤8 words), we have high confidence and can
+                # skip the LLM entirely. For longer messages, still call the
+                # LLM to extract location, age, urgency, etc. — but now with
+                # a better starting service_type that the LLM can confirm.
+                if len(message.split()) <= 8:
+                    logger.info("Semantic router resolved short message — skipping LLM")
+                    return regex_result
+
     # Step 3: Complex message — LLM is authoritative
     logger.info("Complex message — calling LLM for slot extraction")
     llm_result = extract_slots_llm(message, conversation_history=conversation_history)

@@ -21,7 +21,6 @@ export interface ServiceResult {
   email?: string;
   website?: string;
   description?: string;
-  additional_info?: string;
   hours_today?: string;
   is_open?: "open" | "closed" | "unknown";
   fees?: string;
@@ -300,4 +299,28 @@ export interface EvalRunStatus {
   completed?: number;
   started_at?: string;
   finished_at?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Health check
+// ---------------------------------------------------------------------------
+
+export interface HealthComponentStatus {
+  status: "up" | "down" | "unavailable" | "not_loaded";
+  latency_ms?: number;
+  error?: string;
+  mode?: string;
+  model?: string;
+  route_count?: number;
+}
+
+export interface HealthCheckResponse {
+  status: "healthy" | "degraded" | "unhealthy";
+  timestamp: string;
+  uptime_seconds: number;
+  checks: {
+    database: HealthComponentStatus;
+    llm: HealthComponentStatus;
+    semantic_router: HealthComponentStatus;
+  };
 }

@@ -71,7 +71,7 @@ def test_llm_extracts_age_and_gender(mock_get_client):
     )
     result = extract_slots_llm("I'm a 17 year old girl and I need shelter tonight in Queens")
     assert result["age"] == 17
-    assert result["gender"] == "female"
+    assert result["_gender"] == "female"
     assert result["urgency"] == "high"
 
 

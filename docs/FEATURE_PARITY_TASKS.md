@@ -1,5 +1,7 @@
 # Feature Parity Gap — Implementation Tasks (v2)
 
+> **Status: ALL 16 GAPS IMPLEMENTED** as of April 2026. This document is retained as a historical reference for the implementation decisions made. See FEATURES.md for current feature descriptions.
+
 > Cross-referenced against: yourpeer.nyc production codebase, IMPLEMENTATION_PLAN_v2.md, AUDIT.md, PHASE3_SPEC.md
 > Phase 6 (Spanish) is deferred. Phase 3 (populations) has its own spec.
 

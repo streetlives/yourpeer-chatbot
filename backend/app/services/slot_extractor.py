@@ -11,13 +11,16 @@ from typing import Optional
 SERVICE_KEYWORDS = {
     # --- Food (taxonomy: Food, Food Pantry, Mobile Pantry, etc.) ---
     "food": [
-        "food", "food bank", "food pantry", "meal", "meals", "groceries",
+        "food", "food bank", "food pantry", "meals", "groceries",
         "pantry", "hungry", "soup kitchen", "soup", "lunch", "dinner",
         "breakfast", "snack", "free food", "hot meal", "brown bag",
         "farmers market", "mobile pantry",
         "something to eat", "grab a bite", "canned food",
         # NYC-specific (P3 audit)
-        "baby formula", "formula", "wic",
+        "baby formula",
+        # "formula" retired — "mathematical formula" false positive (REGEX_AUDIT)
+        # "wic" moved to _WORD_BOUNDARY_KEYWORDS (REGEX_AUDIT)
+        # "meal" moved to _WORD_BOUNDARY_KEYWORDS — "oatmeal" collision (REGEX_AUDIT)
         # Vernacular (Phase 1 audit)
         "starving", "feed my kids", "need to eat",
     ],
@@ -28,8 +31,10 @@ SERVICE_KEYWORDS = {
         "sleep tonight",
         "place to sleep", "somewhere to sleep", "homeless", "unhoused",
         "drop-in center", "drop in center", "warming center",
-        "overnight", "transitional housing", "safe haven", "room",
-        "place to live", "somewhere to live", "intake",
+        "overnight", "transitional housing", "safe haven",
+        # "room" moved to _WORD_BOUNDARY_KEYWORDS — "classroom" collision (REGEX_AUDIT)
+        "place to live", "somewhere to live",
+        # "intake" retired — generic term, collides with all services (REGEX_AUDIT)
         "evicted", "kicked out", "kicked me out", "on the street",
         "sleeping outside", "somewhere safe", "safe place",
         # NYC-specific (P3 audit)
@@ -45,7 +50,8 @@ SERVICE_KEYWORDS = {
     "clothing": [
         "clothing", "clothes", "jacket", "coat", "shoes", "boots",
         "socks", "underwear", "warm clothes", "winter clothes",
-        "free clothes", "outfit", "pants", "shirt",
+        "free clothes", "outfit", "shirt",
+        # "pants" moved to _WORD_BOUNDARY_KEYWORDS — "participants" collision (REGEX_AUDIT)
         "sweater", "sweatshirt", "hoodie", "gloves",
         "winter gear", "sneakers",
     ],
@@ -54,9 +60,11 @@ SERVICE_KEYWORDS = {
     "personal_care": [
         "shower", "showers", "hygiene", "clean up", "laundry",
         "toiletries", "restroom", "bathroom", "haircut", "barber",
-        "toothbrush", "toothpaste", "soap", "shampoo", "deodorant",
+        "toothbrush", "toothpaste", "shampoo", "deodorant",
+        # "soap" moved to _WORD_BOUNDARY_KEYWORDS — "soap opera" collision (REGEX_AUDIT)
+        # "pads" moved to _WORD_BOUNDARY_KEYWORDS — "iPads" collision (REGEX_AUDIT)
         "personal care", "grooming",
-        "hygiene kit", "feminine products", "pads", "tampons",
+        "hygiene kit", "feminine products", "tampons",
         "menstrual", "razors", "freshen up", "get clean",
     ],
 
@@ -64,9 +72,12 @@ SERVICE_KEYWORDS = {
     "medical": [
         "doctor", "clinic", "medical", "hospital", "medicine", "health",
         "health care", "healthcare", "prescription", "dental", "dentist",
-        "eye doctor", "vision", "glasses", "urgent care", "checkup",
-        "physical", "vaccination", "vaccine", "std testing", "hiv testing",
-        "sick", "nurse", "wound", "injury", "infection",
+        "eye doctor", "glasses", "urgent care", "checkup",
+        # "vision" retired — "I have a vision for my future" collision (REGEX_AUDIT)
+        # "physical" retired — "physical abuse" collision (REGEX_AUDIT)
+        # "sick" moved to _WORD_BOUNDARY_KEYWORDS — "homesick" collision (REGEX_AUDIT)
+        "vaccination", "vaccine", "std testing", "hiv testing",
+        "nurse", "wound", "injury", "infection",
         "medication", "blood pressure", "sti testing",
         # Harm reduction / community health (P3 audit)
         "methadone", "suboxone", "narcan", "naloxone",
@@ -107,11 +118,14 @@ SERVICE_KEYWORDS = {
 
     # --- Legal Services (taxonomy: Legal Services, Advocates / Legal Aid) ---
     "legal": [
-        "legal", "lawyer", "attorney", "court", "eviction", "immigration",
+        "legal", "lawyer", "attorney", "eviction", "immigration",
+        # "court" retired — "food court" collision (REGEX_AUDIT). Keep "housing court"
+        # "bail" retired — "bail out" collision (REGEX_AUDIT)
         "legal aid", "legal help", "legal services", "tenant rights",
-        "asylum", "deportation", "green card", "visa", "work permit",
+        "asylum", "deportation", "green card", "work permit",
+        # "visa" moved to _WORD_BOUNDARY_KEYWORDS (REGEX_AUDIT)
         "public defender", "advocate", "rights",
-        "landlord", "tenant", "custody", "bail",
+        "landlord", "tenant", "custody",
         "housing court", "discrimination",
         # DV-specific services (Phase 1 audit — 59 services searchable,
         # distinct from crisis detection phrases)
@@ -125,7 +139,8 @@ SERVICE_KEYWORDS = {
 
     # --- Employment (taxonomy: Employment) ---
     "employment": [
-        "job", "jobs", "employment", "hiring", "career",
+        "jobs", "employment", "hiring", "career",
+        # "job" moved to _WORD_BOUNDARY_KEYWORDS — "good job" collision (REGEX_AUDIT)
         "resume", "interview", "job training", "vocational",
         "workforce", "job placement", "temp work", "day labor",
         "job search", "job help", "find work", "need work",
@@ -160,13 +175,16 @@ SERVICE_KEYWORDS = {
     # --- Other Services (taxonomy: Other service) ---
     "other": [
         "other services", "other service",
-        "benefits", "snap", "ebt", "food stamps", "medicaid",
+        "benefits", "ebt", "food stamps", "medicaid",
+        # "snap" moved to _WORD_BOUNDARY_KEYWORDS — "Snapchat" collision (REGEX_AUDIT)
         "social security", "disability", "public assistance",
         "identification", "birth certificate", "need an id",
-        "free phone", "wifi", "internet", "charging", "mail",
+        "free phone", "wifi", "internet", "charging",
+        # "mail" moved to _WORD_BOUNDARY_KEYWORDS — "email"/"gmail" collision (REGEX_AUDIT)
         "mailing address", "storage", "locker",
         "welfare", "cash assistance", "state id", "nyc id",
-        "metro card", "transit", "charger", "charging station",
+        "metro card", "charger", "charging station",
+        # "transit" moved to _WORD_BOUNDARY_KEYWORDS — "transition" collision (REGEX_AUDIT)
         # NYC-specific (P3 audit)
         "voter registration", "replacement id",
         "tax prep", "tax preparation", "free tax",
@@ -229,10 +247,28 @@ _WORD_BOUNDARY_KEYWORDS = {
     "esl": "other",            # collides with "diesel", "weasel"
     "ged": "other",            # collides with "aged", "managed", "changed"
     "syep": "employment",      # collides with nothing but 4 chars, be safe
-    "prep": "medical",         # PrEP — collides with "prepare", "prepping"
     "sober": "mental_health",  # collides with nothing but contextually useful
-    "parole": "other",         # re-entry
-    "probation": "other",      # re-entry
+    # --- REGEX_AUDIT: moved from SERVICE_KEYWORDS (substring collision risk) ---
+    # These are legitimate service terms that collide as substrings of common
+    # English words. Word-boundary matching prevents false positives while
+    # keeping the fast regex path. The semantic layer (Tier 2) also handles
+    # them via example utterances for novel phrasings.
+    #
+    # NOTE: "job", "sick", "room", "snap", "transit" were initially moved here
+    # but removed after testing showed contextual false positives that word
+    # boundaries can't prevent ("good job", "sick of this", "oh snap").
+    # These are now handled exclusively by the semantic layer.
+    "mail": "other",           # "email", "gmail" collision. "mailing address" stays in SERVICE_KEYWORDS
+    "soap": "personal_care",   # "soap opera" collision
+    "pads": "personal_care",   # "iPads" collision
+    "wic": "food",             # "wicked" collision
+    "visa": "legal",           # ambiguous (credit card vs immigration)
+    "meal": "food",            # "oatmeal" collision (benign but inconsistent)
+    "pants": "clothing",        # "participants" collision
+    # --- REGEX_AUDIT: removed (collision risk outweighs value) ---
+    # "prep" — PrEP collides with "food prep", "test prep". Semantic layer handles.
+    # "parole" — population phrase only, not a service request. Stays in _POPULATION_PHRASES.
+    # "probation" — population phrase only, not a service request. Stays in _POPULATION_PHRASES.
 }
 
 # Pre-compile word-boundary patterns for collision-prone keywords
@@ -937,7 +973,7 @@ _POPULATION_PHRASES = {
     "veteran": "veteran",
     "military": "veteran",
     "served in the": "veteran",
-    "navy": "veteran",
+    # "navy" retired — "navy blue sweater" false positive (REGEX_AUDIT). Semantic layer handles.
     "marines": "veteran",
     "air force": "veteran",
     "national guard": "veteran",
@@ -969,11 +1005,11 @@ _POPULATION_PHRASES = {
     "felony": "reentry",
     "ex-felon": "reentry",
     "criminal record": "reentry",
-    "have a record": "reentry",
+    # "have a record" retired — "I have a record of all my meetings" false positive (REGEX_AUDIT)
     "been to prison": "reentry",
     "was in prison": "reentry",
     "got out of prison": "reentry",
-    "did time": "reentry",
+    # "did time" retired — "I did time management training" false positive (REGEX_AUDIT)
 
     # DV survivor — domestic violence
     "escaped abuse": "dv_survivor",
@@ -994,7 +1030,8 @@ _POPULATION_PHRASES = {
 
     # Senior — useful when age isn't stated as a number.
     # When age >= 62 is extracted, query_services() auto-adds senior.
-    "senior": "senior",
+    # "senior" standalone retired — "senior developer" false positive (REGEX_AUDIT).
+    # Semantic layer handles via example utterances.
     "elderly": "senior",
     "older adult": "senior",
     "senior citizen": "senior",

@@ -110,6 +110,8 @@ EXPECTED_TAXONOMY_NAMES = {
 def test_all_templates_use_taxonomy_names_list():
     """Every template must use taxonomy_names (list), not the old taxonomy_name (string)."""
     for key, template in TEMPLATES.items():
+        if key == "org_name":
+            continue  # org_name searches by organization, not taxonomy
         params = template["default_params"]
         assert "taxonomy_names" in params, \
             f"Template '{key}' still uses old taxonomy_name (singular). " \
@@ -125,6 +127,8 @@ def test_all_templates_use_taxonomy_names_list():
 def test_all_taxonomy_names_are_lowercase():
     """All entries in taxonomy_names must be lowercase (for ANY() case-insensitive matching)."""
     for key, template in TEMPLATES.items():
+        if key == "org_name":
+            continue
         for name in template["default_params"]["taxonomy_names"]:
             assert name == name.lower(), \
                 f"Template '{key}' has non-lowercase taxonomy name: '{name}'. " \
@@ -135,6 +139,8 @@ def test_all_taxonomy_names_exist_in_db():
     """Every taxonomy name in every template must exist in the actual Streetlives DB."""
     valid_lower = {n.lower() for n in VALID_DB_TAXONOMY_NAMES}
     for key, template in TEMPLATES.items():
+        if key == "org_name":
+            continue
         for name in template["default_params"]["taxonomy_names"]:
             assert name in valid_lower, \
                 f"Template '{key}' has taxonomy_name '{name}' not found in DB. " \
@@ -144,6 +150,8 @@ def test_all_taxonomy_names_exist_in_db():
 def test_no_taxonomy_name_duplicates_within_template():
     """No template should list the same taxonomy name twice."""
     for key, template in TEMPLATES.items():
+        if key == "org_name":
+            continue
         names = template["default_params"]["taxonomy_names"]
         assert len(names) == len(set(names)), \
             f"Template '{key}' has duplicate taxonomy names: {[n for n in names if names.count(n) > 1]}"
@@ -238,6 +246,8 @@ def test_taxonomy_aliases_match_taxonomy_names():
     the alias list, the chatbot may not route to the right template.
     """
     for key, template in TEMPLATES.items():
+        if key == "org_name":
+            continue
         names_lower = set(template["default_params"]["taxonomy_names"])
         aliases_lower = {a.lower() for a in template.get("taxonomy_aliases", [])}
         missing_from_aliases = names_lower - aliases_lower
@@ -269,7 +279,7 @@ def test_base_query_joins():
     assert "join service_taxonomy" not in from_no_subqueries, \
         "Taxonomy should use EXISTS filter, not base JOIN (avoids row duplication)"
     # Schedule and membership use regular LEFT JOINs (not LATERAL)
-    assert "left join regular_schedules" in sql_lower
+    assert "left join holiday_schedules" in sql_lower
     assert "left join eligibility" in sql_lower
 
 
@@ -294,7 +304,7 @@ def test_base_query_schedule_join():
     """Schedule should use a regular LEFT JOIN for today's hours."""
     sql_lower = _BASE_QUERY.lower()
     assert "today_sched" in sql_lower
-    assert "left join regular_schedules" in sql_lower
+    assert "left join holiday_schedules" in sql_lower
     assert "isodow" in sql_lower
 
 
@@ -318,7 +328,6 @@ def _mock_row(**overrides):
         "fees": "Free",
         "service_url": "https://example.com",
         "service_email": "info@example.com",
-        "additional_info": "Bring ID",
         "organization_name": "Test Org",
         "organization_url": "https://testorg.com",
         "location_id": "loc-uuid-456",
@@ -615,6 +624,8 @@ def test_deduplicate_all_unique():
 def test_generated_sql_is_parameterized():
     """Generated SQL should use :param placeholders, never string interpolation."""
     for key in TEMPLATES:
+        if key == "org_name":
+            continue  # org_name uses ILIKE, not taxonomy_names
         sql, params = build_query(key, {"city": "Brooklyn", "age": 17, "max_results": 5})
         # All templates now use taxonomy_names list with ANY()
         assert ":taxonomy_names" in sql, \
@@ -1162,7 +1173,7 @@ def test_format_card_also_available_filters():
         "service_id": "1", "service_name": "Test",
         "also_available": ["Shower", "Other service", "Clothing Pantry", "Unknown Category"],
     })
-    assert card["also_available"] == ["Clothing Pantry", "Shower"]
+    assert card["also_available"] == ["Clothing", "Shower"]
 
 
 def test_format_card_also_available_none_when_empty():

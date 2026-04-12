@@ -304,6 +304,8 @@ def test_hidden_filter_always_present():
 def test_taxonomy_filter_always_present():
     """The taxonomy filter should always be in the query."""
     for key in TEMPLATES:
+        if key == "org_name":
+            continue  # org_name searches by organization, not taxonomy
         sql, params = build_query(key, {"max_results": 5})
         assert "t.name" in sql.lower(), \
             f"Template '{key}' missing taxonomy filter"
