@@ -254,6 +254,48 @@ def generate_reply(
             "confirm_change_service", "confirm_change_location",
             "confirm_yes", "confirm_deny", "reset", "greeting",
         )
+        # Handle confirm_yes / confirm_deny after results when no pending
+        # confirmation exists. Without this, these messages fall through to
+        # extraction and re-trigger the same search.
+        if (_last_results
+                and _action_pre in ("confirm_yes", "confirm_deny")
+                and not existing.get("_pending_confirmation")
+                and not existing.get("_queue_offer_pending")
+                and not existing.get("_queued_services")):
+
+            if _action_pre == "confirm_yes":
+                # "Yes, search" after results already shown
+                existing.pop("_last_results", None)
+                save_session_slots(session_id, existing)
+                result = _empty_reply(
+                    session_id,
+                    "I've already shown the results above — you can tap on any "
+                    "service card for more details. Would you like to search for "
+                    "something else?",
+                    existing,
+                    quick_replies=[
+                        {"label": "🔍 New search", "value": "Start over"},
+                        {"label": "🤝 Peer navigator", "value": "Connect with peer navigator"},
+                    ],
+                )
+                _log_turn(session_id, redacted_message, result, "post_results_confirm",
+                          request_id=request_id, tone=tone)
+                return result
+
+            else:  # confirm_deny
+                # "nah I'm good" / "no thanks" after results
+                existing.pop("_last_results", None)
+                save_session_slots(session_id, existing)
+                result = _empty_reply(
+                    session_id,
+                    "No problem! Let me know if you need anything else.",
+                    existing,
+                    quick_replies=list(_WELCOME_QUICK_REPLIES),
+                )
+                _log_turn(session_id, redacted_message, result, "post_results_decline",
+                          request_id=request_id, tone=tone)
+                return result
+
         if _last_results and not has_service_intent and not _is_confirmation_action:
             _is_frustration_or_rejection = (
                 tone == "frustrated"
