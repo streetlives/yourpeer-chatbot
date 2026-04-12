@@ -79,6 +79,29 @@ export async function sendFeedback(
   }).catch(() => {});
 }
 
+export interface LocationFeedbackData {
+  session_id: string;
+  location_id: string;
+  location_name?: string;
+  safety?: boolean;
+  friendliness?: boolean;
+  cleanliness?: boolean;
+  queer_friendly?: boolean;
+  comment?: string;
+}
+
+export async function sendLocationFeedback(
+  data: LocationFeedbackData,
+): Promise<void> {
+  // Fire and forget — feedback loss is acceptable
+  await fetch("/api/chat/location-feedback", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+    signal: timeoutSignal(ADMIN_TIMEOUT_MS),
+  }).catch(() => {});
+}
+
 // ---------------------------------------------------------------------------
 // Admin API
 // ---------------------------------------------------------------------------

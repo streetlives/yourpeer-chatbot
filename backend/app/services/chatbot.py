@@ -265,21 +265,48 @@ def generate_reply(
                 existing.pop("_last_results", None)
                 save_session_slots(session_id, existing)
             else:
-                # "Show all results"
-                if message.lower().strip() in ("show all results", "show results", "show all"):
-                    result = {
-                        "session_id": session_id,
-                        "response": "Here are all the results again:",
-                        "follow_up_needed": False,
-                        "slots": existing,
-                        "services": _last_results,
-                        "result_count": len(_last_results),
-                        "relaxed_search": False,
-                        "quick_replies": [
-                            {"label": "🔍 New search", "value": "Start over"},
-                            {"label": "🤝 Peer navigator", "value": "Connect with peer navigator"},
-                        ],
-                    }
+                # "Show all results" / "Show more results"
+                _show_patterns = (
+                    "show all results", "show results", "show all",
+                    "show more results", "show more", "more results",
+                    "any others", "what else", "next results",
+                    "any more", "see more",
+                )
+                if message.lower().strip() in _show_patterns:
+                    displayed = existing.get("_displayed_count", 0)
+                    if displayed and displayed < len(_last_results):
+                        # Show the undisplayed remainder
+                        remaining = _last_results[displayed:]
+                        existing["_displayed_count"] = len(_last_results)
+                        save_session_slots(session_id, existing)
+                        result = {
+                            "session_id": session_id,
+                            "response": f"Here are {len(remaining)} more result{'s' if len(remaining) != 1 else ''}:",
+                            "follow_up_needed": False,
+                            "slots": existing,
+                            "services": remaining,
+                            "result_count": len(remaining),
+                            "relaxed_search": False,
+                            "quick_replies": [
+                                {"label": "🔍 New search", "value": "Start over"},
+                                {"label": "🤝 Peer navigator", "value": "Connect with peer navigator"},
+                            ],
+                        }
+                    else:
+                        # No more to show — re-display all
+                        result = {
+                            "session_id": session_id,
+                            "response": "Here are all the results again:",
+                            "follow_up_needed": False,
+                            "slots": existing,
+                            "services": _last_results,
+                            "result_count": len(_last_results),
+                            "relaxed_search": False,
+                            "quick_replies": [
+                                {"label": "🔍 New search", "value": "Start over"},
+                                {"label": "🤝 Peer navigator", "value": "Connect with peer navigator"},
+                            ],
+                        }
                     _log_turn(session_id, redacted_message, result, "post_results", request_id=request_id)
                     return result
 
@@ -1200,8 +1227,11 @@ def _execute_and_respond(session_id: str, message: str, slots: dict, request_id:
     """Execute the DB query and return results. Called after user confirms."""
     bot_response = None
     services_list = []
+    all_services = []
     result_count = 0
     relaxed = False
+    _DISPLAY_LIMIT = 10
+    _FETCH_LIMIT = 25
 
     try:
         location = slots.get("location")
@@ -1228,6 +1258,7 @@ def _execute_and_respond(session_id: str, message: str, slots: dict, request_id:
             service_detail=slots.get("service_detail"),
             populations=slots.get("_populations"),
             org_name=slots.get("org_name"),
+            max_results=_FETCH_LIMIT,
         )
 
         colocated_success = (
@@ -1255,8 +1286,10 @@ def _execute_and_respond(session_id: str, message: str, slots: dict, request_id:
             logger.warning(f"Query error: {results['error']}")
             bot_response = _fallback_response(message, slots)
         elif results["result_count"] > 0:
-            services_list = results["services"]
-            result_count = results["result_count"]
+            all_services = results["services"]
+            services_list = all_services[:_DISPLAY_LIMIT]
+            result_count = len(services_list)
+            _total_available = len(all_services)
             relaxed = results.get("relaxed", False)
 
             qualifier = ""
@@ -1337,8 +1370,17 @@ def _execute_and_respond(session_id: str, message: str, slots: dict, request_id:
         ]
 
     if services_list:
-        slots["_last_results"] = services_list
+        slots["_last_results"] = all_services  # Store ALL fetched (up to 25)
+        slots["_displayed_count"] = len(services_list)  # Track what user has seen
         save_session_slots(session_id, slots)
+
+        # If there are undisplayed results, add "show more" quick reply
+        _undisplayed = len(all_services) - len(services_list)
+        if _undisplayed > 0 and not queued:
+            after_results_qr.insert(0, {
+                "label": f"📋 Show {_undisplayed} more result{'s' if _undisplayed != 1 else ''}",
+                "value": "Show more results",
+            })
 
     return {
         "session_id": session_id,

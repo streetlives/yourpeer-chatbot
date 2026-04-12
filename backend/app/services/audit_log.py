@@ -180,6 +180,33 @@ def log_feedback(session_id="", rating="", comment=None, **kwargs):
     persistence.persist_event(event)
 
 
+def log_location_feedback(
+    session_id="", location_id="", location_name=None,
+    safety=None, friendliness=None, cleanliness=None,
+    queer_friendly=None, comment=None, **kwargs,
+):
+    event = {
+        "type": "location_feedback",
+        "timestamp": _now_iso(),
+        "session_id": session_id,
+        "location_id": location_id,
+        "location_name": location_name,
+        "ratings": {
+            k: v for k, v in {
+                "safety": safety,
+                "friendliness": friendliness,
+                "cleanliness": cleanliness,
+                "queer_friendly": queer_friendly,
+            }.items() if v is not None
+        },
+        "comment": comment,
+    }
+    with _lock:
+        _events.append(event)
+        _register_conversation(session_id, event)
+    persistence.persist_event(event)
+
+
 # ---------------------------------------------------------------------------
 # RETRIEVAL
 # ---------------------------------------------------------------------------
@@ -238,6 +265,7 @@ def get_stats() -> dict:
     crises = [e for e in all_events if e.get("type") == "crisis_detected"]
     resets = [e for e in all_events if e.get("type") == "session_reset"]
     feedbacks = [e for e in all_events if e.get("type") == "feedback"]
+    location_feedbacks = [e for e in all_events if e.get("type") == "location_feedback"]
 
     all_sessions = {e.get("session_id") for e in all_events if e.get("session_id")}
 
@@ -341,6 +369,7 @@ def get_stats() -> dict:
         "feedback_up": fb_up,
         "feedback_down": fb_down,
         "feedback_score": round(fb_up / fb_total, 2) if fb_total else None,
+        "location_feedback_count": len(location_feedbacks),
         "conversation_quality": cq,
         "routing": routing,
         "tone_distribution": tone_dist,

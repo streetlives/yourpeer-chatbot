@@ -5,6 +5,7 @@
 
 import { MapPin, Phone, Mail, Clock, CheckCircle, AlertTriangle } from "lucide-react";
 import type { ServiceResult } from "@/lib/chat/types";
+import { LocationFeedbackRow } from "./location-feedback-row";
 
 interface ServiceCardProps {
   service: ServiceResult;
@@ -315,6 +316,14 @@ export function ServiceCard({ service, isActive, index, total }: ServiceCardProp
           </a>
         )}
       </div>
+
+      {/* Per-location feedback */}
+      {service.service_id && (
+        <LocationFeedbackRow
+          serviceId={service.service_id}
+          locationName={name}
+        />
+      )}
     </div>
   );
 }
