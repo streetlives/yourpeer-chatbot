@@ -434,7 +434,8 @@ class TestResponseSelectionAccuracy:
         assert _pick_emotional_response("I'm really scared") == _EMOTIONAL_RESPONSES["scared"]
 
     def test_sad_routes_to_sad(self):
-        assert _pick_emotional_response("I'm feeling down") == _EMOTIONAL_RESPONSES["sad"]
+        # "really" is stripped by _strip_intensifiers, matching "feeling down"
+        assert _pick_emotional_response("I'm feeling really down") == _EMOTIONAL_RESPONSES["sad"]
 
     def test_rough_day_routes_to_rough_day(self):
         assert _pick_emotional_response("Having a rough day") == _EMOTIONAL_RESPONSES["rough_day"]

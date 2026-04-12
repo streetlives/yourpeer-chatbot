@@ -177,13 +177,32 @@ _EMOTIONAL_RESPONSES = {
 def _pick_emotional_response(text: str) -> str:
     """Pick the most appropriate emotion-specific static response.
 
+    Applies the same text normalization as ``_classify_tone`` — contraction
+    expansion and intensifier stripping — so that "I'm feeling *really*
+    down" matches the "feeling down" keyword just as it does in the
+    classifier.  Without this, the classifier correctly routes to
+    ``emotional`` but the response selector falls through to the
+    generic response.
+
     Falls back to the generic _EMOTIONAL_RESPONSE if no specific
     emotion is detected.
     """
+    from app.services.classifier import _normalize_contractions, _strip_intensifiers
+
     lower = text.lower()
+    normalized = _normalize_contractions(lower)
+    stripped = _strip_intensifiers(lower)
+    stripped_normalized = _strip_intensifiers(normalized)
+
+    def _any_match(phrases):
+        """Check if any phrase appears in any text variant."""
+        return any(
+            p in lower or p in normalized or p in stripped or p in stripped_normalized
+            for p in phrases
+        )
 
     # Shame/stigma — including indirect vulnerability expressions
-    if any(p in lower for p in [
+    if _any_match([
         "embarrassed", "ashamed", "pathetic", "failure",
         "never thought i'd need", "never thought id need",
         "don't want anyone to know", "dont want anyone to know",
@@ -204,26 +223,26 @@ def _pick_emotional_response(text: str) -> str:
         return _EMOTIONAL_RESPONSES["shame"]
 
     # Grief/loss
-    if any(p in lower for p in [
+    if _any_match([
         "died", "passed away", "lost someone", "grieving", "mourning",
     ]):
         return _EMOTIONAL_RESPONSES["grief"]
 
     # Scared/fear
-    if any(p in lower for p in [
+    if _any_match([
         "scared", "afraid", "frightened", "terrified", "fear",
     ]):
         return _EMOTIONAL_RESPONSES["scared"]
 
     # Isolation/loneliness
-    if any(p in lower for p in [
+    if _any_match([
         "alone", "no one", "nobody", "no friends", "no family",
         "have no one", "completely alone",
     ]):
         return _EMOTIONAL_RESPONSES["alone"]
 
     # Sad/down
-    if any(p in lower for p in [
+    if _any_match([
         "feeling down", "feeling sad", "feeling bad", "depressed",
         "not okay", "not ok", "not doing well", "not doing good",
         "i'm sad", "im sad", "i am sad",
@@ -231,7 +250,7 @@ def _pick_emotional_response(text: str) -> str:
         return _EMOTIONAL_RESPONSES["sad"]
 
     # Rough day / general hardship
-    if any(p in lower for p in [
+    if _any_match([
         "rough day", "bad day", "tough day", "hard day",
         "rough time", "hard time", "tough time",
         "falling apart", "getting worse",
@@ -241,7 +260,7 @@ def _pick_emotional_response(text: str) -> str:
     # --- Research-backed additions (R28) ---
 
     # Feeling undeserving — 41% of homeless people report this (PMC)
-    if any(p in lower for p in [
+    if _any_match([
         "don't deserve", "dont deserve",
         "i'm not worth", "im not worth", "not worth it",
         "other people need it more", "others need it more",
@@ -253,7 +272,7 @@ def _pick_emotional_response(text: str) -> str:
         return _EMOTIONAL_RESPONSES["undeserving"]
 
     # Distrust / suspicion — named trauma response (Harm Reduction Coalition)
-    if any(p in lower for p in [
+    if _any_match([
         "don't trust", "dont trust", "i do not trust",
         "is this legit", "is this real", "is this safe",
         "how do i know", "can i trust",
@@ -266,7 +285,7 @@ def _pick_emotional_response(text: str) -> str:
         return _EMOTIONAL_RESPONSES["distrust"]
 
     # Anger at situation (NOT bot-directed frustration)
-    if any(p in lower for p in [
+    if _any_match([
         "i'm so angry", "im so angry", "i am so angry",
         "i'm furious", "im furious",
         "i'm pissed", "im pissed",
