@@ -10,6 +10,7 @@ unhoused New Yorkers find services (shelter, food, clothing, showers, benefits).
 | Layer | Tech |
 |-------|------|
 | LLM | Claude Haiku + Sonnet |
+| Semantic Routing | sentence-transformers / all-MiniLM-L6-v2 (local, CPU) |
 | Backend | FastAPI (Python) |
 | Frontend | Next.js 15 / React 19 / Zustand |
 | Database | Streetlives PostgreSQL (read-only) |
@@ -21,10 +22,10 @@ unhoused New Yorkers find services (shelter, food, clothing, showers, benefits).
 ## Current State
 
 A fully functional multi-turn chatbot that guides users through service discovery via
-slot-filling conversation. The system uses a two-stage classification pipeline (regex first,
-LLM fallback) to route messages, extracts service needs (type, location, age, urgency, gender,
-family status, population context), confirms with the user, then queries a read-only Streetlives
-PostgreSQL database using parameterized SQL templates. Population context (veteran, disabled,
+slot-filling conversation. The system uses a three-tier classification cascade (regex → semantic
+embedding → LLM fallback) to route messages, extracts service needs (type, location, age,
+urgency, gender, family status, population context), confirms with the user, then queries a
+read-only Streetlives PostgreSQL database using parameterized SQL templates. Population context (veteran, disabled,
 reentry, DV survivor, pregnant, senior) cross-cuts all searches — boosting relevant services
 via taxonomy or description-based ORDER BY ranking. Results are returned as structured service
 cards with contact info, hours, accessibility info, and directions links. Crisis detection, PII
@@ -38,7 +39,7 @@ User Message
   → POST /chat/ (FastAPI)
   → chatbot.generate_reply()
     ├─ PII redaction (every message)
-    ├─ Message classification (2-stage: regex → LLM fallback)
+    ├─ Message classification (3-tier: regex → semantic embedding → LLM fallback)
     ├─ Route by category:
     │   ├─ crisis → crisis_detector (regex + Sonnet LLM) → hotline resources
     │   ├─ correction → clears pending state, shows alternatives
@@ -48,7 +49,7 @@ User Message
     │   ├─ emotional → static emotion-specific response (no LLM, 6 emotion keys)
     │   ├─ post-results → deterministic answers from stored cards (no LLM)
     │   ├─ disambiguation → clarifying options when intent is ambiguous
-    │   ├─ service request → slot extraction (regex or Haiku LLM for complex inputs)
+    │   ├─ service request → slot extraction (3-tier: regex → semantic router → Haiku LLM)
     │   │   ├─ slots incomplete → follow-up question
     │   │   ├─ slots complete → confirmation prompt with quick replies
     │   │   └─ confirmed → query_services() → SQL template → DB → service cards
@@ -76,7 +77,9 @@ information, preventing hallucination.
 | `backend/app/services/bot_knowledge.py` | Bot self-knowledge: live capability sourcing, topic matching, LLM context generation |
 | `backend/app/services/crisis_detector.py` | Two-stage crisis detection (regex + Sonnet LLM), category-specific hotlines |
 | `backend/app/services/slot_extractor.py` | Regex-based slot extraction with keyword matching, gender/LGBTQ identity extraction, population context extraction (veteran, disabled, reentry, DV survivor, pregnant, senior), organization name extraction, walk-in/no-requirements detection |
-| `backend/app/services/llm_slot_extractor.py` | LLM slot extraction via Claude Haiku tool calling |
+| `backend/app/services/semantic_router.py` | Tier 2 semantic routing: `all-MiniLM-L6-v2` sentence embedding model, cosine similarity classification against pre-embedded route utterances, per-route confidence thresholds, population detection |
+| `backend/app/services/semantic_routes.py` | Route definitions: 10–20 example utterances per service category (10 routes) and 6–12 per population category (6 routes). No code changes needed to add utterances — just edit and restart |
+| `backend/app/services/llm_slot_extractor.py` | LLM slot extraction via Claude Haiku tool calling, 3-tier cascade integration (regex → semantic → LLM) |
 | `backend/app/services/llm_classifier.py` | Unified LLM classification gate — single Haiku call returning service_type, location, tone, action when regex fails |
 | `backend/app/services/session_store.py` | In-memory session state with 30-min TTL (max 500 sessions) |
 | `backend/app/services/audit_log.py` | Anonymized event logging (capped ring buffer), P0-P3 metrics aggregation (confidence, recovery rates, session metrics, no-result by service, time-of-day, geographic demand, frustration tiers, session duration, repetition rate, LLM call metrics) |
@@ -97,6 +100,7 @@ information, preventing hallucination.
 ## What's Working
 
 - **10 service categories**: food, shelter, clothing, personal care, medical, mental health, legal, employment, housing assistance, other
+- **3-tier classification cascade**: regex keyword matching (Tier 1, <1ms) → semantic embedding with `all-MiniLM-L6-v2` (Tier 2, ~2-5ms, handles novel phrasings regex misses) → LLM fallback with Claude Haiku (Tier 3, 1-3s, handles complex multi-intent narratives). Semantic routing eliminates the "missing keyword" class of failures — "I ran out of insulin" routes to medical even though "insulin" shares no keywords with the medical phrase list
 - **Multi-turn slot-filling**: extracts service_type, location, age, urgency, gender across conversation turns
 - **Two-stage classification**: regex for fast deterministic routing, LLM for ambiguous messages
 - **Complexity-based LLM routing**: regex handles simple inputs, Claude Haiku handles complex/implicit/slang
@@ -145,13 +149,14 @@ information, preventing hallucination.
 - **Stability**: 1,000-char message length limit (frontend + backend), coordinate validation (lat ±90, lng ±180), 10s LLM timeout, 5s DB statement timeout, 30s frontend fetch timeout, admin endpoint rate limiting (120/min IP + 5/hr eval), rate limiter memory cap (5,000 buckets)
 - **Observability**: `X-Request-ID` correlation IDs flow from frontend → Next.js proxy → FastAPI backend → audit log, enabling end-to-end request tracing
 - **Admin data caching**: centralized Zustand store with 30-second staleness threshold; navigating between admin tabs reuses cached data
-- **Test suite**: 45 pytest files (~1,830 tests) organized into `tests/unit/` (30 files — no DB or LLM needed) and `tests/integration/` (15 files — use mocked DB/LLM), plus an `eval/` directory. Covers all services, routes, edge cases, geolocation, rate limiting, security, privacy, family composition, multi-service extraction, split classifier, taxonomy enrichment, nearby borough suggestions, gender/LGBTQ identity extraction, population context extraction, organization name search, walk-in filter, eligibility display, review highlights, required documents, languages, phone extensions, sort options, day-specific hours, auto-execute, location feedback, pagination, bug fix regressions, narrative extraction, bot knowledge, boundary drift detection, context routing, integration scenarios, ambiguity handling, post-results boundary routing, and DB schema/query integration. LLM-as-judge evaluation: 172 scenarios across 20 categories
+- **Test suite**: 46 pytest files (~1,880+ tests) organized into `tests/unit/` (31 files — no DB or LLM needed) and `tests/integration/` (15 files — use mocked DB/LLM), plus an `eval/` directory. Covers all services, routes, edge cases, geolocation, rate limiting, security, privacy, family composition, multi-service extraction, split classifier, taxonomy enrichment, nearby borough suggestions, gender/LGBTQ identity extraction, population context extraction, organization name search, walk-in filter, eligibility display, review highlights, required documents, languages, phone extensions, sort options, day-specific hours, auto-execute, location feedback, pagination, bug fix regressions, narrative extraction, bot knowledge, boundary drift detection, context routing, integration scenarios, ambiguity handling, post-results boundary routing, semantic routing (route definitions, classification, thresholds, population detection, integration fallthrough, graceful degradation), and DB schema/query integration. LLM-as-judge evaluation: 172 scenarios across 20 categories
 
 ## Known Gaps / In Progress
 
 - **Adversarial LLM false positives** — The unified classification gate classifies nonsensical service requests ("helicopter ride") as `service_type=other` instead of returning null. Fix: tighten the LLM prompt to restrict "other" to known social service subcategories.
 - **Slot overwrite on contradiction** — `multiturn_change_mind` (3.25): when user says "actually, shelter" mid-conversation, the filled slot is not overwritten. Requires contradiction detection.
-- **Multilingual support** — English only. Spanish keyword support is designed (Phase 6 in implementation plan) but not yet implemented.
+- **Keyword brittleness (partially addressed)** — The Tier 2 semantic router handles novel phrasings that regex keywords miss ("insulin" → medical, "felon looking for work" → employment). Three eval scenarios that were persistently below 4.0 due to keyword gaps (`peer_diabetic_insulin`, `peer_felon_employment`, `peer_aging_out_foster`) are expected to improve. The model must be downloaded on first startup (~80 MB) — requires internet access to `huggingface.co`.
+- **Multilingual support** — English only. Spanish keyword support is designed (Phase 6 in implementation plan) but not yet implemented. The semantic router can be switched to `paraphrase-multilingual-MiniLM-L12-v2` for Spanish support (one-line change).
 - **Schedule data coverage** — sparse; only walk-in services have >40% coverage. Day-specific hours queries are supported but coverage varies by service
 - **Sort by nearest** — not implemented. Would require PostGIS distance calculation stored on service cards for client-side re-sort. Current sort options are "recently verified" and "most services"
 - **`additional_info` field** — 99.7% null in DB, always empty in results
@@ -173,7 +178,7 @@ pytest -k reset                           # filter by test name
 ```
 
 All tests mock `claude_reply()` and `query_services()` — no live services required.
-Tests are organized into `tests/unit/` (30 files, no external deps) and `tests/integration/` (15 files, use `send()`/`send_multi()` helpers).
+Tests are organized into `tests/unit/` (31 files, no external deps) and `tests/integration/` (15 files, use `send()`/`send_multi()` helpers).
 Shared fixtures and helpers live in `tests/conftest.py` (use `send()`, `send_multi()`,
 `assert_classified()`). For live LLM integration tests:
 
@@ -183,9 +188,11 @@ ANTHROPIC_API_KEY=... pytest tests/test_llm_slot_extractor.py -k live
 
 ## Code Conventions
 
-- **Two-stage pattern**: classification, slot extraction, and crisis detection all use
-  regex first, LLM second. Regex handles the common/obvious cases fast; LLM catches
-  ambiguous inputs. New detection features should follow this same pattern.
+- **Three-tier pattern**: slot extraction uses regex first (fast, deterministic), semantic
+  embedding second (handles novel phrasings, ~2-5ms, free), LLM third (handles complex
+  narratives, ~1-3s). Classification and crisis detection follow the same multi-stage approach.
+  New detection features should follow this pattern: start with regex, add semantic routes
+  for generalization, reserve LLM for genuinely ambiguous inputs.
 - **No LLM-generated service data**: the LLM handles conversation only. All service
   results come from parameterized SQL templates in `query_templates.py`. Never let the
   LLM produce service names, addresses, or phone numbers.
@@ -200,7 +207,12 @@ ANTHROPIC_API_KEY=... pytest tests/test_llm_slot_extractor.py -k live
 - Editing slot extraction logic without updating both `slot_extractor.py` (regex) **and**
   `llm_slot_extractor.py` (LLM) — they must stay in sync on supported slot names/values.
 - Adding a new service category requires updates in `query_templates.py` (SQL template),
-  `slot_extractor.py` (keywords), and `phrase_lists.py` (service label).
+  `slot_extractor.py` (keywords), `semantic_routes.py` (example utterances), and
+  `phrase_lists.py` (service label). The semantic route definitions must use the same
+  category keys as `SERVICE_KEYWORDS` in `slot_extractor.py`.
+- Adding new example utterances to semantic routes requires no code changes — just edit
+  `semantic_routes.py` and restart. But don't add the same utterance to two different
+  routes (cross-route duplicates cause nondeterministic routing).
 - Adding a new phrase list or keyword goes in `phrase_lists.py`, not `chatbot.py`.
   Classification logic is in `classifier.py`, response strings in `responses.py`,
   confirmation logic in `confirmation.py`.

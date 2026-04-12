@@ -3789,7 +3789,7 @@ Three of four below-4.0 scenarios are keyword brittleness failures — exactly t
  
 ## What's Next
  
-**Semantic routing layer (Tier 2):** The three keyword-brittleness failures (`peer_diabetic_insulin`, `peer_felon_employment`, `multiturn_change_mind`) will be addressed by inserting `all-MiniLM-L6-v2` between regex and LLM. Design document approved — implementation estimated at 1-2 days.
+**Semantic routing layer (Tier 2) — IMPLEMENTED:** The `all-MiniLM-L6-v2` semantic router is now integrated between regex and LLM in `extract_slots_smart()`. The three keyword-brittleness failures (`peer_diabetic_insulin`, `peer_felon_employment`, `peer_aging_out_foster`) are expected to improve in Run 27. See `semantic_router.py`, `semantic_routes.py`, and `SEMANTIC_ROUTING_DESIGN.md`. 54 tests in `test_semantic_router.py` cover route definitions, classification, thresholds, integration, and graceful degradation.
  
 **Shame/stigma tone detection:** `multi_shame_single_service` (3.88) needs shame-specific phrases ("hard for me to say", "embarrassed to ask") added to the emotional classifier with an empathetic prefix.
  

@@ -53,20 +53,20 @@ See [SETUP.md](docs/SETUP.md) for detailed instructions including prerequisites,
 
 ```
 User → Chat UI → FastAPI → Classifier → Slot Extraction → Confirmation → Query Templates → Streetlives DB
-          ↑                      ↓                     ↓               ↓                                   ↓
-   Quick-reply            Crisis Detection        PII Redaction    User confirms                      Service Cards
-   buttons                (regex + Sonnet)            ↓          or changes slots                         ↓
-                          → Step-down when       Session Store                                       YourPeer links
-                            service intent           ↓
-                          Greeting / Reset       Unified LLM Gate
-                          Thanks / Help          (Haiku — when regex
-                          Escalation             finds nothing, returns
-                          Frustration (AVR)      service_type + tone +
-                          Emotional (AVR)        action in one call)
-                          Bot identity                ↓
-                          Confused/overwhelmed   Claude Haiku (fallback
-                          Confirmation           for general conversation
-                          handling               and DB failures only)
+          ↑                      ↓            ↓                  ↓               ↓                                   ↓
+   Quick-reply            Crisis Detection  3-tier cascade:  PII Redaction    User confirms                      Service Cards
+   buttons                (regex + Sonnet)  1. Regex keywords    ↓          or changes slots                         ↓
+                          → Step-down when  2. Semantic embed Session Store                                       YourPeer links
+                            service intent  3. LLM (Haiku)       ↓
+                          Greeting / Reset                   Unified LLM Gate
+                          Thanks / Help                      (Haiku — when regex+
+                          Escalation                         semantic find nothing,
+                          Frustration (AVR)                   returns service_type +
+                          Emotional (AVR)                    tone + action in one call)
+                          Bot identity                            ↓
+                          Confused/overwhelmed               Claude Haiku (fallback
+                          Confirmation                       for general conversation
+                          handling                           and DB failures only)
 
 Staff → Admin Console (/admin) → Audit Log API → Anonymized transcripts, query logs, crisis events, stats
                                        ↓
@@ -76,7 +76,7 @@ Staff → Admin Console (/admin) → Audit Log API → Anonymized transcripts, q
 
 The system follows a **Safer, Limited RAG** pattern with four phases:
 
-1. **Intake** — Slot extraction collects structured fields (service type, location, age, urgency, gender/LGBTQ identity, family status, population context) through multi-turn conversation. **Population context** (veteran, disabled, reentry, DV survivor, pregnant, senior) is extracted as a cross-cutting identity attribute — separate from what service the user needs. A veteran searching for food gets veteran-tagged services ranked higher; a disabled user gets accessibility-related services boosted. Multiple populations are supported ("disabled veteran"). Gender is extracted only when explicitly stated — never inferred from name or voice. LGBTQ, trans, and nonbinary identities trigger taxonomy boosts (prioritizing affirming services like Ali Forney Center) rather than eligibility filters, since the DB only contains binary gender values. Multi-service extraction detects all services in a message ("I need food and shelter") and queues them for sequential search, with per-service location binding when different locations are mentioned ("food in Brooklyn and shelter in Manhattan"). Quick-reply buttons let users tap instead of type. Uses regex by default; when `ANTHROPIC_API_KEY` is set, a **unified LLM classification gate** fires on messages where regex finds no service type, no action, and no tone — a single Haiku call returns all classification dimensions (service_type, location, tone, action, gender, populations) in one JSON response, fixing the 52% regex miss rate on natural language. Crisis detection runs on every message before anything else, using regex pre-check followed by Claude Sonnet LLM classification when regex misses — with an emotional phrase guard that prevents sub-crisis expressions ("feeling scared", "I'm struggling") from being over-escalated to crisis. When crisis fires alongside service intent, a step-down flow shows crisis resources while preserving the service context (supported for safety_concern, domestic_violence, and youth_runaway categories). **For DV crises, `dv_survivor` is injected into the session's population context** so that subsequent searches boost DV-specific services — even when the triggering phrase (e.g., "he hits me") doesn't explicitly mention "domestic violence." The message classifier routes greetings, resets, escalation, frustration, bot-identity questions, confusion, and help before slot extraction runs. Emotional handling follows the Acknowledge-Validate-Redirect (AVR) pattern from clinical chatbot research. NYC youth slang is supported for confirmations ("bet", "aight", "word") and declines ("nah I'm good"). PII — including gender identity terms — is redacted from stored transcripts.
+1. **Intake** — Slot extraction collects structured fields (service type, location, age, urgency, gender/LGBTQ identity, family status, population context) through multi-turn conversation. **Population context** (veteran, disabled, reentry, DV survivor, pregnant, senior) is extracted as a cross-cutting identity attribute — separate from what service the user needs. A veteran searching for food gets veteran-tagged services ranked higher; a disabled user gets accessibility-related services boosted. Multiple populations are supported ("disabled veteran"). Gender is extracted only when explicitly stated — never inferred from name or voice. LGBTQ, trans, and nonbinary identities trigger taxonomy boosts (prioritizing affirming services like Ali Forney Center) rather than eligibility filters, since the DB only contains binary gender values. Multi-service extraction detects all services in a message ("I need food and shelter") and queues them for sequential search, with per-service location binding when different locations are mentioned ("food in Brooklyn and shelter in Manhattan"). Quick-reply buttons let users tap instead of type. Service type extraction uses a **3-tier cascade**: (1) regex keyword matching (<1ms, handles ~85%), (2) semantic embedding with `all-MiniLM-L6-v2` (~2-5ms, handles novel phrasings like "I ran out of insulin" → medical, runs locally, zero cost), (3) LLM classification via Claude Haiku (1-3s, handles complex multi-intent narratives). When `ANTHROPIC_API_KEY` is set, a **unified LLM classification gate** fires on messages where all three tiers find no service type, no action, and no tone — a single Haiku call returns all classification dimensions (service_type, location, tone, action, gender, populations) in one JSON response. Crisis detection runs on every message before anything else, using regex pre-check followed by Claude Sonnet LLM classification when regex misses — with an emotional phrase guard that prevents sub-crisis expressions ("feeling scared", "I'm struggling") from being over-escalated to crisis. When crisis fires alongside service intent, a step-down flow shows crisis resources while preserving the service context (supported for safety_concern, domestic_violence, and youth_runaway categories). **For DV crises, `dv_survivor` is injected into the session's population context** so that subsequent searches boost DV-specific services — even when the triggering phrase (e.g., "he hits me") doesn't explicitly mention "domestic violence." The message classifier routes greetings, resets, escalation, frustration, bot-identity questions, confusion, and help before slot extraction runs. Emotional handling follows the Acknowledge-Validate-Redirect (AVR) pattern from clinical chatbot research. NYC youth slang is supported for confirmations ("bet", "aight", "word") and declines ("nah I'm good"). PII — including gender identity terms — is redacted from stored transcripts.
 2. **Confirmation** — When service type and location are filled, the bot summarizes the search ("I'll search for food in Brooklyn") and presents quick-reply options: confirm, change location, change service, or start over. The database is only queried after explicit user confirmation.
 3. **Query** — Pre-defined, parameterized SQL templates run against the Streetlives PostgreSQL database. Borough-level queries use the `pa.borough` column directly — more reliable than expanding city name lists. Neighborhood queries use PostGIS proximity search (`ST_DWithin`) with coordinates for 59 NYC neighborhoods. If the strict query returns no results, filters are automatically relaxed while keeping location boundaries. Data-informed nearby borough suggestions are offered when results are thin.
 4. **Rendering** — Results are returned as structured service cards, never as LLM-generated text. Cards include address, hours, phone, fees, accessibility info (when available from the DB), a "Referral may be required" badge for membership-gated services, and direct links to YourPeer.
@@ -90,7 +90,7 @@ See [FEATURES.md](docs/FEATURES.md) for the full feature reference, organized by
 | Layer | Technology |
 |---|---|
 | Backend | Python, FastAPI, SQLAlchemy |
-| Slot Extraction | Regex (default) + Claude Haiku via Anthropic API (for complex inputs) |
+| Slot Extraction | Regex (Tier 1) + Semantic embedding with all-MiniLM-L6-v2 (Tier 2) + Claude Haiku (Tier 3, complex inputs) |
 | Crisis Detection | Regex pre-check + Claude Sonnet (LLM stage for nuanced/indirect language) |
 | Conversational Fallback | Claude Haiku (dialog only, not for service data) |
 | Database | Streetlives PostgreSQL on AWS RDS (read-only), PostGIS for neighborhood proximity |
@@ -157,9 +157,10 @@ These are tracked issues identified during DB audits and pilot testing, deferred
 | [PII_REDACTION.md](docs/PII_REDACTION.md) | PII redaction — seven detection categories, pattern details, tradeoffs, known gaps, and future improvements |
 | [METRICS.md](docs/METRICS.md) | Success metrics — 35+ metrics across 7 layers with definitions, targets, measurement methods, and pilot vs. post-pilot phasing |
 | [EVAL_RESULTS.md](docs/EVAL_RESULTS.md) | Eval history — per-scenario scores, critical failures, and fixes across all 23 runs |
+| [SEMANTIC_ROUTING_DESIGN.md](docs/SEMANTIC_ROUTING_DESIGN.md) | Semantic routing design — model selection rationale, 3-tier cascade architecture, route definitions, integration plan, scaling strategy |
 | [SETUP.md](docs/SETUP.md) | Local development setup — virtual environment, dependencies, API keys, running locally |
 | [DEPLOY.md](docs/DEPLOY.md) | Render deployment — environment variables, build commands, auto-deploy, starter tier notes |
-| [TESTING.md](docs/TESTING.md) | Test suite guide — 1,700 tests across 40 files in `unit/` and `integration/` directories + 172-scenario LLM-as-judge evaluation framework |
+| [TESTING.md](docs/TESTING.md) | Test suite guide — 1,880+ tests across 46 files in `unit/` and `integration/` directories + 172-scenario LLM-as-judge evaluation framework |
 | [scripts/DB_AUDIT.md](scripts/DB_AUDIT.md) | Database audit script — why it exists, how to run it, when to run it, and how to interpret results |
 
 ## Related Repositories

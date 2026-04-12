@@ -62,6 +62,7 @@ Render automatically redeploys both services when you push to the branch configu
 
 - Both services run on Render's Starter plan ($7/month each) — always-on, no cold starts
 - The backend is a private service — not reachable from the public internet
+- The semantic routing model (`all-MiniLM-L6-v2`, ~80 MB) is downloaded from Hugging Face on first startup and cached. The build environment must have outbound access to `huggingface.co`. First startup adds ~1-2 seconds for model loading (amortized across all requests). Memory footprint: ~100 MB for the model + embeddings. If the model download fails, the system degrades gracefully — semantic routing is disabled
 - Set `PILOT_DB_PATH=data/pilot.db` to persist audit log and session data across deploys. When unset, data is in-memory only and resets on each deploy
 - Rate limiting runs at two layers: the Next.js frontend (per-IP) and the FastAPI backend (per-session + per-IP)
 
@@ -105,6 +106,8 @@ The frontend service does not connect to the database directly.
 **Database connection errors:** Verify the `DATABASE_URL` is correct in the Render dashboard under the backend service's Environment Variables.
 
 **LLM slot extraction not working:** Check that `ANTHROPIC_API_KEY` is set on the backend service. The app logs whether LLM extraction is enabled on startup. Without the key, everything still works — it just uses regex-only extraction.
+
+**Semantic routing not loading:** Check the backend logs for "Semantic router initialization failed" or "sentence-transformers not installed". The model requires outbound access to `huggingface.co` on first startup to download (~80 MB). After the first download, it's cached locally. If the model can't be downloaded, the system works without it — messages go from regex directly to LLM fallback.
 
 **Staff console empty after deploy:** The audit log is in-memory and starts empty on each deploy. Data populates as users chat. For persistent audit data, replace the in-memory store with a database.
 
