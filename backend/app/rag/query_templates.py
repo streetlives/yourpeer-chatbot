@@ -119,7 +119,25 @@ SELECT
        AND jsonb_array_length(lch.openai_output_json->'top_positive_comments') > 0
      ORDER BY lch.updated_at DESC
      LIMIT 1
-    ) AS review_highlight
+    ) AS review_highlight,
+
+    -- Required documents: what users need to bring (e.g. "State ID", "Proof of address").
+    -- Filtered to exclude null/empty/'None' entries.
+    (SELECT ARRAY_AGG(rd.document)
+     FROM required_documents rd
+     WHERE rd.service_id = s.id
+       AND rd.document IS NOT NULL
+       AND rd.document != ''
+       AND rd.document != 'None'
+    ) AS required_documents,
+
+    -- Languages spoken at this service.
+    -- Helps non-English speakers choose the right location.
+    (SELECT ARRAY_AGG(DISTINCT lang.language ORDER BY lang.language)
+     FROM languages lang
+     JOIN service_languages sl ON lang.id = sl.language_id
+     WHERE sl.service_id = s.id
+    ) AS languages_spoken
 
 FROM services s
     JOIN service_at_locations sal  ON s.id = sal.service_id
@@ -346,6 +364,21 @@ FILTER_BY_DESCRIPTION_KEYWORDS = (
 FILTER_BY_ORG_NAME = (
     "o.name ILIKE :org_name_pattern",
     ["org_name_pattern"],
+)
+
+# Walk-in / no-requirements filter — excludes services that require
+# referrals or registered membership. Used when user says "walk-in only",
+# "no referral needed", "drop-in", etc.
+FILTER_BY_NO_REQUIREMENTS = (
+    """NOT EXISTS (
+        SELECT 1 FROM eligibility e
+        JOIN eligibility_parameters ep ON e.parameter_id = ep.id
+        WHERE e.service_id = s.id
+          AND ep.name = 'membership'
+          AND (e.eligible_values = '["true"]'::jsonb
+               OR e.eligible_values = '[true]'::jsonb)
+    )""",
+    ["no_requirements"],
 )
 
 # ---------------------------------------------------------------------------
@@ -791,7 +824,7 @@ def build_query(template_key: str, user_params: dict) -> tuple[str, dict]:
     # Universal optional filters — apply to any template when params present.
     # Co-location filter: when user asked for multiple services, restrict
     # results to locations that also have the additional service(s).
-    _UNIVERSAL_OPTIONAL = [FILTER_BY_COLOCATED_TAXONOMY]
+    _UNIVERSAL_OPTIONAL = [FILTER_BY_COLOCATED_TAXONOMY, FILTER_BY_NO_REQUIREMENTS]
     for sql_fragment, required_keys in _UNIVERSAL_OPTIONAL:
         if all(k in params for k in required_keys):
             where_clauses.append(sql_fragment)
@@ -962,6 +995,18 @@ def _format_eligibility(rules) -> str | None:
     return " · ".join(parts)
 
 
+def _clean_list(values) -> list | None:
+    """Return a cleaned list or None if empty/null.
+
+    Filters out None, empty strings, and 'None' from DB array results.
+    Returns None instead of [] so the frontend can use simple truthiness checks.
+    """
+    if not values:
+        return None
+    cleaned = [v for v in values if v and str(v).strip() not in ("", "None")]
+    return cleaned if cleaned else None
+
+
 def _format_phone(number: str | None, extension: str | None) -> str | None:
     """Format a phone number with optional extension."""
     if not number:
@@ -1078,6 +1123,8 @@ def format_service_card(row: dict) -> dict:
         "accessibility": row.get("accessibility_info"),
         "eligibility_summary": _format_eligibility(row.get("eligibility_rules")),
         "review_highlight": row.get("review_highlight"),
+        "required_documents": _clean_list(row.get("required_documents")),
+        "languages": _clean_list(row.get("languages_spoken")),
     }
 
 

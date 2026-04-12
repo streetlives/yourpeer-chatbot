@@ -32,6 +32,8 @@ export interface ServiceResult {
   accessibility?: string;
   eligibility_summary?: string;
   review_highlight?: string;
+  required_documents?: string[];
+  languages?: string[];
 }
 
 export interface ChatResponse {

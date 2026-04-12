@@ -41,6 +41,7 @@ def query_services(
     service_detail: str = None,
     populations: list = None,
     org_name: str = None,
+    no_requirements: bool = False,
 ) -> dict:
     """
     High-level entry point: go from intake slots to service results.
@@ -152,6 +153,8 @@ def query_services(
         user_params["weekday"] = weekday
     if current_time:
         user_params["current_time"] = current_time
+    if no_requirements:
+        user_params["no_requirements"] = True
 
     # Shelter taxonomy enrichment based on user profile.
     # The DB has shelter sub-categories as separate taxonomy names with

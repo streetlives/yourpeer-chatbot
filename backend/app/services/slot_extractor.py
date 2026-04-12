@@ -1132,6 +1132,38 @@ def _extract_org_name(text: str) -> str | None:
     return None
 
 
+# ---------------------------------------------------------------------------
+# Requirement preference extraction (Gap 10)
+# ---------------------------------------------------------------------------
+
+_NO_REQUIREMENTS_PHRASES = [
+    "walk-in only", "walk in only", "walkin only",
+    "no referral", "no referral needed", "without referral",
+    "no appointment", "no appointment needed", "without appointment",
+    "don't need a referral", "dont need a referral",
+    "don't need an appointment", "dont need an appointment",
+    "no membership", "no registration",
+    "walk-in welcome", "walk in welcome",
+    "open to anyone", "open to all",
+    "no requirements",
+]
+
+
+def _extract_no_requirements(text: str) -> bool:
+    """Detect if user wants walk-in / no-referral services only.
+
+    Returns True if the user explicitly asks for services without
+    referral or appointment requirements. Returns False otherwise
+    (default — don't filter).
+
+    Note: "drop-in" and "walk-in clinic" are already SERVICE KEYWORDS
+    (shelter and medical respectively). This extractor catches the
+    REQUIREMENT preference, not the service type.
+    """
+    lower = text.lower()
+    return any(phrase in lower for phrase in _NO_REQUIREMENTS_PHRASES)
+
+
 def extract_slots(message: str) -> dict:
     all_types = _extract_all_service_types(message)
     all_locations = _extract_all_locations(message)
@@ -1192,6 +1224,7 @@ def extract_slots(message: str) -> dict:
         "_gender": _extract_gender(message),
         "_populations": _extract_populations(message),
         "org_name": _extract_org_name(message),
+        "no_requirements": _extract_no_requirements(message),
     }
 
 

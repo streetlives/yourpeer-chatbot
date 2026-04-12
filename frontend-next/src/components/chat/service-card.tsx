@@ -250,6 +250,22 @@ export function ServiceCard({ service, isActive, index, total }: ServiceCardProp
         </span>
       )}
 
+      {/* Required documents */}
+      {service.required_documents && service.required_documents.length > 0 && (
+        <div className="flex items-start gap-2 text-xs text-neutral-500 leading-snug">
+          <span className="mt-0.5 flex-shrink-0" aria-hidden="true">📄</span>
+          <span>Bring: {service.required_documents.join(", ")}</span>
+        </div>
+      )}
+
+      {/* Languages spoken */}
+      {service.languages && service.languages.length > 0 && !(service.languages.length === 1 && service.languages[0] === "English") && (
+        <div className="flex items-start gap-2 text-xs text-neutral-500 leading-snug">
+          <span className="mt-0.5 flex-shrink-0" aria-hidden="true">🗣️</span>
+          <span>{service.languages.join(", ")}</span>
+        </div>
+      )}
+
       {/* Also available at this location */}
       {service.also_available && service.also_available.length > 0 && (
         <div className="pt-1 border-t border-neutral-100">

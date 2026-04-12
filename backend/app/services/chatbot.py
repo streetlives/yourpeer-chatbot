@@ -1258,6 +1258,7 @@ def _execute_and_respond(session_id: str, message: str, slots: dict, request_id:
             service_detail=slots.get("service_detail"),
             populations=slots.get("_populations"),
             org_name=slots.get("org_name"),
+            no_requirements=bool(slots.get("no_requirements")),
             max_results=_FETCH_LIMIT,
         )
 

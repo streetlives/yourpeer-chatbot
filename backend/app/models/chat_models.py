@@ -31,6 +31,8 @@ class ServiceCard(BaseModel):
     accessibility: Optional[str] = None
     eligibility_summary: Optional[str] = None
     review_highlight: Optional[str] = None
+    required_documents: Optional[List[str]] = None
+    languages: Optional[List[str]] = None
 
 
 class QuickReply(BaseModel):
