@@ -165,6 +165,35 @@ def generate_reply(
 
     # --- EXTRACT SLOTS FIRST (before classification) ---
     early_extracted = extract_slots(message)
+    _extraction_source = "regex" if early_extracted.get("service_type") else None
+
+    # --- TIER 2: SEMANTIC ROUTING (before LLM gate) ---
+    # The semantic router is a LOCAL model — no API key needed.
+    # It runs here (not just inside extract_slots_smart) so that:
+    #   1. It fires in regex-only mode (no ANTHROPIC_API_KEY)
+    #   2. It fires before the unified LLM gate (saving an LLM call)
+    #   3. It fires before routing, preventing "general" fallthrough
+    if early_extracted.get("service_type") is None:
+        from app.services.semantic_router import classify_service as _semantic_classify
+        from app.services.semantic_router import is_available as _semantic_available
+
+        if _semantic_available():
+            _semantic_match = _semantic_classify(message)
+            if _semantic_match is not None:
+                logger.info(
+                    f"Session {session_id}: semantic router matched "
+                    f"'{_semantic_match.service_type}' "
+                    f"(confidence={_semantic_match.confidence:.3f})"
+                )
+                early_extracted["service_type"] = _semantic_match.service_type
+                _extraction_source = "semantic"
+
+                # Merge population from semantic router
+                if _semantic_match.population:
+                    existing_pops = set(early_extracted.get("_populations") or [])
+                    existing_pops.add(_semantic_match.population)
+                    early_extracted["_populations"] = sorted(existing_pops)
+
     has_service_intent = (
         early_extracted.get("service_type") is not None
         or early_extracted.get("org_name") is not None
@@ -200,6 +229,7 @@ def generate_reply(
                         f"'{_unified['service_type']}' that regex missed"
                     )
                     early_extracted["service_type"] = _unified["service_type"]
+                    _extraction_source = "llm_gate"
                     if _unified.get("service_detail"):
                         early_extracted["service_detail"] = _unified["service_detail"]
                     if _unified.get("location"):
@@ -444,7 +474,19 @@ def generate_reply(
     # --- COMBINE INTO ROUTING CATEGORY ---
     action = _action_pre
     _response_tone = tone
-    _confidence = "high"
+    # Confidence reflects how the service_type was determined:
+    #   "high"     — regex keyword match (deterministic)
+    #   "semantic" — semantic embedding match (Tier 2, high but not deterministic)
+    #   "medium"   — LLM classification (unified gate or fallback)
+    #   "low"      — no classification succeeded, using fallback
+    if _extraction_source == "regex":
+        _confidence = "high"
+    elif _extraction_source == "semantic":
+        _confidence = "semantic"
+    elif _extraction_source == "llm_gate":
+        _confidence = "medium"
+    else:
+        _confidence = "high"  # default for non-service routes (greeting, reset, etc.)
 
     if tone == "crisis":
         category = "crisis"
