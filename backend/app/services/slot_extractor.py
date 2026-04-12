@@ -1044,6 +1044,94 @@ def _extract_all_locations(text: str) -> list[tuple[int, str]]:
     return found
 
 
+# ---------------------------------------------------------------------------
+# Organization name extraction (Gap 3)
+# ---------------------------------------------------------------------------
+# Curated list of well-known NYC social service organizations that users
+# commonly ask about by name. This handles the regex path; the LLM extractor
+# catches orgs not on this list.
+
+_KNOWN_ORGS = {
+    # Shelter & Housing
+    "covenant house": "Covenant House",
+    "safe horizon": "Safe Horizon",
+    "ali forney": "Ali Forney Center",
+    "ali forney center": "Ali Forney Center",
+    "bowery residents": "Bowery Residents' Committee",
+    "project renewal": "Project Renewal",
+    "breaking ground": "Breaking Ground",
+    "women in need": "Women In Need",
+    "urban pathways": "Urban Pathways",
+    "goddard riverside": "Goddard Riverside",
+    # Food
+    "city harvest": "City Harvest",
+    "food bank for new york": "Food Bank For New York City",
+    "food bank nyc": "Food Bank For New York City",
+    # Health & Mental Health
+    "mount sinai": "Mount Sinai",
+    "beth israel": "Beth Israel",
+    "realization center": "Realization Center",
+    "ryan health": "Ryan Health",
+    # Legal & Immigration
+    "legal aid society": "Legal Aid Society",
+    "unlocal": "UnLocal",
+    "make the road": "Make the Road New York",
+    "cabrini immigrant": "Cabrini Immigrant Services",
+    # Multi-service
+    "catholic charities": "Catholic Charities",
+    "catholic worker": "Catholic Worker",
+    "salvation army": "Salvation Army",
+    "riseboro": "RiseBoro",
+    "boom health": "BOOM! Health",
+    "boom! health": "BOOM! Health",
+    # Youth
+    "the door a center": "The Door",
+    # DV
+    "family justice center": "Family Justice Center",
+    # Government
+    "department of homeless services": "Department of Homeless Services",
+}
+
+# Short org abbreviations that need word-boundary matching to avoid
+# false positives (e.g., "win" in "I need to win", "path" in "on the path").
+_KNOWN_ORG_ABBREVIATIONS = {
+    "ymca": "YMCA",
+    "ywca": "YWCA",
+    "mrny": "Make the Road New York",
+    "camba": "CAMBA",
+    "dycd": "DYCD",
+}
+
+import re as _re
+
+_ORG_ABBREV_PATTERN = _re.compile(
+    r"\b(" + "|".join(_re.escape(k) for k in _KNOWN_ORG_ABBREVIATIONS) + r")\b",
+    _re.IGNORECASE,
+)
+
+
+def _extract_org_name(text: str) -> str | None:
+    """Extract a known organization name from user message.
+
+    Returns the canonical org name if found, None otherwise.
+    Uses exact substring match for multi-word names and word-boundary
+    match for abbreviations to avoid false positives.
+    """
+    lower = text.lower()
+
+    # Check multi-word org names (longest match first to avoid partial matches)
+    for phrase, canonical in sorted(_KNOWN_ORGS.items(), key=lambda x: -len(x[0])):
+        if phrase in lower:
+            return canonical
+
+    # Check abbreviations with word boundaries
+    m = _ORG_ABBREV_PATTERN.search(lower)
+    if m:
+        return _KNOWN_ORG_ABBREVIATIONS[m.group(1).lower()]
+
+    return None
+
+
 def extract_slots(message: str) -> dict:
     all_types = _extract_all_service_types(message)
     all_locations = _extract_all_locations(message)
@@ -1103,6 +1191,7 @@ def extract_slots(message: str) -> dict:
         "family_status": _extract_family_status(message),
         "_gender": _extract_gender(message),
         "_populations": _extract_populations(message),
+        "org_name": _extract_org_name(message),
     }
 
 
@@ -1142,7 +1231,10 @@ def merge_slots(existing: dict, new_values: dict) -> dict:
 
 
 def is_enough_to_answer(slots: dict) -> bool:
-    # Need service type + a real location (not the "near me" sentinel)
+    # Org name search: org_name alone is sufficient (location optional)
+    if slots.get("org_name"):
+        return True
+    # Service type search: need service type + a real location
     has_service = bool(slots.get("service_type"))
     has_location = bool(
         slots.get("location")

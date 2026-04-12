@@ -29,6 +29,8 @@ class ServiceCard(BaseModel):
     last_validated_at: Optional[str] = None
     also_available: Optional[List[str]] = None
     accessibility: Optional[str] = None
+    eligibility_summary: Optional[str] = None
+    review_highlight: Optional[str] = None
 
 
 class QuickReply(BaseModel):

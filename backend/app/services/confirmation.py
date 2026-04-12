@@ -34,6 +34,19 @@ def _build_confirmation_message(slots: dict) -> str:
     # generic category label (e.g. "health care") when available.
     service_label = slots.get("service_detail") or _SERVICE_LABELS.get(service, service)
     location = slots.get("location", "your area")
+
+    # Organization name search: different message format
+    org_name = slots.get("org_name")
+    if org_name:
+        if slots.get("service_type"):
+            msg = f"I'll search for {service_label} at {org_name}"
+        else:
+            msg = f"I'll search for services at {org_name}"
+        if location and location != "your area" and location != NEAR_ME_SENTINEL:
+            location_clean, _ = redact_pii(location)
+            msg += f" in {location_clean}"
+        msg += "."
+        return msg
     age = slots.get("age")
 
     # When using browser geolocation, show "near your location"

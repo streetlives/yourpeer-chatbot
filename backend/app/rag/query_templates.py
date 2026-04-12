@@ -93,7 +93,31 @@ SELECT
      FROM accessibility_for_disabilities afd
      WHERE afd.location_id = l.id
      LIMIT 1
-    ) AS accessibility_info
+    ) AS accessibility_info,
+
+    -- Eligibility summary: aggregated eligibility rules for display on cards.
+    -- Returns JSON array of {param, values} for each eligibility rule.
+    (SELECT json_agg(json_build_object(
+         'param', ep.name,
+         'values', e.eligible_values
+     ))
+     FROM eligibility e
+     JOIN eligibility_parameters ep ON e.parameter_id = ep.id
+     WHERE e.service_id = s.id
+       AND ep.name != 'membership'
+    ) AS eligibility_rules,
+
+    -- Review highlight: peer-generated sentiment summary for this location.
+    -- TODO: Enable once the review highlights table is confirmed in the
+    -- Streetlives DB. The sentiment analysis code lives at
+    -- streetlives-api/src/controllers/openai.js and runs overnight.
+    -- Likely table: comments or comment_highlights with a summary/highlight column.
+    -- Replace NULL below with the actual subquery, e.g.:
+    --   (SELECT ch.highlight FROM comment_highlights ch
+    --    WHERE ch.location_id = l.id
+    --    ORDER BY ch.created_at DESC LIMIT 1
+    --   ) AS review_highlight
+    NULL AS review_highlight
 
 FROM services s
     JOIN service_at_locations sal  ON s.id = sal.service_id
@@ -313,6 +337,13 @@ FILTER_NOT_HIDDEN = (
 FILTER_BY_DESCRIPTION_KEYWORDS = (
     "s.description ~* :description_pattern",
     ["description_pattern"],
+)
+
+# Organization name filter — ILIKE match against the org name.
+# Used by OrgNameQuery when users ask about a specific org by name.
+FILTER_BY_ORG_NAME = (
+    "o.name ILIKE :org_name_pattern",
+    ["org_name_pattern"],
 )
 
 # ---------------------------------------------------------------------------
@@ -695,6 +726,20 @@ TEMPLATES = {
             "Families", "Youth", "Senior", "Veterans", "LGBTQ Young Adult", "Intake",
         ],
     },
+    "org_name": {
+        "name": "OrgNameQuery",
+        "description": "Find all services at a specific organization by name",
+        "required_filters": [FILTER_BY_ORG_NAME, FILTER_NOT_HIDDEN, FILTER_BY_STATE_NY],
+        "optional_filters": [
+            FILTER_BY_BOROUGH,
+            FILTER_BY_CITY,
+            FILTER_BY_CITY_IN_BOROUGH,
+            FILTER_BY_CITY_LIKE,
+            FILTER_BY_PROXIMITY,
+        ],
+        "default_params": {},
+        "taxonomy_aliases": [],
+    },
 }
 
 
@@ -860,6 +905,61 @@ def _normalize_url(url: str | None) -> str | None:
     return url
 
 
+def _format_eligibility(rules) -> str | None:
+    """Format eligibility rules into a human-readable summary.
+
+    Args:
+        rules: JSON array of {param, values} from the eligibility subquery,
+               or None if no eligibility rules exist.
+
+    Returns:
+        A concise string like "Ages 18–24 · Women only" or None.
+    """
+    if not rules:
+        return None
+
+    parts = []
+    for rule in rules:
+        param = rule.get("param", "")
+        values = rule.get("values")
+        if not values:
+            continue
+
+        if param == "age":
+            # values: [{"age_min": 18, "age_max": 24}] or [{"all_ages": true}]
+            if isinstance(values, list) and values:
+                v = values[0] if isinstance(values[0], dict) else {}
+                if v.get("all_ages"):
+                    continue  # open to all ages — nothing to display
+                age_min = v.get("age_min")
+                age_max = v.get("age_max")
+                if age_min and age_max:
+                    parts.append(f"Ages {age_min}–{age_max}")
+                elif age_min:
+                    parts.append(f"Ages {age_min}+")
+                elif age_max:
+                    parts.append(f"Ages up to {age_max}")
+
+        elif param == "gender":
+            # values: ["male"] or ["female"] or ["male", "female"]
+            if isinstance(values, list):
+                genders = [str(g).capitalize() for g in values if g]
+                if len(genders) == 1:
+                    parts.append(f"{genders[0]} only")
+                # If both genders listed, skip — it's open to all
+
+        elif param == "familySize":
+            # values: [{"min": 2}] or similar
+            if isinstance(values, list) and values:
+                v = values[0] if isinstance(values[0], dict) else {}
+                if v.get("min") and int(v["min"]) > 1:
+                    parts.append("Families")
+
+    if not parts:
+        return None
+    return " · ".join(parts)
+
+
 def _format_phone(number: str | None, extension: str | None) -> str | None:
     """Format a phone number with optional extension."""
     if not number:
@@ -895,18 +995,61 @@ def format_service_card(row: dict) -> dict:
     today_closes = row.get("today_closes")
     schedule_status = _compute_schedule_status(today_opens, today_closes)
 
-    # Co-located services — filter to user-relevant categories
+    # Co-located services — show granular taxonomy names, not just top-level.
+    # Matches what yourpeer.nyc displays under each location.
     _DISPLAY_CATEGORIES = {
-        "Shelter", "Shower", "Clothing Pantry", "Clothing",
-        "Health", "Mental Health", "General Health",
-        "Laundry", "Legal Services", "Benefits", "Education",
-        "Employment", "Food", "Food Pantry", "Soup Kitchen",
-        "Toiletries", "Mail", "Free Wifi", "Haircut",
-        "Support Groups", "Drop-in Center", "Crisis",
-        "Restrooms", "Warming Center",
+        # Shelter & Housing
+        "Shelter", "Drop-in Center", "Warming Center", "Crisis",
+        "Families", "Single Adult", "Youth", "Senior",
+        # Food
+        "Food", "Food Pantry", "Soup Kitchen", "Mobile Pantry",
+        "Mobile Soup Kitchen", "Mobile Market", "Food Benefits",
+        "Farmer's Markets",
+        # Clothing
+        "Clothing", "Clothing Pantry", "Interview-Ready Clothing",
+        # Personal Care
+        "Shower", "Laundry", "Toiletries", "Haircut", "Restrooms",
+        # Health
+        "Health", "General Health",
+        "Harm Reduction", "Needle Exchange", "Overdose Prevention",
+        "Substance Use Treatment",
+        # Mental Health
+        "Mental Health",
+        # Legal
+        "Legal Services", "Immigration Services",
+        # Employment & Education
+        "Employment", "Education",
+        # Benefits & Support
+        "Benefits", "Case Workers", "Referral",
+        "Support Groups", "Mail", "Free Wifi",
+        # Other specific
+        "Baby", "Baby Supplies", "Senior Center",
+        "Financial Help", "Intake",
     }
+
+    # User-friendly labels for DB-internal taxonomy names
+    _TAXONOMY_DISPLAY_LABELS = {
+        "General Health": "Health",
+        "Substance Use Treatment": "Substance Use Help",
+        "Case Workers": "Case Management",
+        "Clothing Pantry": "Clothing",
+        "Interview-Ready Clothing": "Interview Clothing",
+        "Mobile Soup Kitchen": "Soup Kitchen",
+        "Mobile Pantry": "Food Pantry",
+        "Mobile Market": "Farmers Market",
+        "Farmer's Markets": "Farmers Market",
+        "Food Benefits": "Food Benefits (SNAP)",
+        "Needle Exchange": "Syringe Exchange",
+        "Overdose Prevention": "Overdose Prevention",
+        "Baby Supplies": "Baby Supplies",
+    }
+
     raw_also = row.get("also_available") or []
-    also_available = sorted(set(raw_also) & _DISPLAY_CATEGORIES)
+    also_available = sorted({
+        _TAXONOMY_DISPLAY_LABELS.get(name, name)
+        for name in raw_also
+        if name in _DISPLAY_CATEGORIES
+    })
 
     return {
         "service_id": str(row.get("service_id", "")),
@@ -931,6 +1074,8 @@ def format_service_card(row: dict) -> dict:
         ),
         "also_available": also_available if also_available else None,
         "accessibility": row.get("accessibility_info"),
+        "eligibility_summary": _format_eligibility(row.get("eligibility_rules")),
+        "review_highlight": row.get("review_highlight"),
     }
 
 

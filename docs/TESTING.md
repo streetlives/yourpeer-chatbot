@@ -46,7 +46,7 @@ pytest tests/integration/test_chatbot.py::test_confirm_deny_breaks_loop -v
 **Run LLM-as-judge evaluation (requires API key):**
 
 ```
-ANTHROPIC_API_KEY=sk-ant-... python tests/eval_llm_judge.py
+ANTHROPIC_API_KEY=sk-ant-... python tests/eval/eval_llm_judge.py
 ```
 
 **Run LLM integration tests (requires API key):**
@@ -604,13 +604,13 @@ The evaluation runs a three-stage pipeline:
 
 ```bash
 # Run all 114 scenarios
-ANTHROPIC_API_KEY=sk-ant-... python tests/eval_llm_judge.py
+ANTHROPIC_API_KEY=sk-ant-... python tests/eval/eval_llm_judge.py
 
 # Run only crisis scenarios
-ANTHROPIC_API_KEY=sk-ant-... python tests/eval_llm_judge.py --category crisis
+ANTHROPIC_API_KEY=sk-ant-... python tests/eval/eval_llm_judge.py --category crisis
 
 # Run a single scenario and save JSON report
-ANTHROPIC_API_KEY=sk-ant-... python tests/eval_llm_judge.py --scenario-id shelter_queens_17 --output eval_report.json
+ANTHROPIC_API_KEY=sk-ant-... python tests/eval/eval_llm_judge.py --scenario-id shelter_queens_17 --output eval_report.json
 ```
 
 ### Scenario coverage

@@ -30,6 +30,8 @@ export interface ServiceResult {
   last_validated_at?: string;
   also_available?: string[];
   accessibility?: string;
+  eligibility_summary?: string;
+  review_highlight?: string;
 }
 
 export interface ChatResponse {

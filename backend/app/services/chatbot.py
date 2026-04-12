@@ -163,7 +163,10 @@ def generate_reply(
 
     # --- EXTRACT SLOTS FIRST (before classification) ---
     early_extracted = extract_slots(message)
-    has_service_intent = early_extracted.get("service_type") is not None
+    has_service_intent = (
+        early_extracted.get("service_type") is not None
+        or early_extracted.get("org_name") is not None
+    )
 
     # --- CLASSIFY ACTION (regex, instant) ---
     _action_pre = _classify_action(message)
@@ -1224,6 +1227,7 @@ def _execute_and_respond(session_id: str, message: str, slots: dict, request_id:
             colocated_service_types=colocated_types,
             service_detail=slots.get("service_detail"),
             populations=slots.get("_populations"),
+            org_name=slots.get("org_name"),
         )
 
         colocated_success = (
