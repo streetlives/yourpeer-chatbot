@@ -3,7 +3,7 @@
 
 "use client";
 
-import { MapPin, Phone, Mail, Clock, CheckCircle } from "lucide-react";
+import { MapPin, Phone, Mail, Clock, CheckCircle, AlertTriangle } from "lucide-react";
 import type { ServiceResult } from "@/lib/chat/types";
 
 interface ServiceCardProps {
@@ -36,7 +36,14 @@ function StatusBadge({ status }: { status?: string }) {
 }
 
 function ValidatedBadge({ dateStr }: { dateStr?: string }) {
-  if (!dateStr) return null;
+  if (!dateStr) {
+    return (
+      <span className="inline-flex items-center gap-1 text-xs font-medium text-amber-600">
+        <AlertTriangle size={12} aria-hidden="true" />
+        Unverified — call to confirm
+      </span>
+    );
+  }
 
   const validated = new Date(dateStr);
   if (isNaN(validated.getTime())) return null;
@@ -60,6 +67,16 @@ function ValidatedBadge({ dateStr }: { dateStr?: string }) {
   }
 
   const isRecent = diffDays <= 90;
+  const isStale = diffDays > 180;
+
+  if (isStale) {
+    return (
+      <span className="inline-flex items-center gap-1 text-xs font-medium text-amber-600">
+        <AlertTriangle size={12} aria-hidden="true" />
+        Not recently verified — call ahead
+      </span>
+    );
+  }
 
   return (
     <span className={`inline-flex items-center gap-1 text-xs font-medium ${
