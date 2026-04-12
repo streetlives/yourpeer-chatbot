@@ -741,6 +741,45 @@ def generate_reply(
         pending_has_new = any(v is not None and v != [] for k, v in pending_extracted.items()
                               if k not in ("additional_services", "_populations"))
 
+        # Fix 3: Contradiction detection — if a slot CHANGED (not just
+        # filled), the user is correcting their search. Auto-execute
+        # instead of re-confirming to reduce friction.
+        if pending_has_new:
+            _SLOT_KEYS = ("service_type", "location", "age", "_gender", "family_status")
+            _changed = {
+                k: pending_extracted[k]
+                for k in _SLOT_KEYS
+                if pending_extracted.get(k) is not None
+                and existing.get(k) is not None
+                and pending_extracted[k] != existing[k]
+            }
+            if _changed:
+                merged_pending = merge_slots(existing, pending_extracted)
+                if is_enough_to_answer(merged_pending):
+                    logger.info(
+                        f"[{session_id}] Contradiction during confirmation: "
+                        f"{_changed} — auto-executing"
+                    )
+                    save_session_slots(session_id, merged_pending)
+                    result = _execute_and_respond(
+                        session_id, message, merged_pending, request_id=request_id
+                    )
+                    # Prepend acknowledgment of the change
+                    changes = []
+                    if "service_type" in _changed:
+                        changes.append(
+                            _SERVICE_LABELS.get(_changed["service_type"], _changed["service_type"])
+                        )
+                    if "location" in _changed:
+                        changes.append(_changed["location"])
+                    prefix = f"Got it — switching to {', '.join(changes)}. " if changes else ""
+                    result["response"] = prefix + result["response"]
+                    _log_turn(
+                        session_id, redacted_message, result,
+                        "contradiction_auto_execute", request_id=request_id, tone=tone,
+                    )
+                    return result
+
         if not pending_has_new:
             existing["_pending_confirmation"] = True
             save_session_slots(session_id, existing)
@@ -1261,6 +1300,33 @@ def _handle_pending_confirmation(
         return result
 
     if category == "confirm_deny":
+        # Fix 1: Check if the denial also contains a new service intent.
+        # "I changed my mind, shelter" should switch to shelter, not deny.
+        deny_extracted = extract_slots(message)
+        new_service = deny_extracted.get("service_type")
+        if new_service and new_service != existing.get("service_type"):
+            logger.info(
+                f"[{session_id}] confirm_deny + new service: "
+                f"'{existing.get('service_type')}' → '{new_service}'"
+            )
+            existing = merge_slots(existing, deny_extracted)
+            existing.pop("_pending_confirmation", None)
+            save_session_slots(session_id, existing)
+            new_label = _SERVICE_LABELS.get(new_service, new_service)
+            confirm_msg = f"Got it — switching to {new_label}. " + _build_confirmation_message(existing)
+            result = {
+                "session_id": session_id,
+                "response": confirm_msg,
+                "follow_up_needed": True,
+                "slots": existing,
+                "services": [],
+                "result_count": 0,
+                "relaxed_search": False,
+                "quick_replies": _confirmation_quick_replies(existing),
+            }
+            _log_turn(session_id, redacted_message, result, "service_switch", request_id=request_id, tone=tone)
+            return result
+
         existing.pop("_pending_confirmation", None)
         save_session_slots(session_id, existing)
         result = _empty_reply(

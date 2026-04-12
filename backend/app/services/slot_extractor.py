@@ -502,15 +502,50 @@ def _extract_gender(text: str) -> Optional[str]:
     return None
 
 
+# ---------------------------------------------------------------------------
+# Negation detection for service keywords (Fix 2)
+# ---------------------------------------------------------------------------
+
+_NEGATION_PREFIXES = [
+    "not ", "no ", "don't want ", "dont want ", "don't need ", "dont need ",
+    "forget ", "skip ", "instead of ", "rather than ", "no more ",
+    "not looking for ", "don't want ", "not interested in ",
+]
+
+
+def _is_negated(text: str, match_pos: int) -> bool:
+    """Check if a keyword match at match_pos is preceded by a negation.
+
+    Looks at the 25 characters before the match position for negation
+    prefixes. Only triggers when the negation immediately precedes the
+    keyword (with optional whitespace/punctuation between).
+
+    Examples:
+        "not food, shelter" → _is_negated("not food, shelter", 4) → True
+        "I need food" → _is_negated("i need food", 7) → False
+        "forget food, I need shelter" → _is_negated(..., 7) → True
+    """
+    # Look at the 25 chars before the match
+    window_start = max(0, match_pos - 25)
+    prefix = text[window_start:match_pos].lower().rstrip()
+
+    return any(prefix.endswith(neg.rstrip()) for neg in _NEGATION_PREFIXES)
+
+
 def _extract_all_service_types(text: str) -> list[tuple[str, Optional[str]]]:
     """Extract ALL service type categories from a message.
 
     Returns a list of (service_type, service_detail) tuples, deduplicated
     by category. Order reflects first appearance in text.
 
+    Negation-aware: keywords preceded by "not", "forget", "don't want",
+    "instead of", "skip" are excluded. This prevents "not food, shelter"
+    from extracting "food" as the primary service.
+
     Examples:
         "I need food and shelter" → [("food", None), ("shelter", None)]
         "dental care in Brooklyn" → [("medical", "dental care")]
+        "not food, shelter" → [("shelter", None)]
         "hello" → []
     """
     lower = text.lower()
@@ -547,6 +582,12 @@ def _extract_all_service_types(text: str) -> list[tuple[str, Optional[str]]]:
                    for ms_start, ms_end in matched_spans):
                 search_start = pos + 1
                 continue
+
+            # Skip if this keyword is negated
+            if _is_negated(lower, pos):
+                matched_spans.append((pos, end))  # block sub-matches
+                search_start = end
+                break
 
             # Record the span (even for already-seen categories, to block
             # sub-matches at this position)
