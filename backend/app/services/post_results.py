@@ -42,6 +42,24 @@ _FILTER_FREE_RE = re.compile(
 _ASK_HOURS_RE = re.compile(
     r"\b(hours|when.*open|what time|schedule|close|closing)\b", re.I
 )
+
+# Gap 15: specific day-of-week detection
+# Maps day names to ISO day-of-week numbers (Monday=1, Sunday=7)
+# matching PostgreSQL EXTRACT(ISODOW ...) used in holiday_schedules.
+_DAY_NAMES = {
+    "monday": 1, "mon": 1,
+    "tuesday": 2, "tue": 2, "tues": 2,
+    "wednesday": 3, "wed": 3,
+    "thursday": 4, "thu": 4, "thurs": 4, "thur": 4,
+    "friday": 5, "fri": 5,
+    "saturday": 6, "sat": 6,
+    "sunday": 7, "sun": 7,
+}
+_DAY_PATTERN = re.compile(
+    r"\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday|"
+    r"mon|tue|tues|wed|thu|thurs?|fri|sat|sun)\b", re.I
+)
+_WEEKEND_RE = re.compile(r"\b(weekend|weekends)\b", re.I)
 _ASK_ADDRESS_RE = re.compile(
     r"\b(address|where|location|directions|how.*get there|"
     r"how.*far|located)\b", re.I
@@ -124,6 +142,17 @@ def classify_post_results_question(message: str) -> Optional[dict]:
         return {"type": "filter_free"}
 
     # Field questions (about all results or a general ask)
+    # Gap 15: check for specific day-of-week BEFORE generic hours
+    day_match = _DAY_PATTERN.search(lower)
+    weekend_match = _WEEKEND_RE.search(lower)
+    if day_match and _ASK_HOURS_RE.search(lower):
+        weekday = _DAY_NAMES.get(day_match.group(1).lower())
+        if weekday is not None:
+            return {"type": "ask_hours_day", "weekday": weekday}
+    if weekend_match and _ASK_HOURS_RE.search(lower):
+        # "weekend hours" → return Saturday (6 in ISODOW); caller also checks Sunday (7)
+        return {"type": "ask_hours_day", "weekday": 6, "weekend": True}
+
     if _ASK_HOURS_RE.search(lower):
         return {"type": "ask_field", "field": "hours"}
     if _ASK_ADDRESS_RE.search(lower):

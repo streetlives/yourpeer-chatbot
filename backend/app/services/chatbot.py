@@ -32,6 +32,8 @@ from app.services.slot_extractor import (
     NEAR_ME_SENTINEL,
 )
 from app.rag import query_services
+from app.rag.query_executor import fetch_schedule_for_day
+from app.rag.query_templates import _format_time
 from app.privacy.pii_redactor import redact_pii
 from app.services.crisis_detector import detect_crisis
 from app.services.post_results import classify_post_results_question, answer_from_results
@@ -310,8 +312,57 @@ def generate_reply(
                     _log_turn(session_id, redacted_message, result, "post_results", request_id=request_id)
                     return result
 
+                # Gap 8: Sort options
+                _sort_patterns = {
+                    "sort by recently verified": "verified",
+                    "sort by recently updated": "verified",
+                    "sort by newest": "verified",
+                    "sort by most services": "services",
+                    "most services": "services",
+                }
+                _sort_key = _sort_patterns.get(message.lower().strip())
+                if _sort_key and _last_results:
+                    if _sort_key == "verified":
+                        sorted_results = sorted(
+                            _last_results,
+                            key=lambda s: s.get("last_validated_at") or "",
+                            reverse=True,
+                        )
+                    else:  # "services"
+                        sorted_results = sorted(
+                            _last_results,
+                            key=lambda s: len(s.get("also_available") or []),
+                            reverse=True,
+                        )
+                    existing["_last_results"] = sorted_results
+                    existing["_displayed_count"] = len(sorted_results)
+                    save_session_slots(session_id, existing)
+                    result = {
+                        "session_id": session_id,
+                        "response": f"Here are the results sorted by {'most recently verified' if _sort_key == 'verified' else 'most services at location'}:",
+                        "follow_up_needed": False,
+                        "slots": existing,
+                        "services": sorted_results[:10],
+                        "result_count": len(sorted_results[:10]),
+                        "relaxed_search": False,
+                        "quick_replies": [
+                            {"label": "🔍 New search", "value": "Start over"},
+                            {"label": "🤝 Peer navigator", "value": "Connect with peer navigator"},
+                        ],
+                    }
+                    _log_turn(session_id, redacted_message, result, "post_results", request_id=request_id)
+                    return result
+
                 post_intent = classify_post_results_question(message)
                 if post_intent is not None:
+                    # Gap 15: day-specific hours — requires DB lookup
+                    if post_intent.get("type") == "ask_hours_day":
+                        result = _handle_hours_for_day(
+                            session_id, existing, _last_results, post_intent, redacted_message, request_id
+                        )
+                        if result:
+                            return result
+
                     pr = answer_from_results(post_intent, _last_results)
                     if pr is not None:
                         result = {
@@ -778,8 +829,19 @@ def generate_reply(
     elif _response_tone == "urgent" and _is_service_flow:
         _tone_prefix = "I can see this is urgent — let me find something right away. "
 
-    # If enough detail → CONFIRMATION step
+    # If enough detail → CONFIRMATION step (or auto-execute for urgent)
     if (is_enough_to_answer(merged) or _geolocation_ready) and has_new_slots:
+        # Gap 16: Skip confirmation for high-urgency queries.
+        # "I need a bed tonight in Brooklyn" → execute immediately.
+        _is_urgent = merged.get("urgency") == "high"
+        if _is_urgent:
+            logger.info(f"[{session_id}] High urgency — auto-executing (skipping confirmation)")
+            merged.pop("_pending_confirmation", None)
+            save_session_slots(session_id, merged)
+            result = _execute_and_respond(session_id, message, merged, request_id=request_id)
+            _log_turn(session_id, redacted_message, result, "auto_execute", request_id=request_id, tone=tone)
+            return result
+
         merged["_pending_confirmation"] = True
         merged.pop("_queue_offer_pending", None)
         merged.pop("_queued_services_original", None)
@@ -1220,6 +1282,81 @@ def _handle_pending_confirmation(
 
 
 # ---------------------------------------------------------------------------
+# DAY-SPECIFIC HOURS (Gap 15)
+# ---------------------------------------------------------------------------
+
+_ISODOW_NAMES = {1: "Monday", 2: "Tuesday", 3: "Wednesday", 4: "Thursday",
+                 5: "Friday", 6: "Saturday", 7: "Sunday"}
+
+
+def _handle_hours_for_day(
+    session_id, existing, last_results, post_intent, redacted_message, request_id
+):
+    """Look up schedule for a specific day of the week for displayed services."""
+    weekday = post_intent.get("weekday")
+    is_weekend = post_intent.get("weekend", False)
+    if weekday is None or not last_results:
+        return None
+
+    # Collect service IDs
+    service_ids = [s["service_id"] for s in last_results if s.get("service_id")]
+    if not service_ids:
+        return None
+
+    # Fetch from DB
+    schedule = fetch_schedule_for_day(service_ids, weekday)
+
+    # For weekend requests, also fetch Sunday
+    if is_weekend:
+        sunday_sched = fetch_schedule_for_day(service_ids, 7)
+        for sid, slots in sunday_sched.items():
+            schedule.setdefault(sid, []).extend(slots)
+
+    day_name = _ISODOW_NAMES.get(weekday, f"day {weekday}")
+    if is_weekend:
+        day_name = "the weekend"
+
+    # Build response lines
+    lines = []
+    for svc in last_results:
+        sid = svc.get("service_id")
+        name = svc.get("service_name", "Unknown")
+        sched_entries = schedule.get(sid)
+        if sched_entries:
+            time_strs = []
+            for entry in sched_entries:
+                opens = _format_time(entry.get("opens_at"))
+                closes = _format_time(entry.get("closes_at"))
+                if opens and closes:
+                    time_strs.append(f"{opens} – {closes}")
+            if time_strs:
+                lines.append(f"• **{name}**: {', '.join(time_strs)}")
+            else:
+                lines.append(f"• **{name}**: Hours not confirmed")
+        else:
+            lines.append(f"• **{name}**: No schedule data for {day_name}")
+
+    response = f"Here are the hours for {day_name}:\n\n" + "\n".join(lines)
+    response += "\n\nHours can change — I'd recommend calling ahead to confirm."
+
+    result = {
+        "session_id": session_id,
+        "response": response,
+        "follow_up_needed": False,
+        "slots": existing,
+        "services": [],
+        "result_count": 0,
+        "relaxed_search": False,
+        "quick_replies": [
+            {"label": "📋 Show results again", "value": "Show all results"},
+            {"label": "🔍 New search", "value": "Start over"},
+        ],
+    }
+    _log_turn(session_id, redacted_message, result, "post_results", request_id=request_id)
+    return result
+
+
+# ---------------------------------------------------------------------------
 # QUERY EXECUTION (after confirmation)
 # ---------------------------------------------------------------------------
 
@@ -1381,6 +1518,12 @@ def _execute_and_respond(session_id: str, message: str, slots: dict, request_id:
                 "label": f"📋 Show {_undisplayed} more result{'s' if _undisplayed != 1 else ''}",
                 "value": "Show more results",
             })
+
+        # Gap 8: Sort options (only when multiple results)
+        if len(all_services) > 1 and not queued:
+            after_results_qr.append(
+                {"label": "🕐 Sort by recently verified", "value": "Sort by recently verified"},
+            )
 
     return {
         "session_id": session_id,
