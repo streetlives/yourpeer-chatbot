@@ -1508,15 +1508,22 @@ def next_follow_up_question(slots: dict) -> str:
 
     if not slots.get("location") or slots.get("location") == NEAR_ME_SENTINEL:
         return (
-            "I'd love to find services near you! "
             "What neighborhood or borough are you in? "
-            "For example: Brooklyn, Queens, Harlem, Midtown."
+            "This helps me find what's closest to you."
         )
 
     if slots.get("service_type") == "shelter" and not slots.get("age"):
-        return "To narrow shelter options, can you share your age?"
+        return (
+            "How old are you? Some shelters have specific programs "
+            "for youth or adults — this helps me match you. "
+            "You can skip this if you'd rather not say."
+        )
 
     if slots.get("service_type") == "shelter" and not slots.get("family_status"):
-        return "Are you on your own, or do you have family or children with you?"
+        return (
+            "Are you on your own, or do you have others with you "
+            "(children, family, partner)? Some shelters have "
+            "specific options depending on your situation."
+        )
 
     return "Could you share one more detail to help me narrow options?"

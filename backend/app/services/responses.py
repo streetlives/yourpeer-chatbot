@@ -23,9 +23,11 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _GREETING_RESPONSE = (
-    "Hey! I'm here to help you find services in NYC — things like "
-    "food, shelter, showers, clothing, health care, and more. "
-    "What are you looking for today?"
+    "Hey! I'm here to help you find free services in NYC — things like "
+    "food, shelter, showers, clothing, health care, and more.\n\n"
+    "I'll ask a couple of questions to find what's near you. "
+    "You can skip anything you're not comfortable sharing. "
+    "What are you looking for?"
 )
 
 _RESET_RESPONSE = (

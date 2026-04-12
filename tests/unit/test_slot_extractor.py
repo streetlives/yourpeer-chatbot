@@ -568,7 +568,7 @@ def test_followup_asks_age_for_shelter():
         "service_type": "shelter",
         "location": "Brooklyn",
     })
-    assert "age" in question.lower()
+    assert "age" in question.lower() or "old" in question.lower()
 
 
 # -----------------------------------------------------------------------

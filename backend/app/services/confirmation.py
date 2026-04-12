@@ -39,15 +39,17 @@ def _build_confirmation_message(slots: dict) -> str:
     org_name = slots.get("org_name")
     if org_name:
         if slots.get("service_type"):
-            msg = f"I'll search for {service_label} at {org_name}"
+            msg = f"Does this look right? {service_label} at {org_name}"
         else:
-            msg = f"I'll search for services at {org_name}"
+            msg = f"Does this look right? Services at {org_name}"
         if location and location != "your area" and location != NEAR_ME_SENTINEL:
             location_clean, _ = redact_pii(location)
             msg += f" in {location_clean}"
         msg += "."
         return msg
     age = slots.get("age")
+    if age == "skipped":
+        age = None
 
     # When using browser geolocation, show "near your location"
     # instead of the raw "__near_me__" sentinel.
@@ -80,7 +82,7 @@ def _build_confirmation_message(slots: dict) -> str:
         else:
             service_label = ", ".join(all_labels[:-1]) + f", and {all_labels[-1]}"
 
-    parts = [f"I'll search for {service_label} {location_phrase}"]
+    parts = [f"Does this look right? {service_label} {location_phrase}"]
     if age:
         parts[0] += f" (age {age})"
 
@@ -107,8 +109,8 @@ def _build_confirmation_message(slots: dict) -> str:
 
     if _prefix:
         parts[0] = parts[0].replace(
-            f"I'll search for {service_label}",
-            f"I'll search for {_prefix}{service_label}",
+            f"Does this look right? {service_label}",
+            f"Does this look right? {_prefix}{service_label}",
         )
 
     family = slots.get("family_status")
@@ -152,6 +154,21 @@ def _follow_up_quick_replies(slots: dict) -> list:
             {"label": "Queens", "value": "Queens"},
             {"label": "Bronx", "value": "Bronx"},
             {"label": "Staten Island", "value": "Staten Island"},
+        ]
+
+    # Missing age (shelter only) — offer skip option
+    if slots.get("service_type") == "shelter" and not slots.get("age"):
+        return [
+            {"label": "⏭️ Skip this", "value": "I'd rather not say"},
+        ]
+
+    # Missing family status (shelter only) — offer skip + options
+    if slots.get("service_type") == "shelter" and not slots.get("family_status"):
+        return [
+            {"label": "🧑 On my own", "value": "On my own"},
+            {"label": "👨‍👩‍👦 With children", "value": "With children"},
+            {"label": "👥 With others", "value": "With family"},
+            {"label": "⏭️ Skip this", "value": "I'd rather not say"},
         ]
 
     return []
