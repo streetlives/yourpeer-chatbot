@@ -39,13 +39,13 @@ def _build_confirmation_message(slots: dict) -> str:
     org_name = slots.get("org_name")
     if org_name:
         if slots.get("service_type"):
-            msg = f"Does this look right? {service_label} at {org_name}"
+            msg = f"I\u2019ll look for {service_label} at {org_name}"
         else:
-            msg = f"Does this look right? Services at {org_name}"
+            msg = f"I\u2019ll look for services at {org_name}"
         if location and location != "your area" and location != NEAR_ME_SENTINEL:
             location_clean, _ = redact_pii(location)
             msg += f" in {location_clean}"
-        msg += "."
+        msg += " \u2014 does that sound right?"
         return msg
     age = slots.get("age")
     if age == "skipped":
@@ -82,15 +82,11 @@ def _build_confirmation_message(slots: dict) -> str:
         else:
             service_label = ", ".join(all_labels[:-1]) + f", and {all_labels[-1]}"
 
-    parts = [f"Does this look right? {service_label} {location_phrase}"]
+    parts = [f"I\u2019ll look for {service_label} {location_phrase}"]
     if age:
         parts[0] += f" (age {age})"
 
     # --- Identity-aware prefixes ---
-    # Build a prefix for the service label based on the user's identity
-    # context. Applied ONCE to avoid fragile str.replace() chains.
-    # Priority order: LGBTQ (from _gender) > population (from _populations).
-    # Only one prefix is shown to keep the message concise.
     _prefix = ""
     gender = slots.get("_gender")
     populations = slots.get("_populations", [])
@@ -109,8 +105,8 @@ def _build_confirmation_message(slots: dict) -> str:
 
     if _prefix:
         parts[0] = parts[0].replace(
-            f"Does this look right? {service_label}",
-            f"Does this look right? {_prefix}{service_label}",
+            f"I\u2019ll look for {service_label}",
+            f"I\u2019ll look for {_prefix}{service_label}",
         )
 
     family = slots.get("family_status")
@@ -121,7 +117,7 @@ def _build_confirmation_message(slots: dict) -> str:
     elif family == "alone":
         parts[0] += ", for yourself"
 
-    parts[0] += "."
+    parts[0] += " \u2014 does that sound right?"
 
     return " ".join(parts)
 

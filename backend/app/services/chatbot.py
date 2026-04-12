@@ -1831,12 +1831,12 @@ def _execute_and_respond(session_id: str, message: str, slots: dict, request_id:
                     ", ".join(all_labels[:-1]) + ", and " + all_labels[-1]
                 )
                 bot_response = (
-                    f"Here are {result_count} location(s) that offer both "
-                    f"{combined.lower()}{qualifier}:"
+                    f"I found {result_count} location(s) that offer both "
+                    f"{combined.lower()}{qualifier} \u2014 here\u2019s what\u2019s available:"
                 )
             else:
                 bot_response = (
-                    f"Here are {result_count} option(s){qualifier}:"
+                    f"I found {result_count} option(s) for you{qualifier}:"
                 )
         else:
             bot_response = _no_results_message(slots)
