@@ -871,7 +871,7 @@ def generate_reply(
         else:
             pending_extracted = extract_slots(message)
         pending_has_new = any(v is not None and v != [] for k, v in pending_extracted.items()
-                              if k not in ("additional_services", "_populations"))
+                              if k not in ("additional_services", "_populations", "_contradiction"))
 
         # Fix 3: Contradiction detection — if a slot CHANGED (not just
         # filled), the user is correcting their search. Auto-execute
@@ -953,7 +953,7 @@ def generate_reply(
         extracted = early_extracted
 
     has_new_slots = any(v is not None and v != [] for k, v in extracted.items()
-                        if k not in ("additional_services", "_populations"))
+                        if k not in ("additional_services", "_populations", "_contradiction"))
 
     merged = merge_slots(existing, extracted)
 

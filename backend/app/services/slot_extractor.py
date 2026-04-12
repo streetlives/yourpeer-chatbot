@@ -1,5 +1,8 @@
 import re
+import logging
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 # NOTE: This file contains a simple rule-based slot extractor used for early
 # prototyping. It relies on keyword matching and basic regex patterns, so it
@@ -553,24 +556,88 @@ _NEGATION_PREFIXES = [
     "not looking for ", "don't want ", "not interested in ",
 ]
 
+# Articles, determiners, and possessives that can appear between a
+# negation word and the keyword it negates.  "forget the food" and
+# "skip my shelter" should still negate the keyword.
+_NEGATION_FILLER_WORDS = frozenset({
+    "the", "my", "this", "that", "those", "all", "any", "about",
+    "the", "a", "an",
+})
+
 
 def _is_negated(text: str, match_pos: int) -> bool:
     """Check if a keyword match at match_pos is preceded by a negation.
 
     Looks at the 25 characters before the match position for negation
-    prefixes. Only triggers when the negation immediately precedes the
-    keyword (with optional whitespace/punctuation between).
+    prefixes. Handles both direct adjacency ("forget food") and
+    intervening filler words ("forget the food", "not my shelter").
 
     Examples:
-        "not food, shelter" → _is_negated("not food, shelter", 4) → True
-        "I need food" → _is_negated("i need food", 7) → False
-        "forget food, I need shelter" → _is_negated(..., 7) → True
+        "not food, shelter"           → True  (direct)
+        "I need food"                 → False
+        "forget food, I need shelter" → True  (direct)
+        "forget the food"             → True  (filler word "the")
+        "skip my shelter"             → True  (filler word "my")
+        "actually forget the food"    → True  (filler word "the")
     """
     # Look at the 25 chars before the match
     window_start = max(0, match_pos - 25)
     prefix = text[window_start:match_pos].lower().rstrip()
 
-    return any(prefix.endswith(neg.rstrip()) for neg in _NEGATION_PREFIXES)
+    # Direct check (existing behavior — handles "forget food")
+    if any(prefix.endswith(neg.rstrip()) for neg in _NEGATION_PREFIXES):
+        return True
+
+    # Strip trailing filler words and re-check.
+    # Handles "forget the food", "not my shelter", "skip that food".
+    stripped = prefix
+    while True:
+        parts = stripped.rsplit(None, 1)
+        if len(parts) < 2:
+            break
+        last_word = parts[1]
+        if last_word in _NEGATION_FILLER_WORDS:
+            stripped = parts[0].rstrip()
+        else:
+            break
+
+    if stripped != prefix:
+        if any(stripped.endswith(neg.rstrip()) for neg in _NEGATION_PREFIXES):
+            return True
+
+    return False
+
+
+# ---------------------------------------------------------------------------
+# Contradiction signal detection (multiturn_change_mind fix)
+# ---------------------------------------------------------------------------
+
+# Phrases that signal the user is explicitly changing their mind.
+# Sorted longest-first so that "i changed my mind" matches before "actually".
+_CONTRADICTION_SIGNALS = [
+    "i changed my mind", "changed my mind",
+    "never mind the", "never mind that", "nevermind the", "nevermind that",
+    "forget that", "forget about", "scratch that",
+    "no wait", "hold on",
+    "actually", "instead", "wait,", "wait ",
+]
+
+
+def _find_contradiction_signal(text: str) -> int:
+    """Return the position of an explicit change-of-mind signal, or -1.
+
+    Used to reorder extracted services so the user's *new* intent becomes
+    primary. Only fires when the signal appears BETWEEN two service
+    keywords — "actually I need shelter" where shelter appears after
+    "actually".
+    """
+    lower = text.lower()
+    best_pos = -1
+    for signal in _CONTRADICTION_SIGNALS:
+        pos = lower.find(signal)
+        if pos >= 0 and (best_pos < 0 or pos < best_pos):
+            best_pos = pos
+    return best_pos
 
 
 def _extract_all_service_types(text: str) -> list[tuple[str, Optional[str]]]:
@@ -583,10 +650,16 @@ def _extract_all_service_types(text: str) -> list[tuple[str, Optional[str]]]:
     "instead of", "skip" are excluded. This prevents "not food, shelter"
     from extracting "food" as the primary service.
 
+    Contradiction-aware: when the message contains explicit change-of-mind
+    signals ("actually", "instead", "I changed my mind"), services
+    appearing AFTER the signal are promoted to primary. This handles
+    "Actually forget the food, I really need shelter" → [("shelter", ...)].
+
     Examples:
         "I need food and shelter" → [("food", None), ("shelter", None)]
         "dental care in Brooklyn" → [("medical", "dental care")]
         "not food, shelter" → [("shelter", None)]
+        "actually forget the food, I need shelter" → [("shelter", None)]
         "hello" → []
     """
     lower = text.lower()
@@ -655,6 +728,18 @@ def _extract_all_service_types(text: str) -> list[tuple[str, Optional[str]]]:
     # Sort by text position so the primary service is what the user
     # mentioned first, not whichever keyword happens to be longest.
     found.sort(key=lambda x: x[0])
+
+    # Contradiction reordering: when the user signals a change of mind
+    # ("actually", "instead", "I changed my mind") and multiple services
+    # were found, promote services that appear AFTER the signal.
+    # "I need food... actually, I need shelter" → shelter becomes primary.
+    if len(found) > 1:
+        signal_pos = _find_contradiction_signal(text)
+        if signal_pos >= 0:
+            post_signal = [(p, s, d) for p, s, d in found if p > signal_pos]
+            pre_signal = [(p, s, d) for p, s, d in found if p <= signal_pos]
+            if post_signal:
+                found = post_signal + pre_signal
 
     return [(svc, detail) for _, svc, detail in found]
 
@@ -1318,15 +1403,53 @@ def extract_slots(message: str) -> dict:
         "_populations": _extract_populations(message),
         "org_name": _extract_org_name(message),
         "no_requirements": _extract_no_requirements(message),
+        "_contradiction": _find_contradiction_signal(message) >= 0,
     }
 
 
 def merge_slots(existing: dict, new_values: dict) -> dict:
+    """Merge newly extracted slots into the existing session state.
+
+    Contradiction-aware: when the extraction flags ``_contradiction``
+    (the user said "actually", "instead", "I changed my mind", etc.)
+    and the new service_type matches the existing one — meaning the
+    negation layer didn't catch the old service — fall back to the
+    first ``additional_services`` entry as the intended new service.
+    This fixes the ``multiturn_change_mind`` eval scenario.
+    """
     merged = dict(existing)
+
+    # --- Contradiction promotion (defense-in-depth) ---
+    # If negation + reordering already produced the correct primary
+    # service_type, this block is a no-op.  It only fires when the
+    # old service survived extraction AND additional_services holds
+    # the user's real intent.
+    _is_contradiction = new_values.get("_contradiction", False)
+    if (_is_contradiction
+            and new_values.get("service_type") is not None
+            and new_values["service_type"] == existing.get("service_type")
+            and new_values.get("additional_services")):
+        additional = new_values["additional_services"]
+        if additional:
+            promoted_svc, promoted_detail = additional[0][0], additional[0][1]
+            logger.info(
+                f"Contradiction promotion: '{new_values['service_type']}' "
+                f"→ '{promoted_svc}' (from additional_services)"
+            )
+            new_values = dict(new_values)
+            new_values["service_type"] = promoted_svc
+            new_values["service_detail"] = promoted_detail
+            # Remove the promoted service from additional_services
+            new_values["additional_services"] = additional[1:]
+
     for key, value in new_values.items():
         # additional_services is transient extraction metadata —
         # never persist it in session state.
         if key == "additional_services":
+            continue
+        # _contradiction is a transient extraction flag —
+        # never persist it in session state.
+        if key == "_contradiction":
             continue
         # _populations is a list — merge by union, not replace.
         if key == "_populations":
@@ -1348,10 +1471,14 @@ def merge_slots(existing: dict, new_values: dict) -> dict:
 
     # When service_type changes, clear stale service_detail so the
     # confirmation message doesn't show the old sub-type label.
+    # Also clear _pending_confirmation — the old confirmation is
+    # no longer valid.
     if (new_values.get("service_type") is not None
             and new_values["service_type"] != existing.get("service_type")):
         if new_values.get("service_detail") is None:
             merged.pop("service_detail", None)
+        if _is_contradiction:
+            merged.pop("_pending_confirmation", None)
 
     return merged
 

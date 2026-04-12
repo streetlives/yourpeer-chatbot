@@ -266,3 +266,194 @@ class TestDeclineWithServiceIntent:
     def test_changed_mind_medical(self):
         r = send_multi(["I need food in Brooklyn", "I changed my mind, medical"])
         assert r[1]["slots"]["service_type"] == "medical"
+
+
+# -----------------------------------------------------------------------
+# NEGATION WITH FILLER WORDS (multiturn_change_mind root cause fix)
+# -----------------------------------------------------------------------
+
+class TestNegationFillerWords:
+    """_is_negated should handle articles/determiners between negation and keyword.
+
+    Root cause of multiturn_change_mind: 'forget the food' was not negating
+    'food' because 'the' broke the direct adjacency check.
+    """
+
+    @pytest.mark.parametrize("msg,expected_service", [
+        # Filler-word negation — food should be negated
+        ("forget the food, I need shelter", "shelter"),
+        ("forget my food, shelter please", "shelter"),
+        ("skip the food, shelter", "shelter"),
+        ("not the food, shelter", "shelter"),
+        ("forget about the food, I need shelter", "shelter"),
+        ("don't want the food, shelter", "shelter"),
+        ("don't need the food, give me shelter", "shelter"),
+        ("skip my food, I need clothing", "clothing"),
+        # The exact eval scenario message
+        ("Actually forget the food, I really need a place to sleep tonight", "shelter"),
+        # Should NOT negate — no negation word, just filler
+        ("the food bank is great", "food"),
+        ("I forgot I need food", "food"),
+        ("I need my food in Brooklyn", "food"),
+    ])
+    def test_filler_word_negation(self, msg, expected_service):
+        s = extract_slots(msg)
+        assert s["service_type"] == expected_service, \
+            f'"{msg}" → {s["service_type"]}, expected {expected_service}'
+
+
+class TestContradictionSignalExtraction:
+    """Contradiction signals should reorder services so the new intent is primary."""
+
+    @pytest.mark.parametrize("msg,expected_service", [
+        # "actually" promotes post-signal service
+        ("I said food but actually I need shelter", "shelter"),
+        ("food... actually shelter", "shelter"),
+        # "instead" promotes post-signal service
+        ("not food, shelter instead", "shelter"),
+        ("I want shelter instead", "shelter"),
+        # "I changed my mind" promotes post-signal service
+        ("I changed my mind, I need medical", "medical"),
+        # "wait" promotes post-signal service
+        ("wait, I need clothing not food", "clothing"),
+        # No contradiction signal — first-mentioned wins
+        ("I need food and shelter", "food"),
+    ])
+    def test_contradiction_reordering(self, msg, expected_service):
+        s = extract_slots(msg)
+        assert s["service_type"] == expected_service, \
+            f'"{msg}" → {s["service_type"]}, expected {expected_service}'
+
+    def test_contradiction_flag_set(self):
+        s = extract_slots("actually I need shelter")
+        assert s["_contradiction"] is True
+
+    def test_no_contradiction_flag_for_normal(self):
+        s = extract_slots("I need food in Brooklyn")
+        assert s["_contradiction"] is False
+
+
+class TestMergeSlotsContradiction:
+    """merge_slots should promote additional_services on contradiction when
+    negation failed to filter the old service (defense-in-depth)."""
+
+    def test_promotion_when_same_service_with_contradiction(self):
+        from app.services.slot_extractor import merge_slots
+        existing = {"service_type": "food", "location": "manhattan"}
+        new_vals = {
+            "service_type": "food",  # negation didn't catch it
+            "additional_services": [("shelter", None, None)],
+            "_contradiction": True,
+        }
+        merged = merge_slots(existing, new_vals)
+        assert merged["service_type"] == "shelter"
+
+    def test_no_promotion_without_contradiction(self):
+        from app.services.slot_extractor import merge_slots
+        existing = {"service_type": "food", "location": "manhattan"}
+        new_vals = {
+            "service_type": "food",
+            "additional_services": [("shelter", None, None)],
+            "_contradiction": False,
+        }
+        merged = merge_slots(existing, new_vals)
+        assert merged["service_type"] == "food"
+
+    def test_contradiction_clears_pending_confirmation(self):
+        from app.services.slot_extractor import merge_slots
+        existing = {
+            "service_type": "food",
+            "location": "manhattan",
+            "_pending_confirmation": True,
+        }
+        new_vals = {
+            "service_type": "shelter",
+            "_contradiction": True,
+        }
+        merged = merge_slots(existing, new_vals)
+        assert merged["service_type"] == "shelter"
+        assert "_pending_confirmation" not in merged
+
+    def test_contradiction_flag_not_persisted(self):
+        from app.services.slot_extractor import merge_slots
+        existing = {"service_type": "food"}
+        new_vals = {"service_type": "shelter", "_contradiction": True}
+        merged = merge_slots(existing, new_vals)
+        assert "_contradiction" not in merged
+
+    def test_demographics_preserved_on_contradiction(self):
+        from app.services.slot_extractor import merge_slots
+        existing = {"service_type": "food", "location": "brooklyn", "age": 19}
+        new_vals = {"service_type": "shelter", "_contradiction": True}
+        merged = merge_slots(existing, new_vals)
+        assert merged["service_type"] == "shelter"
+        assert merged["age"] == 19
+        assert merged["location"] == "brooklyn"
+
+
+# -----------------------------------------------------------------------
+# EVAL SCENARIO: multiturn_change_mind (4-turn regression guard)
+# -----------------------------------------------------------------------
+
+class TestEvalMultiturnChangeMind:
+    """Exact reproduction of the multiturn_change_mind eval scenario.
+
+    User: 'I need food'
+    User: 'Manhattan'
+    User: 'Actually forget the food, I really need a place to sleep tonight'
+    User: 'Yes, search'
+
+    Expected: service_type=shelter, location contains manhattan.
+    """
+
+    def test_full_eval_scenario(self):
+        r = send_multi([
+            "I need food",
+            "Manhattan",
+            "Actually forget the food, I really need a place to sleep tonight",
+            "Yes, search",
+        ])
+        # After turn 3, service_type should be shelter
+        assert r[2]["slots"]["service_type"] == "shelter"
+        # Location should be preserved from turn 2
+        loc = r[2]["slots"].get("location", "")
+        assert "manhattan" in loc.lower(), f"location={loc}"
+
+    def test_turn_3_switches_to_shelter(self):
+        """Turn 3 alone should switch from food to shelter."""
+        r = send_multi([
+            "I need food",
+            "Manhattan",
+            "Actually forget the food, I really need a place to sleep tonight",
+        ])
+        assert r[2]["slots"]["service_type"] == "shelter"
+
+    def test_final_results_are_shelter(self):
+        """The final results (after 'Yes, search') should be for shelter."""
+        r = send_multi([
+            "I need food",
+            "Manhattan",
+            "Actually forget the food, I really need a place to sleep tonight",
+            "Yes, search",
+        ])
+        final = next(
+            (res for res in reversed(r) if res["result_count"] > 0),
+            r[-1],
+        )
+        assert final["slots"]["service_type"] == "shelter"
+
+    def test_variant_forget_about_the_food(self):
+        """Variant phrasing: 'forget about the food'."""
+        r = send_multi([
+            "I need food in Brooklyn",
+            "forget about the food, I need shelter",
+        ])
+        assert r[1]["slots"]["service_type"] == "shelter"
+
+    def test_variant_skip_the_food(self):
+        """Variant phrasing: 'skip the food'."""
+        r = send_multi([
+            "I need food in Brooklyn",
+            "skip the food, I need a shower",
+        ])
+        assert r[1]["slots"]["service_type"] == "personal_care"
