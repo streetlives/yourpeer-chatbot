@@ -66,7 +66,7 @@ information, preventing hallucination.
 | File | Purpose |
 |------|---------|
 | `backend/app/main.py` | FastAPI app entry point, CORS, router registration |
-| `backend/app/routes/chat.py` | `POST /chat/` and `/chat/feedback` endpoints |
+| `backend/app/routes/chat.py` | `POST /chat/`, `/chat/feedback`, and `/chat/location-feedback` endpoints |
 | `backend/app/routes/admin.py` | Admin API: conversations, events, stats, eval runner |
 | `backend/app/services/chatbot.py` | Conversation router: `generate_reply()`, query execution, session orchestration |
 | `backend/app/services/classifier.py` | Message classification: `_classify_action()`, `_classify_tone()`, contraction normalization, intensifier stripping |
@@ -75,7 +75,7 @@ information, preventing hallucination.
 | `backend/app/services/confirmation.py` | Confirmation messages, quick-reply builders, no-results messages, borough suggestions |
 | `backend/app/services/bot_knowledge.py` | Bot self-knowledge: live capability sourcing, topic matching, LLM context generation |
 | `backend/app/services/crisis_detector.py` | Two-stage crisis detection (regex + Sonnet LLM), category-specific hotlines |
-| `backend/app/services/slot_extractor.py` | Regex-based slot extraction with keyword matching, gender/LGBTQ identity extraction, population context extraction (veteran, disabled, reentry, DV survivor, pregnant, senior) |
+| `backend/app/services/slot_extractor.py` | Regex-based slot extraction with keyword matching, gender/LGBTQ identity extraction, population context extraction (veteran, disabled, reentry, DV survivor, pregnant, senior), organization name extraction, walk-in/no-requirements detection |
 | `backend/app/services/llm_slot_extractor.py` | LLM slot extraction via Claude Haiku tool calling |
 | `backend/app/services/llm_classifier.py` | Unified LLM classification gate — single Haiku call returning service_type, location, tone, action when regex fails |
 | `backend/app/services/session_store.py` | In-memory session state with 30-min TTL (max 500 sessions) |
@@ -83,7 +83,7 @@ information, preventing hallucination.
 | `backend/app/llm/claude_client.py` | Anthropic client (lazy init), model constants, shared helpers |
 | `backend/app/rag/__init__.py` | `query_services()` entry point |
 | `backend/app/rag/query_executor.py` | DB execution, location normalization, borough/neighborhood PostGIS logic |
-| `backend/app/rag/query_templates.py` | 10 parameterized SQL templates (food, shelter, clothing, etc.), dynamic ORDER BY with population boosts |
+| `backend/app/rag/query_templates.py` | 11 parameterized SQL templates (food, shelter, clothing, etc. + org_name), dynamic ORDER BY with population boosts, eligibility/review highlight/required docs/languages subqueries |
 | `backend/app/privacy/pii_redactor.py` | PII detection and redaction (phone, SSN, email, DOB, address, names, gender identity) |
 | `backend/app/models/chat_models.py` | Pydantic models: ChatRequest, ChatResponse, ServiceCard, QuickReply |
 | `frontend-next/src/components/chat/` | Chat UI components (ChatContainer, ServiceCard, QuickReplies) |
@@ -107,7 +107,9 @@ information, preventing hallucination.
 - **Relaxed fallback**: auto-broadens filters when 0 results, suggests boroughs with more data
 - **Crisis detection**: regex + Sonnet LLM, covers suicide/self-harm, DV, trafficking, medical emergency, violence, youth runaway; fail-open policy returns safety response if LLM unavailable
 - **PII redaction**: phone, SSN, email, DOB, address, name, gender identity detection/redaction on every message
-- **Service cards**: structured results with name, org, address, phone, hours, fees, open/closed status, referral badges, action links
+- **Service cards**: structured results with name, org, address, phone (with extensions), hours, fees, open/closed status, referral badges, eligibility summary, review highlights, required documents, languages spoken, accessibility info, stale data warnings, action links, and per-location feedback
+- **Organization name search**: users can search by org name ("tell me about Covenant House", "Safe Horizon in Harlem"). 35+ multi-word names matched via substring, 5 abbreviations via word-boundary regex. Org name alone is sufficient (no location required). Returns all services at the matching organization
+- **Walk-in / no-requirements filter**: 20 phrases ("walk-in only", "no referral needed", "without appointment") exclude services requiring membership or referral. Universal optional filter across all templates
 - **Gender & LGBTQ identity filtering**: extracted only when explicitly stated (never inferred). Binary gender (male/female) passes to SQL filter. Transgender/nonbinary/LGBTQ bypass the eligibility filter and trigger taxonomy boosts for affirming services. Confirmation shows "LGBTQ-friendly" label. Gender terms redacted from stored transcripts
 - **Population context extraction & query boosts**: `_populations` slot detects veteran, disabled, reentry, DV survivor, pregnant, senior as cross-cutting identity attributes. Veterans get taxonomy-based boost (services tagged "Veterans" rank higher). All other populations get description-based ORDER BY boost (dynamic `pop_boost_pattern` applied across all 10 templates). Senior auto-inferred from age ≥ 62. Multiple populations supported. Confirmation shows context-aware prefixes ("veteran-friendly food", "accessible shelter"). Stored with `_` prefix for PII exclusion
 - **DV crisis → population injection**: when crisis detector fires on `domestic_violence` category, `dv_survivor` is injected into session `_populations` regardless of whether the population extractor caught it. This bridges the 51-phrase gap between crisis detection (54 DV phrases) and population extraction (3 matching phrases). Fires in both step-down (service intent) and crisis-only (no service intent) branches
@@ -135,20 +137,23 @@ information, preventing hallucination.
 - **Anonymized audit logging**: conversation turns, query executions, crisis events
 - **In-memory sessions**: no persistent conversation storage, 30-min TTL, LRU eviction at 500-session cap
 - **Chat history persistence**: conversation survives page refresh via Zustand `localStorage` sync; auto-resets after 30-min inactivity to match backend TTL
-- **Result sorting**: open-now first, then recently verified, then name; proximity-first when geolocation available
+- **Result sorting & pagination**: open-now first, then recently verified, then name; proximity-first when geolocation available. Users can re-sort by "recently verified" or "most services" after results. Initial query fetches 25, displays first 10 — "📋 Show N more" for the rest
+- **Auto-execute for urgent queries**: when urgency is high and slots are sufficient, skips confirmation and executes immediately. Medium urgency still confirms
+- **Day-specific hours**: "are they open Saturday?" queries `holiday_schedules` for the requested weekday and returns per-service hours. Weekend queries fetch both Saturday and Sunday
 - **Error boundaries**: route-level (chat, admin, global) + component-level (ServiceCarousel) + custom 404
 - **Security**: CORS allowlist, CSRF middleware, HMAC-signed session tokens, admin API key auth, CSP/X-Frame-Options/Permissions-Policy headers, eval subprocess isolation
 - **Stability**: 1,000-char message length limit (frontend + backend), coordinate validation (lat ±90, lng ±180), 10s LLM timeout, 5s DB statement timeout, 30s frontend fetch timeout, admin endpoint rate limiting (120/min IP + 5/hr eval), rate limiter memory cap (5,000 buckets)
 - **Observability**: `X-Request-ID` correlation IDs flow from frontend → Next.js proxy → FastAPI backend → audit log, enabling end-to-end request tracing
 - **Admin data caching**: centralized Zustand store with 30-second staleness threshold; navigating between admin tabs reuses cached data
-- **Test suite**: 40 pytest files (1,700 tests) organized into `tests/unit/` (25 files — no DB or LLM needed) and `tests/integration/` (15 files — use mocked DB/LLM), plus an `eval/` directory. Covers all services, routes, edge cases, geolocation, rate limiting, security, privacy, family composition, multi-service extraction, split classifier, taxonomy enrichment, nearby borough suggestions, gender/LGBTQ identity extraction, population context extraction (veteran, disabled, reentry, DV survivor, pregnant, senior — 88 tests covering extraction, merge, false positives, query boosts, confirmation messages, DV crisis injection, ORDER BY generation), bug fix regressions, narrative extraction, bot knowledge, boundary drift detection, context routing, integration scenarios, ambiguity handling (confidence scoring, disambiguation, correction recovery), post-results boundary routing, and DB schema/query integration. LLM-as-judge evaluation: 172 scenarios across 20 categories
+- **Test suite**: 45 pytest files (~1,830 tests) organized into `tests/unit/` (30 files — no DB or LLM needed) and `tests/integration/` (15 files — use mocked DB/LLM), plus an `eval/` directory. Covers all services, routes, edge cases, geolocation, rate limiting, security, privacy, family composition, multi-service extraction, split classifier, taxonomy enrichment, nearby borough suggestions, gender/LGBTQ identity extraction, population context extraction, organization name search, walk-in filter, eligibility display, review highlights, required documents, languages, phone extensions, sort options, day-specific hours, auto-execute, location feedback, pagination, bug fix regressions, narrative extraction, bot knowledge, boundary drift detection, context routing, integration scenarios, ambiguity handling, post-results boundary routing, and DB schema/query integration. LLM-as-judge evaluation: 172 scenarios across 20 categories
 
 ## Known Gaps / In Progress
 
 - **Adversarial LLM false positives** — The unified classification gate classifies nonsensical service requests ("helicopter ride") as `service_type=other` instead of returning null. Fix: tighten the LLM prompt to restrict "other" to known social service subcategories.
 - **Slot overwrite on contradiction** — `multiturn_change_mind` (3.25): when user says "actually, shelter" mid-conversation, the filled slot is not overwritten. Requires contradiction detection.
 - **Multilingual support** — English only. Spanish keyword support is designed (Phase 6 in implementation plan) but not yet implemented.
-- **Schedule data coverage** — sparse; only walk-in services have >40% coverage
+- **Schedule data coverage** — sparse; only walk-in services have >40% coverage. Day-specific hours queries are supported but coverage varies by service
+- **Sort by nearest** — not implemented. Would require PostGIS distance calculation stored on service cards for client-side re-sort. Current sort options are "recently verified" and "most services"
 - **`additional_info` field** — 99.7% null in DB, always empty in results
 - **LLM call instrumentation** — `log_llm_call()` API is defined in audit_log.py but not yet wired into `claude_client.py` call sites. Metrics section shows "No data" until instrumentation is added.
 - **Persistent storage** — when `PILOT_DB_PATH` is set, audit events and sessions are persisted to SQLite (WAL mode) and hydrated on startup. When unset, in-memory only
@@ -168,7 +173,7 @@ pytest -k reset                           # filter by test name
 ```
 
 All tests mock `claude_reply()` and `query_services()` — no live services required.
-Tests are organized into `tests/unit/` (25 files, no external deps) and `tests/integration/` (15 files, use `send()`/`send_multi()` helpers).
+Tests are organized into `tests/unit/` (30 files, no external deps) and `tests/integration/` (15 files, use `send()`/`send_multi()` helpers).
 Shared fixtures and helpers live in `tests/conftest.py` (use `send()`, `send_multi()`,
 `assert_classified()`). For live LLM integration tests:
 

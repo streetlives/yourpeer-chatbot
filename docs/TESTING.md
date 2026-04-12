@@ -2,7 +2,7 @@
 
 ## Overview
 
-The test suite covers 1,700 tests across 40 test files, plus an LLM-as-judge evaluation framework with 172 scenarios. Tests are organized into `tests/unit/` (25 files — no DB or LLM needed) and `tests/integration/` (15 files — use mocked DB/LLM via `send()`/`send_multi()` helpers), with a separate `tests/eval/` directory for the LLM judge. Tests validate every backend module: slot extraction (regex and LLM-based), gender/LGBTQ identity extraction, population context extraction (veteran, disabled, reentry, DV survivor, pregnant, senior — with false-positive guards, multi-population support, query boost verification, DV crisis injection), PII redaction (including gender identity terms), conversational routing, crisis detection, crisis step-down (including DV population injection), emotional handling (AVR pattern with 6 emotion-specific static responses), frustration routing (3-tier counter-based escalation), negative preference handling, conversational awareness guard, privacy routing exception, phrase list audit coverage (C-SSRS, Joiner IPT, DV control, shame/stigma, grief, NYC service terms), contraction normalization, intensifier stripping, post-normalization emotional phrase variants, location boundary enforcement, query template correctness (including dynamic ORDER BY generation with population boosts), confirmation flow (including population-aware prefixes), quick replies, audit logging, admin API routes, chat HTTP endpoint, Pydantic model validation, Claude client initialization, API configuration, session management, geolocation, rate limiting, request correlation IDs, privacy question handling, family composition, multi-service extraction, split classifier (action + tone), shelter taxonomy enrichment, word-boundary keyword collision prevention, nearby borough suggestions, bug fix regressions (7 targeted fixes with 30 tests), post-results question handling, crisis safety edge cases (research-sourced C-SSRS, HITS/SAFE, Polaris, SAMHSA), co-located multi-service queries, gap coverage (freshness, admin stats shape, skip_llm pipeline, prompt builders), quick reply button audit, SQLite pilot persistence (write-through, hydration, disabled mode), database schema/query integration, bot self-knowledge (live capability sourcing, topic matching), boundary drift detection (mock/Pydantic/SQL/format sync), context-aware routing (state transitions, frustration counting, implicit service changes), integration scenarios (narrative flows, cross-feature interactions, eval approximations), narrative extraction (urgency-aware slot extraction for long messages), ambiguity handling (confidence scoring, disambiguation prompts, correction recovery, "Not what I meant" button), and post-results boundary routing (new-request escape hatch, location-based result clearing, name-match fallthrough). Unit tests run without external services (database and Claude API are mocked). DB integration tests require DATABASE_URL and are automatically skipped without it.
+The test suite covers ~1,830 tests across 45 test files, plus an LLM-as-judge evaluation framework with 172 scenarios. Tests are organized into `tests/unit/` (30 files — no DB or LLM needed) and `tests/integration/` (15 files — use mocked DB/LLM via `send()`/`send_multi()` helpers), with a separate `tests/eval/` directory for the LLM judge. Tests validate every backend module: slot extraction (regex and LLM-based), gender/LGBTQ identity extraction, population context extraction (veteran, disabled, reentry, DV survivor, pregnant, senior — with false-positive guards, multi-population support, query boost verification, DV crisis injection), PII redaction (including gender identity terms), conversational routing, crisis detection, crisis step-down (including DV population injection), emotional handling (AVR pattern with 6 emotion-specific static responses), frustration routing (3-tier counter-based escalation), negative preference handling, conversational awareness guard, privacy routing exception, phrase list audit coverage (C-SSRS, Joiner IPT, DV control, shame/stigma, grief, NYC service terms), contraction normalization, intensifier stripping, post-normalization emotional phrase variants, location boundary enforcement, query template correctness (including dynamic ORDER BY generation with population boosts), confirmation flow (including population-aware prefixes), quick replies, audit logging, admin API routes, chat HTTP endpoint, Pydantic model validation, Claude client initialization, API configuration, session management, geolocation, rate limiting, request correlation IDs, privacy question handling, family composition, multi-service extraction, split classifier (action + tone), shelter taxonomy enrichment, word-boundary keyword collision prevention, nearby borough suggestions, bug fix regressions (7 targeted fixes with 30 tests), post-results question handling, crisis safety edge cases (research-sourced C-SSRS, HITS/SAFE, Polaris, SAMHSA), co-located multi-service queries, gap coverage (freshness, admin stats shape, skip_llm pipeline, prompt builders), quick reply button audit, SQLite pilot persistence (write-through, hydration, disabled mode), database schema/query integration, bot self-knowledge (live capability sourcing, topic matching), boundary drift detection (mock/Pydantic/SQL/format sync), context-aware routing (state transitions, frustration counting, implicit service changes), integration scenarios (narrative flows, cross-feature interactions, eval approximations), narrative extraction (urgency-aware slot extraction for long messages), ambiguity handling (confidence scoring, disambiguation prompts, correction recovery, "Not what I meant" button), and post-results boundary routing (new-request escape hatch, location-based result clearing, name-match fallthrough). Unit tests run without external services (database and Claude API are mocked). DB integration tests require DATABASE_URL and are automatically skipped without it.
 
 ## Running Tests
 
@@ -63,21 +63,21 @@ All 21 backend modules and all public functions are covered. Tests are in `tests
 
 | Module | Test file(s) | Tests | Status |
 |---|---|---|---|
-| `chatbot.py` | `integration/test_chatbot.py`, `integration/test_bug_fixes.py`, `integration/test_context_routing.py`, `integration/test_integration_scenarios.py`, `integration/test_ambiguity_handling.py` | 280+ | Full |
+| `chatbot.py` | `integration/test_chatbot.py`, `integration/test_bug_fixes.py`, `integration/test_context_routing.py`, `integration/test_integration_scenarios.py`, `integration/test_ambiguity_handling.py`, `unit/test_service_card_display.py`, `unit/test_results_enhancements.py` | 310+ | Full |
 | `classifier.py` | `unit/test_contraction_normalization.py`, `unit/test_phrase_audit.py`, `integration/test_chatbot.py` | 60+ | Full |
 | `phrase_lists.py` | `unit/test_phrase_audit.py` | 41 | Full |
 | `responses.py` | `integration/test_chatbot.py`, `integration/test_gap_coverage.py` | (inline) | Full |
 | `confirmation.py` | `unit/test_edge_cases.py`, `unit/test_gender_extraction.py`, `integration/test_chatbot.py` | (inline) | Full |
-| `slot_extractor.py` | `unit/test_slot_extractor.py`, `unit/test_gender_extraction.py`, `unit/test_edge_cases.py`, `unit/test_location_boundaries.py`, `unit/test_populations.py` | 280+ | Full |
-| `rag/__init__.py` | `unit/test_query_templates.py`, `unit/test_populations.py`, `integration/test_geolocation.py`, `integration/test_db_integration.py` | 100+ | Full |
-| `query_templates.py` | `unit/test_query_templates.py`, `unit/test_location_boundaries.py` | 49+ | Full |
+| `slot_extractor.py` | `unit/test_slot_extractor.py`, `unit/test_gender_extraction.py`, `unit/test_edge_cases.py`, `unit/test_location_boundaries.py`, `unit/test_populations.py`, `unit/test_org_name_search.py`, `unit/test_walk_in_and_card_extras.py` | 330+ | Full |
+| `rag/__init__.py` | `unit/test_query_templates.py`, `unit/test_populations.py`, `unit/test_org_name_search.py`, `unit/test_walk_in_and_card_extras.py`, `integration/test_geolocation.py`, `integration/test_db_integration.py` | 125+ | Full |
+| `query_templates.py` | `unit/test_query_templates.py`, `unit/test_location_boundaries.py`, `unit/test_service_card_display.py`, `unit/test_walk_in_and_card_extras.py` | 120+ | Full |
 | `query_executor.py` | `unit/test_location_boundaries.py`, `unit/test_edge_cases.py` | 65 | Full |
-| `audit_log.py` | `unit/test_audit_log.py`, `integration/test_bug_fixes.py`, `integration/test_admin.py`, `integration/test_ambiguity_handling.py` | 70+ | Full |
+| `audit_log.py` | `unit/test_audit_log.py`, `unit/test_location_feedback.py`, `integration/test_bug_fixes.py`, `integration/test_admin.py`, `integration/test_ambiguity_handling.py` | 77+ | Full |
 | `crisis_detector.py` | `unit/test_crisis_detector.py`, `integration/test_bug_fixes.py`, `integration/test_crisis_safety_edges.py` | 60+ | Full |
 | `llm_slot_extractor.py` | `unit/test_llm_slot_extractor.py`, `unit/test_narrative_extraction.py` | 44 | Full |
 | `llm_classifier.py` | `unit/test_llm_classifier.py` | 30 | Full |
 | `bot_knowledge.py` | `unit/test_bot_knowledge.py` | 37 | Full |
-| `post_results.py` | `unit/test_post_results.py`, `unit/test_post_results_boundary.py` | 100 | Full |
+| `post_results.py` | `unit/test_post_results.py`, `unit/test_post_results_boundary.py`, `unit/test_results_enhancements.py` | 125 | Full |
 | `pii_redactor.py` | `unit/test_pii_redactor.py`, `unit/test_gender_extraction.py`, `unit/test_edge_cases.py` | 38+ | Full |
 | `session_store.py` | `unit/test_session_store.py`, `integration/test_chatbot.py`, `integration/test_chat_route.py` | 7+ | Full |
 | `session_token.py` | `unit/test_session_token.py`, `integration/test_chat_route.py` | 17 | Full |
@@ -572,6 +572,68 @@ Validates Phase 3 (population context extraction and query boosts) and Phase 5 (
 | LLM merge | 3 | Union of LLM + regex populations, LLM empty + regex has data, both empty |
 | ORDER BY builder | 5 | pop_boost_pattern in SQL, absent when not set, LGBTQ coexist, veteran coexist, distance coexist |
 | DV crisis injection | 8 | With service intent, without service intent, non-DV no injection, preserves existing, no duplicate, step-down offers search, persists after confirm, follow-up gets boost |
+
+### `test_org_name_search.py` — 21 tests
+
+Validates organization name search (Gap 3): regex extraction with false-positive guards, slot integration, confirmation messages, query template configuration, routing through query_services, and full chatbot pipeline integration.
+
+| Category | Tests | What's covered |
+|---|---|---|
+| Org name extraction | 5 | Known orgs matched (8 names), abbreviations (4), false positives rejected (6), no-org messages (4), case insensitive |
+| Slot integration | 5 | extract_slots includes org_name, no org returns None, org_name alone sufficient, service_type still needed without org, coexistence |
+| Confirmation messages | 4 | Org only, org + location, org + service + location, normal without org |
+| Query template | 3 | Template exists, no taxonomy filter required, uses org_name_pattern filter |
+| Query routing | 2 | Routes to org_name template with ILIKE, location params applied alongside |
+| Chatbot integration | 2 | Org name triggers confirmation, org + location confirms |
+
+### `test_service_card_display.py` — 46 tests
+
+Validates service card display features: phone extensions, eligibility formatting, sub-category labels, accessibility, review highlights, SQL structure, and pagination/show-more handler.
+
+| Category | Tests | What's covered |
+|---|---|---|
+| _format_phone | 9 | None, no extension, empty, "None", "n/a", valid extension, whitespace, card with/without extension |
+| _format_eligibility | 16 | None, empty, all_ages, age range/min/max, gender single/both, combined, familySize, unknown param, null/empty values, card integration |
+| Also available labels | 6 | Taxonomy name mapping, "Other service" excluded, granular names preserved, deduplication, empty/null |
+| Accessibility | 2 | Present and absent |
+| Review highlights | 3 | Present, absent, SQL references location_comment_highlights |
+| SQL structure | 4 | phone_extension, eligibility_rules, review_highlight, accessibility_info in _BASE_QUERY |
+| Show more / pagination | 6 | Initial cap at 10, QR offered, no QR for few results, remainder returned, 6 patterns recognized, show all returns everything |
+
+### `test_location_feedback.py` — 7 tests
+
+Validates per-location feedback logging and stats aggregation.
+
+| Category | Tests | What's covered |
+|---|---|---|
+| Audit log | 5 | Full ratings stored, partial ratings, no ratings, multi-location, conversation registration |
+| Stats | 2 | Count included in stats, zero when none |
+
+### `test_walk_in_and_card_extras.py` — 28 tests
+
+Validates walk-in filter, required documents, and languages spoken on cards.
+
+| Category | Tests | What's covered |
+|---|---|---|
+| Walk-in extraction | 8 | Walk-in phrases, no referral, no appointment, open to anyone, no membership, negatives, extract_slots integration |
+| Walk-in routing | 2 | no_requirements param set when true, omitted when false |
+| _clean_list | 7 | None, empty, all-None, "None" string, empty strings, normal list, single item |
+| Required documents on cards | 4 | Present, absent, filters junk, empty list |
+| Languages on cards | 4 | Present, absent, filters null, empty list |
+| SQL structure | 3 | required_documents, languages_spoken, no_requirements filter exists |
+
+### `test_results_enhancements.py` — 25 tests
+
+Validates sort options, day-specific hours, and urgent auto-execute.
+
+| Category | Tests | What's covered |
+|---|---|---|
+| Auto-execute | 4 | High urgency skips confirmation, high urgency + location executes, medium still confirms, no location still asks |
+| Sort patterns | 5 | Sort by verified, by services, updates session, QR offered, unrecognized falls through |
+| Day detection | 7 | Saturday/Sunday/Monday/abbreviated/weekend detected, day without hours context ignored, generic hours still works |
+| ISODOW mapping | 3 | Monday=1, Saturday=6, Sunday=7, abbreviations match |
+| Hours for day handler | 3 | Hours per service with mock DB, no-data message, weekend fetches both days |
+| Schedule DB function | 2 | Empty input returns {}, SQL uses correct params |
 
 ## LLM-as-Judge Evaluation (`eval_llm_judge.py`)
 

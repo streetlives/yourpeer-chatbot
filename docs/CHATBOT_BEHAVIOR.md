@@ -248,7 +248,13 @@ The `_last_action` tracker is cleared after any non-yes/no message so it doesn't
 
 ### Service
 
-Extracts structured slots (service type, service detail, location, age, urgency, gender, family status) from the message. If slots are complete, shows a confirmation prompt. If incomplete, asks a follow-up question for the missing slot.
+Extracts structured slots (service type, service detail, location, age, urgency, gender, family status, organization name, walk-in preference) from the message. If slots are complete, shows a confirmation prompt. If incomplete, asks a follow-up question for the missing slot.
+
+**Organization name search:** When a user mentions a known organization name ("tell me about Covenant House", "Safe Horizon in Harlem"), the `org_name` slot is extracted. Organization name alone is sufficient to search — no location or service type required. The confirmation message adapts: "I'll search for services at Covenant House" or "I'll search for legal help at Safe Horizon in Harlem."
+
+**Auto-execute for urgent queries:** When urgency is "high" and all required slots are filled (e.g., "I need a bed tonight in Brooklyn"), the confirmation step is skipped and the search executes immediately. Medium urgency and incomplete slots still go through normal confirmation.
+
+**Walk-in filter:** When a user says "walk-in only", "no referral needed", or similar (20 phrases), the `no_requirements` slot is set. This excludes services requiring membership or referral from the results.
 
 **Family composition:** For shelter searches, the chatbot asks "Are you on your own, or do you have family or children with you?" after collecting age. The `family_status` slot (with_children, with_family, alone) is shown in the confirmation and used to enrich shelter taxonomy queries.
 
@@ -364,12 +370,19 @@ After search results are displayed, follow-up questions are answered determinist
 | `specific_index` | "tell me about the first one" | Shows detailed view of that service |
 | `specific_name` | "tell me about The Door" | Fuzzy matches service by name |
 | `ask_field` | "what's the phone number?" | Answers the field question |
+| `ask_hours_day` | "are they open Saturday?" | Queries DB for that day's schedule |
 | `unknown_about_results` | "do they take walk-ins?" | Honest "I don't have that info" |
 | No match | (new service request) | Falls through to normal routing |
 
+**Sort options:** After results, a "🕐 Sort by recently verified" quick reply is offered. Sort patterns ("sort by recently verified", "sort by most services", etc.) re-sort `_last_results` in Python and return the re-ordered cards.
+
+**Pagination / show more:** Initial query fetches 25 results but displays the first 10. When undisplayed results exist, a "📋 Show N more results" quick reply is offered. "Show more", "more results", "any others", "what else" (10 patterns) return the undisplayed remainder.
+
+**Day-specific hours:** When the user asks about a specific day ("are they open Saturday?"), the system detects the day name, queries `holiday_schedules` for that weekday (ISO DOW: Monday=1, Sunday=7), and returns per-service hours. Weekend queries fetch both Saturday and Sunday.
+
 **Safety requirement (eval P10):** Crisis detection always runs BEFORE the post-results handler. Messages like "do they even help? I want to die" contain result-reference words ("they") that would match the post-results classifier. Without this ordering, the crisis handler would never fire.
 
-**Stored results lifecycle:** Results are stored in `_last_results` after a successful search. Cleared when: the user starts a new search, resets, or the confirmation step begins for a different service. Post-results questions do not modify service slots.
+**Stored results lifecycle:** Results are stored in `_last_results` after a successful search (up to 25 from the initial query). `_displayed_count` tracks how many the user has seen. Cleared when: the user starts a new search, resets, or the confirmation step begins for a different service. Sort and show-more operations modify `_last_results` but do not clear service slots.
 
 ### Just chatting mode
 

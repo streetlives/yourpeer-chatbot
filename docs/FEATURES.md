@@ -86,6 +86,12 @@ See [CRISIS_DETECTION.md](CRISIS_DETECTION.md) for architecture, phrase list des
 - **Graceful degradation** — if the database is unreachable, falls back to LLM; if LLM also fails, returns a safe static message
 - **Open-now sorting** — results are sorted with currently open services first, closed second, unknown third. Stable sort preserves the freshness/proximity ordering within each group
 - **Post-results question handler** — after search results are displayed, follow-up questions like "are any open now?", "are any free?", "tell me about the first one", or "which ones are near Harlem?" are answered deterministically from stored card data — zero LLM calls. Supports 7 intent types: filter by open, filter by free, specific service by index, specific by name, field questions (hours/address/phone/website), general about results, and unknown. Crisis detection always runs before the post-results handler (eval P10 safety requirement). The detail view shows all card fields including "Also available here" co-located services
+- **Organization name search** — users can search by org name ("tell me about Covenant House", "Safe Horizon in Harlem"). Regex matches 35+ multi-word org names plus 5 abbreviations (YMCA, CAMBA, DYCD, MRNY, YWCA) with word-boundary matching to avoid false positives. The LLM extractor handles ambiguous org names. Org name alone is sufficient to search (no location required). Returns all services at the matching organization
+- **Walk-in / no-requirements filter** — detects 20 phrases ("walk-in only", "no referral needed", "without appointment", "open to anyone") and excludes services that require membership or referral. Applied as a universal optional filter across all service templates
+- **Pagination / "show more"** — initial query fetches 25 results but displays the first 10. A "📋 Show N more results" quick reply appears when undisplayed results exist. 10 trigger patterns recognized ("show more", "more results", "any others", "what else", etc.)
+- **Sort options** — after results, a "🕐 Sort by recently verified" quick reply lets users re-sort by most recently validated data. Also supports "sort by most services" to prioritize locations with the most co-located service offerings
+- **Day-specific hours** — "are they open Saturday?" queries the `holiday_schedules` table for the requested weekday (ISO DOW) and returns hours per service. Weekend queries fetch both Saturday and Sunday. Includes "call ahead to confirm" caveat
+- **Auto-execute for urgent queries** — when urgency is high and slots are sufficient ("I need a bed tonight in Brooklyn"), skips the confirmation step and executes the search immediately. Medium urgency and missing-location cases still go through normal confirmation
 
 ---
 
@@ -94,12 +100,18 @@ See [CRISIS_DETECTION.md](CRISIS_DETECTION.md) for architecture, phrase list des
 - **No hallucination** — all service data comes from deterministic SQL query templates against the Streetlives database. The LLM never generates service names, addresses, hours, or phone numbers
 - **Service cards with actions** — call, get directions, visit website, or learn more on YourPeer
 - **Open/closed status** — hours from the database displayed on each card where available; "Call for hours" shown when schedule data is absent (most categories have sparse schedule coverage)
-- **Validated badge** — each card shows "✓ Validated X days ago" (green for ≤90 days, gray for older) based on the location's `last_validated_at` field, matching the YourPeer web interface style
-- **"Also here" co-located services** — cards show other service categories available at the same location (e.g., "🚿 Shower · 👕 Clothing Pantry · 🏥 Health"). Filtered to 24 user-relevant display categories, sorted alphabetically. Helps users discover services they didn't think to ask about — 30% of locations have 2+ services, with top locations offering 10-19 different offerings
+- **Validated badge with stale data warning** — each card shows "✓ Validated X days ago" (green for ≤90 days). When data is >180 days old, shows "⚠️ Not recently verified — call ahead" in amber. When no validation date exists, shows "⚠️ Unverified — call to confirm"
+- **"Also here" co-located services** — cards show other service categories available at the same location (e.g., "🚿 Shower · 👕 Clothing · 🏥 Health"). Expanded to 45 granular taxonomy names (from 24) with user-friendly labels (e.g., "Substance Use Treatment" → "Substance Use Help"). Sorted alphabetically, deduplicated. Helps users discover services they didn't think to ask about — 30% of locations have 2+ services, with top locations offering 10-19 different offerings
 - **Referral badge** — cards show "Referral may be required" for the 624 services in the database that have membership requirements, rather than silently filtering them out
-- **Accessibility info** — cards show wheelchair accessibility status from the `accessibility_for_disabilities` table when available (e.g., "Accessible", "Not wheelchair accessible", "Wheelchair ramp available"). Displayed as informational text — not used as a filter — so negative values ("Not wheelchair accessible") don't silently exclude locations
+- **Eligibility display** — cards show eligibility criteria as an informational badge (e.g., "👤 Ages 18–24 · Female only") parsed from the eligibility table's JSONB age ranges, gender restrictions, and family size requirements
+- **Review highlights** — peer-generated sentiment highlights from the `location_comment_highlights` table. Shows the most informative positive comment (e.g., 💬 "very friendly and lgbtq safe space"). Currently available for 35 high-traffic locations
+- **Accessibility info** — cards show wheelchair accessibility status from the `accessibility_for_disabilities` table when available (e.g., "♿ Wheelchair accessible"). Displayed as informational text — not used as a filter
+- **Required documents** — cards show what users need to bring (e.g., "📄 Bring: State ID, proof of address") from the `required_documents` table. Filtered to exclude null/empty entries
+- **Languages spoken** — cards show non-English languages available (e.g., "🗣️ English, Spanish, Mandarin") from the `languages` and `service_languages` tables. Hidden when only English (not informative)
+- **Phone extensions** — phone numbers include extensions when available (e.g., "212-555-1234 ext. 456"). The `tel:` link strips the extension text before dialing to avoid wrong numbers
 - **URL normalization** — website links from the database are normalized to include `https://` so they open correctly in all browsers
 - **Call buttons with native dialer** — call buttons use `tel:` links that trigger the native phone dialer on mobile and a calling app prompt on desktop. Applied to both service card action buttons and post-results quick reply call buttons
+- **Per-location feedback** — each service card includes a collapsible "Rate this location" widget with 4 binary dimensions (Safe? Friendly? Clean? LGBTQ+ friendly?) and a submit button. Feedback is logged to the audit system for staff review
 
 ---
 
@@ -194,6 +206,7 @@ The frontend is designed for the population served — people who may be using s
 - **Query detail drawer** — clicking a row in the Query Log opens a Radix dialog showing template name, all parameters, result count, relaxed flag, execution time, and session ID
 - **Metric detail dialog** — clicking any metric name opens a Radix dialog showing the full definition, formula, target, and rationale sourced from METRICS.md (35 metric definitions)
 - **User feedback** — thumbs up/down on every bot response; feedback events show green/red badges in the event feed with comment preview. Feedback scores are surfaced in the admin Overview and Metrics tabs
+- **Per-location feedback** — location-specific feedback events (safety, friendliness, cleanliness, queer-friendliness) logged to the audit system. `location_feedback_count` surfaced in admin stats. Filterable as `location_feedback` event type in the admin event feed
 - **Routing distribution stats** — `get_stats()` computes message routing across 5 buckets (service flow, conversational, emotional, safety, general) with per-bucket percentages. Post-results questions are tracked under the conversational bucket
 - **Tone distribution stats** — aggregates emotional tones (emotional, frustrated, confused, urgent) across all turns with percentage breakdowns
 - **Multi-intent queue stats** — tracks queue offers, declines, and accept sessions for the multi-service feature
@@ -209,8 +222,9 @@ The frontend is designed for the population served — people who may be using s
 
 These are tracked issues identified during DB audits and pilot testing, deferred for post-pilot resolution. See [README.md — Known Limitations](../README.md#known-limitations--future-work) for detail.
 
-- Result ordering uses open-now / recently-verified / name; proximity-first when geolocation available
+- Result ordering uses open-now / recently-verified / name; proximity-first when geolocation available. Users can re-sort by recently verified or most services at location after results are shown
 - `additional_info` field is effectively empty (99.7% null)
-- Schedule data is sparse for most categories — open/closed filtering intentionally disabled
+- Schedule data is sparse for most categories — open/closed filtering intentionally disabled. Day-specific hours are available via "are they open Saturday?" but coverage varies
+- Sort by nearest is not available (requires distance data on service cards)
 - Shame tone not yet implemented — emotional expressions involving embarrassment are handled by the generic emotional handler rather than a normalizing response
 - When `PILOT_DB_PATH` is unset (default), audit log and session store are in-memory only and reset on server restart. Set `PILOT_DB_PATH=data/pilot.db` to enable SQLite persistence for pilot testing
