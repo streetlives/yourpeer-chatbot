@@ -925,19 +925,8 @@ def generate_reply(
     if _SENSITIVE_CONTEXT_RE.search(message):
         _tone_prefix = "I understand this is a difficult situation. Let me help. "
 
-    # If enough detail → CONFIRMATION step (or auto-execute for urgent)
+    # If enough detail → CONFIRMATION step
     if (is_enough_to_answer(merged) or _geolocation_ready) and has_new_slots:
-        # Gap 16: Skip confirmation for high-urgency queries.
-        # "I need a bed tonight in Brooklyn" → execute immediately.
-        _is_urgent = merged.get("urgency") == "high"
-        if _is_urgent:
-            logger.info(f"[{session_id}] High urgency — auto-executing (skipping confirmation)")
-            merged.pop("_pending_confirmation", None)
-            save_session_slots(session_id, merged)
-            result = _execute_and_respond(session_id, message, merged, request_id=request_id)
-            _log_turn(session_id, redacted_message, result, "auto_execute", request_id=request_id, tone=tone)
-            return result
-
         merged["_pending_confirmation"] = True
         merged.pop("_queue_offer_pending", None)
         merged.pop("_queued_services_original", None)
