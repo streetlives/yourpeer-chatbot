@@ -99,7 +99,7 @@ See [FEATURES.md](docs/FEATURES.md) for the full feature reference, organized by
 
 ## Models
 
-Two Claude models are used across the system, each assigned to specific tasks based on a cost/capability analysis (see the Model Analysis tab in the admin panel). None of them generate service data. Model selection is centralized in `backend/app/llm/claude_client.py`.
+Three Claude models are used across the system, each assigned to specific tasks based on a cost/capability analysis (see the Model Analysis tab in the admin panel). None of them generate service data. Model selection is centralized in `backend/app/llm/claude_client.py` for production models and `tests/eval/eval_llm_judge.py` for the evaluation judge.
 
 ### Claude Haiku (`claude-haiku-4-5-20251001`)
 
@@ -119,7 +119,7 @@ Two Claude models are used across the system, each assigned to specific tasks ba
 
 ### Claude Sonnet (`claude-sonnet-4-6`)
 
-**Used for:** Crisis detection (Stage 2 LLM classification) and LLM-as-judge evaluation.
+**Used for:** Crisis detection (Stage 2 LLM classification).
 
 **Crisis detection** — Only invoked when the regex pre-check returns no match. Clear crisis language ("I want to kill myself") is caught by regex in <1ms and never reaches the LLM. Sonnet handles indirect and paraphrased expressions — "I've been on the streets for months and nothing helps anymore", "no one would notice if I disappeared." `max_tokens` is capped at 60 — the JSON response (`{"crisis": true, "category": "..."}`) is about 15 tokens.
 
@@ -127,9 +127,15 @@ Two Claude models are used across the system, each assigned to specific tasks ba
 
 **Fail-open:** If the Sonnet call fails for any reason, the system returns a general safety response rather than falling through to normal conversation. See [CRISIS_DETECTION.md](docs/CRISIS_DETECTION.md) for full details.
 
-**LLM-as-judge** — `eval_llm_judge.py` uses Sonnet to score conversations across 8 dimensions. This runs only during evaluation, not in production.
-
 **Requires:** `ANTHROPIC_API_KEY` in `.env`. If absent, the LLM crisis detection stage is disabled and only regex detection runs.
+
+---
+
+### Claude Opus (`claude-opus-4-6`)
+
+**Used for:** LLM-as-judge evaluation only.
+
+**LLM-as-judge** — `eval_llm_judge.py` uses Opus to score conversations across 11 dimensions (8 core + 3 domain-specific: dignity & anti-stigma, cultural responsiveness, equity of access). Reports both unweighted and weighted overall scores, where safety-critical dimensions carry higher weight. The judge uses a MORE capable model than the chatbot under evaluation (Haiku + Sonnet) to avoid same-family scoring bias.
 
 **When it runs:** Only when the eval suite is triggered manually — either via `python tests/eval_llm_judge.py` on the command line or via the "Run Evals" button in the admin console. Never runs during normal user interactions.
 
@@ -159,7 +165,7 @@ These are tracked issues identified during DB audits and pilot testing, deferred
 | [REGEX_AUDIT.md](docs/REGEX_AUDIT.md) | Regex keyword audit — collision risk analysis, proven false positives, remediation actions, keyword maintenance guide |
 | [SETUP.md](docs/SETUP.md) | Local development setup — virtual environment, dependencies, API keys, running locally |
 | [DEPLOY.md](docs/DEPLOY.md) | Render deployment — environment variables, build commands, auto-deploy, starter tier notes |
-| [TESTING.md](docs/TESTING.md) | Test suite guide — 1,900+ tests across 46 files in `unit/` and `integration/` directories + 172-scenario LLM-as-judge evaluation framework |
+| [TESTING.md](docs/TESTING.md) | Test suite guide — 1,900+ tests across 46 files in `unit/` and `integration/` directories + 167-scenario LLM-as-judge evaluation framework (11 dimensions, Opus judge, weighted scoring) |
 | [scripts/DB_AUDIT.md](scripts/DB_AUDIT.md) | Database audit script — why it exists, how to run it, when to run it, and how to interpret results |
 
 ## Related Repositories

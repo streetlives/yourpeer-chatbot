@@ -118,12 +118,12 @@ export function EvalRunner({ onComplete }: EvalRunnerProps) {
             </Dialog.Title>
             <p id="eval-confirm-desc" className="text-sm text-neutral-500 mb-4">
               This will run <strong>{scenarioLabel}</strong> through the full
-              chatbot pipeline and score each one using Claude Sonnet as a judge.
+              chatbot pipeline and score each one using Claude Opus as a judge.
             </p>
 
             <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 mb-5 text-sm text-amber-800">
               <strong>Cost warning:</strong> Each scenario makes multiple
-              Anthropic API calls (Haiku for conversation + Sonnet for judging).
+              Anthropic API calls (Haiku for conversation + Opus for judging).
               A full run of 100+ scenarios typically costs <strong>$2–5</strong> in
               API credits and takes 10–20 minutes. The backend will be under
               heavier load during the run.
