@@ -92,7 +92,7 @@ export function EvalRunner({ onComplete }: EvalRunnerProps) {
 
   const scenarioLabel = scenarioCount
     ? `${scenarioCount} scenarios`
-    : "all scenarios (~100+)";
+    : "all scenarios (~150+)";
 
   return (
     <div className="flex items-center gap-3 mb-5 flex-wrap">
@@ -123,21 +123,22 @@ export function EvalRunner({ onComplete }: EvalRunnerProps) {
 
             <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 mb-5 text-sm text-amber-800">
               <strong>Cost warning:</strong> Each scenario makes multiple
-              Anthropic API calls (Haiku for conversation + Opus for judging).
-              A full run of 100+ scenarios typically costs <strong>$2–5</strong> in
-              API credits and takes 10–20 minutes. The backend will be under
+              Anthropic API calls (Haiku for conversation, Sonnet for user
+              simulation, Opus for judging across 11 dimensions).
+              A full run of 167 scenarios typically costs <strong>$15–25</strong> in
+              API credits and takes 30–60 minutes. The backend will be under
               heavier load during the run.
             </div>
 
             <div className="flex justify-end gap-3">
               <Dialog.Close asChild>
-                <button className="px-4 py-2 rounded-lg text-sm font-medium text-neutral-600 hover:bg-neutral-100 transition">
+                <button className="px-4 py-2 rounded-lg bg-amber-400 text-sm font-semibold text-neutral-900 hover:bg-amber-500 transition">
                   Cancel
                 </button>
               </Dialog.Close>
               <button
                 onClick={handleRun}
-                className="px-4 py-2 rounded-lg bg-amber-400 text-neutral-900 text-sm font-semibold hover:bg-amber-500 transition"
+                className="px-4 py-2 rounded-lg text-sm font-medium text-neutral-600 hover:bg-neutral-100 transition"
               >
                 Yes, run {scenarioLabel}
               </button>
