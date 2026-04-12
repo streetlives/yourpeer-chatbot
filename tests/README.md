@@ -6,9 +6,13 @@
 tests/
 ├── conftest.py              # Shared fixtures, helpers (send, send_multi, assert_classified)
 │
-├── unit/                    # Fast, isolated tests — no DB, no LLM, no network
+├── unit/                    # Fast, isolated tests — no DB, no LLM, no network (39 files)
 │   ├── test_slot_extractor.py          # Slot extraction (service, location, age, family)
+│   ├── test_slot_extraction_keywords.py # Keyword-specific slot extraction
+│   ├── test_service_keywords.py        # Service keyword coverage and alignment
+│   ├── test_semantic_router.py         # Semantic routing (classification, thresholds, populations)
 │   ├── test_gender_extraction.py       # Gender/LGBTQ identity extraction
+│   ├── test_populations.py            # Population context extraction and query boosts
 │   ├── test_location_boundaries.py     # NYC location parsing edge cases
 │   ├── test_contraction_normalization.py # Contraction expansion, intensifier stripping
 │   ├── test_phrase_audit.py            # Keyword coverage audits
@@ -16,7 +20,9 @@ tests/
 │   ├── test_query_templates.py         # SQL template building and formatting
 │   ├── test_crisis_detector.py         # Crisis phrase detection
 │   ├── test_post_results.py            # Post-results question classification
-│   ├── test_post_results_boundary.py   # Post-results edge cases
+│   ├── test_post_results_boundary.py   # Post-results → new-request transitions
+│   ├── test_post_results_state.py      # Post-results state management
+│   ├── test_results_enhancements.py    # Sort, auto-execute, day detection
 │   ├── test_bot_knowledge.py           # Bot knowledge base answers
 │   ├── test_audit_log.py               # Audit log writing and stats
 │   ├── test_session_store.py           # In-memory session state
@@ -28,8 +34,18 @@ tests/
 │   ├── test_llm_multi_service.py       # Multi-service LLM extraction
 │   ├── test_narrative_extraction.py    # Long-message narrative handling
 │   ├── test_edge_cases.py              # Slot extractor edge cases
-│   ├── test_persistence.py             # Session persistence
-│   └── test_main.py                    # FastAPI app initialization
+│   ├── test_persistence.py             # SQLite pilot persistence
+│   ├── test_main.py                    # FastAPI app initialization, health check, CORS
+│   ├── test_org_name_search.py         # Organization name search
+│   ├── test_service_card_display.py    # Service card rendering, pagination
+│   ├── test_walk_in_and_card_extras.py # Walk-in filter, card extras
+│   ├── test_location_feedback.py       # Location-specific feedback
+│   ├── test_confirmation_flow.py       # Confirmation/denial flow
+│   ├── test_change_mind_and_decline.py # Mid-conversation service changes
+│   ├── test_core_conversation_flows.py # Core conversation scenarios
+│   ├── test_multi_intent_queue.py      # Multi-service queue handling
+│   ├── test_response_escalation.py     # Frustration escalation
+│   └── test_tone_and_empathy.py        # Tone detection, emotional responses
 │
 ├── integration/             # Multi-component tests — use send(), mock DB/LLM
 │   ├── test_chatbot.py                 # Core generate_reply routing (193 tests)

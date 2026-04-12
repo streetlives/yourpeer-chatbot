@@ -111,31 +111,46 @@ Route every message through Claude Haiku or GPT-3.5 for intent extraction. Most 
 
 ## 3. How It Works in YourPeer
 
-### Integration Point
+### Integration Points
 
-In `slot_extractor.py`, after regex extraction returns `service_type=None`:
+The semantic router fires at **two points** in the pipeline for maximum coverage:
+
+**1. Early extraction in `chatbot.py`** (before routing decisions):
 
 ```python
-from app.services.semantic_router import classify_service
-
-def extract_slots_smart(message, conversation_history=None):
-    # Tier 1: Regex
-    regex_result = extract_slots(message)
-
-    if regex_result.get("service_type") is None:
-        # Tier 2: Semantic routing
+# After regex extraction, before the unified LLM gate
+early_extracted = extract_slots(message)
+if early_extracted.get("service_type") is None:
+    from app.services.semantic_router import classify_service, is_available
+    if is_available():
         match = classify_service(message)
-        if match and match.confidence >= 0.75:
-            regex_result["service_type"] = match.service_type
-            if match.population:
-                regex_result["_populations"] = [match.population]
-            return regex_result
+        if match:
+            early_extracted["service_type"] = match.service_type
+            _extraction_source = "semantic"
+```
 
-    # Tier 3: LLM (only for messages that escape both)
-    if _needs_llm(regex_result, message):
-        return _call_llm(message, conversation_history)
+This fires **even in regex-only mode** (no API key), preventing "general" fallthrough for messages that regex misses. It also saves an LLM call when semantic matches — the unified gate skips because `has_service_intent` is already `True`.
 
-    return regex_result
+**2. Inside `extract_slots_smart()` in `llm_slot_extractor.py`** (safety net):
+
+```python
+# After regex, before LLM — same cascade logic
+if regex_result.get("service_type") is None:
+    match = classify_service(message)
+    if match:
+        regex_result["service_type"] = match.service_type
+```
+
+This provides redundant coverage when `extract_slots_smart()` is called later in the service handling flow.
+
+### Health Check API
+
+The module exposes a `get_status()` function for the `/api/health` endpoint:
+
+```python
+from app.services.semantic_router import get_status
+status = get_status()
+# {"available": True, "model": "all-MiniLM-L6-v2", "route_count": 16}
 ```
 
 ### Route Definitions

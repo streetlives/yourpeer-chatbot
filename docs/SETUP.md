@@ -96,7 +96,7 @@ cd backend
 uvicorn app.main:app --reload
 ```
 
-Verify it's running: `curl http://localhost:8000/api/health` should return `{"status": "ok"}`.
+Verify it's running: `curl http://localhost:8000/api/health` should return a JSON response with `"status": "healthy"` (or `"degraded"` if `ANTHROPIC_API_KEY` is not set).
 
 ## 2. Frontend Setup
 

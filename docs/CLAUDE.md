@@ -66,7 +66,7 @@ information, preventing hallucination.
 
 | File | Purpose |
 |------|---------|
-| `backend/app/main.py` | FastAPI app entry point, CORS, router registration |
+| `backend/app/main.py` | FastAPI app entry point, CORS, router registration, enhanced `/api/health` endpoint (checks DB, LLM, semantic router, returns structured JSON with per-component status) |
 | `backend/app/routes/chat.py` | `POST /chat/`, `/chat/feedback`, and `/chat/location-feedback` endpoints |
 | `backend/app/routes/admin.py` | Admin API: conversations, events, stats, eval runner |
 | `backend/app/services/chatbot.py` | Conversation router: `generate_reply()`, query execution, session orchestration |
@@ -77,7 +77,7 @@ information, preventing hallucination.
 | `backend/app/services/bot_knowledge.py` | Bot self-knowledge: live capability sourcing, topic matching, LLM context generation |
 | `backend/app/services/crisis_detector.py` | Two-stage crisis detection (regex + Sonnet LLM), category-specific hotlines |
 | `backend/app/services/slot_extractor.py` | Regex-based slot extraction with keyword matching, gender/LGBTQ identity extraction, population context extraction (veteran, disabled, reentry, DV survivor, pregnant, senior), organization name extraction, walk-in/no-requirements detection |
-| `backend/app/services/semantic_router.py` | Tier 2 semantic routing: `all-MiniLM-L6-v2` sentence embedding model, cosine similarity classification against pre-embedded route utterances, per-route confidence thresholds, population detection |
+| `backend/app/services/semantic_router.py` | Tier 2 semantic routing: `all-MiniLM-L6-v2` sentence embedding model, cosine similarity classification against pre-embedded route utterances, per-route confidence thresholds, population detection, `get_status()` for health checks |
 | `backend/app/services/semantic_routes.py` | Route definitions: 10–20 example utterances per service category (10 routes) and 6–12 per population category (6 routes). No code changes needed to add utterances — just edit and restart |
 | `backend/app/services/llm_slot_extractor.py` | LLM slot extraction via Claude Haiku tool calling, 3-tier cascade integration (regex → semantic → LLM) |
 | `backend/app/services/llm_classifier.py` | Unified LLM classification gate — single Haiku call returning service_type, location, tone, action when regex fails |
@@ -89,7 +89,9 @@ information, preventing hallucination.
 | `backend/app/rag/query_templates.py` | 11 parameterized SQL templates (food, shelter, clothing, etc. + org_name), dynamic ORDER BY with population boosts, eligibility/review highlight/required docs/languages subqueries |
 | `backend/app/privacy/pii_redactor.py` | PII detection and redaction (phone, SSN, email, DOB, address, names, gender identity) |
 | `backend/app/models/chat_models.py` | Pydantic models: ChatRequest, ChatResponse, ServiceCard, QuickReply |
-| `frontend-next/src/components/chat/` | Chat UI components (ChatContainer, ServiceCard, QuickReplies) |
+| `frontend-next/src/components/chat/` | Chat UI components (ChatContainer with three-state health indicator, ServiceCard, QuickReplies, VoiceInputButton) |
+| `frontend-next/src/hooks/use-backend-health.ts` | Backend health polling hook — polls `/api/health` every 30s, derives connected/degraded/unreachable status |
+| `frontend-next/src/components/admin/system-health.tsx` | Admin system health card — real-time component status (Backend, DB, LLM, Semantic Router) |
 | `frontend-next/src/lib/chat/store.ts` | Zustand chat store with `localStorage` persistence |
 | `frontend-next/src/lib/admin/store.ts` | Zustand admin store with staleness-based caching |
 | `frontend-next/src/app/admin/` | Staff console pages (overview, conversations, metrics, queries, evals, models) |
@@ -130,7 +132,7 @@ information, preventing hallucination.
 - **Service flow continuation**: when a user already has a service_type and provides new slot data (e.g., "near me", "close by", "I'm 25", "with my kids") in a message not classified as "service", the system treats it as a service flow continuation rather than falling through to the LLM
 - **Narrative extraction**: long messages (20+ words) are detected as narratives and processed with urgency-aware slot extraction that prioritizes shelter/safety over food/employment. Regex fallback handles narrative extraction when LLM is unavailable
 - **Bot self-knowledge**: live capability sourcing from actual code (service categories, PII types, location count) rather than hardcoded facts. Topic matching for 12+ question types with LLM context generation
-- **Confidence scoring**: every routing decision is tagged with a confidence level (high/medium/low/disambiguated) and stored in audit events. Regex matches = high, LLM classification = medium, fallback = low
+- **Confidence scoring**: every routing decision is tagged with a confidence level (high/semantic/medium/low/disambiguated) and stored in audit events. Regex matches = high, semantic embedding matches = semantic, LLM classification = medium, fallback = low. The audit log aggregates confidence distributions per session and tracks `semantic_rate` alongside `high_rate` and `low_rate`
 - **Disambiguation prompts**: when a message is ambiguous between a post-results question and a new service request, the bot asks the user to clarify instead of guessing. Presents quick-reply buttons for both interpretations
 - **"Not what I meant" recovery**: correction phrases ("not what I meant", "you misunderstood") trigger a handler that clears pending state, shows what the bot was doing, and offers alternatives. "❌ Not what I meant" button appears on low-confidence responses
 - **Post-results escape hatch**: new service requests ("I need X", "where can I go", "looking for") are no longer intercepted by the post-results handler. Messages with a new location clear stored results automatically
@@ -149,13 +151,13 @@ information, preventing hallucination.
 - **Stability**: 1,000-char message length limit (frontend + backend), coordinate validation (lat ±90, lng ±180), 10s LLM timeout, 5s DB statement timeout, 30s frontend fetch timeout, admin endpoint rate limiting (120/min IP + 5/hr eval), rate limiter memory cap (5,000 buckets)
 - **Observability**: `X-Request-ID` correlation IDs flow from frontend → Next.js proxy → FastAPI backend → audit log, enabling end-to-end request tracing
 - **Admin data caching**: centralized Zustand store with 30-second staleness threshold; navigating between admin tabs reuses cached data
-- **Test suite**: 46 pytest files (~1,880+ tests) organized into `tests/unit/` (31 files — no DB or LLM needed) and `tests/integration/` (15 files — use mocked DB/LLM), plus an `eval/` directory. Covers all services, routes, edge cases, geolocation, rate limiting, security, privacy, family composition, multi-service extraction, split classifier, taxonomy enrichment, nearby borough suggestions, gender/LGBTQ identity extraction, population context extraction, organization name search, walk-in filter, eligibility display, review highlights, required documents, languages, phone extensions, sort options, day-specific hours, auto-execute, location feedback, pagination, bug fix regressions, narrative extraction, bot knowledge, boundary drift detection, context routing, integration scenarios, ambiguity handling, post-results boundary routing, semantic routing (route definitions, classification, thresholds, population detection, integration fallthrough, graceful degradation), and DB schema/query integration. LLM-as-judge evaluation: 172 scenarios across 20 categories
+- **Test suite**: 46 pytest files (~1,900+ tests) organized into `tests/unit/` and `tests/integration/`, plus an `eval/` directory. LLM-as-judge evaluation: 172 scenarios across 20 categories
 
 ## Known Gaps / In Progress
 
 - **Adversarial LLM false positives** — The unified classification gate classifies nonsensical service requests ("helicopter ride") as `service_type=other` instead of returning null. Fix: tighten the LLM prompt to restrict "other" to known social service subcategories.
 - **Slot overwrite on contradiction** — `multiturn_change_mind` (3.25): when user says "actually, shelter" mid-conversation, the filled slot is not overwritten. Requires contradiction detection.
-- **Keyword brittleness (addressed)** — The Tier 2 semantic router handles novel phrasings that regex keywords miss ("insulin" → medical, "felon looking for work" → employment). The regex layer has been audited per `REGEX_AUDIT.md`: 18 collision-prone keywords moved from substring matching to word-boundary patterns, 6 context-dependent keywords retired entirely (semantic layer handles them), 4 false-positive population phrases removed, and 3 collision-prone word-boundary patterns removed. The remaining 384 keywords (208 multi-word phrases + 151 domain-specific single words + 25 word-boundary patterns) have zero known collision risks. The model must be downloaded on first startup (~80 MB) — requires internet access to `huggingface.co`.
+- **Keyword brittleness (addressed)** — The Tier 2 semantic router handles novel phrasings that regex keywords miss ("insulin" → medical, "felon looking for work" → employment). The regex layer has been audited per `REGEX_AUDIT.md`: 11 collision-prone keywords moved from substring matching to word-boundary patterns (mail, soap, pads, wic, visa, meal, pants, and 4 from prior audits), 11 context-dependent keywords retired entirely to the semantic layer (formula, physical, vision, intake, court, bail, job, sick, room, snap, transit), 4 false-positive population phrases removed (have a record, did time, senior, navy), and 3 collision-prone word-boundary patterns removed (prep, parole, probation). The remaining 379 keywords (359 SERVICE_KEYWORDS + 20 word-boundary patterns) have zero known collision risks. The model must be downloaded on first startup (~80 MB) — requires internet access to `huggingface.co`.
 - **Multilingual support** — English only. Spanish keyword support is designed (Phase 6 in implementation plan) but not yet implemented. The semantic router can be switched to `paraphrase-multilingual-MiniLM-L12-v2` for Spanish support (one-line change).
 - **Schedule data coverage** — sparse; only walk-in services have >40% coverage. Day-specific hours queries are supported but coverage varies by service
 - **Sort by nearest** — not implemented. Would require PostGIS distance calculation stored on service cards for client-side re-sort. Current sort options are "recently verified" and "most services"

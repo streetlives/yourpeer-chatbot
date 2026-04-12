@@ -316,12 +316,15 @@ Every routing decision is tagged with a confidence level, stored in the audit lo
 
 | Confidence | When it's set | What it means |
 |---|---|---|
-| `high` | Regex classification match, service keyword extracted, confirmation action | The system is confident about the user's intent — standard handling |
-| `medium` | LLM classification | The system used the LLM to determine intent — correct in most cases but may misinterpret indirect language |
+| `high` | Regex keyword match, confirmation action | Deterministic match — the system is certain about intent |
+| `semantic` | Semantic embedding match (Tier 2) | Local model matched the message to a service category above the confidence threshold (~0.75). High reliability but not deterministic |
+| `medium` | LLM classification (unified gate or fallback) | The system used the LLM to determine intent — correct in most cases but may misinterpret indirect language |
 | `low` | General fallback, unrecognized service redirect, correction handler | The system is uncertain — the response may not match what the user wanted |
 | `disambiguated` | Disambiguation prompt shown | The system detected ambiguity and asked the user to clarify |
 
 When confidence is `medium` or `low`, the response includes a "❌ Not what I meant" quick reply button so the user can recover immediately if the system misinterpreted their message.
+
+The `_extraction_source` variable tracks which tier determined the service type: `"regex"`, `"semantic"`, or `"llm_gate"`. This maps directly to the confidence label and is logged with every audit event. The audit log aggregates these into `high_rate`, `semantic_rate`, and `low_rate` metrics per session.
 
 The post-results handler has its own ambiguity detection: when a message pattern-matches as a post-results question (e.g., "What about X?") but the extracted name doesn't match any displayed result, the system presents a disambiguation prompt rather than guessing. This prevents users from getting trapped in the post-results flow when they're trying to start a new search.
 

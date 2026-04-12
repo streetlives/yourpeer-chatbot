@@ -116,7 +116,7 @@ These keywords appear in SERVICE_KEYWORDS for one category but logically belong 
 
 ## Word-Boundary Patterns — Current Assessment
 
-These already use `\b` word boundaries, which is the correct approach.
+These already use `\b` word boundaries, which is the correct approach. Patterns marked "Retired" were removed after testing revealed contextual false positives that word boundaries cannot prevent.
 
 | Pattern | Category | Assessment |
 |---|---|---|
@@ -127,57 +127,69 @@ These already use `\b` word boundaries, which is the correct approach.
 | `\bhat\b` | clothing | ✅ Good — "what", "that" don't match |
 | `\bstress\b` | mental_health | ✅ Good — unambiguous |
 | `\bsober\b` | mental_health | ✅ Good — unambiguous |
-| `\bprep\b` | medical | ⚠️ Bad — matches "food prep", "test prep". Should only match PrEP (HIV prevention) |
-| `\bparole\b` | other | ⚠️ See cross-category note |
-| `\bprobation\b` | other | ⚠️ See cross-category note |
+| `\bmail\b` | other | ✅ Good — "email", "gmail" don't match |
+| `\bsoap\b` | personal_care | ✅ Good — "soap opera" is rare in target population |
+| `\bpads\b` | personal_care | ✅ Good — "iPads" doesn't match |
+| `\bwic\b` | food | ✅ Good — "wicked" doesn't match |
+| `\bvisa\b` | legal | ✅ Good — "television" doesn't match |
+| `\bmeal\b` | food | ✅ Good — "oatmeal" doesn't match |
+| `\bpants\b` | clothing | ✅ Good — "participants" doesn't match |
+| `\bprep\b` | medical | ❌ Retired — "food prep", "test prep" false positives. Now semantic layer |
+| `\bparole\b` | other | ❌ Retired — dual-registered as population phrase. Now semantic layer |
+| `\bprobation\b` | other | ❌ Retired — dual-registered as population phrase. Now semantic layer |
+| `\bjob\b` | employment | ❌ Retired — "good job" contextual false positive. Now semantic layer |
+| `\bsick\b` | medical | ❌ Retired — "sick of this" contextual false positive. Now semantic layer |
+| `\broom\b` | shelter | ❌ Retired — "my room at the hotel" contextual false positive. Now semantic layer |
+| `\bsnap\b` | other | ❌ Retired — "oh snap" contextual false positive. Now semantic layer |
+| `\btransit\b` | other | ❌ Retired — "in transit" contextual false positive. Now semantic layer |
 
-**Recommendation:** Remove `\bprep\b` from word-boundary patterns. Add "prep" or "PrEP" as a medical keyword only in the phrase "prep medication" or via semantic layer.
+**Current active word-boundary patterns: 14** (bed, wash, id, eat, hat, stress, sober, mail, soap, pads, wic, visa, meal, pants) plus 6 pre-existing domain-specific patterns (ssi, ssdi, hiv, esl, ged, syep).
 
 ---
 
-## Recommended Actions
+## Remediation Actions — Status
 
-### Immediate (before next eval run)
+### Completed
 
-1. **Move to word-boundary patterns:** `room`, `sick`, `job`, `mail`, `soap`, `pads`, `wic`, `visa`, `meal`
-   — This prevents substring false positives without removing the keywords entirely.
+1. ✅ **Moved to word-boundary patterns:** `mail`, `soap`, `pads`, `wic`, `visa`, `meal`, `pants`
+   — Prevents substring false positives ("email", "iPads", "oatmeal", "participants").
 
-2. **Remove from SERVICE_KEYWORDS:** `formula` (food), `physical` (medical)
-   — These cause false positives ("mathematical formula", "physical abuse") and will be handled by the semantic layer.
+2. ✅ **Removed from SERVICE_KEYWORDS:** `formula` (food), `physical` (medical), `vision` (medical), `intake` (shelter), `court` (legal), `bail` (legal)
+   — All context-dependent. Handled by semantic routing layer.
 
-3. **Remove from WORD_BOUNDARY_PATTERNS:** `prep`
-   — "PrEP" is too rare and too collision-prone for regex. The semantic layer handles it better with utterances like "I need PrEP for HIV prevention."
+3. ✅ **Removed from WORD_BOUNDARY_PATTERNS:** `prep`, `parole`, `probation`
+   — All proven false positives. Handled by semantic layer.
 
-4. **Remove from POPULATION_PHRASES:** `have a record`, `did time`, `senior`, `navy`
-   — All proven false positives. The semantic layer handles them via context ("I'm a Navy veteran" vs "navy blue sweater").
+4. ✅ **Removed from POPULATION_PHRASES:** `have a record`, `did time`, `senior` (standalone), `navy`
+   — All proven false positives. Handled by semantic layer.
 
-5. **Remove from SERVICE_KEYWORDS["other"]:** `parole`, `probation`
-   — These are population phrases, not service requests. Keep them in `_POPULATION_PHRASES` only.
+5. ✅ **Removed from SERVICE_KEYWORDS["other"]:** `parole`, `probation`
+   — Now population phrases only, not service requests.
 
-### Medium-term (with semantic layer)
+6. ✅ **Retired from word-boundary after contextual false-positive testing:** `job`, `sick`, `room`, `snap`, `transit`
+   — Word boundaries prevent substring collisions ("blowjob", "homesick") but not contextual collisions ("good job", "sick of this", "oh snap"). These are now handled exclusively by the semantic layer, which understands context natively.
 
-6. **Retire all ≤4-char single-word keywords** from SERVICE_KEYWORDS and handle them via semantic routes. This eliminates the entire class of substring collision risk. The semantic layer doesn't need word boundaries — "I'm homesick" will never embed near the medical route.
+### What's in regex now
 
-7. **Retire ambiguous single-word keywords** regardless of length: `vision`, `physical`, `intake`, `court`, `bail`, `formula`, `recovery`. These are all context-dependent and the semantic layer handles context natively.
+**359 SERVICE_KEYWORDS** (208 multi-word phrases + 151 single-word domain terms) + **20 word-boundary patterns** = **379 total keywords** with zero known collision risks.
 
-### What to KEEP in regex
-
-Regex should be the fast path for **unambiguous, domain-specific terms** that have no common English alternative meaning:
+Regex is the fast path for **unambiguous, domain-specific terms** with no common English alternative meaning:
 
 - Multi-word phrases: "food pantry", "soup kitchen", "urgent care", "job training", "syringe exchange"
 - Domain-specific compound terms: "harm reduction", "sober living", "housing voucher", "birth certificate"
-- Acronyms: "ebt", "daca", "snap", "nycha", "tps", "ptsd" (with word boundaries)
+- Acronyms with word boundaries: `\bssi\b`, `\bssdi\b`, `\bhiv\b`, `\besl\b`, `\bged\b`, `\bsyep\b`
 - Unique terms: "methadone", "suboxone", "naloxone", "narcan"
 
-These will never cause false positives and are faster than the semantic layer. The 3-tier cascade (regex → semantic → LLM) works best when each tier handles what it's good at.
+These never cause false positives and are faster than the semantic layer. The 3-tier cascade (regex → semantic → LLM) works best when each tier handles what it's good at.
 
 ---
 
-## Impact Estimate
+## Impact
 
-| Metric | Before | After (immediate) | After (with semantic) |
-|---|---|---|---|
-| False-positive keywords | 13 proven | ~3 remaining | 0 |
-| Population false positives | 4 proven | 0 | 0 |
-| Keywords requiring maintenance | ~280 | ~270 | ~120 (safe core only) |
-| Coverage of novel phrasings | ~85% | ~85% | ~95%+ |
+| Metric | Before audit | After audit |
+|---|---|---|
+| False-positive keywords | 13 proven | 0 (all retired or word-bounded) |
+| Population false positives | 4 proven | 0 |
+| Contextual false positives (word-boundary) | 8 proven | 0 (5 retired to semantic) |
+| Active keywords | ~400 | 379 (359 SERVICE + 20 word-boundary) |
+| Coverage of novel phrasings | ~85% (regex only) | ~95%+ (regex + semantic + LLM) |

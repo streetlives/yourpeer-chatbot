@@ -101,7 +101,7 @@ The frontend service does not connect to the database directly.
 
 **Frontend build fails with missing modules:** Run `cd frontend-next && rm package-lock.json && npm install` locally, commit the regenerated `package-lock.json`, and push.
 
-**Chat page loads but no responses:** Check that `CHAT_BACKEND_URL` on the frontend service points to the backend's internal URL (format: `http://yourpeer-chatbot-api:PORT`). Since the backend is a private service, you can't test it directly in the browser — use the frontend's `/api/health` proxy or check the backend service logs in the Render dashboard.
+**Chat page loads but no responses:** Check that `CHAT_BACKEND_URL` on the frontend service points to the backend's internal URL (format: `http://yourpeer-chatbot-api:PORT`). Since the backend is a private service, you can't test it directly in the browser — use the frontend's `/api/health` proxy or check the backend service logs in the Render dashboard. The health endpoint returns per-component status (database, LLM, semantic router) — a `"status": "unhealthy"` response indicates the database is unreachable, while `"degraded"` means the LLM or semantic router is unavailable but the service still works in reduced mode.
 
 **Database connection errors:** Verify the `DATABASE_URL` is correct in the Render dashboard under the backend service's Environment Variables.
 

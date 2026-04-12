@@ -159,7 +159,7 @@ These are tracked issues identified during DB audits and pilot testing, deferred
 | [REGEX_AUDIT.md](docs/REGEX_AUDIT.md) | Regex keyword audit — collision risk analysis, proven false positives, remediation actions, keyword maintenance guide |
 | [SETUP.md](docs/SETUP.md) | Local development setup — virtual environment, dependencies, API keys, running locally |
 | [DEPLOY.md](docs/DEPLOY.md) | Render deployment — environment variables, build commands, auto-deploy, starter tier notes |
-| [TESTING.md](docs/TESTING.md) | Test suite guide — 1,880+ tests across 46 files in `unit/` and `integration/` directories + 172-scenario LLM-as-judge evaluation framework |
+| [TESTING.md](docs/TESTING.md) | Test suite guide — 1,900+ tests across 46 files in `unit/` and `integration/` directories + 172-scenario LLM-as-judge evaluation framework |
 | [scripts/DB_AUDIT.md](scripts/DB_AUDIT.md) | Database audit script — why it exists, how to run it, when to run it, and how to interpret results |
 
 ## Related Repositories
