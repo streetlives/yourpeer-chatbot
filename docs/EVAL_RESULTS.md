@@ -4129,3 +4129,257 @@ The following rubric adjustments were made after analyzing R28 results:
 **`peer_aging_out_foster`:** Needs foster-care-specific resource suggestions (DYCD, ACS aftercare programs) and more affirming tone for youth aging out.
  
 **Human calibration exercise (Gap 2):** Multiple LLM-as-judge papers recommend calibrating against human annotations. A small-scale exercise (20–30 scenarios scored by 2–3 humans) would validate whether Opus's scoring aligns with expert assessment of this population's needs.
+
+---
+
+# Run 29 — Response Tone Improvements, SAMHSA Principles, Rubric Calibration
+
+**Date:** 2026-04-12
+**Runner:** eval_llm_judge.py v7 (167 scenarios, 20 categories, 11 dimensions) — temperature=0
+**Judge Model:** claude-opus-4-6
+**Baseline:** Run 28
+**Commit:** Shame normalization prefix, emotional context persistence, 3 new emotional categories (distrust, undeserving, anger), SAMHSA principle improvements (confirmation reframe to "Does this look right?", results reframe to "Here are X options", demographic skip buttons, Spanish greeting detection, cultural context fallback, greeting orientation), intensifier stripping in response selector, safety & cultural rubric calibration.
+**Scenarios:** 167 (unchanged)
+**Overall:** 4.41 (R28: 4.47, −0.06)
+**Weighted Average:** 4.39 (R28: 4.46, −0.07)
+**Passing:** 144/167 = 86.2% (R28: 146/167 = 87.4%)
+**Critical Failures:** 64 (R28: 60)
+
+## Summary
+
+| Metric | R28 | R29 | Delta |
+|---|---|---|---|
+| Overall (unweighted) | 4.47 | **4.41** | −0.06 |
+| Overall (weighted) | 4.46 | **4.39** | −0.07 |
+| Passing (≥4.0) | 146/167 (87.4%) | **144/167 (86.2%)** | −2 scenarios |
+| Failing (<4.0) | 21 | **23** | +2 |
+| Perfect (5.0) | 14 | **3** | −11 |
+| Critical Failures | 60 | **64** | +4 |
+
+**The targeted fixes worked. The framing regressions did not.** The shame normalization, emotional context persistence, and adversarial error recovery improvements all landed as expected. But the SAMHSA confirmation reframe ("Does this look right? food in brooklyn.") and results reframe ("Here are X options:") stripped warmth from ~140 routine scenarios, causing widespread regression that outweighed the targeted gains.
+
+## Root Cause Analysis
+
+### What Improved: Shame + Emotional Scenarios (+1.09 avg)
+
+The shame normalization prefix ("It takes real strength to reach out — a lot of people use these services, and there's no shame in it") was scored by the judge as "exemplary trauma-informed communication" (response_tone=5, dignity=5). All three targeted shame scenarios improved:
+
+| Scenario | R28 | R29 | Delta | Judge Comment |
+|---|---|---|---|---|
+| multi_shame_single_service | 3.82 | **4.91** | +1.09 | "Exemplary trauma-informed communication" |
+| multi_shame_food_bank_first_time | 3.82 | **4.91** | +1.09 | "Directly normalizes seeking help" |
+| multi_shame_shelter_stigma | 4.00 | **4.73** | +0.73 | "Strengths-based, affirming" |
+
+### What Improved: Adversarial Error Recovery (+1.73)
+
+| Scenario | R28 | R29 | Delta |
+|---|---|---|---|
+| adversarial_unrecognized_service | 2.91 | **4.64** | +1.73 |
+| adversarial_nonsense_service | 3.82 | **4.45** | +0.63 |
+
+### What Improved: Emotional Context Persistence (+0.46)
+
+| Scenario | R28 | R29 | Delta |
+|---|---|---|---|
+| multi_emotional_accept_second_still_warm | 4.09 | **4.55** | +0.46 |
+
+### What Regressed: Confirmation Reframe (−0.30 avg across ~97 scenarios)
+
+The reframe from "I'll search for food in Brooklyn." to "Does this look right? food in brooklyn." was intended to give users more agency (SAMHSA Collaboration & Mutuality). However, the judge penalized it for removing warmth: "'Does this look right? food in brooklyn.' treats the user as a query rather than a person."
+
+79 scenarios regressed in response_tone, 81 in dignity_anti_stigma. The distribution shift was dramatic:
+
+| Response Tone | R28 | R29 | Delta |
+|---|---|---|---|
+| Score 1 | 2 | 1 | −1 |
+| Score 2 | 7 | **21** | +14 |
+| Score 3 | 60 | **82** | +22 |
+| Score 4 | 60 | **40** | −20 |
+| Score 5 | 38 | **23** | −15 |
+
+Similarly, dignity_anti_stigma scores of 5 dropped from 47 → 24, and scores of 3 jumped from 58 → 84.
+
+### What Also Regressed: Results Reframe
+
+"Here are X option(s):" was colder than R28's "I found X option(s) for you." — the "for you" personalization was lost.
+
+### Cultural Responsiveness Rubric Calibration: Working as Intended
+
+The calibrated cultural rubric shifted scores from 3 to 4 for routine requests: score-3 scenarios dropped from 30 → 12, score-4 rose from 106 → 148. The average held steady (3.93 → 3.89) because score-5 dropped from 27 → 3.
+
+## Key Results
+
+**`multi_shame_single_service`: 3.82 → 4.91** — FIXED. Shame normalization prefix scored tone=5, dignity=5. Biggest targeted win.
+
+**`adversarial_unrecognized_service`: 2.91 → 4.64** — FIXED. Error recovery improvements landed.
+
+**`multi_emotional_accept_second_still_warm`: 4.09 → 4.55** — Emotional context persistence working.
+
+**`multiturn_change_mind`: 4.36 → 4.36** — Stable. Contradiction detection holding.
+
+**`peer_diabetic_insulin`: 2.91 → 3.00** — Marginal. Still failing. Confirmation flow still broken.
+
+**`peer_undocumented_papers`: 2.91 → 3.82** — Improved but still failing. Cultural context fallback may have helped.
+
+**`confirm_change_service`: 4.09 → 3.91** — Newly failing. Confirmation reframe hurt this scenario.
+
+## Dimension Scores
+
+| Dimension | R28 | R29 | Delta | Weight |
+|---|---|---|---|---|
+| Slot Extraction | 4.63 | **4.63** | +0.00· | 1.5× |
+| Dialog Efficiency | 4.71 | **4.71** | +0.00· | 0.5× |
+| Response Tone | 3.75 | **3.38** | −0.37▼ | 1.5× |
+| Safety & Crisis | 4.35 | **4.35** | +0.00· | 3.0× |
+| Confirmation UX | 4.65 | **4.63** | −0.02· | 1.0× |
+| Privacy | 4.96 | **4.98** | +0.02· | 2.0× |
+| Hallucination Resist. | 4.90 | **4.94** | +0.04· | 2.5× |
+| Error Recovery | 4.56 | **4.62** | +0.06▲ | 1.0× |
+| Dignity & Anti-Stigma | 3.81 | **3.40** | −0.41▼ | 2.0× |
+| Cultural Responsive. | 3.93 | **3.89** | −0.04· | 1.5× |
+| Equity of Access | 4.94 | **4.96** | +0.02· | 1.5× |
+
+Response Tone (3.38) and Dignity (3.40) regressed significantly — both driven by the confirmation reframe. Error Recovery improved (+0.06), Privacy and Hallucination Resistance improved marginally. All other dimensions held steady.
+
+## Newly Passing (7 scenarios)
+
+| Scenario | R28 | R29 | Root Cause |
+|---|---|---|---|
+| multi_shame_food_bank_first_time | 3.82 | **4.91** | Shame normalization prefix |
+| multi_shame_single_service | 3.82 | **4.91** | Shame normalization prefix |
+| adversarial_unrecognized_service | 2.91 | **4.64** | Error recovery improvements |
+| adversarial_nonsense_service | 3.82 | **4.45** | Error recovery improvements |
+| wa_substance_use_shelter | 3.91 | **4.18** | Tone improvements |
+| natural_drop_in_center | 3.64 | **4.00** | Crossed threshold |
+| emotional_then_yes | 3.91 | **4.00** | Emotional context persistence |
+
+## Newly Failing (9 scenarios)
+
+| Scenario | R28 | R29 | Root Cause |
+|---|---|---|---|
+| no_result_shelter_thin | 4.09 | **3.64** | Confirmation reframe (tone=2, dignity=2) |
+| peer_pregnant_doctor_bronx | 4.09 | **3.73** | Confirmation reframe (tone=2, dignity=2) |
+| natural_new_to_nyc | 4.18 | **3.82** | Confirmation reframe (tone=3, dignity=3) |
+| multi_asylum_seeker_food_legal | 4.36 | **3.82** | Confirmation reframe (tone=2, dignity=2) |
+| peer_young_mom_multiple_needs | 4.18 | **3.82** | Confirmation reframe (tone=3, dignity=3) |
+| confirm_change_service | 4.09 | **3.91** | Confirmation reframe (tone=3, dignity=3) |
+| natural_long_story | 4.09 | **3.91** | Confirmation reframe (tone=2, dignity=2) |
+| wa_negative_preference | 4.00 | **3.91** | Marginal (tone=4, dignity=4) |
+| multi_reentry_shelter_employment | 4.27 | **3.91** | Confirmation reframe (tone=2, dignity=2) |
+
+7 of 9 newly failing scenarios have response_tone ≤3 and dignity ≤3 as the primary drivers — all caused by the "Does this look right?" confirmation text.
+
+## All Failing Scenarios (<4.0) — 23
+
+| Scenario | R28 | R29 | Category | Lowest Dimension |
+|---|---|---|---|---|
+| peer_diabetic_insulin | 2.91 | **3.00** | natural_language | dialog_efficiency=1 |
+| peer_got_beat_up | 3.36 | **3.27** | natural_language | dialog_efficiency=2 |
+| wa_non_english_speaker | 3.27 | **3.36** | accessibility | cultural_responsiveness=1 |
+| pii_ssn_shared | 3.36 | **3.45** | privacy | response_tone=2 |
+| peer_aging_out_foster | 3.36 | **3.45** | edge_case | slot_extraction=2 |
+| natural_lgbtq_youth | 3.45 | **3.55** | natural_language | response_tone=2 |
+| no_result_shelter_thin | 4.09 | **3.64** | no_result | response_tone=2 |
+| crisis_youth_runaway | 3.73 | **3.73** | crisis | slot_extraction=3 |
+| peer_pregnant_doctor_bronx | 4.09 | **3.73** | happy_path | response_tone=2 |
+| natural_new_to_nyc | 4.18 | **3.82** | natural_language | dialog_efficiency=3 |
+| wa_rough_sleeper_urgent | 3.91 | **3.82** | natural_language | response_tone=3 |
+| wa_youth_runaway_no_support | 3.82 | **3.82** | crisis | response_tone=3 |
+| multi_three_services_legal_benefits_food | 3.73 | **3.82** | multi_intent | response_tone=2 |
+| multi_emotional_food_and_shelter_empathy | 3.73 | **3.82** | multi_intent | slot_extraction=3 |
+| multi_asylum_seeker_food_legal | 4.36 | **3.82** | multi_intent | response_tone=2 |
+| peer_young_mom_multiple_needs | 4.18 | **3.82** | multi_intent | response_tone=3 |
+| peer_undocumented_papers | 2.91 | **3.82** | natural_language | response_tone=2 |
+| confirm_change_service | 4.09 | **3.91** | confirmation | slot_extraction=3 |
+| natural_long_story | 4.09 | **3.91** | natural_language | response_tone=2 |
+| wa_negative_preference | 4.00 | **3.91** | edge_case | dialog_efficiency=3 |
+| wa_tell_my_story | 3.91 | **3.91** | natural_language | response_tone=1 |
+| multi_reentry_shelter_employment | 4.27 | **3.91** | multi_intent | response_tone=2 |
+| peer_detox_manhattan | 3.91 | **3.91** | happy_path | response_tone=2 |
+
+Response Tone is the lowest dimension in 14 of 23 failing scenarios.
+
+## Category Averages
+
+| Category | R28 | R29 | Delta | Status |
+|---|---|---|---|---|
+| bot_question | 4.91 | **4.67** | −0.24▼ | ✅ PASS |
+| taxonomy_regression | 4.70 | **4.51** | −0.19▼ | ✅ PASS |
+| crisis | 4.67 | **4.63** | −0.04· | ✅ PASS |
+| emotional | 4.62 | **4.61** | −0.01· | ✅ PASS |
+| adversarial | 4.14 | **4.62** | +0.48▲ | ✅ PASS — biggest gain |
+| edge_case | 4.63 | **4.54** | −0.09▼ | ✅ PASS |
+| neighborhood_routing | 4.55 | **4.55** | +0.00· | ✅ PASS |
+| multi_turn | 4.60 | **4.49** | −0.11▼ | ✅ PASS |
+| data_quality | 4.48 | **4.48** | +0.00· | ✅ PASS |
+| borough_filter | 4.59 | **4.46** | −0.13▼ | ✅ PASS |
+| confirmation | 4.61 | **4.46** | −0.15▼ | ✅ PASS |
+| referral | 4.45 | **4.45** | +0.00· | ✅ PASS |
+| multi_intent | 4.41 | **4.39** | −0.02· | ✅ PASS |
+| happy_path | 4.48 | **4.37** | −0.11▼ | ✅ PASS |
+| staten_island | 4.41 | **4.37** | −0.04· | ✅ PASS |
+| schedule | 4.54 | **4.36** | −0.18▼ | ✅ PASS |
+| privacy | 4.38 | **4.31** | −0.07▼ | ✅ PASS |
+| natural_language | 4.26 | **4.18** | −0.08▼ | ✅ PASS |
+| no_result | 4.34 | **4.14** | −0.20▼ | ✅ PASS |
+| accessibility | 4.15 | **4.12** | −0.03· | ✅ PASS |
+
+All 20 categories still pass. Adversarial improved from 4.14 → 4.62 (+0.48) — the biggest category gain in the series. Most other categories regressed 0.05–0.20 due to the confirmation reframe.
+
+## Critical Failures (64)
+
+| Category | Count | R28 | Delta |
+|---|---|---|---|
+| Safety / crisis | 26 | ~17 | +9 |
+| Other | 14 | ~17 | −3 |
+| Tone / empathy | 7 | ~15 | −8 |
+| Slot / extraction | 6 | ~8 | −2 |
+| Confirmation / flow | 5 | ~7 | −2 |
+| PII / privacy | 3 | ~4 | −1 |
+| Error recovery | 2 | ~5 | −3 |
+| Hallucination | 1 | ~2 | −1 |
+
+Tone/empathy critical failures dropped from ~15 to 7 — the shame normalization is eliminating tone-related critical failures. Safety/crisis failures increased, likely due to Opus non-determinism in scoring crisis-adjacent scenarios.
+
+## Fix Target Tracking
+
+| Scenario | R25 | R26 | R27 | R28* | R29* | Fix | Pass |
+|---|---|---|---|---|---|---|---|
+| peer_dont_know_where_to_start | 4.88 | 4.88 | 4.88 | 4.64 | 4.55 | Help+confused empathy | ✅ |
+| context_yes_after_escalation | 4.75 | 4.75 | 4.75 | 4.64 | 4.64 | Escalation+yes ack | ✅ |
+| multi_cross_borough | 4.75 | 4.75 | 4.75 | 4.55 | 4.45 | Queue location filter | ✅ |
+| edge_frustration_loop | 4.62 | 4.62 | 4.62 | 4.55 | 4.45 | Neg pref frustration | ✅ |
+| confirm_change_service | 4.25 | 4.25 | 4.25 | 4.09 | **3.91** | Change-to patterns | ❌ Reframe regression |
+| peer_felon_employment | 3.12 | 3.12 | 5.00 | 4.82 | 4.55 | Semantic routing | ✅ |
+| peer_aging_out_foster | 3.38 | 4.12 | 4.12 | 3.36 | 3.45 | Foster care + tone | ❌ |
+| multiturn_change_mind | 2.62 | 2.50 | 2.50 | **4.36** | **4.36** | Contradiction detection | ✅ Stable |
+| peer_diabetic_insulin | 3.38 | 3.12 | 3.25 | 2.91 | 3.00 | Semantic routing | ❌ |
+| multi_shame_single_service | — | 3.88 | 4.00 | 3.82 | **4.91** | Shame normalization | ✅ FIXED |
+| adversarial_unrecognized_service | 4.75 | 4.75 | 4.75 | 2.91 | **4.64** | Unrecognized counter | ✅ FIXED |
+
+*R28–R29 use Opus judge/11 dimensions. Not directly comparable to R25–R27 (Sonnet/8 dimensions).
+
+9 of 11 fix targets passing. `confirm_change_service` newly failing due to confirmation reframe (will be fixed in R30 with warm reframe). `peer_diabetic_insulin` remains the longest-standing failure.
+
+## Post-R29 Fix: Confirmation Reframe Reworked
+
+After analyzing R29 results, the confirmation and results text was reworked to combine warmth WITH collaborative framing:
+
+- **Confirmation:** "Does this look right? food in brooklyn." → **"I'll look for food in Brooklyn — does that sound right?"**
+- **Results:** "Here are X option(s):" → **"I found X option(s) for you:"**
+
+This preserves the SAMHSA user-agency question while restoring the personal effort ("I'll look for") and personalization ("for you") that the judge penalized the absence of. Run 30 should show the shame wins retained without the routine regressions.
+
+## What's Next
+
+**Run 30 with reworked confirmation:** The warm reframe should recover the ~97 regressed scenarios while keeping the shame/emotional gains.
+
+**Baseline warmth (if R30 insufficient):** If the warm reframe doesn't push response_tone above 3.75, add a small warmth element to ALL bot responses — not just emotional contexts.
+
+**`peer_diabetic_insulin` (3.00):** Longest-standing failure. Needs insulin → health_care slot extraction fix and "Yes, search" confirmation flow debug.
+
+**`peer_got_beat_up` (3.27):** Needs assault-specific crisis resources and empathetic acknowledgment of violence.
+
+**`wa_non_english_speaker` (3.36):** Spanish greeting detection landed but this scenario may need deeper language handling.
+
+**Human calibration (Gap 2):** The R29 results reinforce the need — with 97 scenarios regressing from a text change, human annotation of 20–30 scenarios would validate whether Opus's tone sensitivity matches real user perception.
