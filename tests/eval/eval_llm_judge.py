@@ -3556,6 +3556,13 @@ def generate_report(results: list) -> dict:
         if s.get("llm_simulator_turns")
     ]
 
+    # Check semantic router status for the report
+    try:
+        from app.services.semantic_router import is_available as _sr_check
+        _sr_ready = _sr_check()
+    except Exception:
+        _sr_ready = False
+
     # Build summary
     summary = {
         "overall_average": 0,
@@ -3570,6 +3577,7 @@ def generate_report(results: list) -> dict:
         ),
         "non_deterministic_scenarios": len(non_deterministic),
         "judge_model": JUDGE_MODEL,
+        "semantic_router_available": _sr_ready,
     }
 
     all_scores = []
@@ -3624,6 +3632,8 @@ def print_report(report: dict):
     print(f"  Critical failures: {summary['critical_failure_count']}")
     nd = summary.get('non_deterministic_scenarios', 0)
     print(f"  Non-deterministic scenarios: {nd}")
+    sr = "✓ loaded" if summary.get("semantic_router_available") else "✗ not loaded"
+    print(f"  Semantic router (Tier 2): {sr}")
     print(f"\n  OVERALL SCORE (unweighted): {summary['overall_average']:.2f} / 5.00")
     print(f"  OVERALL SCORE (weighted):   {summary.get('weighted_average', 0):.2f} / 5.00")
 
@@ -3728,6 +3738,22 @@ def main():
         sys.exit(1)
 
     client = anthropic.Anthropic(api_key=api_key)
+
+    # --- Pre-warm the semantic router (Tier 2) ---
+    # The model (~80 MB) downloads on first use. Without pre-warming,
+    # the first scenario pays the download cost and may behave differently
+    # (peer_diabetic_insulin regression in R27 was likely caused by this).
+    try:
+        from app.services.semantic_router import initialize as _sr_init
+        from app.services.semantic_router import is_available as _sr_available
+        print("  Pre-warming semantic router...", end="", flush=True)
+        _sr_ok = _sr_init()
+        if _sr_ok:
+            print(f" ✓ ready")
+        else:
+            print(f" ⚠ not available (sentence-transformers may not be installed)")
+    except Exception as e:
+        print(f" ⚠ failed: {e}")
 
     # Select scenarios
     scenarios = SCENARIOS
