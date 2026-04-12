@@ -107,17 +107,19 @@ SELECT
        AND ep.name != 'membership'
     ) AS eligibility_rules,
 
-    -- Review highlight: peer-generated sentiment summary for this location.
-    -- TODO: Enable once the review highlights table is confirmed in the
-    -- Streetlives DB. The sentiment analysis code lives at
-    -- streetlives-api/src/controllers/openai.js and runs overnight.
-    -- Likely table: comments or comment_highlights with a summary/highlight column.
-    -- Replace NULL below with the actual subquery, e.g.:
-    --   (SELECT ch.highlight FROM comment_highlights ch
-    --    WHERE ch.location_id = l.id
-    --    ORDER BY ch.created_at DESC LIMIT 1
-    --   ) AS review_highlight
-    NULL AS review_highlight
+    -- Review highlight: top positive peer comment for this location.
+    -- Extracted from the LLM sentiment analysis in location_comment_highlights.
+    -- 35 locations currently have highlights (~1.5% of 2,414 locations).
+    -- Uses the most informative positive comment (array is pre-sorted by
+    -- informativeness_score in the OpenAI pipeline).
+    (SELECT lch.openai_output_json->'top_positive_comments'->0->>'comment'
+     FROM location_comment_highlights lch
+     WHERE lch.location_id = l.id
+       AND lch.openai_output_json->'top_positive_comments' IS NOT NULL
+       AND jsonb_array_length(lch.openai_output_json->'top_positive_comments') > 0
+     ORDER BY lch.updated_at DESC
+     LIMIT 1
+    ) AS review_highlight
 
 FROM services s
     JOIN service_at_locations sal  ON s.id = sal.service_id
