@@ -53,6 +53,7 @@ SERVICE_ROUTES = {
         "I'm sick and need to see someone",
         "I need a physical exam",
         "my vision is getting worse and I need glasses",
+        "I'm not feeling well and need medical help",
     ],
 
     "shelter": [
@@ -226,6 +227,8 @@ SERVICE_ROUTES = {
         "I need help with tax preparation",
         "I need computer classes",
         "I need to learn English",
+        # Coverage for retired regex keywords (REGEX_AUDIT)
+        "I need help getting a transit pass",
     ],
 }
 

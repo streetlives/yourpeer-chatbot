@@ -85,9 +85,11 @@ class TestReentryPopulationAdditions:
 
     def test_felon_with_employment_intent(self):
         """'felon looking for work' → employment + reentry."""
-        s = extract_slots("looking for a job that hires felons near East New York")
+        # Uses "looking for work" (multi-word phrase still in regex)
+        # instead of "looking for a job" ("job" retired from regex — REGEX_AUDIT)
+        s = extract_slots("looking for work that hires felons near East New York")
         assert s["service_type"] == "employment"
-        p = _extract_populations("looking for a job that hires felons")
+        p = _extract_populations("looking for work that hires felons")
         assert "reentry" in p
 
     def test_felon_no_false_positive_on_unrelated(self):

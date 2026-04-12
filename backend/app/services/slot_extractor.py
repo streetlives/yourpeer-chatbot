@@ -253,17 +253,17 @@ _WORD_BOUNDARY_KEYWORDS = {
     # English words. Word-boundary matching prevents false positives while
     # keeping the fast regex path. The semantic layer (Tier 2) also handles
     # them via example utterances for novel phrasings.
-    "room": "shelter",         # "mushroom", "classroom" collision
-    "sick": "medical",         # "homesick", "sick of this" collision
-    "job": "employment",       # "good job" collision. Multi-word "job training" etc. stay in SERVICE_KEYWORDS
+    #
+    # NOTE: "job", "sick", "room", "snap", "transit" were initially moved here
+    # but removed after testing showed contextual false positives that word
+    # boundaries can't prevent ("good job", "sick of this", "oh snap").
+    # These are now handled exclusively by the semantic layer.
     "mail": "other",           # "email", "gmail" collision. "mailing address" stays in SERVICE_KEYWORDS
     "soap": "personal_care",   # "soap opera" collision
     "pads": "personal_care",   # "iPads" collision
     "wic": "food",             # "wicked" collision
     "visa": "legal",           # ambiguous (credit card vs immigration)
     "meal": "food",            # "oatmeal" collision (benign but inconsistent)
-    "snap": "other",            # "Snapchat" collision
-    "transit": "other",         # "transition" collision — gender transition is real in this population
     "pants": "clothing",        # "participants" collision
     # --- REGEX_AUDIT: removed (collision risk outweighs value) ---
     # "prep" — PrEP collides with "food prep", "test prep". Semantic layer handles.

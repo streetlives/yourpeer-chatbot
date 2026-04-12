@@ -680,7 +680,8 @@ class TestDisabledServiceKeywordOverlap:
         """'reentry' keywords appear in both SERVICE_KEYWORDS['other'] and
         _POPULATION_PHRASES. 'on parole' is only a population phrase;
         'reentry' is both."""
-        slots = extract_slots("I need a job, I'm on parole")
+        # Uses "find work" instead of "need a job" — "job" retired from regex (REGEX_AUDIT)
+        slots = extract_slots("I need to find work, I'm on parole")
         assert slots["service_type"] == "employment"
         assert "reentry" in slots["_populations"]
 
