@@ -1,0 +1,35 @@
+// Copyright (c) 2024 Streetlives, Inc.
+//
+// Use of this source code is governed by an MIT-style
+// license that can be found in the LICENSE file or at
+// https://opensource.org/licenses/MIT.
+
+import { NextResponse } from "next/server";
+
+const BACKEND_URL = process.env.CHAT_BACKEND_URL || "http://localhost:8000";
+
+export async function GET() {
+  try {
+    const res = await fetch(`${BACKEND_URL}/api/health`, {
+      signal: AbortSignal.timeout(5_000),
+      // Prevent caching so every poll gets fresh status
+      cache: "no-store",
+    });
+    const data = await res.json();
+    return NextResponse.json(data, { status: res.status });
+  } catch {
+    return NextResponse.json(
+      {
+        status: "unhealthy",
+        timestamp: new Date().toISOString(),
+        uptime_seconds: 0,
+        checks: {
+          database: { status: "down", error: "Backend unreachable" },
+          llm: { status: "unavailable" },
+          semantic_router: { status: "not_loaded" },
+        },
+      },
+      { status: 503 },
+    );
+  }
+}

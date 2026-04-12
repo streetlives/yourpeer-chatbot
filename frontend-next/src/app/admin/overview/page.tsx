@@ -10,6 +10,7 @@ import { useEffect } from "react";
 import { useAdminStore } from "@/lib/admin/store";
 import { StatCard } from "@/components/admin/stat-card";
 import { EventFeed } from "@/components/admin/event-feed";
+import { SystemHealth } from "@/components/admin/system-health";
 import { StatCardSkeleton, TableSkeleton } from "@/components/admin/loading-skeleton";
 
 export default function OverviewPage() {
@@ -80,6 +81,10 @@ export default function OverviewPage() {
           colorClass={relaxedCls}
           note="target ≤ 25%"
         />
+      </div>
+
+      <div className="mb-6">
+        <SystemHealth />
       </div>
 
       <div className="mb-7">

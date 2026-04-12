@@ -167,6 +167,19 @@ def is_available() -> bool:
     return _initialized and _model is not None
 
 
+def get_status() -> dict:
+    """Return health-check-friendly status of the semantic router.
+
+    Used by the /api/health endpoint to report component status
+    without accessing private module variables.
+    """
+    return {
+        "available": is_available(),
+        "model": MODEL_NAME.split("/")[-1] if _model else None,
+        "route_count": len(_route_embeddings),
+    }
+
+
 # ---------------------------------------------------------------------------
 # CLASSIFICATION
 # ---------------------------------------------------------------------------

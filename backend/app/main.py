@@ -1,6 +1,7 @@
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from app.routes.chat import router as chat_router
 from app.routes.admin import router as admin_router
 from app.dependencies import (
@@ -8,8 +9,13 @@ from app.dependencies import (
     BotDetectionMiddleware, get_allowed_origins,
 )
 import logging
+import os
+import time
 
 logger = logging.getLogger(__name__)
+
+# Track process start time for uptime calculation.
+_start_time = time.time()
 
 
 @asynccontextmanager
@@ -68,7 +74,70 @@ app.include_router(admin_router)
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok"}
+    """Readiness check — verifies each dependency independently.
+
+    Returns 200 when the database is reachable (required for search results).
+    Returns 503 when the database is unreachable.
+    LLM and semantic router being unavailable is "degraded" (200) because
+    the service still works in regex-only mode.
+    """
+    from datetime import datetime, timezone
+
+    checks: dict = {}
+    overall = "healthy"
+
+    # --- Database (critical — without it, no search results) ---
+    try:
+        t0 = time.perf_counter()
+        from app.rag.query_executor import test_connection
+        db_ok = test_connection()
+        db_ms = round((time.perf_counter() - t0) * 1000, 1)
+        if db_ok:
+            checks["database"] = {"status": "up", "latency_ms": db_ms}
+        else:
+            checks["database"] = {"status": "down", "error": "SELECT 1 failed"}
+            overall = "unhealthy"
+    except Exception as e:
+        checks["database"] = {"status": "down", "error": str(e)[:120]}
+        overall = "unhealthy"
+
+    # --- LLM / Anthropic API (non-critical — regex-only fallback) ---
+    _use_llm = bool(os.getenv("ANTHROPIC_API_KEY"))
+    if _use_llm:
+        checks["llm"] = {"status": "up", "mode": "llm"}
+    else:
+        checks["llm"] = {"status": "unavailable", "mode": "regex_only"}
+        if overall == "healthy":
+            overall = "degraded"
+
+    # --- Semantic router (non-critical — falls through to LLM or regex) ---
+    try:
+        from app.services.semantic_router import get_status as _sr_status
+        sr = _sr_status()
+        if sr["available"]:
+            checks["semantic_router"] = {
+                "status": "up",
+                "model": sr["model"],
+                "route_count": sr["route_count"],
+            }
+        else:
+            checks["semantic_router"] = {"status": "not_loaded"}
+            if overall == "healthy":
+                overall = "degraded"
+    except Exception:
+        checks["semantic_router"] = {"status": "not_loaded"}
+        if overall == "healthy":
+            overall = "degraded"
+
+    payload = {
+        "status": overall,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "uptime_seconds": round(time.time() - _start_time),
+        "checks": checks,
+    }
+
+    status_code = 503 if overall == "unhealthy" else 200
+    return JSONResponse(content=payload, status_code=status_code)
 
 
 @app.get("/")
