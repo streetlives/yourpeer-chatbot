@@ -97,7 +97,7 @@ information, preventing hallucination.
 | `frontend-next/src/app/admin/` | Staff console pages (overview, conversations, metrics, queries, evals, models) |
 | `frontend-next/next.config.js` | CSP + HSTS headers, security config |
 | `tests/conftest.py` | Pytest fixtures, mock data, test helpers |
-| `tests/eval_llm_judge.py` | LLM-as-judge evaluation (172 scenarios, 8 dimensions) |
+| `tests/eval_llm_judge.py` | LLM-as-judge evaluation (167 scenarios, 11 dimensions, Opus judge, weighted scoring) |
 
 ## What's Working
 
@@ -138,7 +138,7 @@ information, preventing hallucination.
 - **Post-results escape hatch**: new service requests ("I need X", "where can I go", "looking for") are no longer intercepted by the post-results handler. Messages with a new location clear stored results automatically
 - **LLM conversational fallback**: Haiku handles general/off-topic messages
 - **Admin console**: conversation viewer, event log, metrics dashboard, in-browser eval runner
-- **LLM-as-judge eval**: 172 scenarios scored on slot accuracy, dialog efficiency, tone, safety, confirmation UX, privacy, hallucination resistance, error recovery
+- **LLM-as-judge eval**: 167 scenarios scored on 11 dimensions — 8 core (slot accuracy, dialog efficiency, tone, safety, confirmation UX, privacy, hallucination resistance, error recovery) + 3 domain-specific (dignity & anti-stigma, cultural responsiveness, equity of access). Judge uses Claude Opus with weighted dimension scoring
 - **Accessibility**: screen reader support, keyboard navigation, voice input (Web Speech API)
 - **Anonymized audit logging**: conversation turns, query executions, crisis events
 - **In-memory sessions**: no persistent conversation storage, 30-min TTL, LRU eviction at 500-session cap
@@ -151,7 +151,7 @@ information, preventing hallucination.
 - **Stability**: 1,000-char message length limit (frontend + backend), coordinate validation (lat ±90, lng ±180), 10s LLM timeout, 5s DB statement timeout, 30s frontend fetch timeout, admin endpoint rate limiting (120/min IP + 5/hr eval), rate limiter memory cap (5,000 buckets)
 - **Observability**: `X-Request-ID` correlation IDs flow from frontend → Next.js proxy → FastAPI backend → audit log, enabling end-to-end request tracing
 - **Admin data caching**: centralized Zustand store with 30-second staleness threshold; navigating between admin tabs reuses cached data
-- **Test suite**: 46 pytest files (~1,900+ tests) organized into `tests/unit/` and `tests/integration/`, plus an `eval/` directory. LLM-as-judge evaluation: 172 scenarios across 20 categories
+- **Test suite**: 46 pytest files (~1,900+ tests) organized into `tests/unit/` and `tests/integration/`, plus an `eval/` directory. LLM-as-judge evaluation: 167 scenarios across 20 categories, 11 dimensions, Opus judge
 
 ## Known Gaps / In Progress
 
