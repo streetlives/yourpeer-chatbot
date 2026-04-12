@@ -49,6 +49,10 @@ SERVICE_ROUTES = {
         "I need to refill my prescription",
         "where can I get vaccinated",
         "I need to see a nurse about this wound",
+        # Coverage for retired regex keywords (REGEX_AUDIT)
+        "I'm sick and need to see someone",
+        "I need a physical exam",
+        "my vision is getting worse and I need glasses",
     ],
 
     "shelter": [
@@ -72,6 +76,9 @@ SERVICE_ROUTES = {
         "I need somewhere warm to stay",
         "I need a cot for tonight",
         "is there an overnight shelter I can go to",
+        # Coverage for retired regex keywords (REGEX_AUDIT)
+        "I need a room for tonight",
+        "where can I do intake for a shelter",
     ],
 
     "food": [
@@ -162,6 +169,10 @@ SERVICE_ROUTES = {
         "I need legal representation for housing court",
         "I need help with my DACA renewal",
         "I'm undocumented and need legal assistance",
+        # Coverage for retired regex keywords (REGEX_AUDIT)
+        "I have to go to court next week",
+        "I need help posting bail",
+        "I need a visa to stay in the country",
     ],
 
     "employment": [

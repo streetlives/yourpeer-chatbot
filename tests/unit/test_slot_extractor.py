@@ -790,7 +790,8 @@ def test_new_legal_keywords():
     phrases = [
         "My landlord is threatening me",
         "I need help with custody",
-        "I need bail money",
+        # "I need bail money" retired from regex — "bail out" collision (REGEX_AUDIT).
+        # Now handled by semantic routing (Tier 2).
         "I'm facing discrimination",
     ]
     for phrase in phrases:

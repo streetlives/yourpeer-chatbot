@@ -68,8 +68,10 @@ class TestReentryPopulationAdditions:
 
     @pytest.mark.parametrize("phrase", [
         "felon", "felony", "ex-felon", "criminal record",
-        "have a record", "been to prison", "was in prison",
-        "got out of prison", "did time",
+        # "have a record" retired — false positive: "I have a record of my meetings" (REGEX_AUDIT)
+        "been to prison", "was in prison",
+        "got out of prison",
+        # "did time" retired — false positive: "I did time management training" (REGEX_AUDIT)
     ])
     def test_new_phrase_extracts_reentry(self, phrase):
         assert "reentry" in _extract_populations(phrase)

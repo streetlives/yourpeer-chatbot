@@ -104,7 +104,9 @@ class TestPopulationExtraction:
         assert "pregnant" in _extract_populations("having a baby in two months")
 
     def test_senior_phrases(self):
-        assert "senior" in _extract_populations("I'm a senior and need meals")
+        # "senior" standalone retired from regex — "senior developer" false positive
+        # (REGEX_AUDIT). Standalone "senior" is now handled by semantic routing
+        # (Tier 2). Multi-word phrases and age-based detection still work via regex.
         assert "senior" in _extract_populations("elderly woman looking for help")
         assert "senior" in _extract_populations("I'm an older adult")
         assert "senior" in _extract_populations("senior citizen needing shelter")
