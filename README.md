@@ -158,6 +158,7 @@ These are tracked issues identified during DB audits and pilot testing, deferred
 | [METRICS.md](docs/METRICS.md) | Success metrics — 35+ metrics across 7 layers with definitions, targets, measurement methods, and pilot vs. post-pilot phasing |
 | [EVAL_RESULTS.md](docs/EVAL_RESULTS.md) | Eval history — per-scenario scores, critical failures, and fixes across all 23 runs |
 | [SEMANTIC_ROUTING_DESIGN.md](docs/SEMANTIC_ROUTING_DESIGN.md) | Semantic routing design — model selection rationale, 3-tier cascade architecture, route definitions, integration plan, scaling strategy |
+| [REGEX_AUDIT.md](docs/REGEX_AUDIT.md) | Regex keyword audit — collision risk analysis, proven false positives, remediation actions, keyword maintenance guide |
 | [SETUP.md](docs/SETUP.md) | Local development setup — virtual environment, dependencies, API keys, running locally |
 | [DEPLOY.md](docs/DEPLOY.md) | Render deployment — environment variables, build commands, auto-deploy, starter tier notes |
 | [TESTING.md](docs/TESTING.md) | Test suite guide — 1,880+ tests across 46 files in `unit/` and `integration/` directories + 172-scenario LLM-as-judge evaluation framework |

@@ -14,6 +14,8 @@ Every incoming message passes through five stages: slot extraction, semantic rou
 
 Regex-based slot extraction runs on every message before classification. This extracts service type(s), location, age, urgency, family status, and service detail. The result determines `has_service_intent` — whether the message contains a service request.
 
+The regex keyword set has been audited for collision risk (see `REGEX_AUDIT.md`). The 384 remaining keywords are split into 208 multi-word phrases (safe from substring collisions), 151 domain-specific single words, and 25 collision-prone keywords protected by `\b` word-boundary matching. Context-dependent keywords (e.g., "court", "bail", "vision") were retired — the semantic routing layer handles them instead.
+
 When multiple services are detected with different locations (e.g. "food in Brooklyn and shelter in Manhattan"), per-service location binding matches each service to its nearest location by text position. The primary service gets the first-mentioned location; queued services get their bound locations stored as 3-tuples `(service_type, detail, location)`.
 
 ### Stage 1a — Semantic Routing (when regex finds no service_type)

@@ -50,7 +50,8 @@ SERVICE_KEYWORDS = {
     "clothing": [
         "clothing", "clothes", "jacket", "coat", "shoes", "boots",
         "socks", "underwear", "warm clothes", "winter clothes",
-        "free clothes", "outfit", "pants", "shirt",
+        "free clothes", "outfit", "shirt",
+        # "pants" moved to _WORD_BOUNDARY_KEYWORDS — "participants" collision (REGEX_AUDIT)
         "sweater", "sweatshirt", "hoodie", "gloves",
         "winter gear", "sneakers",
     ],
@@ -174,14 +175,16 @@ SERVICE_KEYWORDS = {
     # --- Other Services (taxonomy: Other service) ---
     "other": [
         "other services", "other service",
-        "benefits", "snap", "ebt", "food stamps", "medicaid",
+        "benefits", "ebt", "food stamps", "medicaid",
+        # "snap" moved to _WORD_BOUNDARY_KEYWORDS — "Snapchat" collision (REGEX_AUDIT)
         "social security", "disability", "public assistance",
         "identification", "birth certificate", "need an id",
         "free phone", "wifi", "internet", "charging",
         # "mail" moved to _WORD_BOUNDARY_KEYWORDS — "email"/"gmail" collision (REGEX_AUDIT)
         "mailing address", "storage", "locker",
         "welfare", "cash assistance", "state id", "nyc id",
-        "metro card", "transit", "charger", "charging station",
+        "metro card", "charger", "charging station",
+        # "transit" moved to _WORD_BOUNDARY_KEYWORDS — "transition" collision (REGEX_AUDIT)
         # NYC-specific (P3 audit)
         "voter registration", "replacement id",
         "tax prep", "tax preparation", "free tax",
@@ -259,6 +262,9 @@ _WORD_BOUNDARY_KEYWORDS = {
     "wic": "food",             # "wicked" collision
     "visa": "legal",           # ambiguous (credit card vs immigration)
     "meal": "food",            # "oatmeal" collision (benign but inconsistent)
+    "snap": "other",            # "Snapchat" collision
+    "transit": "other",         # "transition" collision — gender transition is real in this population
+    "pants": "clothing",        # "participants" collision
     # --- REGEX_AUDIT: removed (collision risk outweighs value) ---
     # "prep" — PrEP collides with "food prep", "test prep". Semantic layer handles.
     # "parole" — population phrase only, not a service request. Stays in _POPULATION_PHRASES.
