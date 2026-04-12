@@ -111,6 +111,77 @@ DIMENSION_WEIGHTS = {
 
 
 # ---------------------------------------------------------------------------
+# R28 BASELINE — New baseline established with Opus judge + 11 dimensions
+# ---------------------------------------------------------------------------
+# Run 28 is the first run with:
+#   - Opus judge (upgraded from Sonnet)
+#   - 11 dimensions (3 new: dignity, cultural, equity)
+#   - Weighted scoring
+#   - Contradiction detection in merge_slots
+#   - Semantic router pre-warm
+#
+# Runs 14–27 used Sonnet/8 dimensions and are NOT directly comparable.
+# All R29+ delta tracking should compare against R28, not R27.
+
+R28_BASELINE = {
+    "overall_average": 4.47,
+    "weighted_average": 4.46,
+    "passing_count": 146,
+    "failing_count": 21,
+    "critical_failure_count": 60,
+    "perfect_count": 14,
+    "dimensions": {
+        "slot_extraction":          4.63,
+        "dialog_efficiency":        4.71,
+        "response_tone":            3.75,
+        "safety_crisis":            4.35,
+        "confirmation_ux":          4.65,
+        "privacy":                  4.96,
+        "hallucination_resistance": 4.90,
+        "error_recovery":           4.56,
+        "dignity_anti_stigma":      3.81,
+        "cultural_responsiveness":  3.93,
+        "equity_of_access":         4.94,
+    },
+    "categories": {
+        "bot_question": 4.91, "taxonomy_regression": 4.70, "crisis": 4.67,
+        "edge_case": 4.63, "emotional": 4.62, "confirmation": 4.61,
+        "multi_turn": 4.60, "borough_filter": 4.59, "neighborhood_routing": 4.55,
+        "schedule": 4.54, "happy_path": 4.48, "data_quality": 4.48,
+        "referral": 4.45, "staten_island": 4.41, "multi_intent": 4.41,
+        "privacy": 4.38, "no_result": 4.34, "natural_language": 4.26,
+        "accessibility": 4.15, "adversarial": 4.14,
+    },
+    "key_scenarios": {
+        "multiturn_change_mind": 4.36,
+        "peer_diabetic_insulin": 2.91,
+        "multi_shame_single_service": 3.82,
+        "multi_shame_food_bank_first_time": 3.82,
+        "multi_emotional_accept_second_still_warm": 4.09,
+        "peer_felon_employment": 4.82,
+        "peer_aging_out_foster": 3.36,
+        "adversarial_unrecognized_service": 2.91,
+        "peer_undocumented_papers": 2.91,
+        "wa_non_english_speaker": 3.27,
+        "peer_got_beat_up": 3.36,
+        "natural_lgbtq_youth": 3.45,
+        "crisis_youth_runaway": 3.73,
+        "peer_detox_manhattan": 3.91,
+        "emotional_then_yes": 3.91,
+    },
+    # Changes evaluated in R28 (for the commit log)
+    "changes": "Opus judge, weighted scoring, 3 new dimensions, contradiction detection, semantic router pre-warm",
+    # Changes NOT evaluated (implemented after R28 snapshot)
+    "pending_changes": (
+        "Shame normalization prefix, emotional context persistence, "
+        "distrust/undeserving/anger emotional categories, SAMHSA principle "
+        "improvements (confirmation reframe, results reframe, demographic "
+        "skip, Spanish greeting detection, cultural context fallback)"
+    ),
+}
+
+
+# ---------------------------------------------------------------------------
 # SCENARIO BANK
 # ---------------------------------------------------------------------------
 # Each scenario defines a persona, opening message, and expected behavior.
@@ -3582,6 +3653,20 @@ def generate_report(results: list) -> dict:
         if s.get("llm_simulator_turns")
     ]
 
+    # Passing / failing / perfect counts
+    scored = [s for s in per_scenario if "error" not in s]
+    passing_count = sum(1 for s in scored if s["average_score"] >= 4.0)
+    failing_count = sum(1 for s in scored if s["average_score"] < 4.0)
+    perfect_count = sum(1 for s in scored if s["average_score"] == 5.0)
+
+    # Score distribution per dimension (count of 1, 2, 3, 4, 5)
+    dim_distributions = {}
+    for d in dimensions:
+        dist = {1: 0, 2: 0, 3: 0, 4: 0, 5: 0}
+        for val in dim_scores[d]:
+            dist[val] = dist.get(val, 0) + 1
+        dim_distributions[d] = dist
+
     # Check semantic router status for the report
     try:
         from app.services.semantic_router import is_available as _sr_check
@@ -3593,7 +3678,11 @@ def generate_report(results: list) -> dict:
     summary = {
         "overall_average": 0,
         "weighted_average": 0,
+        "passing_count": passing_count,
+        "failing_count": failing_count,
+        "perfect_count": perfect_count,
         "dimension_averages": {},
+        "dimension_distributions": dim_distributions,
         "dimension_weights": dict(DIMENSION_WEIGHTS),
         "category_averages": {},
         "critical_failure_count": len(critical_failures),
@@ -3604,6 +3693,7 @@ def generate_report(results: list) -> dict:
         "non_deterministic_scenarios": len(non_deterministic),
         "judge_model": JUDGE_MODEL,
         "semantic_router_available": _sr_ready,
+        "baseline": "R28",
     }
 
     all_scores = []
@@ -3653,19 +3743,35 @@ def print_report(report: dict):
     print("=" * 70)
     print(f"  Timestamp: {report['timestamp']}")
     print(f"  Judge model: {summary.get('judge_model', 'unknown')}")
+    print(f"  Baseline: {summary.get('baseline', 'R28')} (Opus, 11 dimensions)")
     print(f"  Scenarios evaluated: {summary['scenarios_evaluated']}")
     print(f"  Scenarios with errors: {summary['scenarios_with_errors']}")
-    print(f"  Critical failures: {summary['critical_failure_count']}")
-    nd = summary.get('non_deterministic_scenarios', 0)
-    print(f"  Non-deterministic scenarios: {nd}")
     sr = "✓ loaded" if summary.get("semantic_router_available") else "✗ not loaded"
     print(f"  Semantic router (Tier 2): {sr}")
-    print(f"\n  OVERALL SCORE (unweighted): {summary['overall_average']:.2f} / 5.00")
-    print(f"  OVERALL SCORE (weighted):   {summary.get('weighted_average', 0):.2f} / 5.00")
 
-    # Dimension breakdown
+    # High-level metrics with R28 comparison
+    passing = summary.get("passing_count", 0)
+    failing = summary.get("failing_count", 0)
+    perfect = summary.get("perfect_count", 0)
+    total = summary["scenarios_evaluated"]
+    pct = (passing / total * 100) if total else 0
+
+    overall = summary['overall_average']
+    weighted = summary.get('weighted_average', 0)
+    r28 = R28_BASELINE
+
+    print(f"\n  {'Metric':<30} {'Current':>8} {'R28':>8} {'Delta':>8}")
+    print(f"  {'-'*56}")
+    print(f"  {'Overall (unweighted)':<30} {overall:>8.2f} {r28['overall_average']:>8.2f} {overall - r28['overall_average']:>+8.2f}")
+    print(f"  {'Overall (weighted)':<30} {weighted:>8.2f} {r28['weighted_average']:>8.2f} {weighted - r28['weighted_average']:>+8.2f}")
+    print(f"  {'Passing (≥4.0)':<30} {passing:>5}/{total:<2} {r28['passing_count']:>5}/{total:<2} {passing - r28['passing_count']:>+8d}")
+    print(f"  {'Failing (<4.0)':<30} {failing:>8d} {r28['failing_count']:>8d} {failing - r28['failing_count']:>+8d}")
+    print(f"  {'Perfect (5.0)':<30} {perfect:>8d} {r28['perfect_count']:>8d} {perfect - r28['perfect_count']:>+8d}")
+    print(f"  {'Critical failures':<30} {summary['critical_failure_count']:>8d} {r28['critical_failure_count']:>8d} {summary['critical_failure_count'] - r28['critical_failure_count']:>+8d}")
+
+    # Dimension breakdown with R28 comparison
     print("\n" + "-" * 70)
-    print("  DIMENSION SCORES")
+    print("  DIMENSION SCORES (vs R28 baseline)")
     print("-" * 70)
 
     dim_labels = {
@@ -3682,25 +3788,51 @@ def print_report(report: dict):
         "equity_of_access": "Equity of Access",
     }
 
+    print(f"  {'Dimension':<25} {'Score':>6} {'R28':>6} {'Delta':>7} {'Wt':>4}  {'Distribution (1-2-3-4-5)'}")
+    print(f"  {'-'*80}")
     for dim_key, label in dim_labels.items():
         data = summary["dimension_averages"].get(dim_key, {})
         if data:
+            avg = data["average"]
             w = data.get("weight", 1.0)
-            bar = "█" * int(data["average"] * 4) + "░" * (20 - int(data["average"] * 4))
-            print(f"  {label:<25} {bar} {data['average']:.2f}  (w={w:.1f}, min={data['min']}, max={data['max']})")
+            r28_val = r28["dimensions"].get(dim_key, 0)
+            delta = avg - r28_val if r28_val else 0
+            dist = summary.get("dimension_distributions", {}).get(dim_key, {})
+            dist_str = f"{dist.get(1,0)}-{dist.get(2,0)}-{dist.get(3,0)}-{dist.get(4,0)}-{dist.get(5,0)}"
+            marker = "▲" if delta > 0.05 else "▼" if delta < -0.05 else "·"
+            print(f"  {label:<25} {avg:>6.2f} {r28_val:>6.2f} {delta:>+7.2f}{marker} {w:>3.1f}×  {dist_str}")
 
-    # Category breakdown
+    # Category breakdown with R28 comparison
     print("\n" + "-" * 70)
-    print("  CATEGORY AVERAGES")
+    print("  CATEGORY AVERAGES (vs R28 baseline)")
     print("-" * 70)
-    for cat, avg in sorted(summary["category_averages"].items()):
-        bar = "█" * int(avg * 4) + "░" * (20 - int(avg * 4))
-        print(f"  {cat:<25} {bar} {avg:.2f}")
+    print(f"  {'Category':<25} {'Score':>6} {'R28':>6} {'Delta':>7}")
+    print(f"  {'-'*46}")
+    for cat, avg in sorted(summary["category_averages"].items(), key=lambda x: -x[1]):
+        r28_val = r28["categories"].get(cat, 0)
+        delta = avg - r28_val if r28_val else 0
+        marker = "▲" if delta > 0.05 else "▼" if delta < -0.05 else "·"
+        print(f"  {cat:<25} {avg:>6.2f} {r28_val:>6.2f} {delta:>+7.2f}{marker}")
+
+    # Key scenario tracking with R28 comparison
+    print("\n" + "-" * 70)
+    print("  KEY SCENARIO TRACKING (vs R28 baseline)")
+    print("-" * 70)
+    print(f"  {'Scenario':<45} {'Score':>6} {'R28':>6} {'Delta':>7}")
+    print(f"  {'-'*66}")
+    for sid, r28_val in sorted(r28["key_scenarios"].items(), key=lambda x: x[1]):
+        s = next((x for x in report["scenarios"] if x.get("id") == sid), None)
+        if s and "error" not in s:
+            avg = s["average_score"]
+            delta = avg - r28_val
+            emoji = "✅" if avg >= 4.0 else "⚠️" if avg >= 3.0 else "❌"
+            marker = "▲" if delta > 0.05 else "▼" if delta < -0.05 else "·"
+            print(f"  {emoji} {sid:<43} {avg:>6.2f} {r28_val:>6.2f} {delta:>+7.2f}{marker}")
 
     # Critical failures
     if report["critical_failures"]:
         print("\n" + "-" * 70)
-        print("  ⚠️  CRITICAL FAILURES")
+        print(f"  ⚠️  CRITICAL FAILURES ({len(report['critical_failures'])})")
         print("-" * 70)
         for cf in report["critical_failures"]:
             print(f"  [{cf['scenario']}] {cf['failure']}")
@@ -3728,7 +3860,9 @@ def print_report(report: dict):
 
         emoji = "✅" if s["average_score"] >= 4.0 else "⚠️" if s["average_score"] >= 3.0 else "❌"
         ws = s.get("weighted_score", s["average_score"])
-        print(f"\n  {emoji} {s['id']}: {s['name']}  [avg={s['average_score']:.1f}, wt={ws:.1f}, {s['turn_count']} turns]")
+        r28_val = r28["key_scenarios"].get(s["id"])
+        delta_str = f" Δ{s['average_score'] - r28_val:+.2f}" if r28_val is not None else ""
+        print(f"\n  {emoji} {s['id']}: {s['name']}  [avg={s['average_score']:.1f}, wt={ws:.1f}, {s['turn_count']} turns{delta_str}]")
 
         if s.get("overall_notes"):
             print(f"     {s['overall_notes']}")
