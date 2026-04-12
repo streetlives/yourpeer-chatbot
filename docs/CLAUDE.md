@@ -159,7 +159,6 @@ information, preventing hallucination.
 - **Multilingual support** — English only. Spanish keyword support is designed (Phase 6 in implementation plan) but not yet implemented. The semantic router can be switched to `paraphrase-multilingual-MiniLM-L12-v2` for Spanish support (one-line change).
 - **Schedule data coverage** — sparse; only walk-in services have >40% coverage. Day-specific hours queries are supported but coverage varies by service
 - **Sort by nearest** — not implemented. Would require PostGIS distance calculation stored on service cards for client-side re-sort. Current sort options are "recently verified" and "most services"
-- **`additional_info` field** — 99.7% null in DB, always empty in results
 - **LLM call instrumentation** — `log_llm_call()` API is defined in audit_log.py but not yet wired into `claude_client.py` call sites. Metrics section shows "No data" until instrumentation is added.
 - **Persistent storage** — when `PILOT_DB_PATH` is set, audit events and sessions are persisted to SQLite (WAL mode) and hydrated on startup. When unset, in-memory only
 - **`housing_assistance` not in LLM enum** — the `_SERVICE_TYPE_ENUM` in `llm_slot_extractor.py` has 9 values (no `housing_assistance`). Housing assistance keywords are routed via regex only. The LLM routes these to `other` or `shelter`. Low-impact since the regex keywords are specific ("rental assistance", "help with rent")

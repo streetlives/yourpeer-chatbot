@@ -482,7 +482,6 @@ class TestAccessibilityOnCards:
             "service_url": None,
             "service_email": None,
             "fees": None,
-            "additional_info": None,
             "organization_url": None,
             "today_opens": None,
             "today_closes": None,

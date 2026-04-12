@@ -59,7 +59,6 @@ MOCK_SERVICE_CARD = {
     "email": "info@testpantry.org",
     "website": "https://testpantry.org",
     "fees": "Free",
-    "additional_info": None,
     "yourpeer_url": "https://yourpeer.nyc/locations/test-food-pantry",
     "hours_today": "9:00 AM – 5:00 PM",
     "is_open": "open",

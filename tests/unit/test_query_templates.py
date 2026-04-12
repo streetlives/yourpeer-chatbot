@@ -318,7 +318,6 @@ def _mock_row(**overrides):
         "fees": "Free",
         "service_url": "https://example.com",
         "service_email": "info@example.com",
-        "additional_info": "Bring ID",
         "organization_name": "Test Org",
         "organization_url": "https://testorg.com",
         "location_id": "loc-uuid-456",

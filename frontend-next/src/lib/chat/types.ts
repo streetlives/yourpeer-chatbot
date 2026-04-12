@@ -21,7 +21,6 @@ export interface ServiceResult {
   email?: string;
   website?: string;
   description?: string;
-  additional_info?: string;
   hours_today?: string;
   is_open?: "open" | "closed" | "unknown";
   fees?: string;

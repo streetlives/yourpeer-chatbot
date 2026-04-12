@@ -224,7 +224,6 @@ The frontend is designed for the population served — people who may be using s
 These are tracked issues identified during DB audits and pilot testing, deferred for post-pilot resolution. See [README.md — Known Limitations](../README.md#known-limitations--future-work) for detail.
 
 - Result ordering uses open-now / recently-verified / name; proximity-first when geolocation available. Users can re-sort by recently verified or most services at location after results are shown
-- `additional_info` field is effectively empty (99.7% null)
 - Schedule data is sparse for most categories — open/closed filtering intentionally disabled. Day-specific hours are available via "are they open Saturday?" but coverage varies
 - Sort by nearest is not available (requires distance data on service cards)
 - Shame tone not yet implemented — emotional expressions involving embarrassment are handled by the generic emotional handler rather than a normalizing response

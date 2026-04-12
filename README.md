@@ -141,8 +141,6 @@ These are tracked issues identified during DB audits and pilot testing, deferred
 
 **Result ordering.** Results are sorted by: (1) open now — services currently open appear first, (2) recently verified — freshest data via `l.last_validated_at DESC NULLS LAST`, (3) service name as a stable tiebreaker. When browser geolocation is available, distance is the primary sort with open-now and freshness as secondary tiebreakers.
 
-**`additional_info` field is effectively empty.** DB audit (Apr 2026) shows 3,240 of 3,251 services (99.7%) have no `additional_info`. The field is selected in the base query and rendered conditionally in the card, but it adds negligible value. Consider removing it from the SELECT in a future query optimization pass to reduce payload size.
-
 **Schedule data is sparse for most categories.** Only walk-in service types (Soup Kitchen 81%, Shower 55%, Clothing Pantry 64%, Food Pantry 40%) have meaningful schedule coverage. All other categories show 0% coverage. The `FILTER_BY_OPEN_NOW` and `FILTER_BY_WEEKDAY` query filters exist but are intentionally not passed from the chatbot — enabling them would silently exclude the majority of services. See `METRICS.md` section 2.4 for detail.
 
 **Eval runs share the web server host.** The "Run Evals" button runs the LLM-as-judge suite in a subprocess (isolated from request handling via `asyncio.create_subprocess_exec`), but it still runs on the same machine as the web server. Acceptable for the pilot; for production, isolate into a separate worker or task queue to avoid resource contention during long runs.
