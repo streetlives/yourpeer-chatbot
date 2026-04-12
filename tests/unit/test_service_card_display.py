@@ -23,6 +23,7 @@ from app.rag.query_templates import (
     _BASE_QUERY,
 )
 from app.services.session_store import clear_session, save_session_slots
+from app.services.chatbot import generate_reply
 
 
 # -----------------------------------------------------------------------

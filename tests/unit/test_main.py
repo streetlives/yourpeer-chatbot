@@ -27,10 +27,16 @@ _ALLOWED_ORIGIN = "http://localhost:3000"
 # -----------------------------------------------------------------------
 
 def test_health():
-    """GET /api/health should return ok."""
-    r = client.get("/api/health")
+    """GET /api/health should return structured health check response."""
+    from unittest.mock import patch
+    with patch("app.rag.query_executor.test_connection", return_value=True):
+        r = client.get("/api/health")
     assert r.status_code == 200
-    assert r.json() == {"status": "ok"}
+    data = r.json()
+    assert data["status"] in ("healthy", "degraded")
+    assert "checks" in data
+    assert data["checks"]["database"]["status"] == "up"
+    assert "uptime_seconds" in data
 
 
 # -----------------------------------------------------------------------
@@ -52,9 +58,13 @@ def test_root_returns_json():
 
 def test_api_health_routed():
     """/api/health should be handled by the API router."""
-    r = client.get("/api/health")
+    from unittest.mock import patch
+    with patch("app.rag.query_executor.test_connection", return_value=True):
+        r = client.get("/api/health")
     assert r.status_code == 200
-    assert r.json() == {"status": "ok"}
+    data = r.json()
+    assert data["status"] in ("healthy", "degraded")
+    assert "checks" in data
 
 
 def test_chat_route_exists():
@@ -134,7 +144,7 @@ def test_csrf_rejects_post_with_evil_referer():
 
 def test_cors_headers_present():
     """Responses should include CORS allow-origin header for allowed origins."""
-    r = client.get("/api/health", headers={"Origin": _ALLOWED_ORIGIN})
+    r = client.get("/", headers={"Origin": _ALLOWED_ORIGIN})
     assert r.status_code == 200
     origin = r.headers.get("access-control-allow-origin")
     assert origin == _ALLOWED_ORIGIN, f"Expected {_ALLOWED_ORIGIN}, got: {origin}"
@@ -142,7 +152,7 @@ def test_cors_headers_present():
 
 def test_cors_rejects_unknown_origin():
     """Responses should NOT include CORS allow-origin for disallowed origins."""
-    r = client.get("/api/health", headers={"Origin": "https://evil.com"})
+    r = client.get("/", headers={"Origin": "https://evil.com"})
     assert r.status_code == 200
     origin = r.headers.get("access-control-allow-origin")
     assert origin is None, f"Expected no CORS header for evil origin, got: {origin}"
