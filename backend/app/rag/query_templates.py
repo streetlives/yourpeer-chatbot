@@ -844,6 +844,9 @@ def build_query(template_key: str, user_params: dict) -> tuple[str, dict]:
     # combinatorial explosion of variants for each boost combination).
     _lgbtq_boost = params.pop("lgbtq_boost", False)
     _veteran_boost = params.pop("veteran_boost", False)
+    # no_requirements is a control flag (triggers a NOT EXISTS filter)
+    # with no SQL bind variable — pop it so SQLAlchemy doesn't error.
+    params.pop("no_requirements", None)
     _has_distance = "lat" in params and "lon" in params
     _has_pop_boost = "pop_boost_pattern" in params
 

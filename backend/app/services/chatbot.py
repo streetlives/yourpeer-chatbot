@@ -1290,7 +1290,6 @@ def _execute_and_respond(session_id: str, message: str, slots: dict, request_id:
             all_services = results["services"]
             services_list = all_services[:_DISPLAY_LIMIT]
             result_count = len(services_list)
-            _total_available = len(all_services)
             relaxed = results.get("relaxed", False)
 
             qualifier = ""
