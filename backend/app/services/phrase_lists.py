@@ -220,6 +220,21 @@ _EMOTIONAL_PHRASES = [
     "never thought i'd need help", "never thought id need help",
     "never thought i'd need a food bank",
     "i'm pathetic", "im pathetic", "ashamed",
+    # Shame — indirect / vulnerability expressions (R27 tone gap)
+    # These are how people express shame WITHOUT using the word "ashamed":
+    "hard for me to say", "hard to say this", "hard for me to ask",
+    "hard to ask for", "hard to admit",
+    "difficult to ask", "difficult to say",
+    "hate asking", "hate to ask", "hate having to ask",
+    "humiliating", "degrading",
+    "don't want to be a burden", "dont want to be a burden",
+    "feel like a burden", "i'm a burden", "im a burden",
+    "first time asking for help", "never done this before",
+    "never had to ask", "never asked for help before",
+    "swallow my pride", "swallowed my pride",
+    "can't believe i'm doing this", "cant believe im doing this",
+    "i can't afford to eat", "i cant afford to eat",
+    "can't even feed myself", "cant even feed myself",
     # Grief / loss (P2 audit — common trigger for homelessness)
     "lost someone", "someone died", "my friend died",
     "grieving", "in mourning",
@@ -237,6 +252,12 @@ _EMOTIONAL_PHRASES = [
     "i am not okay", "i am not ok",
     "i am struggling", "i am pathetic",
     "i am stressed",
+    # Post-normalization shame variants (R27 tone gap)
+    "i am a burden",
+    "do not want to be a burden",
+    "can not believe i am doing this",
+    "i can not afford to eat", "can not even feed myself",
+    "never thought i would need",
     # Isolation (P2 audit — major factor in homeless population)
     "nobody understands", "no one understands",
     "completely alone", "i have no one",
@@ -259,6 +280,35 @@ _EMOTIONAL_PHRASES = [
     "so hard right now", "everything is so hard",
     "i don't know what to do with myself",
     "dont know what to do with myself",
+    # --- Research-backed additions (R28) ---
+    # Distrust / suspicion (National Harm Reduction Coalition: "difficulty
+    # trusting people" is a named trauma response; PMC: distrust of
+    # institutional services is a top barrier to care-seeking)
+    "i don't trust", "i dont trust", "i do not trust",
+    "is this legit", "is this real", "is this safe",
+    "how do i know", "can i trust",
+    "been burned before", "been lied to",
+    "sounds too good", "what's the catch", "whats the catch",
+    "how is this free", "is there a catch",
+    # Feeling undeserving (PMC: 41% of homeless people feel undeserving
+    # of help; distinct from shame — about self-worth, not stigma)
+    "i don't deserve", "i dont deserve", "i do not deserve",
+    "i'm not worth", "im not worth", "not worth it",
+    "other people need it more", "others need it more",
+    "people have it worse", "someone else needs",
+    "don't want to take", "dont want to take", "do not want to take",
+    "feel like such a burden",
+    "i'm not worthy", "im not worthy", "i am not worthy",
+    "unworthy", "undeserving",
+    # Anger at situation (SAMHSA: anger is a common trauma response;
+    # distinct from bot-directed frustration handled by _FRUSTRATION_PHRASES)
+    "i'm so angry", "im so angry", "i am so angry",
+    "i'm furious", "im furious", "i am furious",
+    "i'm pissed", "im pissed",
+    "so unfair", "not fair",
+    "fed up with everything", "fed up with this",
+    "sick of this", "tired of being",
+    "why does this keep happening", "why me",
 ]
 
 _BOT_IDENTITY_PHRASES = [

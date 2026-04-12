@@ -144,6 +144,33 @@ _EMOTIONAL_RESPONSES = {
         "If you'd like to talk to someone who understands, I can connect "
         "you with a peer navigator. I'm here."
     ),
+    # --- Research-backed additions (R28) ---
+    # 41% of homeless people report feeling undeserving of help (PMC).
+    "undeserving": (
+        "You absolutely deserve help — everyone does. These services "
+        "exist for exactly this, and you have every right to use them.\n\n"
+        "I'm glad you're here. I can help you find what you need, "
+        "or connect you with a peer navigator."
+    ),
+    # "Difficulty trusting people" is a named trauma response (National
+    # Harm Reduction Coalition). Distrust of institutional services is
+    # one of the top barriers to care-seeking (PMC, SAMHSA).
+    "distrust": (
+        "That's a fair concern — I understand why you'd be cautious. "
+        "Everything I show you comes from a real database of verified "
+        "services, and I don't store any personal information.\n\n"
+        "You're in control here. You can search, skip, or connect with "
+        "a peer navigator — a real person — whenever you're ready."
+    ),
+    # Anger at circumstances (distinct from bot-directed frustration).
+    # SAMHSA notes anger as a common trauma response. Should get
+    # validation, not the frustration escalation handler.
+    "angry": (
+        "You have every right to feel angry. The situation you're in "
+        "is not okay, and that frustration makes complete sense.\n\n"
+        "When you're ready, I can help you find services — or I can "
+        "connect you with a peer navigator who gets it."
+    ),
 }
 
 
@@ -155,11 +182,24 @@ def _pick_emotional_response(text: str) -> str:
     """
     lower = text.lower()
 
-    # Shame/stigma
+    # Shame/stigma — including indirect vulnerability expressions
     if any(p in lower for p in [
         "embarrassed", "ashamed", "pathetic", "failure",
         "never thought i'd need", "never thought id need",
         "don't want anyone to know", "dont want anyone to know",
+        # Indirect shame (R27 tone gap — these are how people express
+        # shame without using the word "ashamed")
+        "hard for me to say", "hard to say this", "hard for me to ask",
+        "hard to ask for", "hard to admit",
+        "difficult to ask", "difficult to say",
+        "hate asking", "hate to ask", "hate having to ask",
+        "humiliating", "degrading",
+        "burden", "swallow my pride", "swallowed my pride",
+        "first time asking", "never done this before",
+        "never had to ask", "never asked for help",
+        "can't believe i'm", "cant believe im",
+        "can't afford to eat", "cant afford to eat",
+        "can't even feed", "cant even feed",
     ]):
         return _EMOTIONAL_RESPONSES["shame"]
 
@@ -197,6 +237,45 @@ def _pick_emotional_response(text: str) -> str:
         "falling apart", "getting worse",
     ]):
         return _EMOTIONAL_RESPONSES["rough_day"]
+
+    # --- Research-backed additions (R28) ---
+
+    # Feeling undeserving — 41% of homeless people report this (PMC)
+    if any(p in lower for p in [
+        "don't deserve", "dont deserve",
+        "i'm not worth", "im not worth", "not worth it",
+        "other people need it more", "others need it more",
+        "don't want to take", "dont want to take",
+        "people have it worse", "someone else needs",
+        "i'm not worthy", "im not worthy",
+        "unworthy", "undeserving",
+    ]):
+        return _EMOTIONAL_RESPONSES["undeserving"]
+
+    # Distrust / suspicion — named trauma response (Harm Reduction Coalition)
+    if any(p in lower for p in [
+        "don't trust", "dont trust", "i do not trust",
+        "is this legit", "is this real", "is this safe",
+        "how do i know", "can i trust",
+        "been burned before", "been lied to",
+        "don't believe", "dont believe",
+        "sounds too good", "what's the catch", "whats the catch",
+        "how is this free", "is there a catch",
+        "suspicious", "sketchy",
+    ]):
+        return _EMOTIONAL_RESPONSES["distrust"]
+
+    # Anger at situation (NOT bot-directed frustration)
+    if any(p in lower for p in [
+        "i'm so angry", "im so angry", "i am so angry",
+        "i'm furious", "im furious",
+        "i'm pissed", "im pissed",
+        "makes me sick", "so unfair", "not fair",
+        "fed up with everything", "fed up with this",
+        "sick of this", "tired of being",
+        "why does this keep happening", "why me",
+    ]):
+        return _EMOTIONAL_RESPONSES["angry"]
 
     return _EMOTIONAL_RESPONSE
 
