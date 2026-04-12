@@ -503,6 +503,44 @@ def generate_reply(
 
     # --- Negative preference ---
     if category == "negative_preference":
+        # Also count as frustration for escalation tiers (Run 24 eval fix)
+        frust_count = existing.get("_frustration_count", 0) + 1
+        existing["_frustration_count"] = frust_count
+
+        # When frustration has accumulated, use tiered escalation
+        if frust_count >= 3:
+            existing["_last_action"] = "frustration"
+            save_session_slots(session_id, existing)
+            result = _empty_reply(
+                session_id,
+                "I'm sorry I haven't been able to help. Let me connect you "
+                "with a peer navigator — they can work with you directly.",
+                existing,
+                quick_replies=[
+                    {"label": "🤝 Peer navigator", "value": "Connect with peer navigator"},
+                ],
+            )
+            _log_turn(session_id, redacted_message, result, "frustration_tier3",
+                      request_id=request_id, tone=tone)
+            return result
+        elif frust_count >= 2:
+            existing["_last_action"] = "frustration"
+            save_session_slots(session_id, existing)
+            result = _empty_reply(
+                session_id,
+                "I hear you — I'm clearly not finding what you need right now. "
+                "A peer navigator would be more helpful — they're real people "
+                "who know the system. You can also call 311 for live help.",
+                existing,
+                quick_replies=[
+                    {"label": "🤝 Peer navigator", "value": "Connect with peer navigator"},
+                    {"label": "🔄 Start over", "value": "Start over"},
+                ],
+            )
+            _log_turn(session_id, redacted_message, result, "frustration_tier2",
+                      request_id=request_id, tone=tone)
+            return result
+
         existing["_last_action"] = "negative_preference"
         save_session_slots(session_id, existing)
         result = _empty_reply(
@@ -547,8 +585,18 @@ def generate_reply(
 
     # --- Help ---
     if category == "help":
+        # When the user is confused or emotional AND asking for help,
+        # lead with empathy before showing the service menu.
+        if _response_tone in ("confused", "emotional"):
+            help_msg = (
+                "I hear you — it can feel overwhelming when you don't know "
+                "where to start. Let's take it one step at a time. "
+                "Here's what I can help you find:"
+            )
+        else:
+            help_msg = _HELP_RESPONSE
         result = _empty_reply(
-            session_id, _HELP_RESPONSE, existing,
+            session_id, help_msg, existing,
             quick_replies=list(_WELCOME_QUICK_REPLIES),
         )
         _log_turn(session_id, redacted_message, result, category, request_id=request_id, tone=tone)
@@ -868,6 +916,15 @@ def generate_reply(
     elif _response_tone == "urgent" and _is_service_flow:
         _tone_prefix = "I can see this is urgent — let me find something right away. "
 
+    # Override casual tone for sensitive life situations (Run 24 eval fix)
+    # Also SET a prefix when tone=None but the message contains sensitive context.
+    _SENSITIVE_CONTEXT_RE = re.compile(
+        r"\b(foster care|aging out|aged out|fleeing|escaped|"
+        r"just got out of jail|just got out of prison|domestic violence)\b", re.I,
+    )
+    if _SENSITIVE_CONTEXT_RE.search(message):
+        _tone_prefix = "I understand this is a difficult situation. Let me help. "
+
     # If enough detail → CONFIRMATION step (or auto-execute for urgent)
     if (is_enough_to_answer(merged) or _geolocation_ready) and has_new_slots:
         # Gap 16: Skip confirmation for high-urgency queries.
@@ -956,18 +1013,42 @@ def generate_reply(
             or (merged.get("location")
                 and not merged.get("service_type")
                 and len(merged.get("transcript", [])) >= 2)):
+        # Track repeated unrecognized requests for response variation
+        _unrec_count = merged.get("_unrecognized_count", 0) + 1
+        merged["_unrecognized_count"] = _unrec_count
+        save_session_slots(session_id, merged)
+
         location_label = merged.get("location", "your area")
-        result = _empty_reply(
-            session_id,
-            "I'm not sure I can help with that specifically, but I can "
-            f"search for services in {location_label} — things like food, "
-            "shelter, clothing, showers, health care, legal help, and more. "
-            "What would be most helpful?",
-            merged,
-            quick_replies=list(_WELCOME_QUICK_REPLIES) + [
+        if _unrec_count >= 3:
+            # Tier 3: direct to navigator
+            response = (
+                "I'm limited to social services and can't help with that. "
+                "A peer navigator might be able to point you in the right direction."
+            )
+            qr = [{"label": "🤝 Peer navigator", "value": "Connect with peer navigator"}]
+        elif _unrec_count >= 2:
+            # Tier 2: shorter, stronger navigator recommendation
+            response = (
+                "I understand that's what you're looking for, but I'm limited "
+                "to social services like food, shelter, and health care. "
+                "Would you like to try one of those, or connect with a person "
+                "who might know other resources?"
+            )
+            qr = list(_WELCOME_QUICK_REPLIES) + [
+                {"label": "🤝 Peer navigator", "value": "Connect with peer navigator"},
+            ]
+        else:
+            # Tier 1: standard redirect
+            response = (
+                "I'm not sure I can help with that specifically, but I can "
+                f"search for services in {location_label} — things like food, "
+                "shelter, clothing, showers, health care, legal help, and more. "
+                "What would be most helpful?"
+            )
+            qr = list(_WELCOME_QUICK_REPLIES) + [
                 {"label": "❌ Not what I meant", "value": "not what I meant"},
-            ],
-        )
+            ]
+        result = _empty_reply(session_id, response, merged, quick_replies=qr)
         _log_turn(session_id, redacted_message, result, "unrecognized_service",
                   request_id=request_id, tone=tone, confidence="low")
         return result
@@ -1131,10 +1212,13 @@ def _handle_context_aware_confirm(
         existing.pop("_last_action", None)
         save_session_slots(session_id, existing)
         result = _empty_reply(
-            session_id, _ESCALATION_RESPONSE, existing,
+            session_id,
+            "I've shared the contact info above — reach out when you're "
+            "ready. Is there anything else I can help with in the meantime?",
+            existing,
             quick_replies=[
-                {"label": "🔍 New search", "value": "Start over"},
-                {"label": "👤 Talk to a person", "value": "Connect with person"},
+                {"label": "🔍 Search for services", "value": "Start over"},
+                {"label": "👤 Show contact info again", "value": "Connect with peer navigator"},
             ],
         )
         _log_turn(session_id, redacted_message, result, "escalation", request_id=request_id, tone=tone)
@@ -1445,7 +1529,16 @@ def _execute_and_respond(session_id: str, message: str, slots: dict, request_id:
         )
 
         queued = slots.get("_queued_services", [])
-        colocated_types = [q[0] for q in queued] if queued else None
+        # Only co-locate queued services that share the same location.
+        # Cross-borough requests (e.g., shelter in Manhattan while searching
+        # food in Brooklyn) should remain queued, not co-located.
+        primary_location = slots.get("location")
+        colocated_types = []
+        for q in queued:
+            q_location = q[2] if len(q) > 2 else None
+            if q_location is None or q_location == primary_location:
+                colocated_types.append(q[0])
+        colocated_types = colocated_types or None
         if queued:
             slots["_queued_services_original"] = list(queued)
 

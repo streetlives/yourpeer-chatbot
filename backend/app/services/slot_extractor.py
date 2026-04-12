@@ -37,6 +37,8 @@ SERVICE_KEYWORDS = {
         # Vernacular (Phase 1 audit)
         "place to crash", "got put out", "somewhere warm",
         "need a cot", "sleeping in my car", "couch surfing",
+        # Foster care / aging out (Run 24 eval gap)
+        "aging out", "aged out", "foster care", "aging out of foster",
     ],
 
     # --- Clothing (taxonomy: Clothing) ---
@@ -75,6 +77,9 @@ SERVICE_KEYWORDS = {
         # Pregnancy / Maternal health (Phase 1 audit — 41 services)
         "prenatal care", "prenatal", "maternity", "ob-gyn", "obgyn",
         "postpartum",
+        # Chronic conditions / medications (Run 24 eval gaps)
+        "insulin", "diabetic", "diabetes", "inhaler", "asthma",
+        "dialysis", "blood sugar", "epipen",
     ],
 
     # --- Mental Health (taxonomy: Mental Health) ---
@@ -959,6 +964,16 @@ _POPULATION_PHRASES = {
     "on parole": "reentry",
     "on probation": "reentry",
     "formerly incarcerated": "reentry",
+    # Run 24 eval gaps — felon/criminal record terminology
+    "felon": "reentry",
+    "felony": "reentry",
+    "ex-felon": "reentry",
+    "criminal record": "reentry",
+    "have a record": "reentry",
+    "been to prison": "reentry",
+    "was in prison": "reentry",
+    "got out of prison": "reentry",
+    "did time": "reentry",
 
     # DV survivor — domestic violence
     "escaped abuse": "dv_survivor",
