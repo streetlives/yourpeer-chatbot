@@ -60,6 +60,7 @@ SELECT
     pa.postal_code    AS zip_code,
 
     best_phone.number     AS phone,
+    best_phone.extension  AS phone_extension,
 
     today_sched.opens_at   AS today_opens,
     today_sched.closes_at  AS today_closes,
@@ -100,7 +101,7 @@ FROM services s
     LEFT JOIN organizations o      ON s.organization_id = o.id
     LEFT JOIN physical_addresses pa ON l.id = pa.location_id
     LEFT JOIN LATERAL (
-        SELECT ph.number
+        SELECT ph.number, ph.extension
         FROM phones ph
         WHERE ph.location_id = l.id
            OR ph.service_id = s.id
@@ -859,6 +860,16 @@ def _normalize_url(url: str | None) -> str | None:
     return url
 
 
+def _format_phone(number: str | None, extension: str | None) -> str | None:
+    """Format a phone number with optional extension."""
+    if not number:
+        return None
+    ext = (extension or "").strip()
+    if ext and ext.lower() not in ("none", "n/a", ""):
+        return f"{number} ext. {ext}"
+    return number
+
+
 def format_service_card(row: dict) -> dict:
     """
     Format a raw query result row into a structured service card.
@@ -904,7 +915,7 @@ def format_service_card(row: dict) -> dict:
         "description": row.get("service_description"),
         "address": full_address or None,
         "city": row.get("city"),
-        "phone": row.get("phone"),
+        "phone": _format_phone(row.get("phone"), row.get("phone_extension")),
         "email": row.get("service_email"),
         "website": _normalize_url(row.get("service_url") or row.get("organization_url")),
         "fees": row.get("fees"),
