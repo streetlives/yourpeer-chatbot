@@ -248,19 +248,19 @@ export const TASKS: TaskDef[] = [
     id: "jury",
     name: "LLM-as-a-jury evaluation",
     icon: Scale,
-    desc: "Run the existing eval suite (142 scenarios across 20 categories) with both Haiku and Sonnet performing each LLM task, then have a judge model score both. Produces empirical model-selection data to validate or override the recommendations above.",
+    desc: "Run the existing eval suite (167 scenarios across 20 categories) with both Haiku and Sonnet performing each LLM task, then have a judge model score both. Produces empirical model-selection data to validate or override the recommendations above.",
     inputTokens: 800,
-    outputTokens: 400,
+    outputTokens: 600,
     requirements: [
       "Run each eval scenario twice: once with Haiku, once with Sonnet on each LLM task",
-      "Judge model (Sonnet or Opus) scores both runs on the existing 8 rubric dimensions",
+      "Judge model (Opus) scores both runs on the 11 rubric dimensions (8 core + 3 domain-specific)",
       "Compare per-task deltas: where does Haiku match Sonnet? Where does it fall short?",
       "Focus on crisis-category scenarios \u2014 the highest-stakes decisions",
       "Produce a per-task recommendation backed by data, not just reasoning",
     ],
     recommendation: "sonnet",
     rationale:
-      "The judge model should be at least as capable as the models being evaluated. The PoLL research (Verga et al., 2024) shows a diverse jury of smaller models can outperform a single large judge, but for same-family comparison (Haiku vs Sonnet), a single Sonnet or Opus judge suffices since intra-model bias is less of a concern within the same family. Use this to validate model choices before deploying \u2014 the ~$50 cost of a full jury run is cheap insurance against deploying the wrong model on crisis detection.",
+      "The judge model should be MORE capable than the models being evaluated to avoid same-tier scoring bias. Claude Opus serves as the judge — it sits above both Haiku and Sonnet in Anthropic\u2019s model hierarchy. The PoLL research (Verga et al., 2024) shows a diverse jury of smaller models can outperform a single large judge, but for same-family comparison (Haiku vs Sonnet), Opus is the right choice. Use this to validate model choices before deploying \u2014 the ~$75 cost of a full jury run is cheap insurance against deploying the wrong model on crisis detection.",
     isJury: true,
     jurySteps: [
       {
@@ -271,7 +271,7 @@ export const TASKS: TaskDef[] = [
       {
         name: "Run paired evaluations",
         detail:
-          "Execute the full 142-scenario suite under two configs: (A) All-Haiku and (B) Recommended mix. Each run produces per-scenario scores across 8 dimensions.",
+          "Execute the full 167-scenario suite under two configs: (A) All-Haiku and (B) Recommended mix. Each run produces per-scenario scores across 11 dimensions.",
       },
       {
         name: "Head-to-head judging",
@@ -290,9 +290,9 @@ export const TASKS: TaskDef[] = [
       },
     ],
     juryCost:
-      "~$25-35 per full eval run (142 scenarios \u00d7 ~10 turns \u00d7 judge call). Two paired runs + judging \u2248 $75-100 total.",
+      "~$50-75 per full eval run (167 scenarios \u00d7 ~10 turns \u00d7 Opus judge call). Two paired runs + judging \u2248 $125-175 total.",
     juryInfra:
-      "eval_llm_judge.py already has the scenario bank (142 cases across 20 categories), conversation simulator, 8-dimension rubric, and judge prompt. Main change: parameterize which model handles each LLM call.",
+      "eval_llm_judge.py already has the scenario bank (167 cases across 20 categories), conversation simulator, 11-dimension rubric (8 core + 3 domain-specific), weighted scoring, and Opus judge prompt. Main change: parameterize which model handles each LLM call.",
   },
   {
     id: "futureMultilang",

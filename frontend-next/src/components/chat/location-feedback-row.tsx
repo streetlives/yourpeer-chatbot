@@ -11,6 +11,8 @@ import { sendLocationFeedback } from "@/lib/chat/api";
 interface LocationFeedbackRowProps {
   serviceId: string;
   locationName: string;
+  /** Optional YourPeer URL — renders "Learn more →" on the left of the trigger row. */
+  learnMoreUrl?: string;
 }
 
 type Dimension = "safety" | "friendliness" | "cleanliness" | "queer_friendly";
@@ -22,7 +24,7 @@ const DIMENSIONS: { key: Dimension; label: string }[] = [
   { key: "queer_friendly", label: "LGBTQ+ friendly?" },
 ];
 
-export function LocationFeedbackRow({ serviceId, locationName }: LocationFeedbackRowProps) {
+export function LocationFeedbackRow({ serviceId, locationName, learnMoreUrl }: LocationFeedbackRowProps) {
   const [expanded, setExpanded] = useState(false);
   const [ratings, setRatings] = useState<Record<Dimension, boolean | null>>({
     safety: null,
@@ -59,23 +61,55 @@ export function LocationFeedbackRow({ serviceId, locationName }: LocationFeedbac
 
   if (submitted) {
     return (
-      <div className="text-[0.68rem] text-neutral-400 text-center py-1">
-        Thanks for your feedback!
+      <div className="border-t border-neutral-100 pt-1.5">
+        <div className="flex items-center justify-between">
+          {learnMoreUrl && (
+            <a
+              href={learnMoreUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-[0.68rem] font-medium text-amber-700 hover:text-amber-900 hover:underline transition-colors"
+            >
+              Learn more →
+            </a>
+          )}
+          <span className="text-[0.68rem] text-neutral-400">
+            Thanks for your feedback!
+          </span>
+        </div>
       </div>
     );
   }
 
   return (
     <div className="border-t border-neutral-100 pt-1.5">
-      <button
-        type="button"
-        onClick={() => setExpanded(!expanded)}
-        className="flex items-center gap-1 text-[0.68rem] text-neutral-400 hover:text-neutral-600 transition-colors w-full justify-center"
-      >
-        <span>Rate this location</span>
-        {expanded ? <ChevronUp size={10} /> : <ChevronDown size={10} />}
-      </button>
+      {/* Trigger row: Learn More (left) + Rate (right) */}
+      <div className="flex items-center justify-between">
+        {learnMoreUrl ? (
+          <a
+            href={learnMoreUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-[0.68rem] font-medium text-amber-700 hover:text-amber-900 hover:underline transition-colors"
+          >
+            Learn more →
+          </a>
+        ) : (
+          <span />
+        )}
+        {serviceId && (
+          <button
+            type="button"
+            onClick={() => setExpanded(!expanded)}
+            className="flex items-center gap-1 text-[0.68rem] text-neutral-400 hover:text-neutral-600 transition-colors"
+          >
+            <span>Rate this location</span>
+            {expanded ? <ChevronUp size={10} /> : <ChevronDown size={10} />}
+          </button>
+        )}
+      </div>
 
+      {/* Expanded rating dimensions */}
       {expanded && (
         <div className="flex flex-col gap-1.5 pt-1.5 animate-in fade-in">
           {DIMENSIONS.map(({ key, label }) => (

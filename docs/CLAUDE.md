@@ -66,17 +66,17 @@ information, preventing hallucination.
 
 | File | Purpose |
 |------|---------|
-| `backend/app/main.py` | FastAPI app entry point, CORS, router registration, enhanced `/api/health` endpoint (checks DB, LLM, semantic router, returns structured JSON with per-component status) |
+| `backend/app/main.py` | FastAPI app entry point, CORS, router registration, semantic router initialization at startup, enhanced `/api/health` endpoint (checks DB, LLM; semantic router status is informational only — does not degrade overall health) |
 | `backend/app/routes/chat.py` | `POST /chat/`, `/chat/feedback`, and `/chat/location-feedback` endpoints |
 | `backend/app/routes/admin.py` | Admin API: conversations, events, stats, eval runner |
 | `backend/app/services/chatbot.py` | Conversation router: `generate_reply()`, query execution, session orchestration |
 | `backend/app/services/classifier.py` | Message classification: `_classify_action()`, `_classify_tone()`, contraction normalization, intensifier stripping |
 | `backend/app/services/phrase_lists.py` | All keyword/phrase lists, quick-reply definitions, service labels, borough suggestion data |
-| `backend/app/services/responses.py` | Response strings, emotion-specific responses, LLM prompt builders, bot-question answers |
+| `backend/app/services/responses.py` | Response strings, emotion-specific responses (9 categories), baseline warmth prefixes (`random_warmth_prefix()`), LLM prompt builders, bot-question answers |
 | `backend/app/services/confirmation.py` | Confirmation messages, quick-reply builders, no-results messages, borough suggestions |
 | `backend/app/services/bot_knowledge.py` | Bot self-knowledge: live capability sourcing, topic matching, LLM context generation |
-| `backend/app/services/crisis_detector.py` | Two-stage crisis detection (regex + Sonnet LLM), category-specific hotlines |
-| `backend/app/services/slot_extractor.py` | Regex-based slot extraction with keyword matching, gender/LGBTQ identity extraction, population context extraction (veteran, disabled, reentry, DV survivor, pregnant, senior), organization name extraction, walk-in/no-requirements detection |
+| `backend/app/services/crisis_detector.py` | Two-stage crisis detection (regex + Sonnet LLM), 7 crisis categories with population-specific resources: suicide_self_harm, medical_emergency, domestic_violence, youth_runaway (Runaway Safeline, Covenant House), assault_victim (Safe Horizon), safety_concern (911, 988, 311 — no DV hotlines), trafficking |
+| `backend/app/services/slot_extractor.py` | Regex-based slot extraction with keyword matching, gender/LGBTQ identity extraction, population context extraction (veteran, disabled, reentry, foster_youth, dv_survivor, pregnant, senior), organization name extraction, walk-in/no-requirements detection, Spanish service keywords (comida, refugio, albergue) |
 | `backend/app/services/semantic_router.py` | Tier 2 semantic routing: `all-MiniLM-L6-v2` sentence embedding model, cosine similarity classification against pre-embedded route utterances, per-route confidence thresholds, population detection, `get_status()` for health checks |
 | `backend/app/services/semantic_routes.py` | Route definitions: 10–20 example utterances per service category (10 routes) and 6–12 per population category (6 routes). No code changes needed to add utterances — just edit and restart |
 | `backend/app/services/llm_slot_extractor.py` | LLM slot extraction via Claude Haiku tool calling, 3-tier cascade integration (regex → semantic → LLM) |
@@ -97,7 +97,7 @@ information, preventing hallucination.
 | `frontend-next/src/app/admin/` | Staff console pages (overview, conversations, metrics, queries, evals, models) |
 | `frontend-next/next.config.js` | CSP + HSTS headers, security config |
 | `tests/conftest.py` | Pytest fixtures, mock data, test helpers |
-| `tests/eval_llm_judge.py` | LLM-as-judge evaluation (172 scenarios, 8 dimensions) |
+| `tests/eval_llm_judge.py` | LLM-as-judge evaluation (167 scenarios, 11 dimensions, Opus judge, weighted scoring) |
 
 ## What's Working
 
@@ -112,12 +112,16 @@ information, preventing hallucination.
 - **Borough + neighborhood search**: direct borough column filter or PostGIS proximity (59 NYC neighborhoods)
 - **Relaxed fallback**: auto-broadens filters when 0 results, suggests boroughs with more data
 - **Crisis detection**: regex + Sonnet LLM, covers suicide/self-harm, DV, trafficking, medical emergency, violence, youth runaway; fail-open policy returns safety response if LLM unavailable
-- **PII redaction**: phone, SSN, email, DOB, address, name, gender identity detection/redaction on every message
+- **PII redaction & safety warnings**: phone, SSN, email, DOB, address, name, gender identity detection/redaction on every message. When sensitive PII (SSN, phone) is detected, a safety warning is prepended to the response: SSN gets "For your safety, please don't share your Social Security number..."; phone gets a lighter heads-up. PII warning + service confirmation are combined seamlessly
+- **Baseline warmth prefixes**: every routine service flow gets a randomized warmth prefix ("Let me see what's available.", "I can help with that.", "Let's find something for you." — 7 variants) to prevent "functional but flat" responses. Fires only when no emotional/shame/urgent context is detected. Stored in `responses.py` as `random_warmth_prefix()`
+- **Spanish bilingual acknowledgment**: when Spanish is detected alongside a service request, the bot prepends a bilingual note ("I can see you may prefer Spanish — lo siento, por ahora solo puedo ayudar en inglés. I'll do my best to help.") and still processes the search. Spanish-only messages (no service intent) get a full bilingual response with peer navigator option. Basic Spanish service keywords added (comida, refugio, albergue, tengo hambre)
+- **Benefits sub-type labels**: "food stamps" shows as "food stamps / SNAP", "benefits" as "benefits enrollment", "ebt" as "EBT / food stamps", "medicaid" as "Medicaid enrollment" in confirmation messages — instead of the vague "other services"
+- **Warm confirmation reframe**: confirmation messages use "I'll look for food in Brooklyn — does that sound right?" instead of "Does this look right? food in brooklyn." Results delivery uses "I found X option(s) for you" instead of "Here are X options"
 - **Service cards**: structured results with name, org, address, phone (with extensions), hours, fees, open/closed status, referral badges, eligibility summary, review highlights, required documents, languages spoken, accessibility info, stale data warnings, action links, and per-location feedback
 - **Organization name search**: users can search by org name ("tell me about Covenant House", "Safe Horizon in Harlem"). 35+ multi-word names matched via substring, 5 abbreviations via word-boundary regex. Org name alone is sufficient (no location required). Returns all services at the matching organization
 - **Walk-in / no-requirements filter**: 20 phrases ("walk-in only", "no referral needed", "without appointment") exclude services requiring membership or referral. Universal optional filter across all templates
 - **Gender & LGBTQ identity filtering**: extracted only when explicitly stated (never inferred). Binary gender (male/female) passes to SQL filter. Transgender/nonbinary/LGBTQ bypass the eligibility filter and trigger taxonomy boosts for affirming services. Confirmation shows "LGBTQ-friendly" label. Gender terms redacted from stored transcripts
-- **Population context extraction & query boosts**: `_populations` slot detects veteran, disabled, reentry, DV survivor, pregnant, senior as cross-cutting identity attributes. Veterans get taxonomy-based boost (services tagged "Veterans" rank higher). All other populations get description-based ORDER BY boost (dynamic `pop_boost_pattern` applied across all 10 templates). Senior auto-inferred from age ≥ 62. Multiple populations supported. Confirmation shows context-aware prefixes ("veteran-friendly food", "accessible shelter"). Stored with `_` prefix for PII exclusion
+- **Population context extraction & query boosts**: `_populations` slot detects veteran, disabled, reentry, foster_youth, dv_survivor, pregnant, senior as cross-cutting identity attributes. Foster youth is distinct from reentry — "aging out of foster care" maps to `foster_youth`, NOT `reentry`. Pregnancy sets a `pregnant` population tag, NOT `family_status: with_children`. Veterans get taxonomy-based boost (services tagged "Veterans" rank higher). All other populations get description-based ORDER BY boost (dynamic `pop_boost_pattern` applied across all 10 templates). Senior auto-inferred from age ≥ 62. Multiple populations supported. Confirmation shows context-aware prefixes ("veteran-friendly food", "youth-friendly shelter"). Stored with `_` prefix for PII exclusion
 - **DV crisis → population injection**: when crisis detector fires on `domestic_violence` category, `dv_survivor` is injected into session `_populations` regardless of whether the population extractor caught it. This bridges the 51-phrase gap between crisis detection (54 DV phrases) and population extraction (3 matching phrases). Fires in both step-down (service intent) and crisis-only (no service intent) branches
 - **Accessibility on service cards**: `accessibility_for_disabilities` table is queried and surfaced on cards as informational text. Not used as a filter — negative values ("Not wheelchair accessible") are displayed so users can make informed decisions
 - **Conversational routing**: greeting, thanks, help, reset, escalation, frustration, emotional, negative preference, bot identity, confusion, location-unknown, correction
@@ -138,7 +142,7 @@ information, preventing hallucination.
 - **Post-results escape hatch**: new service requests ("I need X", "where can I go", "looking for") are no longer intercepted by the post-results handler. Messages with a new location clear stored results automatically
 - **LLM conversational fallback**: Haiku handles general/off-topic messages
 - **Admin console**: conversation viewer, event log, metrics dashboard, in-browser eval runner
-- **LLM-as-judge eval**: 172 scenarios scored on slot accuracy, dialog efficiency, tone, safety, confirmation UX, privacy, hallucination resistance, error recovery
+- **LLM-as-judge eval**: 167 scenarios scored on 11 dimensions — 8 core (slot accuracy, dialog efficiency, tone, safety, confirmation UX, privacy, hallucination resistance, error recovery) + 3 domain-specific (dignity & anti-stigma, cultural responsiveness, equity of access). Judge uses Claude Opus with weighted dimension scoring
 - **Accessibility**: screen reader support, keyboard navigation, voice input (Web Speech API)
 - **Anonymized audit logging**: conversation turns, query executions, crisis events
 - **In-memory sessions**: no persistent conversation storage, 30-min TTL, LRU eviction at 500-session cap
@@ -151,7 +155,7 @@ information, preventing hallucination.
 - **Stability**: 1,000-char message length limit (frontend + backend), coordinate validation (lat ±90, lng ±180), 10s LLM timeout, 5s DB statement timeout, 30s frontend fetch timeout, admin endpoint rate limiting (120/min IP + 5/hr eval), rate limiter memory cap (5,000 buckets)
 - **Observability**: `X-Request-ID` correlation IDs flow from frontend → Next.js proxy → FastAPI backend → audit log, enabling end-to-end request tracing
 - **Admin data caching**: centralized Zustand store with 30-second staleness threshold; navigating between admin tabs reuses cached data
-- **Test suite**: 46 pytest files (~1,900+ tests) organized into `tests/unit/` and `tests/integration/`, plus an `eval/` directory. LLM-as-judge evaluation: 172 scenarios across 20 categories
+- **Test suite**: 46 pytest files (~1,900+ tests) organized into `tests/unit/` and `tests/integration/`, plus an `eval/` directory. LLM-as-judge evaluation: 167 scenarios across 20 categories, 11 dimensions, Opus judge
 
 ## Known Gaps / In Progress
 

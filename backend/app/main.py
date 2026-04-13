@@ -28,6 +28,25 @@ async def lifespan(application: FastAPI):
         events = hydrate_audit()
         sessions = hydrate_sessions()
         logger.info(f"Startup hydration: {events} events, {sessions} sessions from SQLite")
+
+    # Pre-warm the semantic router (Tier 2) so it's ready for the
+    # first user query. Downloads the model (~80 MB) on first run.
+    # Non-blocking: if sentence-transformers isn't installed or the
+    # download fails, the router stays disabled and Tiers 1+3 handle
+    # all routing.
+    try:
+        from app.services.semantic_router import initialize as sr_init
+        ok = sr_init()
+        if ok:
+            logger.info("Semantic router (Tier 2): ready")
+        else:
+            logger.warning(
+                "Semantic router (Tier 2): not available. "
+                "Install with: pip install sentence-transformers"
+            )
+    except Exception as e:
+        logger.warning(f"Semantic router init failed: {e}")
+
     yield
     # Shutdown: close SQLite connection
     from app.services import persistence as p
@@ -78,8 +97,9 @@ def health():
 
     Returns 200 when the database is reachable (required for search results).
     Returns 503 when the database is unreachable.
-    LLM and semantic router being unavailable is "degraded" (200) because
-    the service still works in regex-only mode.
+    LLM being unavailable is "degraded" (200) because the service still
+    works in regex-only mode. The semantic router is informational only —
+    its absence does not affect overall status.
     """
     from datetime import datetime, timezone
 
@@ -110,7 +130,10 @@ def health():
         if overall == "healthy":
             overall = "degraded"
 
-    # --- Semantic router (non-critical — falls through to LLM or regex) ---
+    # --- Semantic router (informational — optional Tier 2 enhancement) ---
+    # The semantic router improves routing accuracy for edge cases but is
+    # NOT required. Without it, regex (Tier 1) and LLM (Tier 3) handle
+    # all routing. Its absence should NOT degrade the overall status.
     try:
         from app.services.semantic_router import get_status as _sr_status
         sr = _sr_status()
@@ -121,13 +144,9 @@ def health():
                 "route_count": sr["route_count"],
             }
         else:
-            checks["semantic_router"] = {"status": "not_loaded"}
-            if overall == "healthy":
-                overall = "degraded"
+            checks["semantic_router"] = {"status": "not_loaded", "required": False}
     except Exception:
-        checks["semantic_router"] = {"status": "not_loaded"}
-        if overall == "healthy":
-            overall = "degraded"
+        checks["semantic_router"] = {"status": "not_loaded", "required": False}
 
     payload = {
         "status": overall,

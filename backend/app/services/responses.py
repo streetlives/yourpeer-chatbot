@@ -23,9 +23,11 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _GREETING_RESPONSE = (
-    "Hey! I'm here to help you find services in NYC — things like "
-    "food, shelter, showers, clothing, health care, and more. "
-    "What are you looking for today?"
+    "Hey! I'm here to help you find free services in NYC — things like "
+    "food, shelter, showers, clothing, health care, and more.\n\n"
+    "I'll ask a couple of questions to find what's near you. "
+    "You can skip anything you're not comfortable sharing. "
+    "What are you looking for?"
 )
 
 _RESET_RESPONSE = (
@@ -144,46 +146,105 @@ _EMOTIONAL_RESPONSES = {
         "If you'd like to talk to someone who understands, I can connect "
         "you with a peer navigator. I'm here."
     ),
+    # --- Research-backed additions (R28) ---
+    # 41% of homeless people report feeling undeserving of help (PMC).
+    "undeserving": (
+        "You absolutely deserve help — everyone does. These services "
+        "exist for exactly this, and you have every right to use them.\n\n"
+        "I'm glad you're here. I can help you find what you need, "
+        "or connect you with a peer navigator."
+    ),
+    # "Difficulty trusting people" is a named trauma response (National
+    # Harm Reduction Coalition). Distrust of institutional services is
+    # one of the top barriers to care-seeking (PMC, SAMHSA).
+    "distrust": (
+        "That's a fair concern — I understand why you'd be cautious. "
+        "Everything I show you comes from a real database of verified "
+        "services, and I don't store any personal information.\n\n"
+        "You're in control here. You can search, skip, or connect with "
+        "a peer navigator — a real person — whenever you're ready."
+    ),
+    # Anger at circumstances (distinct from bot-directed frustration).
+    # SAMHSA notes anger as a common trauma response. Should get
+    # validation, not the frustration escalation handler.
+    "angry": (
+        "You have every right to feel angry. The situation you're in "
+        "is not okay, and that frustration makes complete sense.\n\n"
+        "When you're ready, I can help you find services — or I can "
+        "connect you with a peer navigator who gets it."
+    ),
 }
 
 
 def _pick_emotional_response(text: str) -> str:
     """Pick the most appropriate emotion-specific static response.
 
+    Applies the same text normalization as ``_classify_tone`` — contraction
+    expansion and intensifier stripping — so that "I'm feeling *really*
+    down" matches the "feeling down" keyword just as it does in the
+    classifier.  Without this, the classifier correctly routes to
+    ``emotional`` but the response selector falls through to the
+    generic response.
+
     Falls back to the generic _EMOTIONAL_RESPONSE if no specific
     emotion is detected.
     """
-    lower = text.lower()
+    from app.services.classifier import _normalize_contractions, _strip_intensifiers
 
-    # Shame/stigma
-    if any(p in lower for p in [
+    lower = text.lower()
+    normalized = _normalize_contractions(lower)
+    stripped = _strip_intensifiers(lower)
+    stripped_normalized = _strip_intensifiers(normalized)
+
+    def _any_match(phrases):
+        """Check if any phrase appears in any text variant."""
+        return any(
+            p in lower or p in normalized or p in stripped or p in stripped_normalized
+            for p in phrases
+        )
+
+    # Shame/stigma — including indirect vulnerability expressions
+    if _any_match([
         "embarrassed", "ashamed", "pathetic", "failure",
         "never thought i'd need", "never thought id need",
         "don't want anyone to know", "dont want anyone to know",
+        # Indirect shame (R27 tone gap — these are how people express
+        # shame without using the word "ashamed")
+        "hard for me to say", "hard to say this", "hard for me to ask",
+        "hard to ask for", "hard to admit",
+        "difficult to ask", "difficult to say",
+        "hate asking", "hate to ask", "hate having to ask",
+        "humiliating", "degrading",
+        "burden", "swallow my pride", "swallowed my pride",
+        "first time asking", "never done this before",
+        "never had to ask", "never asked for help",
+        "can't believe i'm", "cant believe im",
+        "can't afford to eat", "cant afford to eat",
+        "can't even feed", "cant even feed",
     ]):
         return _EMOTIONAL_RESPONSES["shame"]
 
     # Grief/loss
-    if any(p in lower for p in [
+    if _any_match([
         "died", "passed away", "lost someone", "grieving", "mourning",
     ]):
         return _EMOTIONAL_RESPONSES["grief"]
 
     # Scared/fear
-    if any(p in lower for p in [
+    if _any_match([
         "scared", "afraid", "frightened", "terrified", "fear",
     ]):
         return _EMOTIONAL_RESPONSES["scared"]
 
     # Isolation/loneliness
-    if any(p in lower for p in [
+    if _any_match([
         "alone", "no one", "nobody", "no friends", "no family",
         "have no one", "completely alone",
     ]):
         return _EMOTIONAL_RESPONSES["alone"]
 
     # Sad/down
-    if any(p in lower for p in [
+    if _any_match([
         "feeling down", "feeling sad", "feeling bad", "depressed",
         "not okay", "not ok", "not doing well", "not doing good",
         "i'm sad", "im sad", "i am sad",
@@ -191,12 +252,51 @@ def _pick_emotional_response(text: str) -> str:
         return _EMOTIONAL_RESPONSES["sad"]
 
     # Rough day / general hardship
-    if any(p in lower for p in [
+    if _any_match([
         "rough day", "bad day", "tough day", "hard day",
         "rough time", "hard time", "tough time",
         "falling apart", "getting worse",
     ]):
         return _EMOTIONAL_RESPONSES["rough_day"]
+
+    # --- Research-backed additions (R28) ---
+
+    # Feeling undeserving — 41% of homeless people report this (PMC)
+    if _any_match([
+        "don't deserve", "dont deserve",
+        "i'm not worth", "im not worth", "not worth it",
+        "other people need it more", "others need it more",
+        "don't want to take", "dont want to take",
+        "people have it worse", "someone else needs",
+        "i'm not worthy", "im not worthy",
+        "unworthy", "undeserving",
+    ]):
+        return _EMOTIONAL_RESPONSES["undeserving"]
+
+    # Distrust / suspicion — named trauma response (Harm Reduction Coalition)
+    if _any_match([
+        "don't trust", "dont trust", "i do not trust",
+        "is this legit", "is this real", "is this safe",
+        "how do i know", "can i trust",
+        "been burned before", "been lied to",
+        "don't believe", "dont believe",
+        "sounds too good", "what's the catch", "whats the catch",
+        "how is this free", "is there a catch",
+        "suspicious", "sketchy",
+    ]):
+        return _EMOTIONAL_RESPONSES["distrust"]
+
+    # Anger at situation (NOT bot-directed frustration)
+    if _any_match([
+        "i'm so angry", "im so angry", "i am so angry",
+        "i'm furious", "im furious",
+        "i'm pissed", "im pissed",
+        "makes me sick", "so unfair", "not fair",
+        "fed up with everything", "fed up with this",
+        "sick of this", "tired of being",
+        "why does this keep happening", "why me",
+    ]):
+        return _EMOTIONAL_RESPONSES["angry"]
 
     return _EMOTIONAL_RESPONSE
 
@@ -468,3 +568,32 @@ def _fallback_response(message: str, slots: dict) -> str:
             "You can try again in a moment, or visit yourpeer.nyc "
             "to search for services directly."
         )
+
+
+# ---------------------------------------------------------------------------
+# BASELINE WARMTH — default tone prefix for routine service flows
+# ---------------------------------------------------------------------------
+# These are short, warm phrases prepended to confirmations and follow-ups
+# when no emotional/shame/urgent context is detected. They prevent the
+# bot from feeling "functional but flat" on routine requests.
+# Randomized to avoid repetitive phrasing across turns.
+
+import random
+
+_WARMTH_PREFIXES = [
+    "Let me see what's available. ",
+    "Let's find something for you. ",
+    "I'll look into that. ",
+    "Let me see what I can find. ",
+    "Absolutely! let me look. ",
+    "I can help with that. ",
+    "Ok, let me look. ",
+    "On it! ",
+    "Let me see what I can find. ",
+    "Absolutely! Let's see... ",
+]
+
+
+def random_warmth_prefix() -> str:
+    """Return a random short warmth prefix for routine service flows."""
+    return random.choice(_WARMTH_PREFIXES)

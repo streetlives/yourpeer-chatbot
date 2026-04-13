@@ -138,9 +138,10 @@ _EXTRACT_SLOTS_TOOL = {
                 "type": "string",
                 "enum": ["with_children", "with_family", "alone"],
                 "description": (
-                    "with_children = user has children, kids, a baby, or is pregnant. "
+                    "with_children = user has children, kids, or a baby. "
                     "with_family = user is with a partner, spouse, or other family. "
                     "alone = user explicitly says they are alone or by themselves. "
+                    "Pregnancy does NOT count as with_children — use the 'pregnant' population tag instead. "
                     "Omit if not mentioned."
                 ),
             },
@@ -151,6 +152,7 @@ _EXTRACT_SLOTS_TOOL = {
                     "enum": [
                         "veteran", "disabled", "reentry",
                         "dv_survivor", "pregnant", "senior",
+                        "foster_youth",
                     ],
                 },
                 "description": (
@@ -159,6 +161,8 @@ _EXTRACT_SLOTS_TOOL = {
                     "veteran = military service (army, navy, marines, etc.). "
                     "disabled = physical or cognitive disability, wheelchair user. "
                     "reentry = released from jail/prison, on parole/probation. "
+                    "Do NOT use reentry for foster care — use foster_youth instead. "
+                    "foster_youth = in foster care, aging out of foster care, aged out, former foster youth. "
                     "dv_survivor = escaping or recovering from domestic violence/abuse. "
                     "pregnant = currently expecting a baby. "
                     "senior = elderly or older adult. "

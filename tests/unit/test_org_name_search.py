@@ -108,7 +108,7 @@ class TestOrgNameConfirmation:
     def test_org_only(self):
         msg = _build_confirmation_message({"org_name": "Covenant House"})
         assert "Covenant House" in msg
-        assert "services at" in msg
+        assert "services at" in msg.lower()
 
     def test_org_with_location(self):
         msg = _build_confirmation_message({

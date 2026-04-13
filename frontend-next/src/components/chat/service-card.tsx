@@ -3,7 +3,8 @@
 
 "use client";
 
-import { MapPin, Phone, Mail, Clock, CheckCircle, AlertTriangle } from "lucide-react";
+import { useState } from "react";
+import { MapPin, Phone, Mail, Clock, CheckCircle, AlertTriangle, ChevronDown } from "lucide-react";
 import type { ServiceResult } from "@/lib/chat/types";
 import { LocationFeedbackRow } from "./location-feedback-row";
 
@@ -39,8 +40,8 @@ function StatusBadge({ status }: { status?: string }) {
 function ValidatedBadge({ dateStr }: { dateStr?: string }) {
   if (!dateStr) {
     return (
-      <span className="inline-flex items-center gap-1 text-xs font-medium text-amber-600">
-        <AlertTriangle size={12} aria-hidden="true" />
+      <span className="inline-flex items-center gap-1 text-[0.65rem] font-medium text-amber-600">
+        <AlertTriangle size={11} aria-hidden="true" />
         Unverified — call to confirm
       </span>
     );
@@ -72,19 +73,19 @@ function ValidatedBadge({ dateStr }: { dateStr?: string }) {
 
   if (isStale) {
     return (
-      <span className="inline-flex items-center gap-1 text-xs font-medium text-amber-600">
-        <AlertTriangle size={12} aria-hidden="true" />
-        Not recently verified — call ahead
+      <span className="inline-flex items-center gap-1 text-[0.65rem] font-medium text-amber-600">
+        <AlertTriangle size={11} aria-hidden="true" />
+        Unverified — call ahead
       </span>
     );
   }
 
   return (
-    <span className={`inline-flex items-center gap-1 text-xs font-medium ${
+    <span className={`inline-flex items-center gap-1 text-[0.65rem] font-medium ${
       isRecent ? "text-green-600" : "text-neutral-400"
     }`}>
-      <CheckCircle size={12} aria-hidden="true" />
-      Validated {label}
+      <CheckCircle size={11} aria-hidden="true" />
+      Verified {label}
     </span>
   );
 }
@@ -140,12 +141,33 @@ const ALSO_EMOJI: Record<string, string> = {
   "Senior Center": "\u{1F9D3}",
 };
 
+const ALSO_HERE_VISIBLE = 3;
+
 export function ServiceCard({ service, isActive, index, total }: ServiceCardProps) {
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const [alsoExpanded, setAlsoExpanded] = useState(false);
+
   const name = service.service_name || "Service";
   const cardLabel =
     index !== undefined && total !== undefined
       ? `${name}, result ${index + 1} of ${total}`
       : name;
+
+  // Determine if there are any detail fields to show
+  const hasDetails = !!(
+    service.address ||
+    service.phone ||
+    service.email ||
+    service.accessibility ||
+    service.description ||
+    (service.required_documents && service.required_documents.length > 0) ||
+    (service.languages && service.languages.length > 0 &&
+      !(service.languages.length === 1 && service.languages[0] === "English"))
+  );
+
+  const alsoItems = service.also_available || [];
+  const alsoVisible = alsoExpanded ? alsoItems : alsoItems.slice(0, ALSO_HERE_VISIBLE);
+  const alsoHiddenCount = alsoItems.length - ALSO_HERE_VISIBLE;
 
   return (
     <div
@@ -159,7 +181,7 @@ export function ServiceCard({ service, isActive, index, total }: ServiceCardProp
         {name}
       </div>
 
-      {/* Organization + Validated */}
+      {/* Organization + Verified */}
       <div className="flex flex-col gap-0.5 -mt-1">
         {service.organization && (
           <div className="text-xs text-neutral-500 font-medium">
@@ -170,56 +192,17 @@ export function ServiceCard({ service, isActive, index, total }: ServiceCardProp
       </div>
 
       {/* Hours + status */}
-      <div className="flex items-center gap-2 flex-wrap">
+      <div className="flex items-center gap-2">
         <StatusBadge status={service.is_open} />
         {service.hours_today && (
-          <span className="inline-flex items-center gap-1 text-xs text-neutral-500">
-            <Clock size={14} className="text-neutral-400" aria-hidden="true" />
-            <span>Hours: {service.hours_today}</span>
+          <span className="inline-flex items-center gap-1 text-xs text-neutral-500 whitespace-nowrap">
+            <Clock size={14} className="text-neutral-400 flex-shrink-0" aria-hidden="true" />
+            <span>{service.hours_today}</span>
           </span>
         )}
       </div>
 
-      {/* Address */}
-      {service.address && (
-        <div className="flex items-start gap-2 text-sm text-neutral-500 leading-snug">
-          <MapPin size={14} className="text-neutral-400 mt-0.5 flex-shrink-0" aria-hidden="true" />
-          <span>Address: {service.address}</span>
-        </div>
-      )}
-
-      {/* Accessibility */}
-      {service.accessibility && (
-        <div className="flex items-start gap-2 text-sm text-neutral-500 leading-snug">
-          <span className="mt-0.5 flex-shrink-0 text-sm" aria-hidden="true">♿</span>
-          <span>{service.accessibility}</span>
-        </div>
-      )}
-
-      {/* Phone */}
-      {service.phone && (
-        <div className="flex items-start gap-2 text-sm text-neutral-500">
-          <Phone size={14} className="text-neutral-400 mt-0.5 flex-shrink-0" aria-hidden="true" />
-          <span>Phone: {service.phone}</span>
-        </div>
-      )}
-
-      {/* Email */}
-      {service.email && (
-        <div className="flex items-start gap-2 text-sm text-neutral-500">
-          <Mail size={14} className="text-neutral-400 mt-0.5 flex-shrink-0" aria-hidden="true" />
-          <span>Email: {service.email}</span>
-        </div>
-      )}
-
-      {/* Description */}
-      {service.description && (
-        <div className="text-xs text-neutral-500 leading-relaxed line-clamp-3">
-          {service.description}
-        </div>
-      )}
-
-      {/* Review highlight */}
+      {/* Review highlight — visible by default (builds trust) */}
       {service.review_highlight && (
         <div className="text-xs text-neutral-500 leading-relaxed bg-neutral-50 border border-neutral-100 rounded-lg px-3 py-2 italic">
           <span aria-hidden="true">💬 </span>
@@ -229,51 +212,114 @@ export function ServiceCard({ service, isActive, index, total }: ServiceCardProp
         </div>
       )}
 
-      {/* Fee badge */}
-      {service.fees && (
-        <span className="self-start inline-block text-xs font-semibold text-green-800 bg-green-100 px-2.5 py-0.5 rounded-lg">
-          {service.fees}
-        </span>
-      )}
-
-      {/* Referral badge */}
-      {service.requires_membership && (
-        <span className="self-start inline-block text-xs font-semibold text-amber-800 bg-amber-100 px-2.5 py-0.5 rounded-lg">
-          Referral may be required
-        </span>
-      )}
-
-      {/* Eligibility badge */}
-      {service.eligibility_summary && (
-        <span className="self-start inline-block text-xs font-semibold text-blue-800 bg-blue-50 px-2.5 py-0.5 rounded-lg">
-          👤 {service.eligibility_summary}
-        </span>
-      )}
-
-      {/* Required documents */}
-      {service.required_documents && service.required_documents.length > 0 && (
-        <div className="flex items-start gap-2 text-xs text-neutral-500 leading-snug">
-          <span className="mt-0.5 flex-shrink-0" aria-hidden="true">📄</span>
-          <span>Bring: {service.required_documents.join(", ")}</span>
+      {/* Badges row — referral, eligibility, fees side by side */}
+      {(service.fees || service.requires_membership || service.eligibility_summary) && (
+        <div className="flex items-center gap-1.5 flex-wrap">
+          {service.requires_membership && (
+            <span className="inline-block text-xs font-semibold text-amber-800 bg-amber-100 px-2 py-0.5 rounded-lg">
+              Ref. may be required
+            </span>
+          )}
+          {service.eligibility_summary && (
+            <span className="inline-block text-xs font-semibold text-blue-800 bg-blue-50 px-2 py-0.5 rounded-lg">
+              {service.eligibility_summary}
+            </span>
+          )}
+          {service.fees && (
+            <span className="inline-block text-xs font-semibold text-green-800 bg-green-100 px-2 py-0.5 rounded-lg">
+              {service.fees}
+            </span>
+          )}
         </div>
       )}
 
-      {/* Languages spoken */}
-      {service.languages && service.languages.length > 0 && !(service.languages.length === 1 && service.languages[0] === "English") && (
-        <div className="flex items-start gap-2 text-xs text-neutral-500 leading-snug">
-          <span className="mt-0.5 flex-shrink-0" aria-hidden="true">🗣️</span>
-          <span>{service.languages.join(", ")}</span>
+      {/* ── Collapsible Details ── */}
+      {hasDetails && (
+        <div className="border-t border-neutral-100 pt-1">
+          <button
+            type="button"
+            onClick={() => setDetailsOpen(!detailsOpen)}
+            aria-expanded={detailsOpen}
+            className="flex items-center justify-between w-full py-1.5 text-xs font-semibold uppercase tracking-wider text-neutral-400 hover:text-neutral-600 transition-colors"
+          >
+            <span>Details</span>
+            <ChevronDown
+              size={14}
+              className={`transition-transform duration-200 ${detailsOpen ? "rotate-180" : ""}`}
+              aria-hidden="true"
+            />
+          </button>
+
+          {detailsOpen && (
+            <div className="flex flex-col gap-2 pb-1 animate-in fade-in slide-in-from-top-1 duration-150">
+              {/* Address */}
+              {service.address && (
+                <div className="flex items-start gap-2 text-xs text-neutral-500 leading-snug">
+                  <MapPin size={14} className="text-neutral-400 mt-0.5 flex-shrink-0" aria-hidden="true" />
+                  <span>{service.address}</span>
+                </div>
+              )}
+
+              {/* Phone */}
+              {service.phone && (
+                <div className="flex items-start gap-2 text-xs text-neutral-500">
+                  <Phone size={14} className="text-neutral-400 mt-0.5 flex-shrink-0" aria-hidden="true" />
+                  <span>{service.phone}</span>
+                </div>
+              )}
+
+              {/* Email */}
+              {service.email && (
+                <div className="flex items-start gap-2 text-sm text-neutral-500">
+                  <Mail size={14} className="text-neutral-400 mt-0.5 flex-shrink-0" aria-hidden="true" />
+                  <span>{service.email}</span>
+                </div>
+              )}
+
+              {/* Accessibility */}
+              {service.accessibility && (
+                <div className="flex items-start gap-2 text-sm text-neutral-500 leading-snug">
+                  <span className="mt-0.5 flex-shrink-0 text-sm" aria-hidden="true">♿</span>
+                  <span>{service.accessibility}</span>
+                </div>
+              )}
+
+              {/* Description */}
+              {service.description && (
+                <div className="text-xs text-neutral-500 leading-relaxed">
+                  {service.description}
+                </div>
+              )}
+
+              {/* Required documents */}
+              {service.required_documents && service.required_documents.length > 0 && (
+                <div className="flex items-start gap-2 text-xs text-neutral-500 leading-snug">
+                  <span className="mt-0.5 flex-shrink-0" aria-hidden="true">📄</span>
+                  <span>Bring: {service.required_documents.join(", ")}</span>
+                </div>
+              )}
+
+              {/* Languages spoken */}
+              {service.languages && service.languages.length > 0 &&
+                !(service.languages.length === 1 && service.languages[0] === "English") && (
+                <div className="flex items-start gap-2 text-xs text-neutral-500 leading-snug">
+                  <span className="mt-0.5 flex-shrink-0" aria-hidden="true">🗣️</span>
+                  <span>{service.languages.join(", ")}</span>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
 
-      {/* Also available at this location */}
-      {service.also_available && service.also_available.length > 0 && (
+      {/* Also available at this location — limited to 3 with expand */}
+      {alsoItems.length > 0 && (
         <div className="pt-1 border-t border-neutral-100">
           <div className="text-[0.65rem] font-semibold uppercase tracking-wider text-neutral-400 mb-1.5">
             Also here
           </div>
           <div className="flex flex-wrap gap-1">
-            {service.also_available.map((cat) => (
+            {alsoVisible.map((cat) => (
               <span
                 key={cat}
                 className="inline-block text-[0.68rem] font-medium px-2 py-0.5 rounded-md bg-neutral-50 border border-neutral-200 text-neutral-600"
@@ -281,25 +327,21 @@ export function ServiceCard({ service, isActive, index, total }: ServiceCardProp
                 {ALSO_EMOJI[cat] || "\u2022"} {cat}
               </span>
             ))}
+            {!alsoExpanded && alsoHiddenCount > 0 && (
+              <button
+                type="button"
+                onClick={() => setAlsoExpanded(true)}
+                className="inline-block text-[0.68rem] font-medium px-2 py-0.5 rounded-md bg-neutral-50 border border-neutral-200 text-blue-600 hover:bg-blue-50 hover:border-blue-200 transition-colors"
+              >
+                +{alsoHiddenCount} more
+              </button>
+            )}
           </div>
         </div>
       )}
 
-      {/* Learn More */}
-      {service.yourpeer_url && (
-        <a
-          href={service.yourpeer_url}
-          target="_blank"
-          rel="noopener noreferrer"
-          aria-label={`Learn more about ${name} on YourPeer`}
-          className="block w-full py-2.5 rounded-lg bg-amber-300 text-center text-sm font-semibold text-neutral-900 transition-all hover:bg-amber-400 hover:shadow-md mt-auto"
-        >
-          Learn More on YourPeer
-        </a>
-      )}
-
-      {/* Action buttons */}
-      <div className="flex gap-1.5 pt-1" role="group" aria-label={`Actions for ${name}`}>
+      {/* Action buttons — mt-auto pins buttons + footer to card bottom */}
+      <div className="flex gap-1.5 pt-1 mt-auto" role="group" aria-label={`Actions for ${name}`}>
         {service.phone && (
           <a
             href={`tel:${service.phone.split(/\s*ext/i)[0].replace(/\D/g, "")}`}
@@ -315,7 +357,7 @@ export function ServiceCard({ service, isActive, index, total }: ServiceCardProp
             target="_blank"
             rel="noopener noreferrer"
             aria-label={`Get directions to ${name}`}
-            className="flex-1 py-2 rounded-lg border border-neutral-200 bg-neutral-50 text-center text-xs font-semibold text-neutral-900 transition hover:bg-neutral-100 hover:border-neutral-300"
+            className="flex-1 py-2 rounded-lg border border-amber-300 bg-amber-300 text-center text-xs font-semibold text-neutral-900 transition hover:bg-amber-400 hover:border-amber-400"
           >
             Directions
           </a>
@@ -333,11 +375,12 @@ export function ServiceCard({ service, isActive, index, total }: ServiceCardProp
         )}
       </div>
 
-      {/* Per-location feedback */}
-      {service.service_id && (
+      {/* Footer: Learn More + Rate — shared row */}
+      {(service.yourpeer_url || service.service_id) && (
         <LocationFeedbackRow
-          serviceId={service.service_id}
+          serviceId={service.service_id || ""}
           locationName={name}
+          learnMoreUrl={service.yourpeer_url}
         />
       )}
     </div>

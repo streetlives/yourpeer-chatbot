@@ -64,6 +64,7 @@ from app.services.responses import (
     _build_conversational_prompt,
     _static_bot_answer,
     _fallback_response,
+    random_warmth_prefix,
 )
 from app.services.confirmation import (
     _build_confirmation_message,
@@ -153,6 +154,29 @@ def generate_reply(
             f"Session {session_id}: redacted {len(pii_detections)} PII item(s) "
             f"from message: {[d.pii_type for d in pii_detections]}"
         )
+
+    # --- PII Safety Warning ---
+    # When a user shares highly sensitive PII (SSN, phone number), warn
+    # them immediately. The message is still processed (with PII redacted),
+    # but the warning is prepended to whatever response follows.
+    _PII_WARN_TYPES = {"ssn", "phone"}
+    _pii_warning = ""
+    if pii_detections:
+        _detected = {d.pii_type for d in pii_detections}
+        _sensitive = _detected & _PII_WARN_TYPES
+        if _sensitive:
+            if "ssn" in _sensitive:
+                _pii_warning = (
+                    "For your safety, please don't share your Social Security "
+                    "number or other sensitive personal information in this "
+                    "chat. I've removed it from the conversation.\n\n"
+                )
+            else:
+                _pii_warning = (
+                    "Just a heads up — I've removed your phone number from "
+                    "the conversation to protect your privacy. You don't need "
+                    "to share personal info to search for services.\n\n"
+                )
 
     existing = get_session_slots(session_id)
 
@@ -547,6 +571,45 @@ def generate_reply(
         # If _crisis_result was None (classification disagreed), fall through
         category = "general"
 
+    # --- Spanish / non-English detection ---
+    # SAMHSA Cultural Humility: acknowledge the language gap rather than
+    # returning silence or an English-only response. Even before full
+    # Spanish support ships, detecting common Spanish phrases and
+    # responding with an acknowledgment shows awareness.
+    _SPANISH_RE = re.compile(
+        r"\b(necesito|ayuda|comida|refugio|albergue|por favor|"
+        r"no hablo ingles|no hablo inglés|hola|buenos dias|"
+        r"buenas tardes|buenas noches|tengo hambre|"
+        r"necesito ayuda|donde puedo|dónde puedo)\b", re.I,
+    )
+    _spanish_detected = _SPANISH_RE.search(message)
+    _spanish_acknowledgment = ""
+
+    if _spanish_detected and not has_service_intent:
+        # Spanish only, no service request — return bilingual message
+        result = _empty_reply(
+            session_id,
+            "I'm sorry — right now I can only help in English. "
+            "A peer navigator may be able to help in Spanish.\n\n"
+            "Lo siento — por ahora solo puedo ayudar en inglés. "
+            "Un navegador comunitario puede ayudarte en español.",
+            existing,
+            quick_replies=[
+                {"label": "🤝 Peer navigator", "value": "Connect with peer navigator"},
+            ],
+        )
+        _log_turn(session_id, redacted_message, result, "spanish_detected",
+                  request_id=request_id, tone=tone)
+        return result
+    elif _spanish_detected and has_service_intent:
+        # Spanish mixed with a service request — acknowledge the language
+        # but still process the search. The acknowledgment is prepended
+        # to whatever response follows (confirmation or follow-up).
+        _spanish_acknowledgment = (
+            "I can see you may prefer Spanish — lo siento, por ahora "
+            "solo puedo ayudar en inglés. I'll do my best to help.\n\n"
+        )
+
     # --- Reset ---
     if category == "reset":
         clear_session(session_id)
@@ -669,6 +732,33 @@ def generate_reply(
 
     # --- Help ---
     if category == "help":
+        # Shame + help: "I'm embarrassed to ask for help" is expressing
+        # vulnerability, not asking what the bot can do. Route to the
+        # emotional handler with the shame-specific response.
+        if _response_tone == "emotional":
+            _help_lower = message.lower()
+            _is_shame_help = any(
+                s in _help_lower for s in [
+                    "embarrassed", "ashamed", "pathetic", "humiliating",
+                    "hard to ask", "hard for me", "hate asking", "hate to ask",
+                    "difficult to ask", "burden", "swallow my pride",
+                ]
+            )
+            if _is_shame_help:
+                response = _pick_emotional_response(message)
+                existing["_last_action"] = "emotional"
+                existing["_emotional_context"] = "shame"
+                save_session_slots(session_id, existing)
+                result = _empty_reply(
+                    session_id, response, existing,
+                    quick_replies=[
+                        {"label": "🤝 Peer navigator", "value": "Connect with peer navigator"},
+                    ],
+                )
+                _log_turn(session_id, redacted_message, result, "emotional",
+                          request_id=request_id, tone=tone)
+                return result
+
         # When the user is confused or emotional AND asking for help,
         # lead with empathy before showing the service menu.
         if _response_tone in ("confused", "emotional"):
@@ -715,6 +805,51 @@ def generate_reply(
             response = _static_bot_answer(message)
         result = _empty_reply(session_id, response, existing)
         _log_turn(session_id, redacted_message, result, category, request_id=request_id, tone=tone)
+        return result
+
+    # --- Demographic skip ("I'd rather not say" / "skip") ---
+    # SAMHSA Empowerment principle: users control what they share.
+    # When a demographic question is pending and the user declines,
+    # proceed to confirmation with what we have.
+    _SKIP_PHRASES = [
+        "i'd rather not say", "id rather not say", "i would rather not say",
+        "rather not say", "prefer not to say", "prefer not to",
+        "skip", "skip this", "don't want to say", "dont want to say",
+        "none of your business", "that's personal", "thats personal",
+        "pass",
+    ]
+    _skip_lower = message.lower().strip()
+    _is_skip = any(p in _skip_lower for p in _SKIP_PHRASES) or _skip_lower in ("skip", "pass")
+    _is_demographic_pending = (
+        existing.get("service_type")
+        and existing.get("location")
+        and not existing.get("_pending_confirmation")
+        and (not existing.get("age") or not existing.get("family_status"))
+    )
+    if _is_skip and _is_demographic_pending:
+        # Mark skipped demographics so we don't re-ask
+        if not existing.get("age"):
+            existing["age"] = "skipped"
+        if not existing.get("family_status"):
+            existing["family_status"] = "skipped"
+        save_session_slots(session_id, existing)
+
+        # Proceed to confirmation with what we have
+        existing["_pending_confirmation"] = True
+        save_session_slots(session_id, existing)
+        confirm_msg = "No problem at all. " + _build_confirmation_message(existing)
+        result = {
+            "session_id": session_id,
+            "response": confirm_msg,
+            "follow_up_needed": True,
+            "slots": existing,
+            "services": [],
+            "result_count": 0,
+            "relaxed_search": False,
+            "quick_replies": _confirmation_quick_replies(existing),
+        }
+        _log_turn(session_id, redacted_message, result, "demographic_skip",
+                  request_id=request_id, tone=tone)
         return result
 
     # --- Location unknown ---
@@ -871,7 +1006,7 @@ def generate_reply(
         else:
             pending_extracted = extract_slots(message)
         pending_has_new = any(v is not None and v != [] for k, v in pending_extracted.items()
-                              if k not in ("additional_services", "_populations"))
+                              if k not in ("additional_services", "_populations", "_contradiction"))
 
         # Fix 3: Contradiction detection — if a slot CHANGED (not just
         # filled), the user is correcting their search. Auto-execute
@@ -953,7 +1088,7 @@ def generate_reply(
         extracted = early_extracted
 
     has_new_slots = any(v is not None and v != [] for k, v in extracted.items()
-                        if k not in ("additional_services", "_populations"))
+                        if k not in ("additional_services", "_populations", "_contradiction"))
 
     merged = merge_slots(existing, extracted)
 
@@ -988,10 +1123,34 @@ def generate_reply(
         and _has_session_coords
     )
 
+    # Shame detection — sub-category of emotional tone that needs a
+    # specific normalizing prefix rather than generic empathy.
+    _SHAME_SIGNALS = [
+        "embarrassed", "ashamed", "pathetic", "failure",
+        "never thought i'd need", "never thought id need",
+        "hard for me to say", "hard to say", "hard for me to ask",
+        "hard to ask", "hard to admit",
+        "difficult to ask", "difficult to say",
+        "hate asking", "hate to ask", "hate having to ask",
+        "humiliating", "degrading",
+        "burden", "swallow my pride", "swallowed my pride",
+        "first time asking", "never done this before",
+        "never had to ask", "never asked for help",
+        "can't believe i'm", "cant believe im",
+        "can't afford to eat", "cant afford to eat",
+        "can't even feed", "cant even feed",
+        "don't want anyone to know", "dont want anyone to know",
+    ]
+    _msg_lower_tone = message.lower()
+    _is_shame = any(s in _msg_lower_tone for s in _SHAME_SIGNALS)
+
     # Tone-based prefix
     _is_service_flow = category == "service"
     _tone_prefix = ""
-    if _response_tone == "emotional" and _is_service_flow:
+    if _is_shame and _is_service_flow:
+        # Shame-specific normalizing prefix — NOT generic "I hear you"
+        _tone_prefix = "It takes real strength to reach out — a lot of people use these services, and there's no shame in it. "
+    elif _response_tone == "emotional" and _is_service_flow:
         _tone_prefix = "I hear you, and I want to help. "
     elif _response_tone == "frustrated" and _is_service_flow:
         _tone_prefix = "I understand this has been frustrating. Let me try something different. "
@@ -999,6 +1158,29 @@ def generate_reply(
         _tone_prefix = "No worries — let me help you with that. "
     elif _response_tone == "urgent" and _is_service_flow:
         _tone_prefix = "I can see this is urgent — let me find something right away. "
+
+    # Check for emotional context from a previous turn in this session.
+    # When the user expressed emotion in an earlier message (e.g., "I'm really
+    # struggling and need food and shelter"), subsequent confirmations should
+    # stay warm instead of resetting to a cold default.
+    if not _tone_prefix and _is_service_flow:
+        _prior_emotion = existing.get("_emotional_context")
+        if _prior_emotion == "shame":
+            _tone_prefix = "Still here with you. "
+        elif _prior_emotion:
+            _tone_prefix = "I'm still here with you. "
+
+    # Baseline warmth: when no emotional/shame/urgent context was detected
+    # and it's a routine service flow, add a small warmth prefix to prevent
+    # the bot from feeling "functional but flat" (the tone=3 gap).
+    if not _tone_prefix and _is_service_flow:
+        _tone_prefix = random_warmth_prefix()
+
+    # Persist emotional context for subsequent turns
+    if _is_shame:
+        merged["_emotional_context"] = "shame"
+    elif _response_tone == "emotional" and _is_service_flow:
+        merged["_emotional_context"] = "emotional"
 
     # Override casual tone for sensitive life situations (Run 24 eval fix)
     # Also SET a prefix when tone=None but the message contains sensitive context.
@@ -1008,6 +1190,13 @@ def generate_reply(
     )
     if _SENSITIVE_CONTEXT_RE.search(message):
         _tone_prefix = "I understand this is a difficult situation. Let me help. "
+        merged["_emotional_context"] = "sensitive"
+
+    # Prepend PII safety warning and/or Spanish acknowledgment before
+    # the tone prefix so they appear first in confirmations and follow-ups.
+    _prefix_prepend = _pii_warning + _spanish_acknowledgment
+    if _prefix_prepend:
+        _tone_prefix = _prefix_prepend + _tone_prefix
 
     # If enough detail → CONFIRMATION step
     if (is_enough_to_answer(merged) or _geolocation_ready) and has_new_slots:
@@ -1136,6 +1325,15 @@ def generate_reply(
         response = _CASUAL_RESPONSES[_idx]
     else:
         response = _fallback_response(message, merged)
+        # Cultural humility: when the bot can't understand what the user
+        # needs (low confidence), acknowledge the limitation rather than
+        # pretending the generic response is adequate.
+        if _confidence == "low" and not merged.get("service_type"):
+            response += (
+                "\n\nIf I'm missing something important about what you need, "
+                "a peer navigator can help — they're real people who know "
+                "the system well."
+            )
 
     has_service_intent = bool(merged.get("service_type") or merged.get("location"))
     _general_qr = []
@@ -1175,7 +1373,9 @@ def _handle_crisis(
     if existing.get("_pending_confirmation"):
         existing.pop("_pending_confirmation", None)
 
-    _step_down_categories = ("safety_concern", "domestic_violence", "youth_runaway")
+    _step_down_categories = (
+        "safety_concern", "domestic_violence", "youth_runaway", "assault_victim",
+    )
     if has_service_intent and crisis_category in _step_down_categories:
         merged_crisis = merge_slots(existing, early_extracted)
 
@@ -1615,14 +1815,16 @@ def _execute_and_respond(session_id: str, message: str, slots: dict, request_id:
         if queued:
             slots["_queued_services_original"] = list(queued)
 
+        _age = slots.get("age")
+        _family = slots.get("family_status")
         results = query_services(
             service_type=slots.get("service_type"),
             location=location,
-            age=slots.get("age"),
+            age=_age if _age != "skipped" else None,
             gender=slots.get("_gender"),
             latitude=slots.get("_latitude") if use_coords else None,
             longitude=slots.get("_longitude") if use_coords else None,
-            family_status=slots.get("family_status"),
+            family_status=_family if _family != "skipped" else None,
             colocated_service_types=colocated_types,
             service_detail=slots.get("service_detail"),
             populations=slots.get("_populations"),
@@ -1680,13 +1882,11 @@ def _execute_and_respond(session_id: str, message: str, slots: dict, request_id:
                 )
                 bot_response = (
                     f"I found {result_count} location(s) that offer both "
-                    f"{combined.lower()}{qualifier}. "
-                    f"Here's what's available:"
+                    f"{combined.lower()}{qualifier} \u2014 here\u2019s what\u2019s available:"
                 )
             else:
                 bot_response = (
-                    f"I found {result_count} option(s) for you{qualifier}. "
-                    f"Here's what's available:"
+                    f"I found {result_count} option(s) for you{qualifier}:"
                 )
         else:
             bot_response = _no_results_message(slots)
