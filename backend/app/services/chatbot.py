@@ -1910,7 +1910,10 @@ def _execute_and_respond(session_id: str, message: str, slots: dict, request_id:
 
         if results.get("error"):
             logger.warning(f"Query error: {results['error']}")
-            bot_response = _fallback_response(message, slots)
+            bot_response = (
+                "I ran into an issue with that search. "
+                "You can try again, or visit yourpeer.nyc directly."
+            )
         elif results["result_count"] > 0:
             all_services = results["services"]
             services_list = all_services[:_DISPLAY_LIMIT]
@@ -1947,10 +1950,33 @@ def _execute_and_respond(session_id: str, message: str, slots: dict, request_id:
 
     except Exception as e:
         logger.error(f"Database query failed: {e}")
-        bot_response = _fallback_response(message, slots)
+        # CRITICAL: Do NOT call _fallback_response (LLM) for DB failures.
+        # When the DB is down, Claude generates helpful-sounding follow-up
+        # questions ("To help narrow things down...") that look like the
+        # intake flow, trapping the user in an infinite confirmation loop
+        # where they keep confirming but never get results.
+        _fail_count = slots.get("_search_fail_count", 0) + 1
+        slots["_search_fail_count"] = _fail_count
+        save_session_slots(session_id, slots)
+        if _fail_count >= 2:
+            bot_response = (
+                "I'm still having trouble searching. "
+                "Please visit yourpeer.nyc to search directly, "
+                "or try again later."
+            )
+        else:
+            bot_response = (
+                "I'm having trouble connecting to the service database "
+                "right now. You can try again in a moment, or visit "
+                "yourpeer.nyc to search for services directly."
+            )
 
     if bot_response is None:
-        bot_response = _fallback_response(message, slots)
+        # Same principle: don't call LLM for search-path failures.
+        bot_response = (
+            "I wasn't able to complete the search. "
+            "You can try again, or visit yourpeer.nyc directly."
+        )
 
     after_results_qr = [
         {"label": "🔍 New search", "value": "Start over"},
@@ -1993,6 +2019,7 @@ def _execute_and_respond(session_id: str, message: str, slots: dict, request_id:
         ]
 
     if services_list:
+        slots.pop("_search_fail_count", None)  # Clear on success
         slots["_last_results"] = all_services  # Store ALL fetched (up to 25)
         slots["_displayed_count"] = len(services_list)  # Track what user has seen
         save_session_slots(session_id, slots)

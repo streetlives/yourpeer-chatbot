@@ -306,14 +306,12 @@ def _pick_emotional_response(text: str) -> str:
 # ---------------------------------------------------------------------------
 
 def _build_empathetic_prompt(user_message: str, slots: dict) -> str:
-    """Prompt for emotionally-charged messages that aren't crisis-level."""
-    slot_context = ""
-    if slots:
-        filled = {k: v for k, v in slots.items()
-                  if v is not None and not k.startswith("_") and k != "transcript"}
-        if filled:
-            slot_context = f"\nContext from our conversation so far: {filled}\n"
+    """Prompt for emotionally-charged messages that aren't crisis-level.
 
+    IMPORTANT: Service slots are intentionally NOT passed. The LLM has
+    no access to the service database and must not reference what the
+    user is searching for.
+    """
     return (
         "You are YourPeer, a friendly assistant that helps people find "
         "free social services in New York City.\n\n"
@@ -325,72 +323,62 @@ def _build_empathetic_prompt(user_message: str, slots: dict) -> str:
         "- Do NOT list service categories or show a menu of options.\n"
         "- Do NOT give medical, psychological, legal, or financial advice.\n"
         "- Do NOT diagnose, suggest treatments, or minimize their experience.\n"
+        "- Do NOT say whether services exist or are available.\n"
         "- Mention that you can connect them with a peer navigator if they "
         "want someone to talk to.\n"
         "- Gently let them know you're here if there's something practical "
         "you can help them find, but don't push it.\n"
-        "- Keep your response to 2-3 sentences. Be genuine, not scripted.\n"
-        f"{slot_context}"
+        "- Keep your response to 2-3 sentences. Be genuine, not scripted.\n\n"
         f"User message: {user_message}"
     )
 
 
 def _build_conversational_prompt(user_message: str, slots: dict) -> str:
-    """Prompt for general conversational messages that aren't service queries."""
-    filled = {k: v for k, v in (slots or {}).items()
-              if v is not None and not k.startswith("_") and k != "transcript"}
-    has_service_intent = bool(filled.get("service_type") or filled.get("location"))
+    """Prompt for general conversational messages that aren't service queries.
 
-    slot_context = ""
-    if filled:
-        slot_context = f"\nContext from our conversation so far: {filled}\n"
-
-    steer_instruction = (
-        "The user has already expressed a service need. Gently remind them "
-        "you can continue their search, or ask if they'd like to change what "
-        "they're looking for. Don't be pushy — just a brief mention."
-        if has_service_intent
-        else
-        "The user has NOT expressed a service need yet. Do NOT push services "
-        "or list categories. Just respond naturally. If the conversation "
-        "feels right, you can mention that you're here to help find services "
-        "whenever they're ready, but only as a brief aside, not the focus."
-    )
-
+    IMPORTANT: Service slots (service_type, location, age, etc.) are
+    intentionally NOT passed to the LLM. The LLM has no access to the
+    service database and must never generate text that implies knowledge
+    of available services. All service data comes from deterministic DB
+    queries only.
+    """
     return (
         "You are YourPeer, a friendly assistant that helps people find "
         "free social services in New York City.\n"
         "You are warm, respectful, and concise.\n\n"
         "STRICT RULES:\n"
         "- You do NOT make up service names, addresses, or phone numbers.\n"
+        "- You do NOT say whether services exist or are available — you "
+        "have NO access to the service database from this context.\n"
         "- You do NOT give specific medical, legal, psychological, or "
         "financial advice.\n"
         "- You do NOT diagnose conditions or suggest treatments.\n"
         "- You do NOT make promises about service availability.\n"
         "- You do NOT encourage specific life decisions.\n"
+        "- You do NOT ask follow-up questions about what kind of service "
+        "the user needs — that is handled by a separate system.\n"
         "- If someone needs professional guidance, suggest they talk to a "
         "peer navigator.\n\n"
-        f"{steer_instruction}\n"
-        "Keep your response to 1-3 sentences.\n"
-        f"{slot_context}"
+        "The user sent a message that doesn't match a service request. "
+        "Respond naturally and briefly. If it feels right, mention that "
+        "you're here to help find services whenever they're ready, but "
+        "only as a brief aside, not the focus.\n"
+        "Keep your response to 1-3 sentences.\n\n"
         f"User message: {user_message}"
     )
 
 
 def _build_bot_question_prompt(user_message: str, slots: dict = None) -> str:
-    """Prompt for questions about the bot's capabilities or behavior."""
+    """Prompt for questions about the bot's capabilities or behavior.
+
+    IMPORTANT: Service slots (service_type, location, age, etc.) are
+    intentionally NOT passed. Only capability indicators (e.g., whether
+    geolocation is active) are included — never service search context.
+    """
     from app.services.bot_knowledge import build_capability_context
 
     context_lines = []
     if slots:
-        if slots.get("service_type"):
-            context_lines.append(
-                f"- The user is currently searching for: {slots.get('service_type')}"
-            )
-        if slots.get("location"):
-            context_lines.append(
-                f"- Their location is set to: {slots.get('location')}"
-            )
         if slots.get("_latitude") is not None:
             context_lines.append(
                 "- The user has shared their browser geolocation"

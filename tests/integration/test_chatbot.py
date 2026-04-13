@@ -149,23 +149,21 @@ def test_service_no_results(fresh_session):
     assert "wasn't able to find" in results[-1]["response"] or "try" in results[-1]["response"].lower()
 @patch("app.services.chatbot.detect_crisis", return_value=None)
 @patch("app.services.chatbot.query_services", side_effect=Exception("DB connection failed"))
-@patch("app.services.responses.claude_reply", return_value="Let me try to help another way.")
-@patch("app.services.chatbot.claude_reply", return_value="Let me try to help another way.")
-def test_db_failure_falls_back_to_claude(mock_chatbot_claude, mock_responses_claude, mock_query, mock_crisis, fresh_session):
-    """If DB query throws after confirmation, should fall back to Claude."""
+def test_db_failure_uses_static_fallback(mock_query, mock_crisis, fresh_session):
+    """If DB query throws after confirmation, should return a static error
+    message — NOT an LLM response (which can generate follow-up questions
+    that trap the user in a confirmation loop)."""
     generate_reply("I need food in Brooklyn", session_id=fresh_session)
     result = generate_reply("Yes, search", session_id=fresh_session)
     mock_query.assert_called_once()
-    # _fallback_response calls claude_reply via responses.py
-    mock_responses_claude.assert_called_once()
-    # Should return some response (from Claude fallback), not crash
     assert len(result["response"]) > 0
     assert result["services"] == []
+    # Should contain a clear error message directing user to yourpeer.nyc
+    assert "yourpeer.nyc" in result["response"]
 @patch("app.services.chatbot.detect_crisis", return_value=None)
 @patch("app.services.chatbot.query_services", side_effect=Exception("DB down"))
-@patch("app.services.chatbot.claude_reply", side_effect=Exception("Claude down too"))
-def test_both_db_and_claude_fail(mock_claude, mock_query, mock_crisis, fresh_session):
-    """If both DB and Claude fail after confirmation, should return safe static message."""
+def test_both_db_and_claude_fail(mock_query, mock_crisis, fresh_session):
+    """If DB query fails, static fallback should still work (no Claude needed)."""
     generate_reply("I need food in Brooklyn", session_id=fresh_session)
     result = generate_reply("Yes, search", session_id=fresh_session)
     # Should return a safe fallback, not crash
@@ -173,16 +171,26 @@ def test_both_db_and_claude_fail(mock_claude, mock_query, mock_crisis, fresh_ses
     assert result["services"] == []
 @patch("app.services.chatbot.detect_crisis", return_value=None)
 @patch("app.services.chatbot.query_services", return_value=MOCK_ERROR_RESULTS)
-@patch("app.services.responses.claude_reply", return_value="I can try to help with that.")
-@patch("app.services.chatbot.claude_reply", return_value="I can try to help with that.")
-def test_query_error_falls_back(mock_chatbot_claude, mock_responses_claude, mock_query, mock_crisis, fresh_session):
-    """If query_services returns an error key after confirmation, should fall back to Claude."""
+def test_query_error_uses_static_fallback(mock_query, mock_crisis, fresh_session):
+    """If query_services returns an error key, should return a static error
+    message — NOT an LLM response."""
     generate_reply("I need food in Brooklyn", session_id=fresh_session)
     result = generate_reply("Yes, search", session_id=fresh_session)
-    mock_responses_claude.assert_called_once()
-    # Should return some response (from Claude fallback), not crash
     assert len(result["response"]) > 0
     assert result["services"] == []
+    # Should contain a clear error message
+    assert "try again" in result["response"].lower() or "yourpeer" in result["response"]
+@patch("app.services.chatbot.detect_crisis", return_value=None)
+@patch("app.services.chatbot.query_services", side_effect=Exception("DB down"))
+def test_repeated_db_failure_escalates_message(mock_query, mock_crisis, fresh_session):
+    """Second consecutive DB failure should show a stronger 'still having trouble' message."""
+    generate_reply("I need food in Brooklyn", session_id=fresh_session)
+    r1 = generate_reply("Yes, search", session_id=fresh_session)
+    assert "yourpeer.nyc" in r1["response"]
+    # User tries again — starts new flow
+    generate_reply("I need food in Brooklyn", session_id=fresh_session)
+    r2 = generate_reply("Yes, search", session_id=fresh_session)
+    assert "still having trouble" in r2["response"].lower()
 # -----------------------------------------------------------------------
 # SERVICE FOLLOW-UP (not enough slots)
 # -----------------------------------------------------------------------
