@@ -1147,9 +1147,35 @@ def generate_reply(
     # Tone-based prefix
     _is_service_flow = category == "service"
     _tone_prefix = ""
+
+    # Medical urgency — running out of essential medication is medically
+    # dangerous. This fires when the message contains BOTH a medication
+    # depletion signal AND a medical keyword, preventing false positives
+    # on generic "ran out of" phrases.
+    _MEDICATION_DEPLETION = [
+        "ran out of", "run out of", "running out of", "out of my",
+        "don't have my", "dont have my", "lost my medication",
+        "lost my medicine",
+        "no more", "can't get my", "cant get my", "ran out of my",
+    ]
+    _MEDICATION_WORDS = [
+        "insulin", "medication", "medicine", "prescription",
+        "inhaler", "epipen", "pills", "meds",
+    ]
+    _is_medical_urgent = (
+        _is_service_flow
+        and any(s in _msg_lower_tone for s in _MEDICATION_DEPLETION)
+        and any(s in _msg_lower_tone for s in _MEDICATION_WORDS)
+    )
+
     if _is_shame and _is_service_flow:
         # Shame-specific normalizing prefix — NOT generic "I hear you"
         _tone_prefix = "It takes real strength to reach out — a lot of people use these services, and there's no shame in it. "
+    elif _is_medical_urgent:
+        # Medical urgency — medication depletion needs a specific
+        # acknowledgment that the bot understands the medical seriousness,
+        # not just generic urgency ("I can see this is urgent").
+        _tone_prefix = "That sounds urgent — let me help you find care right away. "
     elif _response_tone == "emotional" and _is_service_flow:
         _tone_prefix = "I hear you, and I want to help. "
     elif _response_tone == "frustrated" and _is_service_flow:
@@ -1167,6 +1193,8 @@ def generate_reply(
         _prior_emotion = existing.get("_emotional_context")
         if _prior_emotion == "shame":
             _tone_prefix = "Still here with you. "
+        elif _prior_emotion == "medical_urgent":
+            _tone_prefix = "Let's get you to the right place. "
         elif _prior_emotion:
             _tone_prefix = "I'm still here with you. "
 
@@ -1179,6 +1207,8 @@ def generate_reply(
     # Persist emotional context for subsequent turns
     if _is_shame:
         merged["_emotional_context"] = "shame"
+    elif _is_medical_urgent:
+        merged["_emotional_context"] = "medical_urgent"
     elif _response_tone == "emotional" and _is_service_flow:
         merged["_emotional_context"] = "emotional"
 
@@ -1191,6 +1221,12 @@ def generate_reply(
     if _SENSITIVE_CONTEXT_RE.search(message):
         _tone_prefix = "I understand this is a difficult situation. Let me help. "
         merged["_emotional_context"] = "sensitive"
+
+    # Re-save if emotional context was set after the initial save (line 1113).
+    # Without this, emotional context is lost on the follow-up path where
+    # save_session_slots isn't called again before returning.
+    if merged.get("_emotional_context") and not existing.get("_emotional_context"):
+        save_session_slots(session_id, merged)
 
     # Prepend PII safety warning and/or Spanish acknowledgment before
     # the tone prefix so they appear first in confirmations and follow-ups.

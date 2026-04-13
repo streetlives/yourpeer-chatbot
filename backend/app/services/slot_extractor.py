@@ -337,6 +337,17 @@ _NOTABLE_SUB_TYPES = {
     "prenatal": "prenatal care",
     "maternity": "maternity services",
     "postpartum": "postpartum care",
+    # medical — chronic conditions / medications (peer_diabetic_insulin fix)
+    # Without these, "I'm diabetic and ran out of insulin" shows as
+    # generic "health care" in the confirmation — the user feels unheard.
+    "insulin": "diabetes / insulin care",
+    "diabetic": "diabetes / insulin care",
+    "diabetes": "diabetes / insulin care",
+    "blood sugar": "diabetes care",
+    "inhaler": "asthma care",
+    "asthma": "asthma care",
+    "dialysis": "dialysis services",
+    "epipen": "allergy / EpiPen care",
     # mental_health sub-types
     "substance abuse": "substance abuse services",
     "addiction": "addiction services",
@@ -975,6 +986,24 @@ def _extract_urgency(text: str) -> Optional[str]:
     if any(x in lower for x in [
         "tonight", "urgent", "asap", "right now", "immediately",
         "emergency", "today", "before dark", "freezing",
+    ]):
+        return "high"
+    # Medication depletion — running out of essential medication is
+    # medically urgent even without explicit urgency words.
+    # "Ran out of insulin" is as dangerous as "I need shelter tonight."
+    #
+    # NOTE: "need my medication" and "need my medicine" were intentionally
+    # excluded — they self-match because "medication"/"medicine" appear in
+    # both the depletion AND medication word lists, causing false positives
+    # for routine requests like "I need my medication refilled."
+    if any(x in lower for x in [
+        "ran out of", "run out of", "running out of", "out of my",
+        "don't have my", "dont have my", "lost my medication",
+        "lost my medicine",
+        "no more", "can't get my", "cant get my",
+    ]) and any(x in lower for x in [
+        "insulin", "medication", "medicine", "prescription",
+        "inhaler", "epipen", "pills", "meds",
     ]):
         return "high"
     if any(x in lower for x in ["soon", "this week"]):
