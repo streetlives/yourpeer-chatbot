@@ -127,22 +127,22 @@ class TestFix2CrisisGuard:
         """'I'm feeling scared' should not be detected as crisis."""
         # With LLM disabled, detect_crisis uses regex only.
         # "feeling scared" is NOT in crisis regex phrases, so should be None.
-        result = detect_crisis("I'm feeling scared")
+        result = detect_crisis("I'm feeling scared", skip_llm=True)
         assert result is None, \
             f"'I'm feeling scared' should not be crisis, got {result}"
 
     def test_feeling_scared_tone_is_emotional(self):
         """'I'm feeling scared' should classify as emotional tone."""
-        tone = _classify_tone("I'm feeling scared")
+        tone = _classify_tone("I'm feeling scared", crisis_result=None)
         assert tone == "emotional", \
             f"Expected emotional tone, got {tone}"
 
     def test_rough_day_not_crisis(self):
-        result = detect_crisis("I'm having a rough day")
+        result = detect_crisis("I'm having a rough day", skip_llm=True)
         assert result is None
 
     def test_struggling_not_crisis(self):
-        result = detect_crisis("I'm struggling right now")
+        result = detect_crisis("I'm struggling right now", skip_llm=True)
         assert result is None
 
     def test_real_crisis_still_detected(self):
@@ -154,7 +154,7 @@ class TestFix2CrisisGuard:
             "I can't breathe",
         ]
         for phrase in cases:
-            result = detect_crisis(phrase)
+            result = detect_crisis(phrase, skip_llm=True)
             assert result is not None, \
                 f"Crisis should fire for: '{phrase}'"
 

@@ -107,7 +107,7 @@ class TestNormalizationInClassifyTone:
     ])
     def test_frustration_via_normalization(self, phrase):
         with patch("app.services.chatbot.detect_crisis", return_value=None):
-            tone = _classify_tone(phrase)
+            tone = _classify_tone(phrase, crisis_result=None)
         assert tone == "frustrated", \
             f"'{phrase}' should be frustrated via normalization, got '{tone}'"
 
@@ -117,7 +117,7 @@ class TestNormalizationInClassifyTone:
     ])
     def test_confused_via_normalization(self, phrase):
         with patch("app.services.chatbot.detect_crisis", return_value=None):
-            tone = _classify_tone(phrase)
+            tone = _classify_tone(phrase, crisis_result=None)
         assert tone == "confused", \
             f"'{phrase}' should be confused via normalization, got '{tone}'"
 
@@ -129,7 +129,7 @@ class TestNormalizationInClassifyTone:
     ])
     def test_emotional_via_normalization(self, phrase):
         with patch("app.services.chatbot.detect_crisis", return_value=None):
-            tone = _classify_tone(phrase)
+            tone = _classify_tone(phrase, crisis_result=None)
         assert tone == "emotional", \
             f"'{phrase}' should be emotional via normalization, got '{tone}'"
 
@@ -174,9 +174,9 @@ class TestNormalizationDoesNotAffectCrisis:
         because they're explicitly listed."""
         from app.services.crisis_detector import detect_crisis
         # These are in the explicit phrase list
-        assert detect_crisis("I can't go on") is not None
-        assert detect_crisis("dont want to live") is not None
-        assert detect_crisis("i cant take it anymore") is not None
+        assert detect_crisis("I can't go on", skip_llm=True) is not None
+        assert detect_crisis("dont want to live", skip_llm=True) is not None
+        assert detect_crisis("i cant take it anymore", skip_llm=True) is not None
 
     def test_normalization_function_not_called_in_crisis(self):
         """Verify crisis detection path doesn't depend on normalization."""
@@ -230,7 +230,7 @@ class TestIntensifierInClassifyTone:
         """Every intensifier×emotion combination should classify as emotional."""
         phrase = f"I'm {intensifier} {emotion}"
         with patch("app.services.chatbot.detect_crisis", return_value=None):
-            tone = _classify_tone(phrase)
+            tone = _classify_tone(phrase, crisis_result=None)
         assert tone == "emotional", \
             f"'{phrase}' should be emotional, got '{tone}'"
 
@@ -242,7 +242,7 @@ class TestIntensifierInClassifyTone:
     def test_intensifier_frustration(self, phrase):
         """Intensifiers in frustration phrases should still match."""
         with patch("app.services.chatbot.detect_crisis", return_value=None):
-            tone = _classify_tone(phrase)
+            tone = _classify_tone(phrase, crisis_result=None)
         assert tone == "frustrated", \
             f"'{phrase}' should be frustrated, got '{tone}'"
 
@@ -254,7 +254,7 @@ class TestIntensifierInClassifyTone:
     def test_intensifier_confused(self, phrase):
         """Intensifiers in confused phrases should still match."""
         with patch("app.services.chatbot.detect_crisis", return_value=None):
-            tone = _classify_tone(phrase)
+            tone = _classify_tone(phrase, crisis_result=None)
         assert tone == "confused", \
             f"'{phrase}' should be confused, got '{tone}'"
 
@@ -262,6 +262,6 @@ class TestIntensifierInClassifyTone:
         """Crisis detection must not use intensifier stripping."""
         from app.services.crisis_detector import detect_crisis
         # "I really want to die" — crisis should fire from "want to die"
-        result = detect_crisis("I really want to die")
+        result = detect_crisis("I really want to die", skip_llm=True)
         assert result is not None
         # The crisis regex already has "want to die" so stripping isn't needed

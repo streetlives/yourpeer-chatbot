@@ -12,6 +12,7 @@ Tests for session changes — prevents regressions on:
 """
 
 import pytest
+from unittest.mock import patch
 from app.services.chatbot import generate_reply
 from app.services.slot_extractor import extract_slots, _extract_populations
 from app.services.confirmation import _build_confirmation_message
@@ -22,10 +23,13 @@ from app.services.crisis_detector import detect_crisis
 # PII SAFETY WARNINGS
 # -----------------------------------------------------------------------
 
+@patch("app.services.chatbot.detect_crisis", return_value=None)
 class TestPIIWarnings:
-    """PII detection should warn users about sensitive info."""
+    """PII detection should warn users about sensitive info.
+    Crisis detection is mocked — these tests verify PII handling,
+    not crisis detection (which has its own suite)."""
 
-    def test_ssn_warning_in_response(self):
+    def test_ssn_warning_in_response(self, _mock_crisis):
         """SSN in message should trigger a safety warning in the response."""
         r = generate_reply("My SSN is 123-45-6789 I need food in Brooklyn")
         assert "Social Security" in r["response"], \
@@ -33,24 +37,24 @@ class TestPIIWarnings:
         assert "removed" in r["response"].lower(), \
             "Warning should mention the info was removed"
 
-    def test_phone_warning_in_response(self):
+    def test_phone_warning_in_response(self, _mock_crisis):
         """Phone number in message should trigger a privacy heads-up."""
         r = generate_reply("Call me at 212-555-1234, I need shelter in Manhattan")
         assert "phone number" in r["response"].lower(), \
             "Phone number should trigger a privacy heads-up"
 
-    def test_no_warning_without_pii(self):
+    def test_no_warning_without_pii(self, _mock_crisis):
         """Normal messages should not trigger PII warnings."""
         r = generate_reply("I need food in Brooklyn")
         assert "Social Security" not in r["response"]
         assert "phone number" not in r["response"].lower()
 
-    def test_ssn_warning_stronger_than_phone(self):
+    def test_ssn_warning_stronger_than_phone(self, _mock_crisis):
         """SSN warning should mention Social Security specifically."""
         r = generate_reply("My SSN is 123-45-6789 I need food in Brooklyn")
         assert "Social Security" in r["response"]
 
-    def test_pii_warning_precedes_confirmation(self):
+    def test_pii_warning_precedes_confirmation(self, _mock_crisis):
         """PII warning should appear before the confirmation message."""
         r = generate_reply("My SSN is 123-45-6789 I need food in Brooklyn")
         warning_pos = r["response"].find("safety")
@@ -142,31 +146,31 @@ class TestYouthRunawayCrisis:
         "I'm not safe at home",
     ])
     def test_runaway_detects_as_youth_runaway(self, phrase):
-        result = detect_crisis(phrase)
+        result = detect_crisis(phrase, skip_llm=True)
         assert result is not None, f"'{phrase}' should trigger crisis"
         assert result[0] == "youth_runaway", \
             f"'{phrase}' should be youth_runaway, got {result[0]}"
 
     def test_runaway_response_has_safeline(self):
         """Youth runaway response must include National Runaway Safeline."""
-        result = detect_crisis("I ran away from home last night")
+        result = detect_crisis("I ran away from home last night", skip_llm=True)
         assert "1-800-786-2929" in result[1], \
             "Youth runaway response must include Runaway Safeline"
 
     def test_runaway_response_has_covenant_house(self):
         """Youth runaway response must include Covenant House."""
-        result = detect_crisis("I'm a runaway and I need help")
+        result = detect_crisis("I'm a runaway and I need help", skip_llm=True)
         assert "Covenant House" in result[1]
 
     def test_runaway_response_no_dv_hotline(self):
         """Youth runaway response should NOT have DV hotlines."""
-        result = detect_crisis("I ran away from home")
+        result = detect_crisis("I ran away from home", skip_llm=True)
         assert "1-800-799-7233" not in result[1], \
             "Youth runaway response should not include DV hotline"
 
     def test_runaway_has_empathetic_opening(self):
         """Youth runaway response should open with empathy."""
-        result = detect_crisis("I ran away from home")
+        result = detect_crisis("I ran away from home", skip_llm=True)
         assert result[1].startswith("I hear you"), \
             "Youth runaway response should open empathetically"
 
@@ -187,24 +191,24 @@ class TestAssaultVictimCrisis:
         "I was assaulted",
     ])
     def test_assault_detects_correctly(self, phrase):
-        result = detect_crisis(phrase)
+        result = detect_crisis(phrase, skip_llm=True)
         assert result is not None, f"'{phrase}' should trigger crisis"
         assert result[0] == "assault_victim", \
             f"'{phrase}' should be assault_victim, got {result[0]}"
 
     def test_assault_response_has_safe_horizon(self):
         """Assault response must include Safe Horizon victim services."""
-        result = detect_crisis("I just got beat up")
+        result = detect_crisis("I just got beat up", skip_llm=True)
         assert "Safe Horizon" in result[1]
 
     def test_assault_response_has_911(self):
         """Assault response must include 911 for medical attention."""
-        result = detect_crisis("I got jumped")
+        result = detect_crisis("I got jumped", skip_llm=True)
         assert "911" in result[1]
 
     def test_assault_response_empathetic(self):
         """Assault response should open with empathy."""
-        result = detect_crisis("I just got beat up")
+        result = detect_crisis("I just got beat up", skip_llm=True)
         assert "sorry" in result[1].lower(), \
             "Assault response should acknowledge what happened"
 
@@ -232,7 +236,7 @@ class TestSafetyConcernResponse:
 
     def test_safety_concern_no_dv_hotline(self):
         """Safety concern response should not include DV hotline number."""
-        result = detect_crisis("I don't feel safe here")
+        result = detect_crisis("I don't feel safe here", skip_llm=True)
         assert result is not None
         assert result[0] == "safety_concern"
         assert "1-800-799-7233" not in result[1], \
@@ -240,17 +244,17 @@ class TestSafetyConcernResponse:
 
     def test_safety_concern_has_311(self):
         """Safety concern should include 311 for shelter intake."""
-        result = detect_crisis("I don't feel safe here")
+        result = detect_crisis("I don't feel safe here", skip_llm=True)
         assert "311" in result[1]
 
     def test_safety_concern_has_988(self):
         """Safety concern should include 988 crisis lifeline."""
-        result = detect_crisis("I'm not safe where I am")
+        result = detect_crisis("I'm not safe where I am", skip_llm=True)
         assert "988" in result[1]
 
     def test_dv_still_has_dv_hotline(self):
         """DV category should STILL have DV-specific hotlines."""
-        result = detect_crisis("my partner hits me")
+        result = detect_crisis("my partner hits me", skip_llm=True)
         assert result is not None
         assert result[0] == "domestic_violence"
         assert "1-800-799-7233" in result[1], \

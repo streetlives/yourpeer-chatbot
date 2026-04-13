@@ -288,9 +288,9 @@ class TestEmotionalServiceTransitions:
     def test_emotional_adjective_forms(self):
         """Situational adjectives should trigger emotional handler."""
         with patch('app.services.chatbot.detect_crisis', return_value=None):
-            assert _classify_tone("this is really depressing") == "emotional"
-            assert _classify_tone("that's overwhelming") == "emotional"
-            assert _classify_tone("this is terrifying") == "emotional"
+            assert _classify_tone("this is really depressing", crisis_result=None) == "emotional"
+            assert _classify_tone("that's overwhelming", crisis_result=None) == "emotional"
+            assert _classify_tone("this is terrifying", crisis_result=None) == "emotional"
 
 
 # =====================================================================

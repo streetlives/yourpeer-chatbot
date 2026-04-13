@@ -1,7 +1,7 @@
 """
 Tests for the chat route and Pydantic models.
 
-Run: pytest tests/test_chat_route.py
+Run: pytest tests/integration/test_http_routes_and_models.py
 """
 
 import uuid

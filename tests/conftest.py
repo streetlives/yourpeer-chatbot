@@ -14,7 +14,7 @@ It provides:
     - Session management helpers
 
 To run all tests:    pytest
-To run one file:     pytest tests/test_chatbot.py
+To run one file:     pytest tests/integration/test_classification_and_routing.py
 To run with print:   pytest -s
 """
 
@@ -50,7 +50,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 # ---------------------------------------------------------------------------
 # MOCK SERVICE DATA
 # ---------------------------------------------------------------------------
-# Shared across test_chatbot.py, test_chat_route.py, and any new test
+# Shared across test_classification_and_routing.py, test_http_routes_and_models.py, and any new test
 # files that need a realistic query_services() return value.
 # Update this in ONE place when the service card schema changes.
 

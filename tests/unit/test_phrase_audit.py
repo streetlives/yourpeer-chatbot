@@ -39,7 +39,7 @@ class TestP0SuicideCSSRS:
         "I thought about jumping off",
     ])
     def test_cssrs_phrases_detected(self, phrase):
-        result = detect_crisis(phrase)
+        result = detect_crisis(phrase, skip_llm=True)
         assert result is not None, f"'{phrase}' should trigger crisis"
         assert result[0] == "suicide_self_harm"
 
@@ -60,7 +60,7 @@ class TestP0SuicideCSSRS:
         "no point in going on",
     ])
     def test_joiner_ipt_and_pain_phrases(self, phrase):
-        result = detect_crisis(phrase)
+        result = detect_crisis(phrase, skip_llm=True)
         assert result is not None, f"'{phrase}' should trigger crisis"
         assert result[0] == "suicide_self_harm"
 
@@ -80,7 +80,7 @@ class TestP1DVSafety:
         "he won't let me leave the house",
     ])
     def test_dv_control_phrases(self, phrase):
-        result = detect_crisis(phrase)
+        result = detect_crisis(phrase, skip_llm=True)
         assert result is not None, f"'{phrase}' should trigger crisis"
         assert result[0] == "domestic_violence"
 
@@ -94,7 +94,7 @@ class TestP1DVSafety:
         "I left home suddenly last night",
     ])
     def test_safety_youth_and_fleeing(self, phrase):
-        result = detect_crisis(phrase)
+        result = detect_crisis(phrase, skip_llm=True)
         assert result is not None, f"'{phrase}' should trigger crisis"
         assert result[0] == "safety_concern"
 
@@ -104,7 +104,7 @@ class TestP1DVSafety:
         "I'm being hit at home",
     ])
     def test_family_violence_youth_runaway(self, phrase):
-        result = detect_crisis(phrase)
+        result = detect_crisis(phrase, skip_llm=True)
         assert result is not None, f"'{phrase}' should trigger crisis"
         assert result[0] == "youth_runaway"
 
@@ -147,7 +147,7 @@ class TestP1P2Emotional:
     ])
     def test_emotional_classification(self, phrase):
         with patch("app.services.chatbot.detect_crisis", return_value=None):
-            tone = _classify_tone(phrase)
+            tone = _classify_tone(phrase, crisis_result=None)
         assert tone == "emotional", \
             f"'{phrase}' should classify as emotional, got '{tone}'"
 
@@ -155,7 +155,7 @@ class TestP1P2Emotional:
         """Shame phrases are emotional, not crisis."""
         for phrase in ["I'm embarrassed to ask", "I feel like a failure",
                        "I'm ashamed of myself"]:
-            result = detect_crisis(phrase)
+            result = detect_crisis(phrase, skip_llm=True)
             assert result is None, \
                 f"'{phrase}' should NOT trigger crisis"
 
@@ -192,7 +192,7 @@ class TestP2Frustration:
     ])
     def test_frustration_classification(self, phrase):
         with patch("app.services.chatbot.detect_crisis", return_value=None):
-            tone = _classify_tone(phrase)
+            tone = _classify_tone(phrase, crisis_result=None)
         assert tone == "frustrated", \
             f"'{phrase}' should classify as frustrated, got '{tone}'"
 
@@ -204,7 +204,7 @@ class TestP2Frustration:
 
     def test_i_give_up_on_this_routes_to_crisis(self):
         """'i give up on this' matches suicide 'i give up' — intentional."""
-        result = detect_crisis("i give up on this")
+        result = detect_crisis("i give up on this", skip_llm=True)
         assert result is not None, \
             "'i give up on this' should match crisis 'i give up' (intentional broad catch)"
 
@@ -228,7 +228,7 @@ class TestP3Confused:
     ])
     def test_confused_classification(self, phrase):
         with patch("app.services.chatbot.detect_crisis", return_value=None):
-            tone = _classify_tone(phrase)
+            tone = _classify_tone(phrase, crisis_result=None)
         assert tone == "confused", \
             f"'{phrase}' should classify as confused, got '{tone}'"
 
@@ -275,30 +275,30 @@ class TestFalsePositiveGuards:
     def test_embarrassed_not_crisis(self):
         """Shame language should NOT trigger crisis detection."""
         for phrase in ["I'm embarrassed", "I feel ashamed", "I'm pathetic"]:
-            assert detect_crisis(phrase) is None
+            assert detect_crisis(phrase, skip_llm=True) is None
 
     def test_grieving_not_crisis(self):
         """Grief language should NOT trigger crisis detection."""
         for phrase in ["I'm grieving", "I lost someone", "my friend died"]:
-            assert detect_crisis(phrase) is None
+            assert detect_crisis(phrase, skip_llm=True) is None
 
     def test_forget_it_not_crisis(self):
         """'forget it' is frustration, not crisis."""
-        assert detect_crisis("forget it") is None
+        assert detect_crisis("forget it", skip_llm=True) is None
 
     def test_this_is_stupid_not_crisis(self):
         """'this is stupid' is frustration, not crisis."""
-        assert detect_crisis("this is stupid") is None
+        assert detect_crisis("this is stupid", skip_llm=True) is None
 
     def test_i_have_no_one_not_crisis(self):
         """Isolation is emotional, not crisis (unless combined with suicidal language)."""
-        assert detect_crisis("I have no one") is None
+        assert detect_crisis("I have no one", skip_llm=True) is None
 
     def test_disappear_is_crisis(self):
         """'want to disappear' maps to wish-to-be-dead per C-SSRS."""
         # Note: this is in the suicide list, not emotional
         # If it ever moves to emotional, this test should be updated
-        result = detect_crisis("I just want to disappear")
+        result = detect_crisis("I just want to disappear", skip_llm=True)
         # Currently NOT in phrase list — handled by LLM stage
         # This test documents the design decision
         pass
@@ -306,13 +306,13 @@ class TestFalsePositiveGuards:
     def test_whats_the_point_without_anymore_not_suicide(self):
         """'what's the point' without 'anymore' should NOT trigger suicide.
         The bare form is too common in non-suicidal contexts."""
-        result = detect_crisis("what's the point of this")
+        result = detect_crisis("what's the point of this", skip_llm=True)
         assert result is None, \
             "'what's the point of this' should NOT trigger crisis"
 
     def test_whats_the_point_anymore_is_suicide(self):
         """'what's the point anymore' SHOULD trigger suicide."""
-        result = detect_crisis("what's the point anymore")
+        result = detect_crisis("what's the point anymore", skip_llm=True)
         assert result is not None
         assert result[0] == "suicide_self_harm"
 

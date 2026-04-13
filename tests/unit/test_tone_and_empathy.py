@@ -152,7 +152,7 @@ class TestShameToneClassification:
         "I don't want to be a burden",
     ])
     def test_classifies_as_emotional(self, phrase):
-        tone = _classify_tone(phrase)
+        tone = _classify_tone(phrase, crisis_result=None)
         assert tone == "emotional", \
             f"'{phrase}' should classify as emotional, got '{tone}'"
 
@@ -165,7 +165,7 @@ class TestShameToneClassification:
         "humiliating",
     ])
     def test_shame_does_not_trigger_crisis(self, phrase):
-        result = detect_crisis(phrase)
+        result = detect_crisis(phrase, skip_llm=True)
         assert result is None, f"'{phrase}' should NOT trigger crisis"
 
 
@@ -324,7 +324,7 @@ class TestDistrustDetection:
         "Is there a catch?",
     ])
     def test_classifies_as_emotional(self, phrase):
-        tone = _classify_tone(phrase)
+        tone = _classify_tone(phrase, crisis_result=None)
         assert tone == "emotional", \
             f"'{phrase}' should classify as emotional, got '{tone}'"
 
@@ -345,7 +345,7 @@ class TestDistrustDetection:
 
     def test_distrust_not_crisis(self):
         for phrase in ["I don't trust this", "Is this safe?", "I've been burned"]:
-            assert detect_crisis(phrase) is None
+            assert detect_crisis(phrase, skip_llm=True) is None
 
 
 class TestUndeservingDetection:
@@ -363,7 +363,7 @@ class TestUndeservingDetection:
         "I don't want to take from someone who needs it more",
     ])
     def test_classifies_as_emotional(self, phrase):
-        tone = _classify_tone(phrase)
+        tone = _classify_tone(phrase, crisis_result=None)
         assert tone == "emotional", \
             f"'{phrase}' should classify as emotional, got '{tone}'"
 
@@ -382,7 +382,7 @@ class TestUndeservingDetection:
 
     def test_undeserving_not_crisis(self):
         for phrase in ["I don't deserve help", "I'm not worth it"]:
-            assert detect_crisis(phrase) is None
+            assert detect_crisis(phrase, skip_llm=True) is None
 
 
 class TestAngerDetection:
@@ -401,7 +401,7 @@ class TestAngerDetection:
         "Why does this keep happening to me",
     ])
     def test_classifies_as_emotional_or_frustrated(self, phrase):
-        tone = _classify_tone(phrase)
+        tone = _classify_tone(phrase, crisis_result=None)
         assert tone in ("emotional", "frustrated"), \
             f"'{phrase}' should be emotional or frustrated, got '{tone}'"
 
@@ -420,7 +420,7 @@ class TestAngerDetection:
 
     def test_anger_not_crisis(self):
         for phrase in ["I'm so angry", "This is so unfair", "I'm furious"]:
-            assert detect_crisis(phrase) is None
+            assert detect_crisis(phrase, skip_llm=True) is None
 
 
 # =======================================================================

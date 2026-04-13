@@ -1228,29 +1228,29 @@ def test_classify_action_none_for_emotional():
 def test_classify_tone_emotional():
     """Emotional phrases should return 'emotional'."""
     from app.services.classifier import _classify_tone
-    assert _classify_tone("I'm feeling really down") == "emotional"
-    assert _classify_tone("having a rough day") == "emotional"
+    assert _classify_tone("I'm feeling really down", crisis_result=None) == "emotional"
+    assert _classify_tone("having a rough day", crisis_result=None) == "emotional"
 
 
 def test_classify_tone_frustrated():
     """Frustration phrases should return 'frustrated'."""
     from app.services.classifier import _classify_tone
-    assert _classify_tone("that's not helpful") == "frustrated"
-    assert _classify_tone("this is useless") == "frustrated"
+    assert _classify_tone("that's not helpful", crisis_result=None) == "frustrated"
+    assert _classify_tone("this is useless", crisis_result=None) == "frustrated"
 
 
 def test_classify_tone_confused():
     """Confused phrases should return 'confused'."""
     from app.services.classifier import _classify_tone
-    assert _classify_tone("I don't know what to do") == "confused"
-    assert _classify_tone("I'm overwhelmed") == "confused"
+    assert _classify_tone("I don't know what to do", crisis_result=None) == "confused"
+    assert _classify_tone("I'm overwhelmed", crisis_result=None) == "confused"
 
 
 def test_classify_tone_none_for_neutral():
     """Neutral messages should return None."""
     from app.services.classifier import _classify_tone
-    assert _classify_tone("I need food in Brooklyn") is None
-    assert _classify_tone("hello") is None
+    assert _classify_tone("I need food in Brooklyn", crisis_result=None) is None
+    assert _classify_tone("hello", crisis_result=None) is None
 
 
 def test_classify_tone_no_service_word_gate():
@@ -1258,8 +1258,8 @@ def test_classify_tone_no_service_word_gate():
     This is the key difference from the old _classify_message."""
     from app.services.classifier import _classify_tone
     # Old classifier would skip "emotional" because "need" is a service word
-    assert _classify_tone("I'm struggling and need food") == "emotional"
-    assert _classify_tone("I'm feeling down and need shelter") == "emotional"
+    assert _classify_tone("I'm struggling and need food", crisis_result=None) == "emotional"
+    assert _classify_tone("I'm feeling down and need shelter", crisis_result=None) == "emotional"
 
 
 # -----------------------------------------------------------------------
@@ -1374,13 +1374,13 @@ def test_classify_tone_emotional_beats_urgent():
     """Emotional tone should take priority over urgent."""
     from app.services.classifier import _classify_tone
     # "I'm scared" is emotional, "tonight" is urgent — emotional wins
-    assert _classify_tone("I'm scared and need shelter tonight") == "emotional"
+    assert _classify_tone("I'm scared and need shelter tonight", crisis_result=None) == "emotional"
 
 
 def test_classify_tone_urgent_without_emotion():
     """Pure urgency without emotional content should return 'urgent'."""
     from app.services.classifier import _classify_tone
-    assert _classify_tone("I need food tonight") == "urgent"
+    assert _classify_tone("I need food tonight", crisis_result=None) == "urgent"
 
 
 def test_urgent_plus_service_gets_prefix(fresh_session):
