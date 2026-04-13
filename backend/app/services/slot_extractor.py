@@ -26,6 +26,8 @@ SERVICE_KEYWORDS = {
         # "meal" moved to _WORD_BOUNDARY_KEYWORDS — "oatmeal" collision (REGEX_AUDIT)
         # Vernacular (Phase 1 audit)
         "starving", "feed my kids", "need to eat",
+        # Spanish (basic bilingual support)
+        "comida", "tengo hambre", "alimentos",
     ],
 
     # --- Shelter & Housing (taxonomy: Shelter) ---
@@ -47,6 +49,8 @@ SERVICE_KEYWORDS = {
         "need a cot", "sleeping in my car", "couch surfing",
         # Foster care / aging out (Run 24 eval gap)
         "aging out", "aged out", "foster care", "aging out of foster",
+        # Spanish (basic bilingual support)
+        "refugio", "albergue",
     ],
 
     # --- Clothing (taxonomy: Clothing) ---
@@ -385,6 +389,15 @@ _NOTABLE_SUB_TYPES = {
     "help with money": "financial services",
     "bad with money": "financial services",
     "money problems": "financial services",
+    # other — benefits enrollment (labels for confirmation messages)
+    "benefits": "benefits enrollment",
+    "food stamps": "food stamps / SNAP",
+    "ebt": "EBT / food stamps",
+    "medicaid": "Medicaid enrollment",
+    "social security": "Social Security",
+    "public assistance": "public assistance",
+    "cash assistance": "cash assistance",
+    "welfare": "public assistance",
     "english class": "English classes",
     "english classes": "English classes",
     "learn english": "English classes",
@@ -1013,7 +1026,7 @@ def _extract_family_status(text: str) -> Optional[str]:
         "with a baby", "with a toddler", "with an infant",
         "my kids are", "my children are",
         "year old daughter", "year old son", "year old child",
-        "pregnant",
+        # "pregnant" removed — pregnancy ≠ with_children. Use pregnant population instead.
         # "single parent/mother/father" = has children, not alone
         "single mother", "single mom", "single father", "single dad",
         "single parent",

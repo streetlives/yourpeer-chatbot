@@ -64,6 +64,7 @@ from app.services.responses import (
     _build_conversational_prompt,
     _static_bot_answer,
     _fallback_response,
+    random_warmth_prefix,
 )
 from app.services.confirmation import (
     _build_confirmation_message,
@@ -581,7 +582,11 @@ def generate_reply(
         r"buenas tardes|buenas noches|tengo hambre|"
         r"necesito ayuda|donde puedo|dónde puedo)\b", re.I,
     )
-    if _SPANISH_RE.search(message) and not has_service_intent:
+    _spanish_detected = _SPANISH_RE.search(message)
+    _spanish_acknowledgment = ""
+
+    if _spanish_detected and not has_service_intent:
+        # Spanish only, no service request — return bilingual message
         result = _empty_reply(
             session_id,
             "I'm sorry — right now I can only help in English. "
@@ -596,6 +601,14 @@ def generate_reply(
         _log_turn(session_id, redacted_message, result, "spanish_detected",
                   request_id=request_id, tone=tone)
         return result
+    elif _spanish_detected and has_service_intent:
+        # Spanish mixed with a service request — acknowledge the language
+        # but still process the search. The acknowledgment is prepended
+        # to whatever response follows (confirmation or follow-up).
+        _spanish_acknowledgment = (
+            "I can see you may prefer Spanish — lo siento, por ahora "
+            "solo puedo ayudar en inglés. I'll do my best to help.\n\n"
+        )
 
     # --- Reset ---
     if category == "reset":
@@ -1157,6 +1170,12 @@ def generate_reply(
         elif _prior_emotion:
             _tone_prefix = "I'm still here with you. "
 
+    # Baseline warmth: when no emotional/shame/urgent context was detected
+    # and it's a routine service flow, add a small warmth prefix to prevent
+    # the bot from feeling "functional but flat" (the tone=3 gap).
+    if not _tone_prefix and _is_service_flow:
+        _tone_prefix = random_warmth_prefix()
+
     # Persist emotional context for subsequent turns
     if _is_shame:
         merged["_emotional_context"] = "shame"
@@ -1173,10 +1192,11 @@ def generate_reply(
         _tone_prefix = "I understand this is a difficult situation. Let me help. "
         merged["_emotional_context"] = "sensitive"
 
-    # Prepend PII safety warning (if any) before the tone prefix so
-    # it appears first in confirmations and follow-ups.
-    if _pii_warning:
-        _tone_prefix = _pii_warning + _tone_prefix
+    # Prepend PII safety warning and/or Spanish acknowledgment before
+    # the tone prefix so they appear first in confirmations and follow-ups.
+    _prefix_prepend = _pii_warning + _spanish_acknowledgment
+    if _prefix_prepend:
+        _tone_prefix = _prefix_prepend + _tone_prefix
 
     # If enough detail → CONFIRMATION step
     if (is_enough_to_answer(merged) or _geolocation_ready) and has_new_slots:

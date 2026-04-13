@@ -568,3 +568,32 @@ def _fallback_response(message: str, slots: dict) -> str:
             "You can try again in a moment, or visit yourpeer.nyc "
             "to search for services directly."
         )
+
+
+# ---------------------------------------------------------------------------
+# BASELINE WARMTH — default tone prefix for routine service flows
+# ---------------------------------------------------------------------------
+# These are short, warm phrases prepended to confirmations and follow-ups
+# when no emotional/shame/urgent context is detected. They prevent the
+# bot from feeling "functional but flat" on routine requests.
+# Randomized to avoid repetitive phrasing across turns.
+
+import random
+
+_WARMTH_PREFIXES = [
+    "Let me see what's available. ",
+    "Let's find something for you. ",
+    "I'll look into that. ",
+    "Let me see what I can find. ",
+    "Absolutely! let me look. ",
+    "I can help with that. ",
+    "Ok, let me look. ",
+    "On it! ",
+    "Let me see what I can find. ",
+    "Absolutely! Let's see... ",
+]
+
+
+def random_warmth_prefix() -> str:
+    """Return a random short warmth prefix for routine service flows."""
+    return random.choice(_WARMTH_PREFIXES)
