@@ -192,27 +192,44 @@ _SAFETY_CONCERN_PHRASES = [
     "need to get away",
     "afraid for my life", "fear for my life",
     "they're going to find me", "going to find me",
-    # Youth runaway / unsafe home situations (P9)
-    # Runaway youth face acute safety risks — prioritize crisis resources
-    # alongside shelter search rather than treating as routine.
+    "no safe place to go", "nowhere safe",
+    # Generic kicked-out (could be anyone, not just youth)
+    "kicked out of my home", "thrown out of my home", "kicked out at",
+    # Fleeing without DV language (P1 audit)
+    "hiding from someone",
+    "someone looking for me", "someone is looking for me",
+    "he's looking for me", "she's looking for me",
+    "had to leave home fast", "left home suddenly",
+]
+
+# Youth runaway — separated from general safety concerns because
+# runaway youth need DIFFERENT resources (Runaway Safeline, Covenant House)
+# not DV hotlines.
+_YOUTH_RUNAWAY_PHRASES = [
     "ran away from home", "run away from home", "running away from home",
     "ran away last night", "ran away yesterday",
     "i'm a runaway", "im a runaway", "i am a runaway",
-    "kicked out of my home", "kicked out by my parents",
-    "thrown out of my home", "parents kicked me out",
-    "family kicked me out", "kicked out at",
+    "kicked out by my parents", "parents kicked me out",
+    "family kicked me out", "thrown out by my family",
     "unsafe at home", "not safe at home", "home isn't safe", "home is not safe",
     "can't go home", "cant go home", "not safe to go home",
     "afraid to go home",
     # Youth/family violence (P1 audit)
     "my parents hurt me", "my family hurts me",
     "being hit at home",
-    "no safe place to go", "nowhere safe",
-    # Fleeing without DV language (P1 audit)
-    "hiding from someone",
-    "someone looking for me", "someone is looking for me",
-    "he's looking for me", "she's looking for me",
-    "had to leave home fast", "left home suddenly",
+]
+
+# Assault / victim of violence — distinct from DV (partner violence) and
+# from the "violence" category (threats TO hurt others). These are people
+# who have BEEN hurt and need medical + victim services.
+_ASSAULT_VICTIM_PHRASES = [
+    "got beat up", "just got beat up", "got beaten up",
+    "i was attacked", "i was assaulted", "i got assaulted",
+    "someone attacked me", "someone beat me up",
+    "was jumped", "got jumped", "i got jumped",
+    "i was mugged", "got mugged", "got robbed and hurt",
+    "was stabbed", "got stabbed", "got shot",
+    "someone hurt me", "i was hurt by someone",
 ]
 
 _TRAFFICKING_PHRASES = [
@@ -310,13 +327,32 @@ _MEDICAL_EMERGENCY_RESPONSE = (
 _SAFETY_CONCERN_RESPONSE = (
     "Your safety comes first. If you're in immediate danger, please call 911.\n\n"
     "Here are resources that can help right now:\n"
-    "• National Domestic Violence Hotline — 1-800-799-7233 (24/7) "
-    "or text START to 88788\n"
-    "• NYC Domestic Violence Hotline — 1-800-621-4673 (24/7, multilingual)\n"
-    "• NYC Safe Horizons — 1-800-621-HOPE (4673)\n"
-    "• 988 Suicide & Crisis Lifeline — call or text 988\n\n"
+    "• 988 Suicide & Crisis Lifeline — call or text 988 (24/7)\n"
+    "• Crisis Text Line — text HOME to 741741\n"
+    "• NYC 311 — call 311 for shelter intake and social services\n\n"
     "If you need shelter right away, I can help you find somewhere safe. "
     "Just let me know what area you're in."
+)
+
+_YOUTH_RUNAWAY_RESPONSE = (
+    "I hear you, and I want to help you stay safe. You're not alone in this.\n\n"
+    "Here are people who can help right now — they won't judge you:\n"
+    "• National Runaway Safeline — 1-800-786-2929 (24/7, confidential) "
+    "or chat at 1800runaway.org\n"
+    "• Covenant House (NYC) — 1-800-388-3888 (shelter + support for youth)\n"
+    "• Crisis Text Line — text HOME to 741741\n"
+    "• If you're in immediate danger, call 911\n\n"
+    "I can also help you find shelter or a drop-in center nearby."
+)
+
+_ASSAULT_VICTIM_RESPONSE = (
+    "I'm sorry that happened to you. Your safety matters, and help is available.\n\n"
+    "If you need medical attention right now, please call 911.\n\n"
+    "Other resources:\n"
+    "• Safe Horizon Victim Services — 1-800-621-HOPE (4673) (24/7)\n"
+    "• NYC Health + Hospitals — call 311 for non-emergency medical help\n"
+    "• 988 Suicide & Crisis Lifeline — call or text 988\n\n"
+    "I can also help you find medical care or other services nearby."
 )
 
 
@@ -325,10 +361,13 @@ _SAFETY_CONCERN_RESPONSE = (
 # ---------------------------------------------------------------------------
 
 # Map category → (phrases, response)
+# Order matters: more specific categories checked first.
 _CRISIS_CATEGORIES = [
     ("suicide_self_harm", _SUICIDE_SELF_HARM_PHRASES, _SUICIDE_RESPONSE),
     ("medical_emergency", _MEDICAL_EMERGENCY_PHRASES, _MEDICAL_EMERGENCY_RESPONSE),
     ("domestic_violence", _DOMESTIC_VIOLENCE_PHRASES, _DOMESTIC_VIOLENCE_RESPONSE),
+    ("youth_runaway", _YOUTH_RUNAWAY_PHRASES, _YOUTH_RUNAWAY_RESPONSE),
+    ("assault_victim", _ASSAULT_VICTIM_PHRASES, _ASSAULT_VICTIM_RESPONSE),
     ("safety_concern", _SAFETY_CONCERN_PHRASES, _SAFETY_CONCERN_RESPONSE),
     ("trafficking", _TRAFFICKING_PHRASES, _TRAFFICKING_RESPONSE),
     ("violence", _VIOLENCE_PHRASES, _VIOLENCE_RESPONSE),
@@ -338,6 +377,8 @@ _CRISIS_CATEGORIES = [
 _LLM_CATEGORY_RESPONSES = {
     "suicide_self_harm": _SUICIDE_RESPONSE,
     "domestic_violence": _DOMESTIC_VIOLENCE_RESPONSE,
+    "youth_runaway": _YOUTH_RUNAWAY_RESPONSE,
+    "assault_victim": _ASSAULT_VICTIM_RESPONSE,
     "safety_concern": _SAFETY_CONCERN_RESPONSE,
     "trafficking": _TRAFFICKING_RESPONSE,
     "medical_emergency": _MEDICAL_EMERGENCY_RESPONSE,
@@ -361,11 +402,15 @@ Crisis categories:
 hopelessness, passive ideation ("what's the point", "nothing matters anymore")
 - domestic_violence: abuse by a partner or family member, threats, fleeing \
 a dangerous home situation
-- safety_concern: feeling unsafe, running away from home, being kicked out, \
-unsafe living situation
+- youth_runaway: a young person who ran away, was kicked out by family, \
+is unsafe at home, or can't go home. NOT the same as domestic violence.
+- assault_victim: someone who was physically attacked, beaten up, jumped, \
+mugged, or assaulted. They are the VICTIM, not the attacker.
+- safety_concern: feeling unsafe, being followed, in danger — general \
+safety concerns that don't fit the more specific categories above
 - trafficking: being controlled, unable to leave, documents taken
 - medical_emergency: immediate physical danger requiring 911
-- violence: threats to harm others
+- violence: threats to harm others (the person is a potential aggressor)
 
 Respond with ONLY a JSON object, no other text:
 {"crisis": true, "category": "<category_name>"}

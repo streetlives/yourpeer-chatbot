@@ -1353,7 +1353,9 @@ def _handle_crisis(
     if existing.get("_pending_confirmation"):
         existing.pop("_pending_confirmation", None)
 
-    _step_down_categories = ("safety_concern", "domestic_violence", "youth_runaway")
+    _step_down_categories = (
+        "safety_concern", "domestic_violence", "youth_runaway", "assault_victim",
+    )
     if has_service_intent and crisis_category in _step_down_categories:
         merged_crisis = merge_slots(existing, early_extracted)
 

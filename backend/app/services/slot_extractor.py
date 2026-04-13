@@ -1101,6 +1101,17 @@ _POPULATION_PHRASES = {
     "got out of prison": "reentry",
     # "did time" retired — "I did time management training" false positive (REGEX_AUDIT)
 
+    # Foster youth — aging out of or formerly in foster care
+    # NOT reentry — foster care ≠ incarceration
+    "foster care": "foster_youth",
+    "aging out": "foster_youth",
+    "aged out": "foster_youth",
+    "aging out of foster": "foster_youth",
+    "former foster": "foster_youth",
+    "foster youth": "foster_youth",
+    "out of the system": "foster_youth",
+    "out the system": "foster_youth",
+
     # DV survivor — domestic violence
     "escaped abuse": "dv_survivor",
     "fleeing abuse": "dv_survivor",
@@ -1508,7 +1519,8 @@ def next_follow_up_question(slots: dict) -> str:
 
     if not slots.get("location") or slots.get("location") == NEAR_ME_SENTINEL:
         return (
-            "What neighborhood or borough are you in, so I can find what's closest to you?"
+            "What neighborhood or borough are you in? "
+            "This helps me find what's closest to you."
         )
 
     if slots.get("service_type") == "shelter" and not slots.get("age"):
