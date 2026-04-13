@@ -39,9 +39,9 @@ def _build_confirmation_message(slots: dict) -> str:
     org_name = slots.get("org_name")
     if org_name:
         if slots.get("service_type"):
-            msg = f"I\u2019ll look for {service_label} at {org_name}"
+            msg = f"Ok, I\u2019ll look for {service_label} at {org_name}"
         else:
-            msg = f"I\u2019ll look for services at {org_name}"
+            msg = f"Ok, I\u2019ll look for services at {org_name}"
         if location and location != "your area" and location != NEAR_ME_SENTINEL:
             location_clean, _ = redact_pii(location)
             msg += f" in {location_clean}"
@@ -82,7 +82,7 @@ def _build_confirmation_message(slots: dict) -> str:
         else:
             service_label = ", ".join(all_labels[:-1]) + f", and {all_labels[-1]}"
 
-    parts = [f"I\u2019ll look for {service_label} {location_phrase}"]
+    parts = [f"Ok, I\u2019ll look for {service_label} {location_phrase}"]
     if age:
         parts[0] += f" (age {age})"
 
@@ -105,8 +105,8 @@ def _build_confirmation_message(slots: dict) -> str:
 
     if _prefix:
         parts[0] = parts[0].replace(
-            f"I\u2019ll look for {service_label}",
-            f"I\u2019ll look for {_prefix}{service_label}",
+            f"Ok, I\u2019ll look for {service_label}",
+            f"Ok, I\u2019ll look for {_prefix}{service_label}",
         )
 
     family = slots.get("family_status")
