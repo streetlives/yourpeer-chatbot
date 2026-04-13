@@ -1260,7 +1260,7 @@ def generate_reply(
                 "What would be most helpful?"
             )
             qr = list(_WELCOME_QUICK_REPLIES) + [
-                {"label": "❌ Not what I meant", "value": "not what I meant"},
+                {"label": "❌ Not what I meant", "value": "Not what I meant"},
             ]
         result = _empty_reply(session_id, response, merged, quick_replies=qr)
         _log_turn(session_id, redacted_message, result, "unrecognized_service",
@@ -1292,7 +1292,7 @@ def generate_reply(
     if not has_service_intent and len(merged.get("transcript", [])) <= 1 and not _is_casual_chat:
         _general_qr = list(_WELCOME_QUICK_REPLIES)
     if _confidence in ("medium", "low"):
-        _general_qr.append({"label": "❌ Not what I meant", "value": "not what I meant"})
+        _general_qr.append({"label": "❌ Not what I meant", "value": "Not what I meant"})
     result = _empty_reply(
         session_id, response, merged,
         quick_replies=_general_qr,
@@ -1836,7 +1836,7 @@ def _execute_and_respond(session_id: str, message: str, slots: dict, request_id:
                 )
             else:
                 bot_response = (
-                    f"I found {result_count} option(s) for you{qualifier}:"
+                    f"Ok, here are {result_count} option(s) for you{qualifier}:"
                 )
         else:
             bot_response = _no_results_message(slots)

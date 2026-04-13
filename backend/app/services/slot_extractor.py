@@ -1508,8 +1508,7 @@ def next_follow_up_question(slots: dict) -> str:
 
     if not slots.get("location") or slots.get("location") == NEAR_ME_SENTINEL:
         return (
-            "What neighborhood or borough are you in? "
-            "This helps me find what's closest to you."
+            "What neighborhood or borough are you in, so I can find what's closest to you?"
         )
 
     if slots.get("service_type") == "shelter" and not slots.get("age"):

@@ -45,7 +45,7 @@ def _build_confirmation_message(slots: dict) -> str:
         if location and location != "your area" and location != NEAR_ME_SENTINEL:
             location_clean, _ = redact_pii(location)
             msg += f" in {location_clean}"
-        msg += " \u2014 does that sound right?"
+        msg += " \u2014 sound good?"
         return msg
     age = slots.get("age")
     if age == "skipped":
@@ -117,7 +117,7 @@ def _build_confirmation_message(slots: dict) -> str:
     elif family == "alone":
         parts[0] += ", for yourself"
 
-    parts[0] += " \u2014 does that sound right?"
+    parts[0] += " \u2014 sound good?"
 
     return " ".join(parts)
 
