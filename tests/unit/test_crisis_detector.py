@@ -345,8 +345,8 @@ def test_no_false_positive_on_giving_up_task():
 
 def test_youth_runaway_detection():
     """Youth runaway and unsafe home phrases must trigger crisis detection."""
-    # Phrases that map cleanly to safety_concern (no DV overlap)
-    safety_concern_phrases = [
+    # Phrases that map to youth_runaway (family/home-specific)
+    youth_runaway_phrases = [
         "I'm 16 and I ran away from home last night. I have nowhere to go in Brooklyn.",
         "I ran away from home",
         "I run away from home",
@@ -357,22 +357,31 @@ def test_youth_runaway_detection():
         "I can't go home, it's not safe",
         "I can't go home",
     ]
-    for phrase in safety_concern_phrases:
+    for phrase in youth_runaway_phrases:
         result = detect_crisis(phrase)
         assert result is not None, \
             f"Missed youth runaway/unsafe home phrase: '{phrase}'"
-        assert result[0] == "safety_concern", \
-            f"Wrong category for '{phrase}': {result[0]} (expected safety_concern)"
+        assert result[0] == "youth_runaway", \
+            f"Wrong category for '{phrase}': {result[0]} (expected youth_runaway)"
 
-    # "Kicked out" phrases overlap with DV detector — both DV and safety_concern
-    # are appropriate responses for someone kicked out of their home.
-    kicked_out_phrases = [
-        "I got kicked out of my home",
+    # "Kicked out by parents/family" → youth_runaway
+    family_kicked_out = [
         "My parents kicked me out",
         "My family kicked me out",
+    ]
+    for phrase in family_kicked_out:
+        result = detect_crisis(phrase)
+        assert result is not None, \
+            f"Missed kicked-out phrase: '{phrase}'"
+        assert result[0] in ("youth_runaway", "domestic_violence"), \
+            f"Wrong category for '{phrase}': {result[0]} (expected youth_runaway or domestic_violence)"
+
+    # Generic "kicked out" (no family context) → safety_concern or DV
+    generic_kicked_out = [
+        "I got kicked out of my home",
         "I was thrown out of my home",
     ]
-    for phrase in kicked_out_phrases:
+    for phrase in generic_kicked_out:
         result = detect_crisis(phrase)
         assert result is not None, \
             f"Missed kicked-out phrase: '{phrase}'"
@@ -382,14 +391,14 @@ def test_youth_runaway_detection():
 
 
 def test_runaway_response_has_resources():
-    """Runaway scenario must route to safety_concern response with hotline resources."""
+    """Runaway scenario must route to youth_runaway response with youth-specific resources."""
     result = detect_crisis("I ran away from home last night")
     assert result is not None
-    assert result[0] == "safety_concern"
-    assert "1-800-799-7233" in result[1], \
-        "Safety concern response must include DV hotline for runaway situations"
-    assert "988" in result[1], \
-        "Safety concern response must include 988"
+    assert result[0] == "youth_runaway"
+    assert "1-800-786-2929" in result[1], \
+        "Youth runaway response must include National Runaway Safeline"
+    assert "Covenant House" in result[1], \
+        "Youth runaway response must include Covenant House"
 
 
 def test_runaway_minor_with_shelter_need():
@@ -398,8 +407,8 @@ def test_runaway_minor_with_shelter_need():
     result = detect_crisis(msg)
     assert result is not None, \
         "Runaway minor with shelter request must trigger crisis detection"
-    assert result[0] in ("safety_concern", "domestic_violence"), \
-        f"Expected safety_concern or domestic_violence, got {result[0] if result else None}"
+    assert result[0] in ("youth_runaway", "domestic_violence"), \
+        f"Expected youth_runaway or domestic_violence, got {result[0] if result else None}"
 
 
 def test_kicked_out_adult():

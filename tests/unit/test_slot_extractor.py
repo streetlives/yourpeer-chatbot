@@ -942,12 +942,21 @@ def test_family_status_with_children():
         "I have two kids with me",
         "my daughter is 6",
         "I'm here with my son",
-        "I'm pregnant and need shelter",
+        # "pregnant" removed — pregnancy ≠ with_children (uses pregnant population tag)
         "with my children ages 4 and 7",
     ]
     for phrase in phrases:
         slots = extract_slots(phrase)
         assert slots["family_status"] == "with_children", f"Failed on: {phrase}"
+
+
+def test_pregnant_is_population_not_family_status():
+    """Pregnancy should be a population tag, not family_status=with_children."""
+    slots = extract_slots("I'm pregnant and need shelter")
+    assert slots.get("family_status") != "with_children", \
+        "Pregnancy should not set family_status to with_children"
+    assert "pregnant" in slots.get("_populations", []), \
+        "Pregnancy should set pregnant population tag"
 
 
 @pytest.mark.xfail(reason="Not yet implemented: prepositional family phrases ('for me and my kids', 'have a baby')")

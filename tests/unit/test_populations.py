@@ -184,13 +184,17 @@ class TestPregnantCoexistence:
     """Pregnant should fire BOTH family_status and _populations."""
 
     def test_pregnant_sets_both(self):
+        """Pregnant alone sets population tag but NOT family_status."""
         slots = extract_slots("I'm pregnant and need shelter in Brooklyn")
-        assert slots["family_status"] == "with_children"
+        # Pregnancy no longer sets family_status — it's a population tag
+        assert slots.get("family_status") != "with_children", \
+            "Pregnancy alone should not set with_children"
         assert "pregnant" in slots["_populations"]
 
     def test_pregnant_with_kids_both_fire(self):
+        """Pregnant WITH kids should set both family_status and population."""
         slots = extract_slots("I'm pregnant with two kids")
-        assert slots["family_status"] == "with_children"
+        assert slots["family_status"] == "with_children"  # from "two kids"
         assert "pregnant" in slots["_populations"]
 
 

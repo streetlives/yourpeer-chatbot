@@ -85,9 +85,6 @@ class TestP1DVSafety:
         assert result[0] == "domestic_violence"
 
     @pytest.mark.parametrize("phrase", [
-        "my parents hurt me",
-        "my family hurts me",
-        "I'm being hit at home",
         "there's no safe place to go",
         "nowhere safe for me",
         "I'm hiding from someone",
@@ -100,6 +97,16 @@ class TestP1DVSafety:
         result = detect_crisis(phrase)
         assert result is not None, f"'{phrase}' should trigger crisis"
         assert result[0] == "safety_concern"
+
+    @pytest.mark.parametrize("phrase", [
+        "my parents hurt me",
+        "my family hurts me",
+        "I'm being hit at home",
+    ])
+    def test_family_violence_youth_runaway(self, phrase):
+        result = detect_crisis(phrase)
+        assert result is not None, f"'{phrase}' should trigger crisis"
+        assert result[0] == "youth_runaway"
 
 
 # -----------------------------------------------------------------------
