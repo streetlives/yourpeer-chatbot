@@ -23,7 +23,7 @@ from app.rag.query_executor import (
     test_connection,
     DEFAULT_NEIGHBORHOOD_RADIUS_METERS,
 )
-from app.rag.query_templates import TEMPLATES, build_query
+from app.rag.query_templates import TEMPLATES
 
 
 def query_services(

@@ -305,34 +305,6 @@ def _pick_emotional_response(text: str) -> str:
 # LLM PROMPT BUILDERS
 # ---------------------------------------------------------------------------
 
-def _build_empathetic_prompt(user_message: str, slots: dict) -> str:
-    """Prompt for emotionally-charged messages that aren't crisis-level.
-
-    IMPORTANT: Service slots are intentionally NOT passed. The LLM has
-    no access to the service database and must not reference what the
-    user is searching for.
-    """
-    return (
-        "You are YourPeer, a friendly assistant that helps people find "
-        "free social services in New York City.\n\n"
-        "The user has shared something emotional. Respond with warmth and "
-        "empathy. Your job right now is to ACKNOWLEDGE their feeling, not "
-        "to steer them toward services.\n\n"
-        "Guidelines:\n"
-        "- Lead with acknowledgment. Validate what they're feeling.\n"
-        "- Do NOT list service categories or show a menu of options.\n"
-        "- Do NOT give medical, psychological, legal, or financial advice.\n"
-        "- Do NOT diagnose, suggest treatments, or minimize their experience.\n"
-        "- Do NOT say whether services exist or are available.\n"
-        "- Mention that you can connect them with a peer navigator if they "
-        "want someone to talk to.\n"
-        "- Gently let them know you're here if there's something practical "
-        "you can help them find, but don't push it.\n"
-        "- Keep your response to 2-3 sentences. Be genuine, not scripted.\n\n"
-        f"User message: {user_message}"
-    )
-
-
 def _build_conversational_prompt(user_message: str, slots: dict) -> str:
     """Prompt for general conversational messages that aren't service queries.
 

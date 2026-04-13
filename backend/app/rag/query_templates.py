@@ -186,14 +186,6 @@ FROM services s
 # Taxonomy filters use EXISTS subqueries to avoid row multiplication.
 # A service tagged with both "Food Pantry" and "Food Benefits" will only
 # appear once, eliminating the need for Python-side deduplication.
-FILTER_BY_TAXONOMY_NAME = (
-    """EXISTS (
-        SELECT 1 FROM service_taxonomy st
-        JOIN taxonomies t ON st.taxonomy_id = t.id
-        WHERE st.service_id = s.id AND LOWER(t.name) = LOWER(:taxonomy_name)
-    )""",
-    ["taxonomy_name"],
-)
 
 # Multi-value taxonomy match — used when a service category maps to several
 # taxonomy names in the DB (e.g. clothing services are split across

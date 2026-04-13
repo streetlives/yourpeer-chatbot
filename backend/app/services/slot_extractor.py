@@ -506,18 +506,6 @@ _GENDER_PHRASES = {
 # "non-binary" before "non", etc.
 _GENDER_PHRASES_SORTED = sorted(_GENDER_PHRASES.items(), key=lambda x: len(x[0]), reverse=True)
 
-# Words that contain gender keywords but are NOT gender declarations.
-# "the man at the counter" or "Manhattan" should not trigger extraction.
-_GENDER_FALSE_POSITIVE_RE = re.compile(
-    r'\b(?:man(?:hattan|age[rd]?|ual|date|kind|y|or|ic|ner)?'
-    r'|woman(?:hood|ly|ize)?'
-    r'|male(?:volent|function|ware)?'
-    r'|female(?:ness)?'
-    r'|guy(?:ana|s)?'
-    r')\b',
-    re.IGNORECASE,
-)
-
 # Patterns that indicate the user is talking about THEMSELVES
 # (vs. referring to someone else). We require one of:
 #   - "I am a ...", "I'm a ...", "im a ..."
@@ -778,17 +766,6 @@ def _extract_all_service_types(text: str) -> list[tuple[str, Optional[str]]]:
 
     return [(svc, detail) for _, svc, detail in found]
 
-
-def _extract_service_type(text: str) -> tuple[Optional[str], Optional[str]]:
-    """Extract the primary service type category from a message.
-
-    Returns (service_type, service_detail) for the first match.
-    For all matches, use _extract_all_service_types().
-    """
-    all_types = _extract_all_service_types(text)
-    if all_types:
-        return all_types[0]
-    return None, None
 
 
 def _extract_location(text: str) -> Optional[str]:

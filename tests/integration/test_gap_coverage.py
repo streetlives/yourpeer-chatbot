@@ -450,19 +450,7 @@ class TestMultiIntentQueueDeclineReOffer:
 # -----------------------------------------------------------------------
 
 class TestPromptBuilders:
-    """Gap #8: _build_empathetic_prompt, _build_bot_question_prompt untested."""
-
-    def test_empathetic_prompt_returns_string(self):
-        from app.services.responses import _build_empathetic_prompt
-        result = _build_empathetic_prompt("I'm feeling really down today", {})
-        assert isinstance(result, str)
-        assert len(result) > 50
-
-    def test_empathetic_prompt_includes_guardrails(self):
-        from app.services.responses import _build_empathetic_prompt
-        result = _build_empathetic_prompt("I'm scared", {})
-        lower = result.lower()
-        assert any(word in lower for word in ["don't", "do not", "never", "avoid", "peer navigator", "navigator"])
+    """Gap #8: _build_bot_question_prompt untested."""
 
     def test_bot_question_prompt_returns_string(self):
         from app.services.responses import _build_bot_question_prompt
