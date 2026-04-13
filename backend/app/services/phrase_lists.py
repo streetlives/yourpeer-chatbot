@@ -481,6 +481,14 @@ _CONFIRM_DENY_PHRASES = [
     "i'm fine", "im fine", "no i'm fine", "no im fine",
 ]
 
+# Deny words that remain denials even with trailing text.
+# "nah food" during confirmation means "no, not food" — the user is
+# declining, not requesting food. Without this, "nah" only matches as
+# an exact phrase and "nah, food" falls through with no action detected.
+_CONFIRM_DENY_STARTSWITH = [
+    "nah ", "nope ", "no way",
+]
+
 
 # ---------------------------------------------------------------------------
 # BOROUGH SUGGESTION DATA

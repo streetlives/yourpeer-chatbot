@@ -136,22 +136,29 @@ def classify_post_results_question(message: str) -> Optional[dict]:
         return {"type": "unknown_about_results"}
 
     # Filter questions
+    # Gap 15: check for specific day-of-week BEFORE generic open/hours filters.
+    # "are you open Saturday" should route to ask_hours_day (day-specific),
+    # not filter_open (which means "open right now").
+    day_match = _DAY_PATTERN.search(lower)
+    weekend_match = _WEEKEND_RE.search(lower)
+    # A day-specific question can use either hours vocabulary ("hours",
+    # "what time", "schedule") OR open vocabulary ("are you open", "open on")
+    # — both are asking about a specific day's availability.
+    # Also accept bare "open" when paired with a day name — "open Monday?"
+    # is clearly asking about Monday's availability.
+    _bare_open = re.search(r"\bopen\b", lower, re.I)
+    _day_hours_signal = _ASK_HOURS_RE.search(lower) or _FILTER_OPEN_RE.search(lower) or _bare_open
+    if day_match and _day_hours_signal:
+        weekday = _DAY_NAMES.get(day_match.group(1).lower())
+        if weekday is not None:
+            return {"type": "ask_hours_day", "weekday": weekday}
+    if weekend_match and _day_hours_signal:
+        return {"type": "ask_hours_day", "weekday": 6, "weekend": True}
+
     if _FILTER_OPEN_RE.search(lower):
         return {"type": "filter_open"}
     if _FILTER_FREE_RE.search(lower):
         return {"type": "filter_free"}
-
-    # Field questions (about all results or a general ask)
-    # Gap 15: check for specific day-of-week BEFORE generic hours
-    day_match = _DAY_PATTERN.search(lower)
-    weekend_match = _WEEKEND_RE.search(lower)
-    if day_match and _ASK_HOURS_RE.search(lower):
-        weekday = _DAY_NAMES.get(day_match.group(1).lower())
-        if weekday is not None:
-            return {"type": "ask_hours_day", "weekday": weekday}
-    if weekend_match and _ASK_HOURS_RE.search(lower):
-        # "weekend hours" → return Saturday (6 in ISODOW); caller also checks Sunday (7)
-        return {"type": "ask_hours_day", "weekday": 6, "weekend": True}
 
     if _ASK_HOURS_RE.search(lower):
         return {"type": "ask_field", "field": "hours"}

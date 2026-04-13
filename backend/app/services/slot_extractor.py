@@ -47,6 +47,11 @@ SERVICE_KEYWORDS = {
         # Vernacular (Phase 1 audit)
         "place to crash", "got put out", "somewhere warm",
         "need a cot", "sleeping in my car", "couch surfing",
+        # Natural phrasing (test_peer_pregnant_couple_tonight fix)
+        # "need a place" alone is too broad — collides with "need a place
+        # to eat" and "need a place to shower". Use purpose-specific phrases.
+        "need a place to stay", "need a place tonight",
+        "a place tonight", "a place to go",
         # Foster care / aging out (Run 24 eval gap)
         "aging out", "aged out", "foster care", "aging out of foster",
         # Spanish (basic bilingual support)
@@ -822,10 +827,23 @@ def _extract_location(text: str) -> Optional[str]:
     if prep_match:
         candidate = prep_match.group(1).strip()
         candidate_lower = candidate.lower()
-        # Filter out non-location phrases
+        # Filter out non-location phrases.
+        # These are words that commonly follow prepositions ("by", "in")
+        # but are NOT location names. Without this filter, messages like
+        # "Sort by recently verified" extract location="recently verified".
         non_locations = [
             "need", "trouble", "danger", "a", "the", "my", "your",
             "here", "there", "me", "help", "this",
+            # Sort/filter UI commands: "Sort by recently verified"
+            "recently", "most", "sort", "all", "any", "every",
+            # Temporal: "by tomorrow", "by next week"
+            "tomorrow", "next", "last", "today",
+            # Misc non-locations that follow prepositions
+            "now", "then", "someone", "anyone", "myself",
+            # Common nouns after "by" that are never locations
+            # (verified: none conflict with _KNOWN_LOCATIONS)
+            "name", "distance", "rating", "category", "phone",
+            "date", "open", "close", "email", "text",
         ]
         if candidate_lower.split()[0] not in non_locations:
             return candidate
@@ -1024,6 +1042,9 @@ def _extract_age(text: str) -> Optional[int]:
         # Bare number at start or after newline, followed by comma/space+context
         # "21, LGBTQ" or "19, with a toddler"
         r"(?:^|\n)(\d{1,2})\s*,",
+        # Bare number after a comma, followed by comma/space+context
+        # "aging out of foster care, 21, in the Bronx"
+        r",\s*(\d{1,2})\s*,",
     ]
     for p in patterns:
         m = re.search(p, text.lower())

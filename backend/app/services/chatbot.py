@@ -311,11 +311,17 @@ def generate_reply(
         # Handle confirm_yes / confirm_deny after results when no pending
         # confirmation exists. Without this, these messages fall through to
         # extraction and re-trigger the same search.
+        # Guard: when the message ALSO contains a new service intent
+        # (e.g., "Search for employment in Manhattan"), the new intent
+        # should override the confirm action. Without this guard,
+        # "search for" matches confirm_yes and the user's new request
+        # is swallowed.
         if (_last_results
                 and _action_pre in ("confirm_yes", "confirm_deny")
                 and not existing.get("_pending_confirmation")
                 and not existing.get("_queue_offer_pending")
-                and not existing.get("_queued_services")):
+                and not existing.get("_queued_services")
+                and not has_service_intent):
 
             if _action_pre == "confirm_yes":
                 # "Yes, search" after results already shown

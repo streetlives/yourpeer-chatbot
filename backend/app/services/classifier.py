@@ -32,7 +32,7 @@ from app.services.phrase_lists import (
     _URGENT_PHRASES,
     _CONFIRM_YES_EXACT, _CONFIRM_YES_STARTSWITH,
     _CONFIRM_CHANGE_SERVICE, _CONFIRM_CHANGE_LOCATION,
-    _CONFIRM_DENY_EXACT, _CONFIRM_DENY_PHRASES,
+    _CONFIRM_DENY_EXACT, _CONFIRM_DENY_PHRASES, _CONFIRM_DENY_STARTSWITH,
 )
 
 logger = logging.getLogger(__name__)
@@ -169,6 +169,9 @@ def _classify_action(text: str) -> str | None:
             return "confirm_yes"
     for phrase in _CONFIRM_DENY_EXACT:
         if cleaned == phrase:
+            return "confirm_deny"
+    for phrase in _CONFIRM_DENY_STARTSWITH:
+        if cleaned.startswith(phrase):
             return "confirm_deny"
     for phrase in _CONFIRM_DENY_PHRASES:
         if phrase in cleaned:

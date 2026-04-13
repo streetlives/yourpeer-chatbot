@@ -244,7 +244,7 @@ class TestP3ServiceKeywords:
         # Food
         ("where can I get baby formula", "food"),
         ("I need WIC", "food"),
-        ("where can I get diapers", "food"),
+        ("where can I get diapers", "other"),  # baby supplies → other (not food)
         # Shelter
         ("how do I get to the PATH center", "shelter"),
         ("I need DHS intake", "shelter"),
