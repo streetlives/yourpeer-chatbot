@@ -154,6 +154,29 @@ def generate_reply(
             f"from message: {[d.pii_type for d in pii_detections]}"
         )
 
+    # --- PII Safety Warning ---
+    # When a user shares highly sensitive PII (SSN, phone number), warn
+    # them immediately. The message is still processed (with PII redacted),
+    # but the warning is prepended to whatever response follows.
+    _PII_WARN_TYPES = {"ssn", "phone"}
+    _pii_warning = ""
+    if pii_detections:
+        _detected = {d.pii_type for d in pii_detections}
+        _sensitive = _detected & _PII_WARN_TYPES
+        if _sensitive:
+            if "ssn" in _sensitive:
+                _pii_warning = (
+                    "For your safety, please don't share your Social Security "
+                    "number or other sensitive personal information in this "
+                    "chat. I've removed it from the conversation.\n\n"
+                )
+            else:
+                _pii_warning = (
+                    "Just a heads up — I've removed your phone number from "
+                    "the conversation to protect your privacy. You don't need "
+                    "to share personal info to search for services.\n\n"
+                )
+
     existing = get_session_slots(session_id)
 
     # Store browser geolocation coords in session if provided
@@ -1150,6 +1173,11 @@ def generate_reply(
         _tone_prefix = "I understand this is a difficult situation. Let me help. "
         merged["_emotional_context"] = "sensitive"
 
+    # Prepend PII safety warning (if any) before the tone prefix so
+    # it appears first in confirmations and follow-ups.
+    if _pii_warning:
+        _tone_prefix = _pii_warning + _tone_prefix
+
     # If enough detail → CONFIRMATION step
     if (is_enough_to_answer(merged) or _geolocation_ready) and has_new_slots:
         merged["_pending_confirmation"] = True
@@ -1260,7 +1288,7 @@ def generate_reply(
                 "What would be most helpful?"
             )
             qr = list(_WELCOME_QUICK_REPLIES) + [
-                {"label": "❌ Not what I meant", "value": "Not what I meant"},
+                {"label": "❌ Not what I meant", "value": "not what I meant"},
             ]
         result = _empty_reply(session_id, response, merged, quick_replies=qr)
         _log_turn(session_id, redacted_message, result, "unrecognized_service",
@@ -1292,7 +1320,7 @@ def generate_reply(
     if not has_service_intent and len(merged.get("transcript", [])) <= 1 and not _is_casual_chat:
         _general_qr = list(_WELCOME_QUICK_REPLIES)
     if _confidence in ("medium", "low"):
-        _general_qr.append({"label": "❌ Not what I meant", "value": "Not what I meant"})
+        _general_qr.append({"label": "❌ Not what I meant", "value": "not what I meant"})
     result = _empty_reply(
         session_id, response, merged,
         quick_replies=_general_qr,
@@ -1836,7 +1864,7 @@ def _execute_and_respond(session_id: str, message: str, slots: dict, request_id:
                 )
             else:
                 bot_response = (
-                    f"Ok, here are {result_count} option(s) for you{qualifier}:"
+                    f"I found {result_count} option(s) for you{qualifier}:"
                 )
         else:
             bot_response = _no_results_message(slots)
