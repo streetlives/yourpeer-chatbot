@@ -212,7 +212,7 @@ def test_service_card_serialization():
     assert "service_name" in data
     assert "phone" in data
     assert "organization" in data  # None but present
-    assert len(data) == 17  # all 17 fields
+    assert len(data) == 21  # 17 original + 5 new optional fields
 
 
 # -----------------------------------------------------------------------

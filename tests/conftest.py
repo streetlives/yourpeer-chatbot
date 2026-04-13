@@ -72,6 +72,12 @@ MOCK_SERVICE_CARD = {
     "requires_membership": False,
     "last_validated_at": "2026-04-01T10:00:00",
     "also_available": ["Shower", "Clothing Pantry"],
+    # Optional fields added to ServiceCard Pydantic model
+    "accessibility": None,
+    "eligibility_summary": None,
+    "review_highlight": None,
+    "required_documents": None,
+    "languages": None,
 }
 
 MOCK_QUERY_RESULTS = {

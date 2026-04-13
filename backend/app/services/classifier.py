@@ -318,8 +318,15 @@ def _classify_message(text: str) -> str:
 
     # Check slots — if service intent found, it wins over emotional/confused
     extracted = extract_slots(text)
+    # Only check meaningful slot fields — metadata fields like _contradiction
+    # (always False), no_requirements (always False), and _populations (always [])
+    # are never None and would make has_slot True for every message.
+    _SLOT_FIELDS = {
+        "service_type", "location", "urgency", "age", "family_status",
+        "_gender", "org_name", "service_detail",
+    }
     has_slot = any(v is not None for k, v in extracted.items()
-                   if k != "additional_services")
+                   if k in _SLOT_FIELDS)
     if has_slot:
         return "service"
 

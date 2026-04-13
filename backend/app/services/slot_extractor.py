@@ -158,6 +158,7 @@ SERVICE_KEYWORDS = {
         "job search", "job help", "find work", "need work",
         "looking for work", "finding work", "help finding work",
         "finding a job", "help finding a job", "help with work",
+        "need a job", "get a job", "want a job",
         "apprenticeship", "part-time", "gig work",
         # Trade / career training (Phase 1 audit — 15 services)
         "trade school", "hvac training", "construction training",

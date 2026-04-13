@@ -565,6 +565,18 @@ def generate_reply(
 
     # === ROUTE TO HANDLERS ===
 
+    # Clear stale _last_action when the user shifts context.
+    # _last_action is set by emotional/escalation/crisis/confused/frustration
+    # handlers and consumed by _handle_context_aware_confirm for the NEXT
+    # confirm_yes or confirm_deny. If the user sends anything else (greeting,
+    # help, thanks, a new service request), the context has shifted and
+    # _last_action should not persist — otherwise it would incorrectly
+    # affect a confirm_yes/confirm_deny many turns later.
+    _CONSUMES_LAST_ACTION = {"confirm_yes", "confirm_deny"}
+    if existing.get("_last_action") and category not in _CONSUMES_LAST_ACTION:
+        existing.pop("_last_action", None)
+        save_session_slots(session_id, existing)
+
     # --- Crisis ---
     if category == "crisis":
         result = _handle_crisis(

@@ -145,7 +145,7 @@ _FRUSTRATION_PHRASES = [
     "already tried", "tried that", "tried those",
     "none of those", "none of them", "doesn't work",
     "doesnt work", "didn't work", "didnt work",
-    "useless", "waste of time", "not working",
+    "useless", "waste of time", "not working", "nothing works",
     "can't find anything", "cant find anything",
     "not what i needed", "not what i need",
     "wrong results", "results are bad", "results are wrong",
