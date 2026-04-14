@@ -100,7 +100,6 @@ export function ChatContainer() {
                 <ChatMessage
                   message={msg}
                   onQuickReply={send}
-                  onFeedback={submitFeedback}
                   onRetry={retry}
                 />
               </ChatMessageBoundary>
@@ -108,12 +107,21 @@ export function ChatContainer() {
           )}
         </div>
 
-        {/* Floating feedback — bottom-right of the chat area */}
-        {messages.some((m) => m.showFeedback) && (
-          <div className="absolute bottom-3 right-3 z-10">
-            <FeedbackRow onFeedback={submitFeedback} />
-          </div>
-        )}
+        {/* Floating feedback — bottom-right of the chat area.
+            Keyed to the latest results message ID so it remounts
+            (resetting hidden/submitted state) when new results arrive. */}
+        {(() => {
+          const lastFeedbackMsg = [...messages].reverse().find((m) => m.showFeedback);
+          if (!lastFeedbackMsg) return null;
+          // Only show if the last results message is also the last bot message
+          const lastBot = [...messages].reverse().find((m) => m.role === "bot");
+          if (lastBot?.id !== lastFeedbackMsg.id) return null;
+          return (
+            <div className="absolute bottom-3 right-3 z-10">
+              <FeedbackRow key={lastFeedbackMsg.id} onFeedback={submitFeedback} />
+            </div>
+          );
+        })()}
       </div>
 
       {connectionState === "offline" && (

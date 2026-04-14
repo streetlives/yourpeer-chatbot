@@ -6,7 +6,7 @@
 
 "use client";
 
-import type { ChatMessage as ChatMessageType, FeedbackRating } from "@/lib/chat/types";
+import type { ChatMessage as ChatMessageType } from "@/lib/chat/types";
 import { ServiceCarousel } from "./service-carousel";
 import { ServiceCarouselBoundary } from "./service-carousel-boundary";
 import { QuickReplies } from "./quick-replies";
@@ -24,11 +24,10 @@ function stripMarkdown(text: string): string {
 interface ChatMessageProps {
   message: ChatMessageType;
   onQuickReply: (value: string) => void;
-  onFeedback: (rating: FeedbackRating) => void;
   onRetry?: (errorMsgId: string, originalText: string) => void;
 }
 
-export function ChatMessage({ message, onQuickReply, onFeedback, onRetry }: ChatMessageProps) {
+export function ChatMessage({ message, onQuickReply, onRetry }: ChatMessageProps) {
   const isUser = message.role === "user";
 
   return (
