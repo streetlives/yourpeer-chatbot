@@ -46,6 +46,7 @@ export function ChatMessage({ message, onQuickReply, onRetry }: ChatMessageProps
         {message.retryMessage && onRetry && (
           <button
             onClick={() => onRetry(message.id, message.retryMessage!)}
+            aria-label="Retry sending this message"
             className="flex items-center gap-1.5 mt-2 px-3 py-1.5 text-xs font-medium text-amber-800 bg-amber-100 hover:bg-amber-200 rounded-lg transition-colors"
           >
             <RotateCcw size={12} />

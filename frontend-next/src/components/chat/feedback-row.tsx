@@ -6,7 +6,7 @@
 
 "use client";
 
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { ThumbsUp, ThumbsDown } from "lucide-react";
 import type { FeedbackRating } from "@/lib/chat/types";
 
@@ -17,13 +17,18 @@ interface FeedbackRowProps {
 export function FeedbackRow({ onFeedback }: FeedbackRowProps) {
   const [submitted, setSubmitted] = useState<FeedbackRating | null>(null);
   const [hidden, setHidden] = useState(false);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => () => {
+    if (timerRef.current) clearTimeout(timerRef.current);
+  }, []);
 
   function submit(rating: FeedbackRating) {
     if (submitted) return;
     setSubmitted(rating);
     onFeedback(rating);
     // Auto-hide after a short delay so the thank-you is visible
-    setTimeout(() => setHidden(true), 1500);
+    timerRef.current = setTimeout(() => setHidden(true), 1500);
   }
 
   if (hidden) return null;

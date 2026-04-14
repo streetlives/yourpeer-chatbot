@@ -1,6 +1,8 @@
 // Copyright (c) 2024 Streetlives, Inc.
 // Use of this source code is governed by an MIT-style license.
 
+"use client";
+
 import type { SortDir } from "@/hooks/use-sortable-table";
 
 interface SortableHeaderProps {
