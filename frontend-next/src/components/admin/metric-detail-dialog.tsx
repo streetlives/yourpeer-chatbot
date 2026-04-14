@@ -72,6 +72,17 @@ export function MetricDetailDialog({ metric, onClose }: MetricDetailDialogProps)
                 {metric.rationale}
               </p>
             </div>
+
+            {metric.statusNote && (
+              <div className="bg-amber-50 border border-amber-200 rounded-lg px-3.5 py-2.5">
+                <div className="text-[0.7rem] font-semibold uppercase tracking-wider text-amber-600 mb-1">
+                  Status Note
+                </div>
+                <p className="text-sm text-amber-800 leading-relaxed">
+                  {metric.statusNote}
+                </p>
+              </div>
+            )}
           </div>
         </Dialog.Content>
       </Dialog.Portal>

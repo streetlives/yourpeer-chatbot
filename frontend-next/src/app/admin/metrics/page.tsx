@@ -188,7 +188,7 @@ export default function MetricsPage() {
             totalSessions > 0 ? (stats.total_escalations || 0) / totalSessions : null,
             true,
           )}
-          status="no-data"
+          status={totalSessions > 0 ? "tracking" : "no-data"}
         />
         <MetricRow onClick={onMetricClick}
           name="Avg Turns to Query"
@@ -332,7 +332,7 @@ export default function MetricsPage() {
             );
           })
         ) : (
-          <MetricRow onClick={onMetricClick}
+          <MetricRow
             name="No tones detected yet"
             subtitle="Tone data populates after the split classifier processes messages"
             target="—"
