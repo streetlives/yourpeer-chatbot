@@ -42,10 +42,35 @@ export default function OverviewPage() {
   }
 
   const s = stats.data;
-  const relaxedRate = s.relaxed_query_rate || 0;
-  const relaxedCls =
-    relaxedRate > 0.35 ? "text-red-600" : relaxedRate > 0.25 ? "text-amber-500" : "text-green-600";
 
+  // --- Task Completion Rate ---
+  const taskRate = s.task_completion_rate;
+  const taskDisplay = taskRate != null ? `${Math.round(taskRate * 100)}%` : "—";
+  const taskCls =
+    taskRate == null ? ""
+      : taskRate >= 0.8 ? "text-green-600"
+        : taskRate >= 0.6 ? "text-amber-500"
+          : "text-red-600";
+
+  // --- Avg Turns to Result ---
+  const avgTurns = s.avg_turns_to_result;
+  const avgTurnsDisplay = avgTurns != null ? `${avgTurns}` : "—";
+  const avgTurnsCls =
+    avgTurns == null ? ""
+      : avgTurns <= 4 ? "text-green-600"
+        : avgTurns <= 6 ? "text-amber-500"
+          : "text-red-600";
+
+  // --- No-Result Rate ---
+  const noResultRate = s.no_result_rate;
+  const noResultDisplay = noResultRate != null ? `${Math.round(noResultRate * 100)}%` : "—";
+  const noResultCls =
+    noResultRate == null ? ""
+      : noResultRate <= 0.15 ? "text-green-600"
+        : noResultRate <= 0.25 ? "text-amber-500"
+          : "text-red-600";
+
+  // --- User Feedback ---
   const totalFeedback = (s.feedback_up || 0) + (s.feedback_down || 0);
   const feedbackDisplay =
     totalFeedback > 0 ? `${Math.round((s.feedback_score ?? 0) * 100)}% 👍` : "—";
@@ -62,8 +87,18 @@ export default function OverviewPage() {
     <>
       <div className="grid grid-cols-[repeat(auto-fill,minmax(180px,1fr))] gap-3 mb-6">
         <StatCard label="Sessions" value={s.unique_sessions} colorClass="text-amber-500" />
-        <StatCard label="Turns" value={s.total_turns} />
-        <StatCard label="Queries Executed" value={s.total_queries} />
+        <StatCard
+          label="Task Completion"
+          value={taskDisplay}
+          colorClass={taskCls}
+          note="target ≥ 80%"
+        />
+        <StatCard
+          label="Avg Turns to Result"
+          value={avgTurnsDisplay}
+          colorClass={avgTurnsCls}
+          note="target ≤ 4"
+        />
         <StatCard
           label="Crises Detected"
           value={s.total_crises}
@@ -76,10 +111,10 @@ export default function OverviewPage() {
           note={totalFeedback > 0 ? `${totalFeedback} responses · target ≥ 70%` : "target ≥ 70%"}
         />
         <StatCard
-          label="Relaxed Query Rate"
-          value={`${(relaxedRate * 100).toFixed(0)}%`}
-          colorClass={relaxedCls}
-          note="target ≤ 25%"
+          label="No-Result Rate"
+          value={noResultDisplay}
+          colorClass={noResultCls}
+          note="target ≤ 15%"
         />
       </div>
 

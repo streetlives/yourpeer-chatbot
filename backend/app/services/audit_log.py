@@ -345,6 +345,31 @@ def get_stats() -> dict:
     time_of_day = _compute_time_of_day(all_events)
     post_results_eng = _compute_post_results_engagement(turns, queries)
 
+    # --- Overview headline metrics (pre-computed for overview page) ---
+    _task_completion_rate = (
+        round(len(q_sessions) / len(svc_intent), 2)
+        if svc_intent and q_sessions else None
+    )
+    # Avg turns to result: mean turn count for sessions that completed a search
+    _completed_turn_counts = []
+    _turn_counts_by_session: dict[str, int] = {}
+    for t in turns:
+        sid = t.get("session_id", "")
+        if sid:
+            _turn_counts_by_session[sid] = _turn_counts_by_session.get(sid, 0) + 1
+    for sid in q_sessions:
+        if sid in _turn_counts_by_session:
+            _completed_turn_counts.append(_turn_counts_by_session[sid])
+    _avg_turns_to_result = (
+        round(sum(_completed_turn_counts) / len(_completed_turn_counts), 1)
+        if _completed_turn_counts else None
+    )
+    _zero_result_queries = sum(1 for q in queries if q.get("result_count", 0) == 0)
+    _no_result_rate = (
+        round(_zero_result_queries / len(queries), 2)
+        if queries else None
+    )
+
     return {
         "total_events": len(all_events),
         "total_turns": len(turns),
@@ -392,6 +417,10 @@ def get_stats() -> dict:
         "repetition_rate": _compute_repetition_rate(all_events),
         # --- P3 metrics (Run 23+) ---
         "llm_metrics": _compute_llm_metrics(),
+        # --- Overview headline metrics ---
+        "task_completion_rate": _task_completion_rate,
+        "avg_turns_to_result": _avg_turns_to_result,
+        "no_result_rate": _no_result_rate,
     }
 
 
