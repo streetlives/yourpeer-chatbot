@@ -526,6 +526,45 @@ def test_chat_route_crisis_returns_resources(mock_claude, mock_query):
 
 
 # -----------------------------------------------------------------------
+# HTTP ROUTE — Catch-all error handling
+# -----------------------------------------------------------------------
+
+def test_chat_route_returns_usable_response_on_crash():
+    """If generate_reply crashes, user should get a helpful message, not a 500."""
+    with patch("app.routes.chat.generate_reply",
+               side_effect=RuntimeError("unexpected internal error")):
+        r = client.post("/chat/", json={"message": "I need shelter"})
+
+    # Should NOT be a 500
+    assert r.status_code == 200
+    data = r.json()
+
+    # Should have all required ChatResponse fields
+    assert "session_id" in data
+    assert "response" in data
+    assert "follow_up_needed" in data
+    assert "slots" in data
+
+    # Should direct user to yourpeer.nyc
+    assert "yourpeer.nyc" in data["response"]
+
+    # Should not expose internal error details
+    assert "RuntimeError" not in data["response"]
+    assert "unexpected internal error" not in data["response"]
+
+
+def test_chat_route_crash_preserves_session_id():
+    """Even on crash, the session_id should be returned so the user can retry."""
+    sid = generate_session_id()
+    with patch("app.routes.chat.generate_reply",
+               side_effect=Exception("db gone")):
+        r = client.post("/chat/", json={"message": "help", "session_id": sid})
+
+    assert r.status_code == 200
+    assert r.json()["session_id"] == sid
+
+
+# -----------------------------------------------------------------------
 # HTTP ROUTE — GET method not allowed
 # -----------------------------------------------------------------------
 
