@@ -203,12 +203,18 @@ def test_service_needs_followup(fresh_session):
 # -----------------------------------------------------------------------
 # GENERAL CONVERSATION
 # -----------------------------------------------------------------------
+@patch("app.services.chatbot._USE_LLM", False)
 @patch("app.services.chatbot.detect_crisis", return_value=None)
 @patch("app.services.chatbot.query_services")
 @patch("app.services.responses.claude_reply", return_value="I understand. How can I help you find what you need?")
 @patch("app.services.chatbot.claude_reply", return_value="I understand. How can I help you find what you need?")
 def test_general_conversation(mock_chatbot_claude, mock_responses_claude, mock_query, mock_crisis, fresh_session):
-    """Unrecognized messages should route to Claude for conversational response."""
+    """Unrecognized messages should route to Claude for conversational response.
+
+    _USE_LLM is patched to False so the LLM classifier doesn't intercept
+    the message before it reaches _fallback_response. This test verifies
+    the regex-general → fallback → claude_reply path.
+    """
     result = generate_reply("tell me more about that", session_id=fresh_session)
     mock_query.assert_not_called()
     # _fallback_response calls claude_reply via responses.py

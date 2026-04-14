@@ -922,11 +922,9 @@ def build_relaxed_query(template_key: str, user_params: dict) -> tuple[str, dict
 # RESULT FORMATTER
 # ---------------------------------------------------------------------------
 
-def _normalize_url(url: str | None) -> str | None:
+def _normalize_url(url) -> str | None:
     """Ensure a URL has a protocol prefix so browsers open it as absolute."""
-    if not url:
-        return None
-    url = url.strip()
+    url = _safe_str(url)
     if not url:
         return None
     if not url.startswith(("http://", "https://", "//")):
@@ -1001,14 +999,29 @@ def _clean_list(values) -> list | None:
     return cleaned if cleaned else None
 
 
-def _format_phone(number: str | None, extension: str | None) -> str | None:
+def _safe_str(value) -> str | None:
+    """Safely convert a DB value to string, or None if empty.
+
+    PostgreSQL column types are not always what the schema says —
+    migrations, defaults, and JSONB extraction can produce unexpected
+    types. This function ensures .strip() and other string operations
+    never crash on a non-string value.
+    """
+    if value is None:
+        return None
+    s = str(value).strip()
+    return s if s else None
+
+
+def _format_phone(number, extension) -> str | None:
     """Format a phone number with optional extension."""
     if not number:
         return None
-    ext = (extension or "").strip()
-    if ext and ext.lower() not in ("none", "n/a", ""):
-        return f"{number} ext. {ext}"
-    return number
+    num = _safe_str(number) or ""
+    ext = _safe_str(extension) or ""
+    if ext and ext.lower() not in ("none", "n/a"):
+        return f"{num} ext. {ext}"
+    return num or None
 
 
 def format_service_card(row: dict) -> dict:
@@ -1020,10 +1033,10 @@ def format_service_card(row: dict) -> dict:
     """
     # Build address string
     address_parts = [
-        row.get("address"),
-        row.get("city"),
-        row.get("state"),
-        row.get("zip_code"),
+        _safe_str(row.get("address")),
+        _safe_str(row.get("city")),
+        _safe_str(row.get("state")),
+        _safe_str(row.get("zip_code")),
     ]
     full_address = ", ".join(p for p in address_parts if p)
 
@@ -1094,15 +1107,15 @@ def format_service_card(row: dict) -> dict:
 
     return {
         "service_id": str(row.get("service_id", "")),
-        "service_name": row.get("service_name") or "Unknown Service",
-        "organization": row.get("organization_name"),
-        "description": row.get("service_description"),
+        "service_name": _safe_str(row.get("service_name")) or "Unknown Service",
+        "organization": _safe_str(row.get("organization_name")),
+        "description": _safe_str(row.get("service_description")),
         "address": full_address or None,
-        "city": row.get("city"),
+        "city": _safe_str(row.get("city")),
         "phone": _format_phone(row.get("phone"), row.get("phone_extension")),
-        "email": row.get("service_email"),
+        "email": _safe_str(row.get("service_email")),
         "website": _normalize_url(row.get("service_url") or row.get("organization_url")),
-        "fees": row.get("fees"),
+        "fees": _safe_str(row.get("fees")),
         "yourpeer_url": yourpeer_url,
         "hours_today": schedule_status["hours_today"],
         "is_open": schedule_status["is_open"],
@@ -1110,12 +1123,12 @@ def format_service_card(row: dict) -> dict:
         "last_validated_at": (
             row["last_validated_at"].isoformat()
             if row.get("last_validated_at") and hasattr(row["last_validated_at"], "isoformat")
-            else row.get("last_validated_at")  # pass through str or None
+            else _safe_str(row.get("last_validated_at"))
         ),
         "also_available": also_available if also_available else None,
-        "accessibility": row.get("accessibility_info"),
+        "accessibility": _safe_str(row.get("accessibility_info")),
         "eligibility_summary": _format_eligibility(row.get("eligibility_rules")),
-        "review_highlight": row.get("review_highlight"),
+        "review_highlight": _safe_str(row.get("review_highlight")),
         "required_documents": _clean_list(row.get("required_documents")),
         "languages": _clean_list(row.get("languages_spoken")),
     }

@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 from app.main import app
 from app.models.chat_models import ChatRequest, ChatResponse, ServiceCard, QuickReply
 from app.services.session_store import clear_session
+from app.services.session_token import generate_session_id
 from conftest import MOCK_SERVICE_CARD, MOCK_QUERY_RESULTS, MOCK_EMPTY_RESULTS
 
 client = TestClient(app)
@@ -350,11 +351,12 @@ def test_chat_route_generates_session_id(mock_claude, mock_query):
 @patch("app.services.chatbot.claude_reply", return_value="test")
 def test_chat_route_preserves_session_id(mock_claude, mock_query):
     """POST /chat/ with a valid session_id should preserve it."""
-    sid = str(uuid.uuid4())
+    sid = generate_session_id()
     response = client.post("/chat/", json={
         "message": "hi",
         "session_id": sid,
     })
+    assert response.status_code == 200
     assert response.json()["session_id"] == sid
     clear_session(sid)
 
@@ -428,7 +430,7 @@ def test_chat_route_response_schema(mock_claude, mock_query):
 @patch("app.services.chatbot.claude_reply", return_value="test")
 def test_chat_route_multi_turn_with_services(mock_claude, mock_query):
     """A full multi-turn conversation should return service cards."""
-    sid = "http-multi-turn"
+    sid = generate_session_id()
     clear_session(sid)
 
     # Step 1: service request → confirmation
@@ -458,7 +460,7 @@ def test_chat_route_multi_turn_with_services(mock_claude, mock_query):
 @patch("app.services.chatbot.claude_reply", return_value="test")
 def test_chat_route_session_continuity(mock_claude, mock_query):
     """Slots should accumulate across turns within the same session."""
-    sid = "http-continuity"
+    sid = generate_session_id()
     clear_session(sid)
 
     # Turn 1: provide service type
@@ -478,7 +480,7 @@ def test_chat_route_session_continuity(mock_claude, mock_query):
 @patch("app.services.chatbot.claude_reply", return_value="test")
 def test_chat_route_reset_clears_session(mock_claude, mock_query):
     """Saying 'start over' should clear the session slots."""
-    sid = "http-reset"
+    sid = generate_session_id()
     clear_session(sid)
 
     # Build up some slots
