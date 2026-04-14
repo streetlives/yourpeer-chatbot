@@ -9,7 +9,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { HealthCheckResponse } from "@/lib/chat/types";
 
-const POLL_INTERVAL_MS = 30_000;
+const POLL_INTERVAL_MS = 60_000;
 const FETCH_TIMEOUT_MS = 5_000;
 
 export type BackendStatus = "connected" | "degraded" | "unreachable";

@@ -61,16 +61,36 @@ def _get_engine():
         _engine = create_engine(
             DATABASE_URL,
             poolclass=QueuePool,
-            pool_size=5,
-            max_overflow=10,
-            pool_pre_ping=True,   # verify connections before use
+            pool_size=3,            # 3 persistent connections (was 5)
+            max_overflow=5,         # up to 8 total under burst (was 10→15)
+            pool_timeout=10,        # fail fast — 10s, not default 30s
+            pool_pre_ping=True,     # verify connections before use
+            pool_recycle=1800,      # recycle connections after 30 min
+            pool_use_lifo=True,     # reuse most-recent connection first;
+                                    # idle connections naturally expire,
+                                    # reducing total open connections
             echo=False,
             # D3: prevent runaway queries from blocking indefinitely.
             # All queries in this app are parameterized lookups against
             # indexed tables — 5 seconds is generous.
-            connect_args={"options": "-c statement_timeout=5000"},
+            connect_args={
+                "options": "-c statement_timeout=5000"
+                           " -c idle_in_transaction_session_timeout=10000",
+            },
         )
     return _engine
+
+
+def dispose_engine():
+    """Dispose the connection pool, closing all checked-in connections.
+
+    Called on shutdown so the DB doesn't see orphaned sessions after
+    Render restarts or redeploys the service.
+    """
+    global _engine
+    if _engine is not None:
+        _engine.dispose()
+        _engine = None
 
 
 def test_connection() -> bool:
