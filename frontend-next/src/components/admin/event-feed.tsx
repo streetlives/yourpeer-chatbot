@@ -101,9 +101,7 @@ export function EventFeed({ events }: EventFeedProps) {
             } else if (ev.type === "session_reset") {
               detail = "Session cleared";
             } else if (ev.type === "feedback") {
-              const ctx = ev.context as
-                | { result_count?: number; service_names?: string[]; organizations?: string[]; bot_response?: string }
-                | undefined;
+              const ctx = ev.context;
               detail = (
                 <span className="flex flex-col gap-1">
                   <span className="flex items-center gap-2">
