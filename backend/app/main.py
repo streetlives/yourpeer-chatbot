@@ -1,5 +1,5 @@
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from app.routes.chat import router as chat_router
@@ -8,6 +8,7 @@ from app.dependencies import (
     RateLimitMiddleware, CSRFMiddleware, BodySizeLimitMiddleware,
     BotDetectionMiddleware, get_allowed_origins,
 )
+import hmac
 import logging
 import os
 import time
@@ -17,10 +18,57 @@ logger = logging.getLogger(__name__)
 # Track process start time for uptime calculation.
 _start_time = time.time()
 
+# Render sets RENDER=true automatically. Use this to detect production
+# and enforce security requirements that are optional in local dev.
+_IS_PRODUCTION = bool(os.getenv("RENDER"))
+
+
+def _validate_production_env():
+    """Verify required secrets are set when running in production.
+
+    In local dev (no RENDER env var), missing secrets trigger warnings.
+    In production, missing secrets fail the startup — silent fallback to
+    open access is too dangerous for an app serving vulnerable populations.
+    """
+    issues = []
+
+    if not os.environ.get("SESSION_SECRET"):
+        msg = "SESSION_SECRET is not set — session tokens will not be signed."
+        if _IS_PRODUCTION:
+            issues.append(msg)
+        else:
+            logger.warning(f"{msg} This is fine for local dev.")
+
+    if not os.environ.get("ADMIN_API_KEY"):
+        msg = "ADMIN_API_KEY is not set — admin panel is publicly accessible."
+        if _IS_PRODUCTION:
+            issues.append(msg)
+        else:
+            logger.warning(f"{msg} This is fine for local dev.")
+
+    if not os.environ.get("DATABASE_URL"):
+        msg = "DATABASE_URL is not set — no search results will be returned."
+        if _IS_PRODUCTION:
+            issues.append(msg)
+        else:
+            logger.warning(msg)
+
+    if issues:
+        for issue in issues:
+            logger.critical(f"PRODUCTION SECURITY: {issue}")
+        raise RuntimeError(
+            f"Missing required environment variables in production: "
+            f"{'; '.join(issues)}"
+        )
+
 
 @asynccontextmanager
 async def lifespan(application: FastAPI):
     """Startup/shutdown lifecycle. Hydrates persisted data on boot."""
+
+    # Validate production environment before anything else
+    _validate_production_env()
+
     from app.services import persistence
     if persistence.is_enabled():
         from app.services.audit_log import hydrate_from_db as hydrate_audit
@@ -66,7 +114,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=get_allowed_origins(),
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
 )
 
@@ -92,16 +140,26 @@ app.include_router(admin_router)
 
 
 @app.get("/api/health")
-def health():
+def health(request: Request):
     """Readiness check — verifies each dependency independently.
 
     Returns 200 when the database is reachable (required for search results).
     Returns 503 when the database is unreachable.
-    LLM being unavailable is "degraded" (200) because the service still
-    works in regex-only mode. The semantic router is informational only —
-    its absence does not affect overall status.
+
+    Detailed diagnostics (latency, model info, uptime) are only included
+    when the admin API key is provided via Authorization header. Without
+    auth, returns only the status — enough for Render's readiness probe
+    without exposing internal architecture details.
     """
     from datetime import datetime, timezone
+
+    # Check if admin auth is provided for detailed view
+    _admin_key = os.environ.get("ADMIN_API_KEY")
+    _auth = request.headers.get("authorization", "")
+    _is_admin = (
+        not _admin_key  # dev mode — show everything
+        or hmac.compare_digest(_auth, f"Bearer {_admin_key}")
+    )
 
     checks: dict = {}
     overall = "healthy"
@@ -113,47 +171,50 @@ def health():
         db_ok = test_connection()
         db_ms = round((time.perf_counter() - t0) * 1000, 1)
         if db_ok:
-            checks["database"] = {"status": "up", "latency_ms": db_ms}
+            checks["database"] = {"status": "up"}
+            if _is_admin:
+                checks["database"]["latency_ms"] = db_ms
         else:
-            checks["database"] = {"status": "down", "error": "SELECT 1 failed"}
+            checks["database"] = {"status": "down"}
             overall = "unhealthy"
     except Exception as e:
-        checks["database"] = {"status": "down", "error": str(e)[:120]}
+        checks["database"] = {"status": "down"}
+        if _is_admin:
+            checks["database"]["error"] = str(e)[:120]
         overall = "unhealthy"
 
     # --- LLM / Anthropic API (non-critical — regex-only fallback) ---
     _use_llm = bool(os.getenv("ANTHROPIC_API_KEY"))
     if _use_llm:
-        checks["llm"] = {"status": "up", "mode": "llm"}
+        checks["llm"] = {"status": "up"}
     else:
-        checks["llm"] = {"status": "unavailable", "mode": "regex_only"}
+        checks["llm"] = {"status": "unavailable"}
         if overall == "healthy":
             overall = "degraded"
 
     # --- Semantic router (informational — optional Tier 2 enhancement) ---
-    # The semantic router improves routing accuracy for edge cases but is
-    # NOT required. Without it, regex (Tier 1) and LLM (Tier 3) handle
-    # all routing. Its absence should NOT degrade the overall status.
-    try:
-        from app.services.semantic_router import get_status as _sr_status
-        sr = _sr_status()
-        if sr["available"]:
-            checks["semantic_router"] = {
-                "status": "up",
-                "model": sr["model"],
-                "route_count": sr["route_count"],
-            }
-        else:
+    if _is_admin:
+        try:
+            from app.services.semantic_router import get_status as _sr_status
+            sr = _sr_status()
+            if sr["available"]:
+                checks["semantic_router"] = {
+                    "status": "up",
+                    "model": sr["model"],
+                    "route_count": sr["route_count"],
+                }
+            else:
+                checks["semantic_router"] = {"status": "not_loaded", "required": False}
+        except Exception:
             checks["semantic_router"] = {"status": "not_loaded", "required": False}
-    except Exception:
-        checks["semantic_router"] = {"status": "not_loaded", "required": False}
 
     payload = {
         "status": overall,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "uptime_seconds": round(time.time() - _start_time),
         "checks": checks,
     }
+    if _is_admin:
+        payload["timestamp"] = datetime.now(timezone.utc).isoformat()
+        payload["uptime_seconds"] = round(time.time() - _start_time)
 
     status_code = 503 if overall == "unhealthy" else 200
     return JSONResponse(content=payload, status_code=status_code)
