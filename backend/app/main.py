@@ -96,7 +96,13 @@ async def lifespan(application: FastAPI):
         logger.warning(f"Semantic router init failed: {e}")
 
     yield
-    # Shutdown: close SQLite connection
+    # Shutdown: close DB connection pool and SQLite persistence
+    try:
+        from app.rag.query_executor import dispose_engine
+        dispose_engine()
+        logger.info("PostgreSQL connection pool disposed")
+    except Exception as e:
+        logger.warning(f"Engine disposal failed: {e}")
     from app.services import persistence as p
     p.close()
 

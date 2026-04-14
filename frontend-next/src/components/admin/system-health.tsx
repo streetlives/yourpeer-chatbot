@@ -51,7 +51,7 @@ export function SystemHealth() {
     }
 
     check();
-    const id = setInterval(check, 30_000);
+    const id = setInterval(check, 60_000);
     return () => { active = false; clearInterval(id); };
   }, []);
 
