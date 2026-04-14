@@ -6,30 +6,45 @@
 
 import { MODELS } from "./model-data";
 
-export function ModelBadge({ model }: { model: "haiku" | "sonnet" }) {
-  const isHaiku = model === "haiku";
+export function ModelBadge({ model }: { model: "haiku" | "sonnet" | "opus" }) {
+  const colors = {
+    haiku: "bg-green-50 text-green-700",
+    sonnet: "bg-violet-50 text-violet-700",
+    opus: "bg-amber-50 text-amber-700",
+  };
+  const labels = {
+    haiku: "Haiku 4.5",
+    sonnet: "Sonnet 4.6",
+    opus: "Opus 4.6",
+  };
   return (
     <span
-      className={`inline-block text-xs font-semibold px-2.5 py-0.5 rounded-lg ${
-        isHaiku
-          ? "bg-green-50 text-green-700"
-          : "bg-violet-50 text-violet-700"
-      }`}
+      className={`inline-block text-xs font-semibold px-2.5 py-0.5 rounded-lg ${colors[model]}`}
     >
-      {isHaiku ? "Haiku 4.5" : "Sonnet 4.6"}
+      {labels[model]}
     </span>
   );
 }
 
-export function ModelCard({ modelKey }: { modelKey: "haiku" | "sonnet" }) {
+export function ModelCard({ modelKey }: { modelKey: "haiku" | "sonnet" | "opus" }) {
   const m = MODELS[modelKey];
-  const isHaiku = modelKey === "haiku";
-  const accent = isHaiku ? "border-t-green-400" : "border-t-violet-400";
+  const accents: Record<string, string> = {
+    haiku: "border-t-green-400",
+    sonnet: "border-t-violet-400",
+    opus: "border-t-amber-400",
+  };
+  const textColors: Record<string, string> = {
+    haiku: "text-green-700",
+    sonnet: "text-violet-700",
+    opus: "text-amber-700",
+  };
+  const accent = accents[modelKey];
+  const textColor = textColors[modelKey];
 
   return (
     <div className={`bg-white border border-neutral-200 rounded-lg p-4 border-t-[3px] ${accent}`}>
       <div className="flex items-baseline justify-between mb-2.5">
-        <span className={`text-base font-bold ${isHaiku ? "text-green-700" : "text-violet-700"}`}>
+        <span className={`text-base font-bold ${textColor}`}>
           {m.name}
         </span>
         <span className="text-xs font-mono text-neutral-400">

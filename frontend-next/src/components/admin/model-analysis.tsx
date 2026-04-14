@@ -39,9 +39,10 @@ export function ModelAnalysis() {
       <h2 className="text-xs font-bold uppercase tracking-widest text-neutral-400 mb-3 pb-2 border-b border-neutral-200">
         Model comparison
       </h2>
-      <div className="grid grid-cols-2 gap-3 mb-8">
+      <div className="grid grid-cols-3 gap-3 mb-8">
         <ModelCard modelKey="haiku" />
         <ModelCard modelKey="sonnet" />
+        <ModelCard modelKey="opus" />
       </div>
 
       {/* Per-task recommendations */}

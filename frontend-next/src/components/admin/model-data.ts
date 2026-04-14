@@ -125,6 +125,29 @@ export const MODELS: Record<string, ModelInfo> = {
       "Higher latency matters for real-time chat UX",
     ],
   },
+  opus: {
+    id: "claude-opus-4-6",
+    name: "Opus 4.6",
+    input: 5.0,
+    output: 25.0,
+    speed: "Slowest (deepest reasoning)",
+    latency: "Est. ~1.5s TTFT [3]",
+    context: "1M (beta)",
+    strengths: [
+      "Most capable reasoning model in the Claude family [9]",
+      "1M token context window \u2014 processes entire codebases in one session [9]",
+      "Adaptive thinking with deepest reasoning depth [9]",
+      "State-of-the-art on Humanity\u2019s Last Exam, Terminal-Bench 2.0, BrowseComp [9]",
+      "Outperforms GPT-5.2 by ~144 Elo on GDPval-AA (finance, legal, knowledge work) [9]",
+      "Lowest over-refusal rate among recent Claude models [9]",
+    ],
+    weaknesses: [
+      "5x input / 5x output more expensive than Haiku [8]",
+      "Highest latency \u2014 unsuitable for real-time chat",
+      "Overkill for classification, extraction, and short-form generation",
+      "Used only for evaluation judging, not production tasks",
+    ],
+  },
 };
 
 // ---------------------------------------------------------------------------
@@ -324,7 +347,8 @@ export const SOURCES: SourceDef[] = [
   { id: 5, text: "MindStudio \u2014 GPT-5.4 Mini vs Haiku comparison (third-party)", url: "https://www.mindstudio.ai/blog/gpt-54-mini-vs-claude-haiku-sub-agent-comparison", note: "Instruction-following and verbosity observations." },
   { id: 6, text: "Anthropic \u2014 Introducing Claude Sonnet 4.6 (Feb 2026)", url: "https://www.anthropic.com/news/claude-sonnet-4-6", note: "94% insurance benchmark is Anthropic-internal. Tool-calling and safety claims." },
   { id: 7, text: "Anthropic \u2014 Claude Sonnet product page", url: "https://www.anthropic.com/claude/sonnet", note: "\u201cZero hallucinated links\u201d and \u201c70% more token-efficient\u201d are partner/user quotes." },
-  { id: 8, text: "Claude API Pricing", url: "https://docs.anthropic.com/en/about-claude/pricing", note: "Haiku 4.5: $1/$5 per MTok. Sonnet 4.6: $3/$15 per MTok. Verified April 2026." },
+  { id: 8, text: "Claude API Pricing", url: "https://docs.anthropic.com/en/about-claude/pricing", note: "Haiku 4.5: $1/$5 per MTok. Sonnet 4.6: $3/$15 per MTok. Opus 4.6: $5/$25 per MTok. Verified April 2026." },
+  { id: 9, text: "Anthropic \u2014 Introducing Claude Opus 4.6 (Feb 2026)", url: "https://www.anthropic.com/news/claude-opus-4-6", note: "1M context window, adaptive thinking, agent teams. State-of-the-art on Terminal-Bench 2.0, HLE, BrowseComp. GDPval-AA: +144 Elo vs GPT-5.2. Used as LLM-as-judge evaluator." },
 ];
 
 // ---------------------------------------------------------------------------
