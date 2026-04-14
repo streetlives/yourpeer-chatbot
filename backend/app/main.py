@@ -193,23 +193,22 @@ def health(request: Request):
             overall = "degraded"
 
     # --- Semantic router (informational — optional Tier 2 enhancement) ---
-    if _is_admin:
-        try:
-            from app.services.semantic_router import get_status as _sr_status
-            sr = _sr_status()
-            if sr["available"]:
-                checks["semantic_router"] = {
-                    "status": "up",
-                    "model": sr["model"],
-                    "route_count": sr["route_count"],
-                }
-            else:
-                checks["semantic_router"] = {"status": "not_loaded", "required": False}
-        except Exception:
+    try:
+        from app.services.semantic_router import get_status as _sr_status
+        sr = _sr_status()
+        if sr["available"]:
+            checks["semantic_router"] = {"status": "up"}
+            if _is_admin:
+                checks["semantic_router"]["model"] = sr["model"]
+                checks["semantic_router"]["route_count"] = sr["route_count"]
+        else:
             checks["semantic_router"] = {"status": "not_loaded", "required": False}
+    except Exception:
+        checks["semantic_router"] = {"status": "not_loaded", "required": False}
 
     payload = {
         "status": overall,
+        "uptime_seconds": round(time.time() - _start_time),
         "checks": checks,
     }
     if _is_admin:

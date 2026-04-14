@@ -10,8 +10,18 @@ const BACKEND_URL = process.env.CHAT_BACKEND_URL || "http://localhost:8000";
 
 export async function GET() {
   try {
+    const headers: Record<string, string> = {};
+
+    // Forward admin API key so the backend returns full diagnostics
+    // (latency, model info, timestamps) for the admin panel.
+    const adminKey = process.env.ADMIN_API_KEY;
+    if (adminKey) {
+      headers["Authorization"] = `Bearer ${adminKey}`;
+    }
+
     const res = await fetch(`${BACKEND_URL}/api/health`, {
       signal: AbortSignal.timeout(5_000),
+      headers,
       // Prevent caching so every poll gets fresh status
       cache: "no-store",
     });

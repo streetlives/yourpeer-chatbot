@@ -71,13 +71,13 @@ export function SystemHealth() {
         {
           name: "Backend",
           status: health.status === "unhealthy" ? "down" : "up",
-          detail: `Uptime: ${formatUptime(health.uptime_seconds)}`,
+          detail: health.uptime_seconds != null ? `Uptime: ${formatUptime(health.uptime_seconds)}` : "Running",
         },
         {
           name: "Database",
           status: health.checks.database.status,
           detail: health.checks.database.status === "up"
-            ? `${health.checks.database.latency_ms}ms latency`
+            ? (health.checks.database.latency_ms != null ? `${health.checks.database.latency_ms}ms latency` : "Connected")
             : health.checks.database.error || "Unreachable",
         },
         {
@@ -89,9 +89,11 @@ export function SystemHealth() {
         },
         {
           name: "Semantic router",
-          status: health.checks.semantic_router.status,
-          detail: health.checks.semantic_router.status === "up"
-            ? `${health.checks.semantic_router.route_count} routes · ${health.checks.semantic_router.model}`
+          status: health.checks.semantic_router?.status ?? "not_loaded",
+          detail: health.checks.semantic_router?.status === "up"
+            ? (health.checks.semantic_router.route_count != null
+              ? `${health.checks.semantic_router.route_count} routes · ${health.checks.semantic_router.model}`
+              : "Loaded")
             : "Model not loaded",
         },
       ]
