@@ -72,7 +72,7 @@ export function EventFeed({ events }: EventFeedProps) {
         <tbody>
           {sorted.map((e, i) => {
             const ev = e as unknown as AuditEvent;
-            const time = new Date(ev.timestamp).toLocaleTimeString();
+            const time = new Date(ev.timestamp).toLocaleTimeString("en-US", { timeZone: "America/New_York" });
             let detail: React.ReactNode = "";
 
             if (ev.type === "conversation_turn") {

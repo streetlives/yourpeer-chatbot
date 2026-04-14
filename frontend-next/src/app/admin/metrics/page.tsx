@@ -15,6 +15,25 @@ import { MetricDetailDialog } from "@/components/admin/metric-detail-dialog";
 import { findMetricDefinition } from "@/lib/admin/metric-definitions";
 import type { MetricDefinition } from "@/lib/admin/metric-definitions";
 
+// ---------------------------------------------------------------------------
+// TIMEZONE — All times render in Eastern Time (NYC-based service)
+// ---------------------------------------------------------------------------
+const NYC_TZ = "America/New_York";
+
+/** Convert a UTC hour (0–23) to an Eastern Time label like "9 AM" */
+function utcHourToET(utcHour: number): string {
+  const d = new Date(Date.UTC(2026, 0, 1, utcHour, 0, 0));
+  return d.toLocaleTimeString("en-US", {
+    hour: "numeric",
+    timeZone: NYC_TZ,
+  });
+}
+
+/** Format an ISO timestamp in Eastern Time */
+function fmtET(iso: string): string {
+  return new Date(iso).toLocaleString("en-US", { timeZone: NYC_TZ });
+}
+
 export default function MetricsPage() {
   const {
     stats: statsSlice,
@@ -592,10 +611,10 @@ export default function MetricsPage() {
         defaultOpen={false}
       >
         <MetricRow
-          name="Peak Hour (UTC)"
+          name="Peak Hour (ET)"
           subtitle={timeOfDay?.total_events ? `${timeOfDay.total_events} events across ${Object.keys(timeOfDay.daily || {}).length} days` : "No data yet"}
           target="Staffing alignment"
-          value={timeOfDay?.peak_hour_utc != null ? `${timeOfDay.peak_hour_utc}:00 UTC` : null}
+          value={timeOfDay?.peak_hour_utc != null ? utcHourToET(timeOfDay.peak_hour_utc) : null}
           status={timeOfDay?.peak_hour_utc != null ? "tracking" : "no-data"}
         />
         {timeOfDay?.hourly && Object.keys(timeOfDay.hourly).length > 0 && (
@@ -605,8 +624,8 @@ export default function MetricsPage() {
               .filter(([, count]) => count > 0)
               .sort(([, a], [, b]) => b - a)
               .slice(0, 6)
-              .map(([hour, count]) => `${hour}h: ${count}`)
-              .join(" · ") + " (top 6)"}
+              .map(([hour, count]) => `${utcHourToET(Number(hour))}: ${count}`)
+              .join(" · ") + " (top 6, ET)"}
             target="—"
             value={`${timeOfDay.total_events} events`}
             status="tracking"

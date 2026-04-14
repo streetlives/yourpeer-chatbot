@@ -60,7 +60,7 @@ export function QueryDetailDrawer({ query, onClose }: QueryDetailDrawerProps) {
                 Executed at
               </div>
               <div className="text-sm text-neutral-700">
-                {new Date(query.timestamp).toLocaleString()}
+                {new Date(query.timestamp).toLocaleString("en-US", { timeZone: "America/New_York" })}
               </div>
             </div>
 

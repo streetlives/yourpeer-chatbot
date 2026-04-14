@@ -119,7 +119,7 @@ export function ConversationTable({ conversations }: ConversationTableProps) {
                     {slots}
                   </td>
                   <td className="px-4 py-2.5 font-mono text-xs text-neutral-400 border-b border-neutral-100">
-                    {new Date(c.last_seen).toLocaleString()}
+                    {new Date(c.last_seen).toLocaleString("en-US", { timeZone: "America/New_York" })}
                   </td>
                 </tr>
               );

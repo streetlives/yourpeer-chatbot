@@ -67,7 +67,7 @@ export function QueryLogTable({ queries }: QueryLogTableProps) {
                   className="cursor-pointer hover:bg-amber-50/50 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 focus-visible:ring-offset-1"
                 >
                   <td className="px-4 py-2.5 font-mono text-xs border-b border-neutral-100">
-                    {new Date(q.timestamp).toLocaleTimeString()}
+                    {new Date(q.timestamp).toLocaleTimeString("en-US", { timeZone: "America/New_York" })}
                   </td>
                   <td className="px-4 py-2.5 font-semibold border-b border-neutral-100">
                     {q.template_name}
