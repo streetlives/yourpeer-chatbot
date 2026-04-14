@@ -24,6 +24,7 @@ class FeedbackRequest(BaseModel):
     session_id: str
     rating: str = Field(..., pattern="^(up|down)$")
     comment: Optional[str] = Field(None, max_length=500)
+    context: Optional[dict] = None
 
 
 class LocationFeedbackRequest(BaseModel):
@@ -89,6 +90,7 @@ async def feedback(request: FeedbackRequest):
             session_id=request.session_id,
             rating=request.rating,
             comment=request.comment,
+            context=request.context,
         )
     except Exception:
         logger.exception("Failed to log feedback")

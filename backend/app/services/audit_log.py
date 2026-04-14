@@ -166,7 +166,7 @@ def log_session_reset(session_id="", **kwargs):
     persistence.persist_event(event)
 
 
-def log_feedback(session_id="", rating="", comment=None, **kwargs):
+def log_feedback(session_id="", rating="", comment=None, context=None, **kwargs):
     event = {
         "type": "feedback",
         "timestamp": _now_iso(),
@@ -174,6 +174,8 @@ def log_feedback(session_id="", rating="", comment=None, **kwargs):
         "rating": rating,
         "comment": comment,
     }
+    if context:
+        event["context"] = context
     with _lock:
         _events.append(event)
         _register_conversation(session_id, event)

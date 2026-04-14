@@ -312,9 +312,33 @@ export function useChat() {
 
   const submitFeedback = useCallback(
     (rating: FeedbackRating) => {
-      if (sessionId) sendFeedback(sessionId, rating);
+      if (!sessionId) return;
+
+      // Gather context from the most recent bot message with results,
+      // or the most recent bot response text if no results were shown.
+      const botMessages = messages.filter((m) => m.role === "bot");
+      const lastWithResults = [...botMessages].reverse().find((m) => m.services && m.services.length > 0);
+      const lastBot = botMessages[botMessages.length - 1];
+
+      const context: Record<string, unknown> = {};
+      if (lastWithResults?.services) {
+        context.result_count = lastWithResults.services.length;
+        context.service_names = lastWithResults.services
+          .slice(0, 10)
+          .map((s) => s.service_name)
+          .filter(Boolean);
+        context.organizations = [...new Set(
+          lastWithResults.services.map((s) => s.organization).filter(Boolean),
+        )].slice(0, 5);
+      }
+      if (lastBot?.text) {
+        // Truncate to avoid sending huge payloads
+        context.bot_response = lastBot.text.slice(0, 200);
+      }
+
+      sendFeedback(sessionId, rating, context);
     },
-    [sessionId],
+    [sessionId, messages],
   );
 
   return { messages, isLoading, error, send, retry, submitFeedback };
