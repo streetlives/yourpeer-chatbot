@@ -153,6 +153,10 @@ export interface AdminStats {
   session_duration?: SessionDuration;
   repetition_rate?: RepetitionRate;
   llm_metrics?: LlmMetrics;
+  // Overview headline metrics (pre-computed)
+  task_completion_rate: number | null;
+  avg_turns_to_result: number | null;
+  no_result_rate: number | null;
 }
 
 // --- P0-P3 metric types ---
