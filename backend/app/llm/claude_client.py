@@ -22,6 +22,7 @@ See /admin/models in the staff console for the full cost/capability analysis.
 
 import os
 import logging
+import time
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -150,13 +151,22 @@ def claude_reply(prompt: str) -> str:
     Returns empty string on failure so the caller can fall back to a
     safe static message.
     """
+    from app.services.audit_log import record_llm_call
     try:
         _track_llm_call("conversational")
         client = get_client()
+        t0 = time.perf_counter()
         response = client.messages.create(
             model=CONVERSATIONAL_MODEL,
             max_tokens=150,  # 1-3 sentences, never needs more
             messages=[{"role": "user", "content": prompt}],
+        )
+        latency = round((time.perf_counter() - t0) * 1000)
+        record_llm_call(
+            task="conversational", model=CONVERSATIONAL_MODEL,
+            input_tokens=response.usage.input_tokens,
+            output_tokens=response.usage.output_tokens,
+            latency_ms=latency, success=True,
         )
         return response.content[0].text or ""
     except Exception as e:
@@ -218,14 +228,23 @@ def classify_message_llm(text: str) -> str | None:
     Returns one of the category strings, or None if the LLM call fails
     (so the caller can fall back to regex classification).
     """
+    from app.services.audit_log import record_llm_call
     try:
         _track_llm_call("classification")
         client = get_client()
+        t0 = time.perf_counter()
         response = client.messages.create(
             model=CLASSIFICATION_MODEL,
             max_tokens=20,  # single word category name
             system=_CLASSIFY_SYSTEM_PROMPT,
             messages=[{"role": "user", "content": text}],
+        )
+        latency = round((time.perf_counter() - t0) * 1000)
+        record_llm_call(
+            task="classification", model=CLASSIFICATION_MODEL,
+            input_tokens=response.usage.input_tokens,
+            output_tokens=response.usage.output_tokens,
+            latency_ms=latency, success=True,
         )
         raw = response.content[0].text.strip().lower()
 

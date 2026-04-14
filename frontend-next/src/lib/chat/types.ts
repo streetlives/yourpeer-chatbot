@@ -232,6 +232,7 @@ export interface ConversationSummary {
   session_id: string;
   turn_count: number;
   services_delivered: number;
+  queries_executed: number;
   crisis_detected: boolean;
   final_slots: Record<string, string>;
   last_seen: string;

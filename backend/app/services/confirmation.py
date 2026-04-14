@@ -119,7 +119,7 @@ def _build_confirmation_message(slots: dict) -> str:
     elif family == "alone":
         parts[0] += ", for yourself"
 
-    parts[0] += " \u2014 does that sound right?"
+    parts[0] += " \u2014 sound good?"
 
     return " ".join(parts)
 

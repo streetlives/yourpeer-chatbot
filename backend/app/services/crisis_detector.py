@@ -45,6 +45,7 @@ import os
 import json
 import re
 import logging
+import time
 from typing import Optional, Tuple
 
 logger = logging.getLogger(__name__)
@@ -438,11 +439,21 @@ def _detect_crisis_llm(text: str) -> Optional[Tuple[str, str]]:
         _track_llm_call("crisis_detection")
         client = get_client()
 
+        t0 = time.perf_counter()
         response = client.messages.create(
             model=CRISIS_DETECTION_MODEL,  # Sonnet 4.6 — nuance matters for safety
             max_tokens=60,                 # {"crisis": true, "category": "..."} is ~15 tokens
             system=_LLM_SYSTEM_PROMPT,
             messages=[{"role": "user", "content": text}],
+        )
+        latency = round((time.perf_counter() - t0) * 1000)
+
+        from app.services.audit_log import record_llm_call
+        record_llm_call(
+            task="crisis_detection", model=CRISIS_DETECTION_MODEL,
+            input_tokens=response.usage.input_tokens,
+            output_tokens=response.usage.output_tokens,
+            latency_ms=latency, success=True,
         )
 
         raw = response.content[0].text.strip()

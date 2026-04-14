@@ -31,6 +31,7 @@ import os
 import json
 import logging
 import re
+import time
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -317,6 +318,7 @@ def extract_slots_llm(message: str, conversation_history: list = None) -> dict:
         # Add the current message
         messages.append({"role": "user", "content": message})
 
+        t0 = time.perf_counter()
         response = client.messages.create(
             model=SLOT_EXTRACTION_MODEL,
             max_tokens=256,
@@ -324,6 +326,15 @@ def extract_slots_llm(message: str, conversation_history: list = None) -> dict:
             tools=[_EXTRACT_SLOTS_TOOL],
             tool_choice={"type": "tool", "name": "extract_intake_slots"},
             messages=messages,
+        )
+        latency = round((time.perf_counter() - t0) * 1000)
+
+        from app.services.audit_log import record_llm_call
+        record_llm_call(
+            task="slot_extraction", model=SLOT_EXTRACTION_MODEL,
+            input_tokens=response.usage.input_tokens,
+            output_tokens=response.usage.output_tokens,
+            latency_ms=latency, success=True,
         )
 
         # Extract the tool call result
@@ -401,6 +412,7 @@ def extract_slots_narrative(message: str, conversation_history: list = None) -> 
 
         messages.append({"role": "user", "content": message})
 
+        t0 = time.perf_counter()
         response = client.messages.create(
             model=SLOT_EXTRACTION_MODEL,
             max_tokens=256,
@@ -408,6 +420,15 @@ def extract_slots_narrative(message: str, conversation_history: list = None) -> 
             tools=[_EXTRACT_SLOTS_TOOL],
             tool_choice={"type": "tool", "name": "extract_intake_slots"},
             messages=messages,
+        )
+        latency = round((time.perf_counter() - t0) * 1000)
+
+        from app.services.audit_log import record_llm_call
+        record_llm_call(
+            task="narrative_extraction", model=SLOT_EXTRACTION_MODEL,
+            input_tokens=response.usage.input_tokens,
+            output_tokens=response.usage.output_tokens,
+            latency_ms=latency, success=True,
         )
 
         for block in response.content:

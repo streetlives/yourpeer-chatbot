@@ -237,10 +237,13 @@ def get_conversations_summary(limit=50) -> list:
             crisis = any(e.get("type") == "crisis_detected" for e in events)
             categories = list({t.get("category", "") for t in turns if t.get("category")})
             last_turn = turns[-1] if turns else {}
+            queries_in_session = [e for e in events if e.get("type") == "query_execution"]
+            max_services = max((t.get("services_count", 0) for t in turns), default=0)
             summaries.append({
                 "session_id": session_id,
                 "turn_count": len(turns),
-                "services_delivered": last_turn.get("services_count", 0),
+                "services_delivered": max_services,
+                "queries_executed": len(queries_in_session),
                 "crisis_detected": crisis,
                 "categories": categories,
                 "final_slots": last_turn.get("slots", {}),
@@ -943,12 +946,40 @@ def _compute_repetition_rate(all_events: list) -> dict:
 # P3: LLM CALL METRICS
 # ---------------------------------------------------------------------------
 
-# LLM call tracking — not yet populated. When instrumentation is added
-# to claude_client.py, entries should be appended here. Each entry:
+# LLM call tracking — populated by record_llm_call() after each API call.
+# Each entry:
 #   {"timestamp": str, "session_id": str, "task": str,
 #    "model": str, "input_tokens": int, "output_tokens": int,
 #    "latency_ms": int, "success": bool}
 _llm_calls: deque = deque(maxlen=MAX_EVENTS)
+
+
+def record_llm_call(
+    task: str,
+    model: str,
+    input_tokens: int,
+    output_tokens: int,
+    latency_ms: int,
+    success: bool,
+    session_id: str = "",
+) -> None:
+    """Record an LLM API call for cost/latency/volume metrics.
+
+    Called after each Anthropic API call in claude_client.py,
+    crisis_detector.py, and llm_slot_extractor.py.
+    """
+    from datetime import datetime, timezone
+    with _lock:
+        _llm_calls.append({
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "session_id": session_id,
+            "task": task,
+            "model": model,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "latency_ms": latency_ms,
+            "success": success,
+        })
 
 
 def _compute_llm_metrics() -> dict:
