@@ -124,8 +124,8 @@ export function EventFeed({ events }: EventFeedProps) {
                 <td className="px-4 py-2.5 border-b border-neutral-100">
                   {detail}
                 </td>
-                <td className="px-4 py-2.5 font-mono text-xs text-neutral-400 border-b border-neutral-100">
-                  {ev.session_id ? `${ev.session_id.slice(0, 8)}…` : ""}
+                <td className="px-4 py-2.5 font-mono text-xs text-neutral-400 border-b border-neutral-100" title={ev.session_id || ""}>
+                  {ev.session_id ? `${ev.session_id.slice(0, 12)}…` : ""}
                 </td>
               </tr>
             );
