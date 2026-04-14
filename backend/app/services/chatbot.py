@@ -499,6 +499,18 @@ def generate_reply(
 
         if _last_results and (has_service_intent or _is_confirmation_action):
             existing.pop("_last_results", None)
+            # When results were already shown and the user asks for something
+            # new, treat it as a fresh search — clear the old service slots
+            # so they don't compound with the new request. Multi-service
+            # should only happen within a single message or before results.
+            if has_service_intent:
+                existing.pop("service_type", None)
+                existing.pop("service_detail", None)
+                existing.pop("_queued_services", None)
+                existing.pop("_queued_services_original", None)
+                existing.pop("_queue_offer_pending", None)
+                existing.pop("_pending_confirmation", None)
+                existing.pop("_displayed_count", None)
             save_session_slots(session_id, existing)
 
     # --- COMBINE INTO ROUTING CATEGORY ---
@@ -647,6 +659,8 @@ def generate_reply(
         save_session_slots(session_id, existing)
         service_type = existing.get("service_type")
         location = existing.get("location")
+        if location == NEAR_ME_SENTINEL:
+            location = None
         context = ""
         if service_type and location:
             context = f" I was searching for {service_type} in {location}."
@@ -1335,6 +1349,8 @@ def generate_reply(
         save_session_slots(session_id, merged)
 
         location_label = merged.get("location", "your area")
+        if location_label == NEAR_ME_SENTINEL:
+            location_label = "your area"
         if _unrec_count >= 3:
             # Tier 3: direct to navigator
             response = (

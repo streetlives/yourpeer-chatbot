@@ -6,11 +6,10 @@
 
 "use client";
 
-import type { ChatMessage as ChatMessageType, FeedbackRating } from "@/lib/chat/types";
+import type { ChatMessage as ChatMessageType } from "@/lib/chat/types";
 import { ServiceCarousel } from "./service-carousel";
 import { ServiceCarouselBoundary } from "./service-carousel-boundary";
 import { QuickReplies } from "./quick-replies";
-import { FeedbackRow } from "./feedback-row";
 
 import { RotateCcw } from "lucide-react";
 
@@ -25,11 +24,10 @@ function stripMarkdown(text: string): string {
 interface ChatMessageProps {
   message: ChatMessageType;
   onQuickReply: (value: string) => void;
-  onFeedback: (rating: FeedbackRating) => void;
   onRetry?: (errorMsgId: string, originalText: string) => void;
 }
 
-export function ChatMessage({ message, onQuickReply, onFeedback, onRetry }: ChatMessageProps) {
+export function ChatMessage({ message, onQuickReply, onRetry }: ChatMessageProps) {
   const isUser = message.role === "user";
 
   return (
@@ -48,6 +46,7 @@ export function ChatMessage({ message, onQuickReply, onFeedback, onRetry }: Chat
         {message.retryMessage && onRetry && (
           <button
             onClick={() => onRetry(message.id, message.retryMessage!)}
+            aria-label="Retry sending this message"
             className="flex items-center gap-1.5 mt-2 px-3 py-1.5 text-xs font-medium text-amber-800 bg-amber-100 hover:bg-amber-200 rounded-lg transition-colors"
           >
             <RotateCcw size={12} />
@@ -61,8 +60,6 @@ export function ChatMessage({ message, onQuickReply, onFeedback, onRetry }: Chat
           <ServiceCarousel services={message.services} />
         </ServiceCarouselBoundary>
       )}
-
-      {message.showFeedback && <FeedbackRow onFeedback={onFeedback} />}
 
       {message.quick_replies && message.quick_replies.length > 0 && (
         <QuickReplies replies={message.quick_replies} onSelect={onQuickReply} />

@@ -101,12 +101,27 @@ export function EventFeed({ events }: EventFeedProps) {
             } else if (ev.type === "session_reset") {
               detail = "Session cleared";
             } else if (ev.type === "feedback") {
+              const ctx = ev.context;
               detail = (
-                <span className="flex items-center gap-2">
-                  {feedbackBadge(ev.rating)}
-                  {ev.comment && (
-                    <span className="text-neutral-500 max-w-[200px] truncate block">
-                      &quot;{ev.comment}&quot;
+                <span className="flex flex-col gap-1">
+                  <span className="flex items-center gap-2">
+                    {feedbackBadge(ev.rating)}
+                    {ev.comment && (
+                      <span className="text-neutral-500 max-w-[200px] truncate block">
+                        &quot;{ev.comment}&quot;
+                      </span>
+                    )}
+                  </span>
+                  {ctx?.service_names && ctx.service_names.length > 0 && (
+                    <span className="text-[0.65rem] text-neutral-400 leading-snug">
+                      {ctx.result_count} results · {ctx.service_names.slice(0, 3).join(", ")}
+                      {ctx.service_names.length > 3 ? ` +${ctx.service_names.length - 3} more` : ""}
+                      {ctx.organizations?.[0] ? ` @ ${ctx.organizations[0]}` : ""}
+                    </span>
+                  )}
+                  {!ctx?.service_names && ctx?.bot_response && (
+                    <span className="text-[0.65rem] text-neutral-400 truncate max-w-[280px] block">
+                      {ctx.bot_response.slice(0, 80)}{ctx.bot_response.length > 80 ? "…" : ""}
                     </span>
                   )}
                 </span>

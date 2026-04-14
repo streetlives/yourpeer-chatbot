@@ -69,12 +69,13 @@ export async function sendChatMessage(
 export async function sendFeedback(
   sessionId: string,
   rating: FeedbackRating,
+  context?: Record<string, unknown>,
 ): Promise<void> {
   // Fire and forget — feedback loss is acceptable
   await fetch("/api/chat/feedback", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ session_id: sessionId, rating }),
+    body: JSON.stringify({ session_id: sessionId, rating, ...(context && { context }) }),
     signal: timeoutSignal(ADMIN_TIMEOUT_MS),
   }).catch(() => {});
 }

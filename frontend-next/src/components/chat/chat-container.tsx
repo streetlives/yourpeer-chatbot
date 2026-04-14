@@ -15,6 +15,7 @@ import { ChatMessage } from "./chat-message";
 import { ChatMessageBoundary } from "./chat-message-boundary";
 import { ChatInput } from "./chat-input";
 import { ChatStatus } from "./chat-status";
+import { FeedbackRow } from "./feedback-row";
 
 export function ChatContainer() {
   const { messages, isLoading, error, send, retry, submitFeedback } = useChat();
@@ -80,29 +81,47 @@ export function ChatContainer() {
         </span>
       </div>
 
-      <div
-        ref={chatRef}
-        role="log"
-        aria-label="Chat messages"
-        aria-live="polite"
-        aria-relevant="additions"
-        tabIndex={0}
-        className="flex-1 bg-white border border-neutral-200 rounded-2xl min-h-[400px] max-h-[75vh] overflow-y-auto p-5 flex flex-col gap-2.5 shadow-sm focus:outline-none focus:ring-2 focus:ring-amber-300/30"
-      >
-        {!hydrated ? (
-          <p className="text-neutral-400 text-sm">Loading…</p>
-        ) : (
-          messages.map((msg) => (
-            <ChatMessageBoundary key={msg.id}>
-              <ChatMessage
-                message={msg}
-                onQuickReply={send}
-                onFeedback={submitFeedback}
-                onRetry={retry}
-              />
-            </ChatMessageBoundary>
-          ))
-        )}
+      {/* Chat area wrapper — relative for floating feedback positioning */}
+      <div className="relative flex-1">
+        <div
+          ref={chatRef}
+          role="log"
+          aria-label="Chat messages"
+          aria-live="polite"
+          aria-relevant="additions"
+          tabIndex={0}
+          className="bg-white border border-neutral-200 rounded-2xl min-h-[400px] max-h-[75vh] overflow-y-auto p-5 flex flex-col gap-2.5 shadow-sm focus:outline-none focus:ring-2 focus:ring-amber-300/30"
+        >
+          {!hydrated ? (
+            <p className="text-neutral-400 text-sm">Loading…</p>
+          ) : (
+            messages.map((msg) => (
+              <ChatMessageBoundary key={msg.id}>
+                <ChatMessage
+                  message={msg}
+                  onQuickReply={send}
+                  onRetry={retry}
+                />
+              </ChatMessageBoundary>
+            ))
+          )}
+        </div>
+
+        {/* Floating feedback — bottom-right of the chat area.
+            Keyed to the latest results message ID so it remounts
+            (resetting hidden/submitted state) when new results arrive. */}
+        {(() => {
+          const lastFeedbackMsg = [...messages].reverse().find((m) => m.showFeedback);
+          if (!lastFeedbackMsg) return null;
+          // Only show if the last results message is also the last bot message
+          const lastBot = [...messages].reverse().find((m) => m.role === "bot");
+          if (lastBot?.id !== lastFeedbackMsg.id) return null;
+          return (
+            <div className="absolute bottom-3 right-3 z-10">
+              <FeedbackRow key={lastFeedbackMsg.id} onFeedback={submitFeedback} />
+            </div>
+          );
+        })()}
       </div>
 
       {connectionState === "offline" && (

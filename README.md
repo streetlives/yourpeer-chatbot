@@ -49,24 +49,24 @@ npm run dev
 
 See [SETUP.md](docs/SETUP.md) for detailed instructions including prerequisites, IDE configuration, and Render deployment.
 
-## Architecture
+## Architecture Flow
 
 ```
 User → Chat UI → FastAPI → Classifier → Slot Extraction → Confirmation → Query Templates → Streetlives DB
-          ↑                      ↓            ↓                  ↓               ↓                                   ↓
-   Quick-reply            Crisis Detection  3-tier cascade:  PII Redaction    User confirms                      Service Cards
-   buttons                (regex + Sonnet)  1. Regex keywords    ↓          or changes slots                         ↓
-                          → Step-down when  2. Semantic embed Session Store                                       YourPeer links
-                            service intent  3. LLM (Haiku)       ↓
-                          Greeting / Reset                   Unified LLM Gate
-                          Thanks / Help                      (Haiku — when regex+
-                          Escalation                         semantic find nothing,
-                          Frustration (AVR)                   returns service_type +
-                          Emotional (AVR)                    tone + action in one call)
-                          Bot identity                            ↓
-                          Confused/overwhelmed               Claude Haiku (fallback
-                          Confirmation                       for general conversation
-                          handling                           and DB failures only)
+          ↑                      ↓            ↓                  ↓               ↓                     ↓
+   Quick-reply           Crisis Detection  3-tier cascade:   PII Redaction   User confirms       Service Cards
+   buttons               (regex + Sonnet)  1. Regex keywords      ↓         or changes slots           ↓
+                        → Step-down when   2. Semantic embed  Session Store                      YourPeer links
+                          service intent   3. LLM (Haiku)         ↓
+                        Greeting / Reset                    Unified LLM Gate
+                        Thanks / Help                      (Haiku — when regex+
+                        Escalation                         semantic find nothing,
+                        Frustration (AVR)                  returns service_type +
+                        Emotional (AVR)                   tone + action in one call)
+                        Bot identity                             ↓
+                        Confused/overwhelmed               Claude Haiku (fallback
+                        Confirmation                      for general conversation
+                        handling                           and DB failures only)
 
 Staff → Admin Console (/admin) → Audit Log API → Anonymized transcripts, query logs, crisis events, stats
                                        ↓

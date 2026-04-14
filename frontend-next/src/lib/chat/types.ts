@@ -243,7 +243,7 @@ export interface ConversationSummary {
 }
 
 export interface AuditEvent {
-  type: "conversation_turn" | "query_execution" | "crisis_detected" | "session_reset" | "feedback";
+  type: "conversation_turn" | "query_execution" | "crisis_detected" | "session_reset" | "feedback" | "location_feedback";
   timestamp: string;
   session_id?: string;
   user_message?: string;
@@ -258,6 +258,12 @@ export interface AuditEvent {
   quick_replies?: string[];
   rating?: string;
   comment?: string;
+  context?: {
+    result_count?: number;
+    service_names?: string[];
+    organizations?: string[];
+    bot_response?: string;
+  };
 }
 
 export interface QueryLogEntry {

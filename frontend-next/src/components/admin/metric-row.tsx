@@ -4,6 +4,8 @@
 // license that can be found in the LICENSE file or at
 // https://opensource.org/licenses/MIT.
 
+"use client";
+
 type MetricStatus = "on-target" | "warning" | "off-target" | "no-data" | "tracking";
 
 interface MetricRowProps {

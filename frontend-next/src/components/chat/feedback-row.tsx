@@ -6,7 +6,7 @@
 
 "use client";
 
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { ThumbsUp, ThumbsDown } from "lucide-react";
 import type { FeedbackRating } from "@/lib/chat/types";
 
@@ -16,53 +16,57 @@ interface FeedbackRowProps {
 
 export function FeedbackRow({ onFeedback }: FeedbackRowProps) {
   const [submitted, setSubmitted] = useState<FeedbackRating | null>(null);
+  const [hidden, setHidden] = useState(false);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => () => {
+    if (timerRef.current) clearTimeout(timerRef.current);
+  }, []);
 
   function submit(rating: FeedbackRating) {
     if (submitted) return;
     setSubmitted(rating);
     onFeedback(rating);
+    // Auto-hide after a short delay so the thank-you is visible
+    timerRef.current = setTimeout(() => setHidden(true), 1500);
   }
+
+  if (hidden) return null;
 
   const label =
     submitted === "up"
-      ? "Thanks for the feedback! 👍"
+      ? "Thanks! 👍"
       : submitted === "down"
-        ? "Thanks — we'll work to improve. 👎"
-        : "Were these results helpful?";
+        ? "Thanks 👎"
+        : "Helpful?";
 
   return (
     <div
       role="group"
       aria-label="Rate these results"
-      className="flex items-center gap-2.5 self-start px-0.5 py-1.5 animate-in fade-in slide-in-from-bottom-1"
+      className="flex items-center gap-1.5 px-2.5 py-1.5 bg-white/95 backdrop-blur-sm border border-neutral-200 rounded-full shadow-md animate-in fade-in slide-in-from-bottom-1"
     >
-      <span id="feedback-label" className="text-xs text-neutral-400">{label}</span>
-      <button
-        type="button"
-        disabled={!!submitted}
-        onClick={() => submit("up")}
-        aria-label="Thumbs up"
-        className={`w-8 h-8 rounded-lg border flex items-center justify-center transition-all disabled:cursor-default ${
-          submitted === "up"
-            ? "bg-green-100 border-green-300 text-green-700"
-            : "border-neutral-200 bg-white text-neutral-500 hover:bg-neutral-50 hover:border-neutral-300 hover:text-neutral-900"
-        }`}
-      >
-        <ThumbsUp size={16} />
-      </button>
-      <button
-        type="button"
-        disabled={!!submitted}
-        onClick={() => submit("down")}
-        aria-label="Thumbs down"
-        className={`w-8 h-8 rounded-lg border flex items-center justify-center transition-all disabled:cursor-default ${
-          submitted === "down"
-            ? "bg-red-50 border-red-200 text-red-600"
-            : "border-neutral-200 bg-white text-neutral-500 hover:bg-neutral-50 hover:border-neutral-300 hover:text-neutral-900"
-        }`}
-      >
-        <ThumbsDown size={16} />
-      </button>
+      <span className="text-[0.7rem] text-neutral-400 font-medium">{label}</span>
+      {!submitted && (
+        <>
+          <button
+            type="button"
+            onClick={() => submit("up")}
+            aria-label="Thumbs up"
+            className="w-7 h-7 rounded-full border border-neutral-200 bg-white text-neutral-400 flex items-center justify-center transition-all hover:bg-green-50 hover:border-green-300 hover:text-green-600"
+          >
+            <ThumbsUp size={13} />
+          </button>
+          <button
+            type="button"
+            onClick={() => submit("down")}
+            aria-label="Thumbs down"
+            className="w-7 h-7 rounded-full border border-neutral-200 bg-white text-neutral-400 flex items-center justify-center transition-all hover:bg-red-50 hover:border-red-200 hover:text-red-500"
+          >
+            <ThumbsDown size={13} />
+          </button>
+        </>
+      )}
     </div>
   );
 }
