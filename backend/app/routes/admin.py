@@ -49,7 +49,11 @@ router = APIRouter(
 
 # Path to the eval/test directory. Configurable via EVAL_DIR env var;
 # falls back to inferring from the file's location in the repo tree.
-_DEFAULT_TESTS_DIR = Path(__file__).resolve().parent.parent.parent / "tests"
+# admin.py is at app/app/routes/admin.py → .parent×4 = repo root → tests/tests/
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
+_DEFAULT_TESTS_DIR = _REPO_ROOT / "tests" / "tests"
+# On Render, the backend runs from a subdirectory — EVAL_DIR lets you
+# point to the correct absolute path (e.g. /opt/render/project/src/tests/tests)
 TESTS_DIR = Path(os.getenv("EVAL_DIR", str(_DEFAULT_TESTS_DIR)))
 
 
@@ -219,7 +223,7 @@ async def _run_eval_background(
     global _eval_running, _eval_status
 
     cmd = [
-        "python", "tests/eval/eval_llm_judge.py",
+        "python", str(TESTS_DIR / "eval" / "eval_llm_judge.py"),
         "--output", str(TESTS_DIR / "eval_report.json"),
     ]
     if max_scenarios:
