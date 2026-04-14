@@ -2032,12 +2032,6 @@ def _execute_and_respond(session_id: str, message: str, slots: dict, request_id:
                 "value": "Show more results",
             })
 
-        # Gap 8: Sort options (only when multiple results)
-        if len(all_services) > 1 and not queued:
-            after_results_qr.append(
-                {"label": "🕐 Sort by recently verified", "value": "Sort by recently verified"},
-            )
-
     return {
         "session_id": session_id,
         "response": bot_response,
