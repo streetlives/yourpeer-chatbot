@@ -437,7 +437,6 @@ _ROUTING_CONVERSATIONAL = {
 _ROUTING_EMOTIONAL = {"emotional", "frustration", "confused"}
 _ROUTING_SAFETY = {"crisis", "escalation"}
 _ROUTING_RECOVERY = {"correction", "negative_preference", "disambiguation", "location_unknown"}
-_ROUTING_GENERAL = {"general"}
 
 
 def _compute_routing(turns: list, cat_dist: dict) -> dict:
@@ -944,37 +943,12 @@ def _compute_repetition_rate(all_events: list) -> dict:
 # P3: LLM CALL METRICS
 # ---------------------------------------------------------------------------
 
-# LLM call tracking — populated by the instrumentation wrapper in
-# claude_client.py (or wherever LLM calls are made). Each entry:
+# LLM call tracking — not yet populated. When instrumentation is added
+# to claude_client.py, entries should be appended here. Each entry:
 #   {"timestamp": str, "session_id": str, "task": str,
 #    "model": str, "input_tokens": int, "output_tokens": int,
 #    "latency_ms": int, "success": bool}
 _llm_calls: deque = deque(maxlen=MAX_EVENTS)
-
-
-def log_llm_call(
-    session_id="", task="", model="", input_tokens=0,
-    output_tokens=0, latency_ms=0, success=True, **kwargs,
-):
-    """Log an LLM API call for cost and latency tracking.
-
-    Call this from claude_client.py or any LLM call site:
-        log_llm_call(session_id=sid, task="crisis_detection",
-                     model="claude-sonnet-4-6", input_tokens=350,
-                     output_tokens=20, latency_ms=850)
-    """
-    entry = {
-        "timestamp": _now_iso(),
-        "session_id": session_id,
-        "task": task,
-        "model": model,
-        "input_tokens": input_tokens,
-        "output_tokens": output_tokens,
-        "latency_ms": latency_ms,
-        "success": success,
-    }
-    with _lock:
-        _llm_calls.append(entry)
 
 
 def _compute_llm_metrics() -> dict:

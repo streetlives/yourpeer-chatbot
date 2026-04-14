@@ -14,7 +14,7 @@ The Pydantic ServiceCard bug (fields silently stripped) was caused by:
 These tests make such drift impossible: adding a field anywhere
 without updating the other layers causes an immediate test failure.
 
-Run: python -m pytest tests/test_boundary_drift.py -v
+Run: python -m pytest tests/integration/test_schema_and_mock_sync.py -v
 """
 
 import re

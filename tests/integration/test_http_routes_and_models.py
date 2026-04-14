@@ -1,7 +1,7 @@
 """
 Tests for the chat route and Pydantic models.
 
-Run: pytest tests/test_chat_route.py
+Run: pytest tests/integration/test_http_routes_and_models.py
 """
 
 import uuid
@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 from app.main import app
 from app.models.chat_models import ChatRequest, ChatResponse, ServiceCard, QuickReply
 from app.services.session_store import clear_session
+from app.services.session_token import generate_session_id
 from conftest import MOCK_SERVICE_CARD, MOCK_QUERY_RESULTS, MOCK_EMPTY_RESULTS
 
 client = TestClient(app)
@@ -212,7 +213,7 @@ def test_service_card_serialization():
     assert "service_name" in data
     assert "phone" in data
     assert "organization" in data  # None but present
-    assert len(data) == 17  # all 17 fields
+    assert len(data) == 21  # 17 original + 5 new optional fields
 
 
 # -----------------------------------------------------------------------
@@ -350,11 +351,12 @@ def test_chat_route_generates_session_id(mock_claude, mock_query):
 @patch("app.services.chatbot.claude_reply", return_value="test")
 def test_chat_route_preserves_session_id(mock_claude, mock_query):
     """POST /chat/ with a valid session_id should preserve it."""
-    sid = str(uuid.uuid4())
+    sid = generate_session_id()
     response = client.post("/chat/", json={
         "message": "hi",
         "session_id": sid,
     })
+    assert response.status_code == 200
     assert response.json()["session_id"] == sid
     clear_session(sid)
 
@@ -428,7 +430,7 @@ def test_chat_route_response_schema(mock_claude, mock_query):
 @patch("app.services.chatbot.claude_reply", return_value="test")
 def test_chat_route_multi_turn_with_services(mock_claude, mock_query):
     """A full multi-turn conversation should return service cards."""
-    sid = "http-multi-turn"
+    sid = generate_session_id()
     clear_session(sid)
 
     # Step 1: service request → confirmation
@@ -458,7 +460,7 @@ def test_chat_route_multi_turn_with_services(mock_claude, mock_query):
 @patch("app.services.chatbot.claude_reply", return_value="test")
 def test_chat_route_session_continuity(mock_claude, mock_query):
     """Slots should accumulate across turns within the same session."""
-    sid = "http-continuity"
+    sid = generate_session_id()
     clear_session(sid)
 
     # Turn 1: provide service type
@@ -478,7 +480,7 @@ def test_chat_route_session_continuity(mock_claude, mock_query):
 @patch("app.services.chatbot.claude_reply", return_value="test")
 def test_chat_route_reset_clears_session(mock_claude, mock_query):
     """Saying 'start over' should clear the session slots."""
-    sid = "http-reset"
+    sid = generate_session_id()
     clear_session(sid)
 
     # Build up some slots
@@ -521,6 +523,45 @@ def test_chat_route_crisis_returns_resources(mock_claude, mock_query):
     assert "988" in data["response"], "Should include 988 lifeline"
     assert len(data["services"]) == 0
     mock_query.assert_not_called()
+
+
+# -----------------------------------------------------------------------
+# HTTP ROUTE — Catch-all error handling
+# -----------------------------------------------------------------------
+
+def test_chat_route_returns_usable_response_on_crash():
+    """If generate_reply crashes, user should get a helpful message, not a 500."""
+    with patch("app.routes.chat.generate_reply",
+               side_effect=RuntimeError("unexpected internal error")):
+        r = client.post("/chat/", json={"message": "I need shelter"})
+
+    # Should NOT be a 500
+    assert r.status_code == 200
+    data = r.json()
+
+    # Should have all required ChatResponse fields
+    assert "session_id" in data
+    assert "response" in data
+    assert "follow_up_needed" in data
+    assert "slots" in data
+
+    # Should direct user to yourpeer.nyc
+    assert "yourpeer.nyc" in data["response"]
+
+    # Should not expose internal error details
+    assert "RuntimeError" not in data["response"]
+    assert "unexpected internal error" not in data["response"]
+
+
+def test_chat_route_crash_preserves_session_id():
+    """Even on crash, the session_id should be returned so the user can retry."""
+    sid = generate_session_id()
+    with patch("app.routes.chat.generate_reply",
+               side_effect=Exception("db gone")):
+        r = client.post("/chat/", json={"message": "help", "session_id": sid})
+
+    assert r.status_code == 200
+    assert r.json()["session_id"] == sid
 
 
 # -----------------------------------------------------------------------

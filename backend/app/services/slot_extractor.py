@@ -47,6 +47,11 @@ SERVICE_KEYWORDS = {
         # Vernacular (Phase 1 audit)
         "place to crash", "got put out", "somewhere warm",
         "need a cot", "sleeping in my car", "couch surfing",
+        # Natural phrasing (test_peer_pregnant_couple_tonight fix)
+        # "need a place" alone is too broad — collides with "need a place
+        # to eat" and "need a place to shower". Use purpose-specific phrases.
+        "need a place to stay", "need a place tonight",
+        "a place tonight", "a place to go",
         # Foster care / aging out (Run 24 eval gap)
         "aging out", "aged out", "foster care", "aging out of foster",
         # Spanish (basic bilingual support)
@@ -153,6 +158,7 @@ SERVICE_KEYWORDS = {
         "job search", "job help", "find work", "need work",
         "looking for work", "finding work", "help finding work",
         "finding a job", "help finding a job", "help with work",
+        "need a job", "get a job", "want a job",
         "apprenticeship", "part-time", "gig work",
         # Trade / career training (Phase 1 audit — 15 services)
         "trade school", "hvac training", "construction training",
@@ -337,6 +343,17 @@ _NOTABLE_SUB_TYPES = {
     "prenatal": "prenatal care",
     "maternity": "maternity services",
     "postpartum": "postpartum care",
+    # medical — chronic conditions / medications (peer_diabetic_insulin fix)
+    # Without these, "I'm diabetic and ran out of insulin" shows as
+    # generic "health care" in the confirmation — the user feels unheard.
+    "insulin": "diabetes / insulin care",
+    "diabetic": "diabetes / insulin care",
+    "diabetes": "diabetes / insulin care",
+    "blood sugar": "diabetes care",
+    "inhaler": "asthma care",
+    "asthma": "asthma care",
+    "dialysis": "dialysis services",
+    "epipen": "allergy / EpiPen care",
     # mental_health sub-types
     "substance abuse": "substance abuse services",
     "addiction": "addiction services",
@@ -488,18 +505,6 @@ _GENDER_PHRASES = {
 # Sorted longest-first so "trans woman" matches before "woman",
 # "non-binary" before "non", etc.
 _GENDER_PHRASES_SORTED = sorted(_GENDER_PHRASES.items(), key=lambda x: len(x[0]), reverse=True)
-
-# Words that contain gender keywords but are NOT gender declarations.
-# "the man at the counter" or "Manhattan" should not trigger extraction.
-_GENDER_FALSE_POSITIVE_RE = re.compile(
-    r'\b(?:man(?:hattan|age[rd]?|ual|date|kind|y|or|ic|ner)?'
-    r'|woman(?:hood|ly|ize)?'
-    r'|male(?:volent|function|ware)?'
-    r'|female(?:ness)?'
-    r'|guy(?:ana|s)?'
-    r')\b',
-    re.IGNORECASE,
-)
 
 # Patterns that indicate the user is talking about THEMSELVES
 # (vs. referring to someone else). We require one of:
@@ -762,17 +767,6 @@ def _extract_all_service_types(text: str) -> list[tuple[str, Optional[str]]]:
     return [(svc, detail) for _, svc, detail in found]
 
 
-def _extract_service_type(text: str) -> tuple[Optional[str], Optional[str]]:
-    """Extract the primary service type category from a message.
-
-    Returns (service_type, service_detail) for the first match.
-    For all matches, use _extract_all_service_types().
-    """
-    all_types = _extract_all_service_types(text)
-    if all_types:
-        return all_types[0]
-    return None, None
-
 
 def _extract_location(text: str) -> Optional[str]:
     lower = text.lower()
@@ -811,10 +805,23 @@ def _extract_location(text: str) -> Optional[str]:
     if prep_match:
         candidate = prep_match.group(1).strip()
         candidate_lower = candidate.lower()
-        # Filter out non-location phrases
+        # Filter out non-location phrases.
+        # These are words that commonly follow prepositions ("by", "in")
+        # but are NOT location names. Without this filter, messages like
+        # "Sort by recently verified" extract location="recently verified".
         non_locations = [
             "need", "trouble", "danger", "a", "the", "my", "your",
             "here", "there", "me", "help", "this",
+            # Sort/filter UI commands: "Sort by recently verified"
+            "recently", "most", "sort", "all", "any", "every",
+            # Temporal: "by tomorrow", "by next week"
+            "tomorrow", "next", "last", "today",
+            # Misc non-locations that follow prepositions
+            "now", "then", "someone", "anyone", "myself",
+            # Common nouns after "by" that are never locations
+            # (verified: none conflict with _KNOWN_LOCATIONS)
+            "name", "distance", "rating", "category", "phone",
+            "date", "open", "close", "email", "text",
         ]
         if candidate_lower.split()[0] not in non_locations:
             return candidate
@@ -977,6 +984,24 @@ def _extract_urgency(text: str) -> Optional[str]:
         "emergency", "today", "before dark", "freezing",
     ]):
         return "high"
+    # Medication depletion — running out of essential medication is
+    # medically urgent even without explicit urgency words.
+    # "Ran out of insulin" is as dangerous as "I need shelter tonight."
+    #
+    # NOTE: "need my medication" and "need my medicine" were intentionally
+    # excluded — they self-match because "medication"/"medicine" appear in
+    # both the depletion AND medication word lists, causing false positives
+    # for routine requests like "I need my medication refilled."
+    if any(x in lower for x in [
+        "ran out of", "run out of", "running out of", "out of my",
+        "don't have my", "dont have my", "lost my medication",
+        "lost my medicine",
+        "no more", "can't get my", "cant get my",
+    ]) and any(x in lower for x in [
+        "insulin", "medication", "medicine", "prescription",
+        "inhaler", "epipen", "pills", "meds",
+    ]):
+        return "high"
     if any(x in lower for x in ["soon", "this week"]):
         return "medium"
     return None
@@ -995,6 +1020,9 @@ def _extract_age(text: str) -> Optional[int]:
         # Bare number at start or after newline, followed by comma/space+context
         # "21, LGBTQ" or "19, with a toddler"
         r"(?:^|\n)(\d{1,2})\s*,",
+        # Bare number after a comma, followed by comma/space+context
+        # "aging out of foster care, 21, in the Bronx"
+        r",\s*(\d{1,2})\s*,",
     ]
     for p in patterns:
         m = re.search(p, text.lower())

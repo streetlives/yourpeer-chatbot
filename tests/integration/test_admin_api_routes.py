@@ -10,8 +10,8 @@ Covers all admin API endpoints:
     GET /admin/api/queries             — query execution log
     GET /admin/api/eval                — LLM evaluation results
 
-Run with: python -m pytest tests/test_admin.py -v
-Or just:  python tests/test_admin.py
+Run with: python -m pytest tests/integration/test_admin_api_routes.py -v
+Or just:  python tests/integration/test_admin_api_routes.py
 """
 
 import os

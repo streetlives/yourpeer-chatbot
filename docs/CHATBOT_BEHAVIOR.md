@@ -524,23 +524,22 @@ Add to `_EMOTIONAL_PHRASES` in `phrase_lists.py`. Avoid phrases that overlap wit
 
 ### Modifying guardrails
 
-LLM guardrails are embedded in three prompt builders in `responses.py`:
-- `_build_conversational_prompt()` — general conversation
-- `_build_empathetic_prompt()` — emotional acknowledgment
+LLM guardrails are embedded in two prompt builders in `responses.py`:
+- `_build_conversational_prompt()` — general conversation (service slots are intentionally NOT passed to the LLM)
 - `_build_bot_question_prompt()` — capability questions
 
-Each prompt contains a "STRICT RULES" or "Guidelines" section that instructs the LLM on what to avoid. Changes to guardrail language should be tested by running the LLM-as-judge eval suite to verify they don't cause regressions.
+Each prompt contains strict rules that instruct the LLM on what to avoid: no fabricating service data, no follow-up questions about service needs, no claiming access to the service database. Changes to guardrail language should be tested by running the LLM-as-judge eval suite to verify they don't cause regressions.
 
 ### Testing
 
-Conversation routing is covered by 193 tests in `integration/test_chatbot.py`, 56 context routing tests in `integration/test_context_routing.py`, 31 post-results boundary tests in `unit/test_post_results_boundary.py`, 26 ambiguity handling tests in `integration/test_ambiguity_handling.py`, 29 integration scenario tests in `integration/test_integration_scenarios.py`, 28 structural fix tests in `integration/test_structural_fixes.py`, 41 phrase audit tests in `unit/test_phrase_audit.py`, 19 contraction normalization tests in `unit/test_contraction_normalization.py`, 29 edge-case tests in `unit/test_edge_cases.py`, 36 crisis detection tests in `unit/test_crisis_detector.py`, 39 gender extraction tests in `unit/test_gender_extraction.py`, 34 PII redaction tests in `unit/test_pii_redactor.py`, and 88 population tests in `unit/test_populations.py` (extraction, merge, false positives, query boosts, DV crisis injection, ORDER BY generation, confirmation prefixes). Use `assert_classified(message, category)` from `conftest.py` for classification tests and `send(message)` for full routing tests.
+Conversation routing is covered by 193 tests in `integration/test_classification_and_routing.py`, 56 context routing tests in `integration/test_multi_turn_and_context.py`, 31 post-results boundary tests in `unit/test_post_results_boundary.py`, 26 ambiguity handling tests in `integration/test_ambiguity_handling.py`, 29 integration scenario tests in `integration/test_narrative_and_eval_scenarios.py`, 28 structural fix tests in `integration/test_crisis_and_flow_regressions.py`, 41 phrase audit tests in `unit/test_phrase_audit.py`, 19 contraction normalization tests in `unit/test_contraction_normalization.py`, 29 edge-case tests in `unit/test_edge_cases.py`, 36 crisis detection tests in `unit/test_crisis_detector.py`, 39 gender extraction tests in `unit/test_gender_extraction.py`, 34 PII redaction tests in `unit/test_pii_redactor.py`, and 88 population tests in `unit/test_populations.py` (extraction, merge, false positives, query boosts, DV crisis injection, ORDER BY generation, confirmation prefixes). Use `assert_classified(message, category)` from `conftest.py` for classification tests and `send(message)` for full routing tests.
 
 ```bash
 # Run conversation tests
-pytest tests/integration/test_chatbot.py -v
+pytest tests/integration/test_classification_and_routing.py -v
 
 # Run a specific category
-pytest tests/integration/test_chatbot.py -k "emotional" -v
+pytest tests/integration/test_classification_and_routing.py -k "emotional" -v
 
 # Unit tests only (fast)
 pytest tests/unit/ -q

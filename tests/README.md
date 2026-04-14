@@ -6,7 +6,7 @@
 tests/
 ├── conftest.py              # Shared fixtures, helpers (send, send_multi, assert_classified)
 │
-├── unit/                    # Fast, isolated tests — no DB, no LLM, no network (39 files)
+├── unit/                    # Fast, isolated tests — no DB, no LLM, no network (42 files)
 │   ├── test_slot_extractor.py          # Slot extraction (service, location, age, family)
 │   ├── test_slot_extraction_keywords.py # Keyword-specific slot extraction
 │   ├── test_service_keywords.py        # Service keyword coverage and alignment
@@ -45,26 +45,31 @@ tests/
 │   ├── test_core_conversation_flows.py # Core conversation scenarios
 │   ├── test_multi_intent_queue.py      # Multi-service queue handling
 │   ├── test_response_escalation.py     # Frustration escalation
-│   └── test_tone_and_empathy.py        # Tone detection, emotional responses
+│   ├── test_tone_and_empathy.py        # Tone detection, emotional responses
+│   ├── test_safety_identity_and_tone.py # PII warnings, identity, crisis categories
+│   ├── test_group_fixes_regression.py  # 117 collision regression tests (Groups A-H)
+│   ├── test_medical_urgency.py         # Medical urgency detection (43 tests)
+│   └── test_parser_collision_guards.py # Parser collision guards
 │
-├── integration/             # Multi-component tests — use send(), mock DB/LLM
-│   ├── test_chatbot.py                 # Core generate_reply routing (193 tests)
-│   ├── test_context_routing.py         # Context-aware yes/no after emotions
-│   ├── test_ambiguity_handling.py      # Ambiguous message handling
-│   ├── test_crisis_safety_edges.py     # Crisis → service flow transitions
-│   ├── test_geolocation.py             # Browser geolocation flow
-│   ├── test_chat_route.py              # HTTP /api/chat endpoint
-│   ├── test_admin.py                   # Admin API routes
-│   ├── test_integration_scenarios.py   # End-to-end conversation flows
-│   ├── test_rate_limit_integration.py  # Rate limiting through HTTP
-│   ├── test_db_integration.py          # Live database queries
+├── integration/             # Multi-component tests — use send(), mock DB/LLM (17 files)
+│   ├── test_classification_and_routing.py  # Core generate_reply routing
+│   ├── test_multi_turn_and_context.py      # Context-aware yes/no after emotions
+│   ├── test_ambiguity_handling.py          # Ambiguous message handling
+│   ├── test_crisis_safety_edges.py         # Crisis → service flow transitions
+│   ├── test_browser_geolocation.py         # Browser geolocation flow
+│   ├── test_http_routes_and_models.py      # HTTP /chat/ endpoint, Pydantic models
+│   ├── test_admin_api_routes.py            # Admin API routes
+│   ├── test_narrative_and_eval_scenarios.py # End-to-end conversation flows
+│   ├── test_service_data_llm_firewall.py   # LLM isolation — 57 tests across 7 layers
+│   ├── test_rate_limit_integration.py      # Rate limiting through HTTP
+│   ├── test_db_integration.py              # Live database queries
 │   │
 │   │  # Regression tests (from bug fixes and coverage audits)
-│   ├── test_bug_fixes.py               # Bugs 8-14 from PR 19
-│   ├── test_structural_fixes.py        # Run 16 failing scenario fixes
-│   ├── test_coverage_gaps.py           # Coverage audit fixes
-│   ├── test_gap_coverage.py            # Gap analysis fixes
-│   └── test_boundary_drift.py          # Boundary condition drift tests
+│   ├── test_targeted_bug_regressions.py    # Bugs 8-14 from PR 19
+│   ├── test_crisis_and_flow_regressions.py # Run 16 failing scenario fixes
+│   ├── test_utility_and_session_edges.py   # Coverage audit fixes
+│   ├── test_format_pipeline_and_admin.py   # Gap analysis fixes
+│   └── test_schema_and_mock_sync.py        # Boundary condition drift tests
 │
 └── eval/                    # LLM evaluation (not pytest — run separately)
     └── eval_llm_judge.py               # Scenario-based LLM judge evaluator
@@ -100,8 +105,8 @@ pytest tests/unit/ --cov=app.services.slot_extractor
 | A new response string | Add `unit/test_responses.py` |
 | PII redaction patterns | `unit/test_pii_redactor.py` |
 | Crisis detection phrases | `unit/test_crisis_detector.py` |
-| Full conversation flow | `integration/test_chatbot.py` or `integration/test_integration_scenarios.py` |
-| A bug fix | `integration/test_bug_fixes.py` (add a section for the bug number) |
+| Full conversation flow | `integration/test_classification_and_routing.py` or `integration/test_narrative_and_eval_scenarios.py` |
+| A bug fix | `integration/test_targeted_bug_regressions.py` (add a section for the bug number) |
 | Gender/LGBTQ filtering | `unit/test_gender_extraction.py` |
 
 ## Source Module → Test File Mapping
@@ -110,16 +115,40 @@ pytest tests/unit/ --cov=app.services.slot_extractor
 |---|---|
 | `slot_extractor.py` | `unit/test_slot_extractor.py`, `unit/test_gender_extraction.py`, `unit/test_location_boundaries.py` |
 | `classifier.py` | `unit/test_contraction_normalization.py`, `unit/test_phrase_audit.py` |
-| `responses.py` | (create `unit/test_responses.py`) |
-| `confirmation.py` | (create `unit/test_confirmation.py`) |
+| `responses.py` | `integration/test_service_data_llm_firewall.py` (prompt isolation) |
+| `confirmation.py` | `unit/test_confirmation_flow.py` |
 | `phrase_lists.py` | `unit/test_phrase_audit.py` |
-| `chatbot.py` | `integration/test_chatbot.py`, `integration/test_context_routing.py` |
+| `chatbot.py` | `integration/test_classification_and_routing.py`, `integration/test_multi_turn_and_context.py` |
 | `pii_redactor.py` | `unit/test_pii_redactor.py` |
 | `query_templates.py` | `unit/test_query_templates.py` |
 | `crisis_detector.py` | `unit/test_crisis_detector.py`, `integration/test_crisis_safety_edges.py` |
 | `llm_slot_extractor.py` | `unit/test_llm_slot_extractor.py`, `unit/test_narrative_extraction.py` |
 | `llm_classifier.py` | `unit/test_llm_classifier.py` |
 | `post_results.py` | `unit/test_post_results.py`, `unit/test_post_results_boundary.py` |
+| `routes/chat.py` | `integration/test_http_routes_and_models.py` |
+| `routes/admin.py` | `integration/test_admin_api_routes.py` |
+
+## LLM Isolation in Tests
+
+Tests that call `_classify_tone()` or `detect_crisis()` must isolate from the Anthropic API to prevent rate-limit cascading failures. Use these patterns:
+
+```python
+# Tone classification — skip the Sonnet crisis detection call
+tone = _classify_tone("I'm embarrassed to ask", crisis_result=None)
+
+# Crisis detection — regex only, no LLM fallback
+result = detect_crisis("I ran away from home", skip_llm=True)
+
+# Full chatbot flow — prevent LLM classifier from intercepting
+@patch("app.services.chatbot._USE_LLM", False)
+def test_something(fresh_session):
+    result = generate_reply("tell me more", session_id=fresh_session)
+```
+
+Three tests intentionally verify LLM integration and are left unprotected:
+- `test_llm_called_when_regex_misses` — verifies Sonnet fires for ambiguous messages
+- `test_skip_llm_false_default` — verifies `skip_llm` defaults to False
+- `test_classify_tone_calls_detect_when_not_provided` — verifies `_classify_tone` calls `detect_crisis` when no pre-computed result
 
 ## Import Changes (Chatbot Refactor)
 

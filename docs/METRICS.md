@@ -358,7 +358,7 @@ These metrics answer the ultimate question: did the referral work? They require 
 |---|---|
 | **Definition** | Total calls, tokens, estimated cost, latency p50/p95, failure rate, breakdown by task and model |
 | **Target** | p50 ≤ 600ms, failure rate ≤ 2% |
-| **Method** | `log_llm_call()` instrumentation in claude_client.py (pending wiring) |
+| **Method** | `_track_llm_call()` in claude_client.py tracks daily call counts and budget warnings. Per-call audit logging not yet implemented. |
 | **Why** | Essential for capacity planning. At 36,000 sessions/month, LLM cost per session determines monthly spend |
 
 ---

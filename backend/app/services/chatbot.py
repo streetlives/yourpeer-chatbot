@@ -311,11 +311,17 @@ def generate_reply(
         # Handle confirm_yes / confirm_deny after results when no pending
         # confirmation exists. Without this, these messages fall through to
         # extraction and re-trigger the same search.
+        # Guard: when the message ALSO contains a new service intent
+        # (e.g., "Search for employment in Manhattan"), the new intent
+        # should override the confirm action. Without this guard,
+        # "search for" matches confirm_yes and the user's new request
+        # is swallowed.
         if (_last_results
                 and _action_pre in ("confirm_yes", "confirm_deny")
                 and not existing.get("_pending_confirmation")
                 and not existing.get("_queue_offer_pending")
-                and not existing.get("_queued_services")):
+                and not existing.get("_queued_services")
+                and not has_service_intent):
 
             if _action_pre == "confirm_yes":
                 # "Yes, search" after results already shown
@@ -558,6 +564,18 @@ def generate_reply(
         _confidence = "low"
 
     # === ROUTE TO HANDLERS ===
+
+    # Clear stale _last_action when the user shifts context.
+    # _last_action is set by emotional/escalation/crisis/confused/frustration
+    # handlers and consumed by _handle_context_aware_confirm for the NEXT
+    # confirm_yes or confirm_deny. If the user sends anything else (greeting,
+    # help, thanks, a new service request), the context has shifted and
+    # _last_action should not persist — otherwise it would incorrectly
+    # affect a confirm_yes/confirm_deny many turns later.
+    _CONSUMES_LAST_ACTION = {"confirm_yes", "confirm_deny"}
+    if existing.get("_last_action") and category not in _CONSUMES_LAST_ACTION:
+        existing.pop("_last_action", None)
+        save_session_slots(session_id, existing)
 
     # --- Crisis ---
     if category == "crisis":
@@ -1147,9 +1165,35 @@ def generate_reply(
     # Tone-based prefix
     _is_service_flow = category == "service"
     _tone_prefix = ""
+
+    # Medical urgency — running out of essential medication is medically
+    # dangerous. This fires when the message contains BOTH a medication
+    # depletion signal AND a medical keyword, preventing false positives
+    # on generic "ran out of" phrases.
+    _MEDICATION_DEPLETION = [
+        "ran out of", "run out of", "running out of", "out of my",
+        "don't have my", "dont have my", "lost my medication",
+        "lost my medicine",
+        "no more", "can't get my", "cant get my", "ran out of my",
+    ]
+    _MEDICATION_WORDS = [
+        "insulin", "medication", "medicine", "prescription",
+        "inhaler", "epipen", "pills", "meds",
+    ]
+    _is_medical_urgent = (
+        _is_service_flow
+        and any(s in _msg_lower_tone for s in _MEDICATION_DEPLETION)
+        and any(s in _msg_lower_tone for s in _MEDICATION_WORDS)
+    )
+
     if _is_shame and _is_service_flow:
         # Shame-specific normalizing prefix — NOT generic "I hear you"
         _tone_prefix = "It takes real strength to reach out — a lot of people use these services, and there's no shame in it. "
+    elif _is_medical_urgent:
+        # Medical urgency — medication depletion needs a specific
+        # acknowledgment that the bot understands the medical seriousness,
+        # not just generic urgency ("I can see this is urgent").
+        _tone_prefix = "That sounds urgent — let me help you find care right away. "
     elif _response_tone == "emotional" and _is_service_flow:
         _tone_prefix = "I hear you, and I want to help. "
     elif _response_tone == "frustrated" and _is_service_flow:
@@ -1167,6 +1211,8 @@ def generate_reply(
         _prior_emotion = existing.get("_emotional_context")
         if _prior_emotion == "shame":
             _tone_prefix = "Still here with you. "
+        elif _prior_emotion == "medical_urgent":
+            _tone_prefix = "Let's get you to the right place. "
         elif _prior_emotion:
             _tone_prefix = "I'm still here with you. "
 
@@ -1179,6 +1225,8 @@ def generate_reply(
     # Persist emotional context for subsequent turns
     if _is_shame:
         merged["_emotional_context"] = "shame"
+    elif _is_medical_urgent:
+        merged["_emotional_context"] = "medical_urgent"
     elif _response_tone == "emotional" and _is_service_flow:
         merged["_emotional_context"] = "emotional"
 
@@ -1191,6 +1239,12 @@ def generate_reply(
     if _SENSITIVE_CONTEXT_RE.search(message):
         _tone_prefix = "I understand this is a difficult situation. Let me help. "
         merged["_emotional_context"] = "sensitive"
+
+    # Re-save if emotional context was set after the initial save (line 1113).
+    # Without this, emotional context is lost on the follow-up path where
+    # save_session_slots isn't called again before returning.
+    if merged.get("_emotional_context") and not existing.get("_emotional_context"):
+        save_session_slots(session_id, merged)
 
     # Prepend PII safety warning and/or Spanish acknowledgment before
     # the tone prefix so they appear first in confirmations and follow-ups.
@@ -1856,7 +1910,10 @@ def _execute_and_respond(session_id: str, message: str, slots: dict, request_id:
 
         if results.get("error"):
             logger.warning(f"Query error: {results['error']}")
-            bot_response = _fallback_response(message, slots)
+            bot_response = (
+                "I ran into an issue with that search. "
+                "You can try again, or visit yourpeer.nyc directly."
+            )
         elif results["result_count"] > 0:
             all_services = results["services"]
             services_list = all_services[:_DISPLAY_LIMIT]
@@ -1893,10 +1950,33 @@ def _execute_and_respond(session_id: str, message: str, slots: dict, request_id:
 
     except Exception as e:
         logger.error(f"Database query failed: {e}")
-        bot_response = _fallback_response(message, slots)
+        # CRITICAL: Do NOT call _fallback_response (LLM) for DB failures.
+        # When the DB is down, Claude generates helpful-sounding follow-up
+        # questions ("To help narrow things down...") that look like the
+        # intake flow, trapping the user in an infinite confirmation loop
+        # where they keep confirming but never get results.
+        _fail_count = slots.get("_search_fail_count", 0) + 1
+        slots["_search_fail_count"] = _fail_count
+        save_session_slots(session_id, slots)
+        if _fail_count >= 2:
+            bot_response = (
+                "I'm still having trouble searching. "
+                "Please visit yourpeer.nyc to search directly, "
+                "or try again later."
+            )
+        else:
+            bot_response = (
+                "I'm having trouble connecting to the service database "
+                "right now. You can try again in a moment, or visit "
+                "yourpeer.nyc to search for services directly."
+            )
 
     if bot_response is None:
-        bot_response = _fallback_response(message, slots)
+        # Same principle: don't call LLM for search-path failures.
+        bot_response = (
+            "I wasn't able to complete the search. "
+            "You can try again, or visit yourpeer.nyc directly."
+        )
 
     after_results_qr = [
         {"label": "🔍 New search", "value": "Start over"},
@@ -1939,6 +2019,7 @@ def _execute_and_respond(session_id: str, message: str, slots: dict, request_id:
         ]
 
     if services_list:
+        slots.pop("_search_fail_count", None)  # Clear on success
         slots["_last_results"] = all_services  # Store ALL fetched (up to 25)
         slots["_displayed_count"] = len(services_list)  # Track what user has seen
         save_session_slots(session_id, slots)

@@ -52,9 +52,15 @@ def _fresh_session():
 
 
 def _send(message, session_id, mock_crisis_return=None):
-    """Send a message with standard mocks."""
+    """Send a message with standard mocks.
+
+    _USE_LLM is patched to False so tests behave identically regardless
+    of whether ANTHROPIC_API_KEY is set. These tests verify chatbot
+    routing and slot logic, not LLM behavior.
+    """
     crisis_val = mock_crisis_return
     with (
+        patch("app.services.chatbot._USE_LLM", False),
         patch("app.services.chatbot.query_services", return_value=MOCK_QUERY_RESULTS),
         patch("app.services.chatbot.claude_reply", return_value="How can I help?"),
         patch("app.services.chatbot.detect_crisis", return_value=crisis_val),

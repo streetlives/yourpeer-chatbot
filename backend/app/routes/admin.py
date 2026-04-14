@@ -71,28 +71,50 @@ def admin_root():
 # DATA API
 # ---------------------------------------------------------------------------
 
+def _admin_error(endpoint: str, e: Exception) -> JSONResponse:
+    """Return a structured error response for admin API failures."""
+    logger.exception(f"Admin API error in {endpoint}")
+    return JSONResponse(
+        status_code=500,
+        content={
+            "error": True,
+            "endpoint": endpoint,
+            "detail": f"{type(e).__name__}: {e}",
+        },
+    )
+
+
 @router.get("/api/stats")
 def admin_stats():
     """Aggregate statistics for the dashboard overview."""
-    return get_stats()
+    try:
+        return get_stats()
+    except Exception as e:
+        return _admin_error("/api/stats", e)
 
 
 @router.get("/api/conversations")
 def admin_conversations(limit: int = Query(50, ge=1, le=200)):
     """List recent conversations with summary info."""
-    return get_conversations_summary(limit=limit)
+    try:
+        return get_conversations_summary(limit=limit)
+    except Exception as e:
+        return _admin_error("/api/conversations", e)
 
 
 @router.get("/api/conversations/{session_id}")
 def admin_conversation_detail(session_id: str):
     """Get full transcript for a specific conversation."""
-    events = get_conversation(session_id)
-    if not events:
-        return JSONResponse(
-            status_code=404,
-            content={"detail": f"No conversation found for session {session_id}"},
-        )
-    return events
+    try:
+        events = get_conversation(session_id)
+        if not events:
+            return JSONResponse(
+                status_code=404,
+                content={"detail": f"No conversation found for session {session_id}"},
+            )
+        return events
+    except Exception as e:
+        return _admin_error(f"/api/conversations/{session_id}", e)
 
 
 @router.get("/api/events")
@@ -101,39 +123,51 @@ def admin_events(
     event_type: str = Query(None, pattern="^(conversation_turn|query_execution|crisis_detected|session_reset|feedback|location_feedback)$"),
 ):
     """Get recent events, optionally filtered by type."""
-    return get_recent_events(limit=limit, event_type=event_type)
+    try:
+        return get_recent_events(limit=limit, event_type=event_type)
+    except Exception as e:
+        return _admin_error("/api/events", e)
 
 
 @router.get("/api/queries")
 def admin_queries(limit: int = Query(100, ge=1, le=500)):
     """Get recent query execution log."""
-    return get_query_log(limit=limit)
+    try:
+        return get_query_log(limit=limit)
+    except Exception as e:
+        return _admin_error("/api/queries", e)
 
 
 @router.get("/api/eval")
 def admin_eval():
     """Get LLM-as-judge evaluation results."""
-    results = get_eval_results()
-    if results is None:
-        # Try loading from the default file location
-        eval_path = TESTS_DIR / "eval_report.json"
-        if eval_path.exists():
-            load_eval_results_from_file(str(eval_path))
-            results = get_eval_results()
+    try:
+        results = get_eval_results()
+        if results is None:
+            # Try loading from the default file location
+            eval_path = TESTS_DIR / "eval_report.json"
+            if eval_path.exists():
+                load_eval_results_from_file(str(eval_path))
+                results = get_eval_results()
 
-    if results is None:
-        return JSONResponse(
-            status_code=200,
-            content={"results": None, "detail": "No evaluation results yet. Use the Run Evals button to generate them."},
-        )
-    return results
+        if results is None:
+            return JSONResponse(
+                status_code=200,
+                content={"results": None, "detail": "No evaluation results yet. Use the Run Evals button to generate them."},
+            )
+        return results
+    except Exception as e:
+        return _admin_error("/api/eval", e)
 
 
 @router.get("/api/eval/status")
 def admin_eval_status():
     """Check whether an eval run is in progress."""
-    with _eval_lock:
-        return {"running": _eval_running, **_eval_status}
+    try:
+        with _eval_lock:
+            return {"running": _eval_running, **_eval_status}
+    except Exception as e:
+        return _admin_error("/api/eval/status", e)
 
 
 @router.post("/api/eval/run")

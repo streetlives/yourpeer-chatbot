@@ -29,7 +29,7 @@ def test_suicide_direct_statements():
         "There's no reason to live",
     ]
     for phrase in phrases:
-        result = detect_crisis(phrase)
+        result = detect_crisis(phrase, skip_llm=True)
         assert result is not None, f"Missed crisis: '{phrase}'"
         assert result[0] == "suicide_self_harm", \
             f"Wrong category for '{phrase}': {result[0]}"
@@ -44,14 +44,14 @@ def test_self_harm():
         "self harm",
     ]
     for phrase in phrases:
-        result = detect_crisis(phrase)
+        result = detect_crisis(phrase, skip_llm=True)
         assert result is not None, f"Missed crisis: '{phrase}'"
         assert result[0] == "suicide_self_harm"
 
 
 def test_suicide_response_has_988():
     """Suicide response must include 988 lifeline."""
-    result = detect_crisis("I want to kill myself")
+    result = detect_crisis("I want to kill myself", skip_llm=True)
     assert result is not None
     assert "988" in result[1]
     assert "741741" in result[1]  # Crisis Text Line
@@ -59,7 +59,7 @@ def test_suicide_response_has_988():
 
 def test_suicide_response_has_trevor():
     """Suicide response must include Trevor Project for LGBTQ+ youth."""
-    result = detect_crisis("I want to die")
+    result = detect_crisis("I want to die", skip_llm=True)
     assert "Trevor" in result[1]
 
 
@@ -75,7 +75,7 @@ def test_violence_threats():
         "I'm gonna hurt him",
     ]
     for phrase in phrases:
-        result = detect_crisis(phrase)
+        result = detect_crisis(phrase, skip_llm=True)
         assert result is not None, f"Missed crisis: '{phrase}'"
         assert result[0] == "violence", \
             f"Wrong category for '{phrase}': {result[0]}"
@@ -83,7 +83,7 @@ def test_violence_threats():
 
 def test_violence_response_has_911():
     """Violence response must include 911."""
-    result = detect_crisis("I'm going to hurt someone")
+    result = detect_crisis("I'm going to hurt someone", skip_llm=True)
     assert "911" in result[1]
 
 
@@ -104,7 +104,7 @@ def test_domestic_violence():
         "I need a restraining order",
     ]
     for phrase in phrases:
-        result = detect_crisis(phrase)
+        result = detect_crisis(phrase, skip_llm=True)
         assert result is not None, f"Missed crisis: '{phrase}'"
         assert result[0] == "domestic_violence", \
             f"Wrong category for '{phrase}': {result[0]}"
@@ -127,19 +127,19 @@ def test_dv_threat_language():
         "He said he would kill me",
     ]
     for phrase in phrases:
-        result = detect_crisis(phrase)
+        result = detect_crisis(phrase, skip_llm=True)
         assert result is not None, \
             f"Missed DV threat language: '{phrase}'"
         assert result[0] == "domestic_violence", \
             f"Wrong category for '{phrase}': {result[0]} (expected domestic_violence)"
     """DV response must include the National DV Hotline."""
-    result = detect_crisis("my partner hits me")
+    result = detect_crisis("my partner hits me", skip_llm=True)
     assert "1-800-799-7233" in result[1]
 
 
 def test_dv_response_has_nyc_hotline():
     """DV response should include the NYC-specific hotline."""
-    result = detect_crisis("domestic violence")
+    result = detect_crisis("domestic violence", skip_llm=True)
     assert "1-800-621-4673" in result[1]
 
 
@@ -158,7 +158,7 @@ def test_trafficking():
         "human trafficking",
     ]
     for phrase in phrases:
-        result = detect_crisis(phrase)
+        result = detect_crisis(phrase, skip_llm=True)
         assert result is not None, f"Missed crisis: '{phrase}'"
         assert result[0] == "trafficking", \
             f"Wrong category for '{phrase}': {result[0]}"
@@ -166,7 +166,7 @@ def test_trafficking():
 
 def test_trafficking_response_has_hotline():
     """Trafficking response must include National Trafficking Hotline."""
-    result = detect_crisis("I'm being trafficked")
+    result = detect_crisis("I'm being trafficked", skip_llm=True)
     assert "1-888-373-7888" in result[1]
     assert "233733" in result[1]  # BeFree text number
 
@@ -186,7 +186,7 @@ def test_medical_emergency():
         "having a seizure",
     ]
     for phrase in phrases:
-        result = detect_crisis(phrase)
+        result = detect_crisis(phrase, skip_llm=True)
         assert result is not None, f"Missed crisis: '{phrase}'"
         assert result[0] == "medical_emergency", \
             f"Wrong category for '{phrase}': {result[0]}"
@@ -194,13 +194,13 @@ def test_medical_emergency():
 
 def test_medical_response_has_911():
     """Medical emergency response must include 911."""
-    result = detect_crisis("I can't breathe")
+    result = detect_crisis("I can't breathe", skip_llm=True)
     assert "911" in result[1]
 
 
 def test_medical_response_has_poison_control():
     """Medical emergency response should include Poison Control."""
-    result = detect_crisis("someone is overdosing")
+    result = detect_crisis("someone is overdosing", skip_llm=True)
     assert "1-800-222-1222" in result[1]
 
 
@@ -232,7 +232,7 @@ def test_no_false_positives_service_requests():
     ]
     with _mock_llm_no_crisis():
         for msg in safe_messages:
-            result = detect_crisis(msg)
+            result = detect_crisis(msg, skip_llm=True)
             assert result is None, \
                 f"False positive on: '{msg}' → {result[0] if result else None}"
 
@@ -251,7 +251,7 @@ def test_no_false_positives_conversational():
     ]
     with _mock_llm_no_crisis():
         for msg in safe_messages:
-            result = detect_crisis(msg)
+            result = detect_crisis(msg, skip_llm=True)
             assert result is None, \
                 f"False positive on: '{msg}' → {result[0] if result else None}"
 
@@ -266,7 +266,7 @@ def test_no_false_positive_on_hurt_in_context():
     ]
     with _mock_llm_no_crisis():
         for msg in safe_messages:
-            result = detect_crisis(msg)
+            result = detect_crisis(msg, skip_llm=True)
             assert result is None, \
                 f"False positive on: '{msg}' → {result[0] if result else None}"
 
@@ -294,7 +294,7 @@ def test_passive_suicidal_ideation():
         "I'm so tired of living like this",
     ]
     for phrase in phrases:
-        result = detect_crisis(phrase)
+        result = detect_crisis(phrase, skip_llm=True)
         assert result is not None, \
             f"Missed passive suicidal ideation: '{phrase}'"
         assert result[0] == "suicide_self_harm", \
@@ -303,7 +303,7 @@ def test_passive_suicidal_ideation():
 
 def test_passive_ideation_response_has_988():
     """Passive ideation must route to suicide response with 988."""
-    result = detect_crisis("What's the point anymore, nothing helps")
+    result = detect_crisis("What's the point anymore, nothing helps", skip_llm=True)
     assert result is not None
     assert result[0] == "suicide_self_harm"
     assert "988" in result[1], "Suicide response must include 988"
@@ -316,7 +316,7 @@ def test_passive_ideation_in_longer_message():
         "I've been trying to find food and shelter for weeks now. "
         "Nothing helps anymore. I give up."
     )
-    result = detect_crisis(msg)
+    result = detect_crisis(msg, skip_llm=True)
     assert result is not None, "Passive ideation missed in longer message"
     assert result[0] == "suicide_self_harm"
 
@@ -331,7 +331,7 @@ def test_no_false_positive_on_giving_up_task():
     is acceptable given the risk of missing genuine ideation.
     """
     # Confirm 'i give up' fires — this is intentional, not a bug
-    result = detect_crisis("I give up")
+    result = detect_crisis("I give up", skip_llm=True)
     assert result is not None and result[0] == "suicide_self_harm", \
         "'I give up' should fire — intentionally broad for crisis-vulnerable population"
 
@@ -358,7 +358,7 @@ def test_youth_runaway_detection():
         "I can't go home",
     ]
     for phrase in youth_runaway_phrases:
-        result = detect_crisis(phrase)
+        result = detect_crisis(phrase, skip_llm=True)
         assert result is not None, \
             f"Missed youth runaway/unsafe home phrase: '{phrase}'"
         assert result[0] == "youth_runaway", \
@@ -370,7 +370,7 @@ def test_youth_runaway_detection():
         "My family kicked me out",
     ]
     for phrase in family_kicked_out:
-        result = detect_crisis(phrase)
+        result = detect_crisis(phrase, skip_llm=True)
         assert result is not None, \
             f"Missed kicked-out phrase: '{phrase}'"
         assert result[0] in ("youth_runaway", "domestic_violence"), \
@@ -382,7 +382,7 @@ def test_youth_runaway_detection():
         "I was thrown out of my home",
     ]
     for phrase in generic_kicked_out:
-        result = detect_crisis(phrase)
+        result = detect_crisis(phrase, skip_llm=True)
         assert result is not None, \
             f"Missed kicked-out phrase: '{phrase}'"
         assert result[0] in ("safety_concern", "domestic_violence"), \
@@ -392,7 +392,7 @@ def test_youth_runaway_detection():
 
 def test_runaway_response_has_resources():
     """Runaway scenario must route to youth_runaway response with youth-specific resources."""
-    result = detect_crisis("I ran away from home last night")
+    result = detect_crisis("I ran away from home last night", skip_llm=True)
     assert result is not None
     assert result[0] == "youth_runaway"
     assert "1-800-786-2929" in result[1], \
@@ -404,7 +404,7 @@ def test_runaway_response_has_resources():
 def test_runaway_minor_with_shelter_need():
     """A minor runaway mentioning shelter should still trigger crisis first."""
     msg = "I'm 16, I ran away from home yesterday and I need somewhere to sleep in Queens"
-    result = detect_crisis(msg)
+    result = detect_crisis(msg, skip_llm=True)
     assert result is not None, \
         "Runaway minor with shelter request must trigger crisis detection"
     assert result[0] in ("youth_runaway", "domestic_violence"), \
@@ -423,7 +423,7 @@ def test_kicked_out_adult():
         "I was kicked out of my home with nowhere to go",
     ]
     for phrase in phrases:
-        result = detect_crisis(phrase)
+        result = detect_crisis(phrase, skip_llm=True)
         assert result is not None, f"Missed kicked-out scenario: '{phrase}'"
         assert result[0] in ("safety_concern", "domestic_violence"), \
             f"Wrong category for '{phrase}': {result[0]}"
@@ -440,7 +440,7 @@ def test_no_false_positive_on_shelter_search():
     ]
     with _mock_llm_no_crisis():
         for msg in safe_messages:
-            result = detect_crisis(msg)
+            result = detect_crisis(msg, skip_llm=True)
             assert result is None, \
                 f"False positive on shelter search: '{msg}' → {result[0] if result else None}"
 
@@ -454,7 +454,7 @@ def test_is_crisis_helper():
 def test_crisis_in_longer_message():
     """Crisis language embedded in a longer message should still be detected."""
     msg = "I've been homeless for a month and I just want to die"
-    result = detect_crisis(msg)
+    result = detect_crisis(msg, skip_llm=True)
     assert result is not None
     assert result[0] == "suicide_self_harm"
 
@@ -462,7 +462,7 @@ def test_crisis_in_longer_message():
 def test_crisis_with_service_request():
     """Crisis language mixed with a service request should still detect crisis."""
     msg = "I need shelter and I'm being abused by my partner"
-    result = detect_crisis(msg)
+    result = detect_crisis(msg, skip_llm=True)
     assert result is not None
     assert result[0] == "domestic_violence"
 
@@ -484,7 +484,7 @@ def test_llm_not_called_when_regex_fires():
 
     with patch.object(cd, '_USE_LLM_DETECTION', True), \
          patch.object(cd, '_detect_crisis_llm') as mock_llm:
-        result = detect_crisis("I want to kill myself")
+        result = detect_crisis("I want to kill myself", skip_llm=True)
 
     assert result is not None
     assert result[0] == "suicide_self_harm"

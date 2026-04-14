@@ -2,7 +2,7 @@
 
 ## Overview
 
-The test suite covers ~2,033+ tests across 46 test files, plus an LLM-as-judge evaluation framework with 167 scenarios. Tests are organized into `tests/unit/` (31 files — no DB or LLM needed) and `tests/integration/` (15 files — use mocked DB/LLM via `send()`/`send_multi()` helpers), with a separate `tests/eval/` directory for the LLM judge. Tests validate every backend module: slot extraction (regex, semantic embedding, and LLM-based), gender/LGBTQ identity extraction, population context extraction (veteran, disabled, reentry, foster_youth, dv_survivor, pregnant, senior — with false-positive guards, multi-population support, query boost verification, DV crisis injection), PII redaction (including gender identity terms) and PII safety warnings, conversational routing, crisis detection (7 categories: suicide_self_harm, medical_emergency, domestic_violence, youth_runaway, assault_victim, safety_concern, trafficking), crisis step-down (including DV population injection and slot preservation for youth_runaway/assault_victim), emotional handling (AVR pattern with 6 emotion-specific static responses), frustration routing (3-tier counter-based escalation), negative preference handling, conversational awareness guard, privacy routing exception, phrase list audit coverage (C-SSRS, Joiner IPT, DV control, shame/stigma, grief, NYC service terms), contraction normalization, intensifier stripping, post-normalization emotional phrase variants, location boundary enforcement, query template correctness (including dynamic ORDER BY generation with population boosts), confirmation flow (including population-aware prefixes, warm reframe, baseline warmth), quick replies, audit logging, admin API routes, chat HTTP endpoint, Pydantic model validation, Claude client initialization, API configuration, session management, geolocation, rate limiting, request correlation IDs, privacy question handling, family composition, multi-service extraction, split classifier (action + tone), shelter taxonomy enrichment, word-boundary keyword collision prevention, nearby borough suggestions, bug fix regressions (7 targeted fixes with 30 tests), post-results question handling, crisis safety edge cases (research-sourced C-SSRS, HITS/SAFE, Polaris, SAMHSA), co-located multi-service queries, gap coverage (freshness, admin stats shape, skip_llm pipeline, prompt builders), quick reply button audit, SQLite pilot persistence (write-through, hydration, disabled mode), database schema/query integration, bot self-knowledge (live capability sourcing, topic matching), boundary drift detection (mock/Pydantic/SQL/format sync), context-aware routing (state transitions, frustration counting, implicit service changes), integration scenarios (narrative flows, cross-feature interactions, eval approximations), narrative extraction (urgency-aware slot extraction for long messages), ambiguity handling (confidence scoring, disambiguation prompts, correction recovery, "Not what I meant" button), post-results boundary routing (new-request escape hatch, location-based result clearing, name-match fallthrough), and semantic routing (route definitions, initialization, service classification, false positive rejection, population detection, threshold behavior, integration fallthrough, graceful degradation, observability, route alignment). Unit tests run without external services (database and Claude API are mocked). DB integration tests require DATABASE_URL and are automatically skipped without it.
+The test suite covers ~2,863 tests across 55 test files, plus an LLM-as-judge evaluation framework with 167 scenarios. Tests are organized into `tests/unit/` (42 files — no DB or LLM needed) and `tests/integration/` (17 files — use mocked DB/LLM via `send()`/`send_multi()` helpers), with a separate `tests/eval/` directory for the LLM judge. Tests validate every backend module: slot extraction (regex, semantic embedding, and LLM-based), gender/LGBTQ identity extraction, population context extraction (veteran, disabled, reentry, foster_youth, dv_survivor, pregnant, senior — with false-positive guards, multi-population support, query boost verification, DV crisis injection), PII redaction (including gender identity terms) and PII safety warnings, conversational routing, crisis detection (7 categories: suicide_self_harm, medical_emergency, domestic_violence, youth_runaway, assault_victim, safety_concern, trafficking), crisis step-down (including DV population injection and slot preservation for youth_runaway/assault_victim), emotional handling (AVR pattern with 6 emotion-specific static responses), frustration routing (3-tier counter-based escalation), negative preference handling, conversational awareness guard, privacy routing exception, phrase list audit coverage (C-SSRS, Joiner IPT, DV control, shame/stigma, grief, NYC service terms), contraction normalization, intensifier stripping, post-normalization emotional phrase variants, location boundary enforcement, query template correctness (including dynamic ORDER BY generation with population boosts), confirmation flow (including population-aware prefixes, warm reframe, baseline warmth), quick replies, audit logging, admin API routes, chat HTTP endpoint, Pydantic model validation, Claude client initialization, API configuration, session management, geolocation, rate limiting, request correlation IDs, privacy question handling, family composition, multi-service extraction, split classifier (action + tone), shelter taxonomy enrichment, word-boundary keyword collision prevention, nearby borough suggestions, bug fix regressions (7 targeted fixes with 30 tests), post-results question handling, crisis safety edge cases (research-sourced C-SSRS, HITS/SAFE, Polaris, SAMHSA), co-located multi-service queries, gap coverage (freshness, admin stats shape, skip_llm pipeline, prompt builders), quick reply button audit, SQLite pilot persistence (write-through, hydration, disabled mode), database schema/query integration, bot self-knowledge (live capability sourcing, topic matching), boundary drift detection (mock/Pydantic/SQL/format sync), context-aware routing (state transitions, frustration counting, implicit service changes), integration scenarios (narrative flows, cross-feature interactions, eval approximations), narrative extraction (urgency-aware slot extraction for long messages), ambiguity handling (confidence scoring, disambiguation prompts, correction recovery, "Not what I meant" button), post-results boundary routing (new-request escape hatch, location-based result clearing, name-match fallthrough), and semantic routing (route definitions, initialization, service classification, false positive rejection, population detection, threshold behavior, integration fallthrough, graceful degradation, observability, route alignment). Unit tests run without external services (database and Claude API are mocked). DB integration tests require DATABASE_URL and are automatically skipped without it.
 
 ## Running Tests
 
@@ -16,7 +16,7 @@ source backend/venv/bin/activate
 
 ```
 pip install pytest httpx
-pytest tests/ -v
+pytest tests/ -q --ignore=tests/integration/test_admin_api_routes.py --ignore=tests/integration/test_rate_limit_integration.py --tb=short
 ```
 
 **Run unit tests only (fast, no external deps):**
@@ -40,7 +40,7 @@ pytest tests/unit/test_slot_extractor.py -v
 **Run a single test:**
 
 ```
-pytest tests/integration/test_chatbot.py::test_confirm_deny_breaks_loop -v
+pytest tests/integration/test_classification_and_routing.py::test_confirm_deny_breaks_loop -v
 ```
 
 **Run LLM-as-judge evaluation (requires API key):**
@@ -52,7 +52,7 @@ ANTHROPIC_API_KEY=sk-ant-... python tests/eval/eval_llm_judge.py
 **Run LLM integration tests (requires API key):**
 
 ```
-ANTHROPIC_API_KEY=sk-ant-... pytest tests/test_llm_slot_extractor.py -v
+ANTHROPIC_API_KEY=sk-ant-... pytest tests/unit/test_llm_slot_extractor.py -v
 ```
 
 Without `ANTHROPIC_API_KEY`, the 5 live LLM tests are automatically skipped.
@@ -63,17 +63,17 @@ All 21 backend modules and all public functions are covered. Tests are in `tests
 
 | Module | Test file(s) | Tests | Status |
 |---|---|---|---|
-| `chatbot.py` | `integration/test_chatbot.py`, `integration/test_bug_fixes.py`, `integration/test_context_routing.py`, `integration/test_integration_scenarios.py`, `integration/test_ambiguity_handling.py`, `unit/test_service_card_display.py`, `unit/test_results_enhancements.py` | 310+ | Full |
-| `classifier.py` | `unit/test_contraction_normalization.py`, `unit/test_phrase_audit.py`, `integration/test_chatbot.py` | 60+ | Full |
+| `chatbot.py` | `integration/test_classification_and_routing.py`, `integration/test_targeted_bug_regressions.py`, `integration/test_multi_turn_and_context.py`, `integration/test_narrative_and_eval_scenarios.py`, `integration/test_ambiguity_handling.py`, `unit/test_service_card_display.py`, `unit/test_results_enhancements.py` | 310+ | Full |
+| `classifier.py` | `unit/test_contraction_normalization.py`, `unit/test_phrase_audit.py`, `integration/test_classification_and_routing.py` | 60+ | Full |
 | `phrase_lists.py` | `unit/test_phrase_audit.py` | 41 | Full |
-| `responses.py` | `integration/test_chatbot.py`, `integration/test_gap_coverage.py` | (inline) | Full |
-| `confirmation.py` | `unit/test_edge_cases.py`, `unit/test_gender_extraction.py`, `integration/test_chatbot.py` | (inline) | Full |
+| `responses.py` | `integration/test_classification_and_routing.py`, `integration/test_format_pipeline_and_admin.py` | (inline) | Full |
+| `confirmation.py` | `unit/test_edge_cases.py`, `unit/test_gender_extraction.py`, `integration/test_classification_and_routing.py` | (inline) | Full |
 | `slot_extractor.py` | `unit/test_slot_extractor.py`, `unit/test_gender_extraction.py`, `unit/test_edge_cases.py`, `unit/test_location_boundaries.py`, `unit/test_populations.py`, `unit/test_org_name_search.py`, `unit/test_walk_in_and_card_extras.py` | 330+ | Full |
-| `rag/__init__.py` | `unit/test_query_templates.py`, `unit/test_populations.py`, `unit/test_org_name_search.py`, `unit/test_walk_in_and_card_extras.py`, `integration/test_geolocation.py`, `integration/test_db_integration.py` | 125+ | Full |
+| `rag/__init__.py` | `unit/test_query_templates.py`, `unit/test_populations.py`, `unit/test_org_name_search.py`, `unit/test_walk_in_and_card_extras.py`, `integration/test_browser_geolocation.py`, `integration/test_db_integration.py` | 125+ | Full |
 | `query_templates.py` | `unit/test_query_templates.py`, `unit/test_location_boundaries.py`, `unit/test_service_card_display.py`, `unit/test_walk_in_and_card_extras.py` | 120+ | Full |
 | `query_executor.py` | `unit/test_location_boundaries.py`, `unit/test_edge_cases.py` | 65 | Full |
-| `audit_log.py` | `unit/test_audit_log.py`, `unit/test_location_feedback.py`, `integration/test_bug_fixes.py`, `integration/test_admin.py`, `integration/test_ambiguity_handling.py` | 77+ | Full |
-| `crisis_detector.py` | `unit/test_crisis_detector.py`, `integration/test_bug_fixes.py`, `integration/test_crisis_safety_edges.py` | 60+ | Full |
+| `audit_log.py` | `unit/test_audit_log.py`, `unit/test_location_feedback.py`, `integration/test_targeted_bug_regressions.py`, `integration/test_admin_api_routes.py`, `integration/test_ambiguity_handling.py` | 77+ | Full |
+| `crisis_detector.py` | `unit/test_crisis_detector.py`, `integration/test_targeted_bug_regressions.py`, `integration/test_crisis_safety_edges.py` | 60+ | Full |
 | `llm_slot_extractor.py` | `unit/test_llm_slot_extractor.py`, `unit/test_narrative_extraction.py`, `unit/test_semantic_router.py` | 44+ | Full |
 | `semantic_router.py` | `unit/test_semantic_router.py` | 54 | Full |
 | `semantic_routes.py` | `unit/test_semantic_router.py` | 54 | Full |
@@ -81,20 +81,21 @@ All 21 backend modules and all public functions are covered. Tests are in `tests
 | `bot_knowledge.py` | `unit/test_bot_knowledge.py` | 37 | Full |
 | `post_results.py` | `unit/test_post_results.py`, `unit/test_post_results_boundary.py`, `unit/test_results_enhancements.py` | 125 | Full |
 | `pii_redactor.py` | `unit/test_pii_redactor.py`, `unit/test_gender_extraction.py`, `unit/test_edge_cases.py` | 38+ | Full |
-| `session_store.py` | `unit/test_session_store.py`, `integration/test_chatbot.py`, `integration/test_chat_route.py` | 7+ | Full |
-| `session_token.py` | `unit/test_session_token.py`, `integration/test_chat_route.py` | 17 | Full |
+| `session_store.py` | `unit/test_session_store.py`, `integration/test_classification_and_routing.py`, `integration/test_http_routes_and_models.py` | 7+ | Full |
+| `session_token.py` | `unit/test_session_token.py`, `integration/test_http_routes_and_models.py` | 17 | Full |
 | `rate_limiter.py` | `unit/test_rate_limiter.py`, `integration/test_rate_limit_integration.py` | 24 | Full |
-| `chat_models.py` | `integration/test_chat_route.py`, `integration/test_boundary_drift.py` | 27+ | Full |
-| `admin.py` (routes) | `integration/test_admin.py` | 28 | Full |
-| `chat.py` (route) | `integration/test_chat_route.py` | 48 | Full |
+| `chat_models.py` | `integration/test_http_routes_and_models.py`, `integration/test_schema_and_mock_sync.py` | 27+ | Full |
+| `admin.py` (routes) | `integration/test_admin_api_routes.py` | 28 | Full |
+| `chat.py` (route) | `integration/test_http_routes_and_models.py` | 48 | Full |
 | `claude_client.py` | `unit/test_claude_client.py` | 19 | Full |
 | `main.py` | `unit/test_main.py` | 14 | Full |
+| LLM isolation (cross-cutting) | `integration/test_service_data_llm_firewall.py` | 57 | Full |
 
 **Not covered:** Frontend TypeScript/React components (`frontend-next/`). There is no frontend test infrastructure in the project yet. See "Known Limitations" section below.
 
 ## Test Suites
 
-### `integration/test_chatbot.py` — 193 tests
+### `integration/test_classification_and_routing.py` — 193 tests
 
 Validates the main chatbot routing — message classification (split classifier in `classifier.py`), slot extraction routing, PII redaction integration, confirmation flow (in `confirmation.py`), quick replies, emotional awareness (responses in `responses.py`), bot questions, privacy question handling, static fallbacks, context-aware yes/no, frustration loop detection, family composition, gender/LGBTQ identity handling, combined action+tone routing, tone prefix assertions, escalation guard, nearby borough suggestions, location-unknown interceptor, service flow continuation, and LLM fallback. External dependencies are mocked.
 
@@ -273,7 +274,7 @@ Validates the Tier 2 semantic routing module: route definitions, model initializ
 | Ring buffer | 3 | Caps at MAX_EVENTS, evicts oldest, conversation index stays within MAX_CONVERSATIONS |
 | Thread safety | 1 | 17 concurrent threads logging and reading simultaneously |
 
-### `test_admin.py` — 28 tests
+### `test_admin_api_routes.py` — 28 tests
 
 HTTP-level tests for the admin API endpoints using FastAPI TestClient.
 
@@ -290,7 +291,7 @@ HTTP-level tests for the admin API endpoints using FastAPI TestClient.
 | Admin rate limits | 2 | 429 after exceeding IP limit, stricter eval/run limit |
 | Health | 1 | `GET /api/health` returns ok |
 
-### `test_chat_route.py` — 48 tests
+### `test_http_routes_and_models.py` — 50 tests
 
 HTTP-level tests for the chat endpoint and Pydantic model validation.
 
@@ -304,6 +305,7 @@ HTTP-level tests for the chat endpoint and Pydantic model validation.
 | ChatResponse model | 4 | Minimal with defaults, nested ServiceCards, missing required rejected, JSON round-trip |
 | HTTP basics | 8 | Valid 200, session_id generated/preserved, missing message 422, non-JSON 422, no body 422, empty message guard, response schema validation |
 | HTTP multi-turn | 4 | Full conversation with service cards, slot accumulation, reset, quick reply structure |
+| HTTP error handling | 2 | Crash returns yourpeer.nyc link (not 500), session_id preserved on crash |
 | HTTP crisis | 1 | Returns 988 resources, no service cards, query_services not called |
 | HTTP method | 1 | GET /chat/ returns non-200 |
 | Session token validation | 5 | Forged session_id → 403, tampered signature → 403, valid signed token → 200, first message mints signed token, feedback rejects forged token |
@@ -365,7 +367,7 @@ Validates HMAC-signed session token generation and verification.
 | Edge cases | 3 | Empty string rejected, bare dot rejected, wrong secret rejected |
 | Format robustness | 2 | Tokens with dots in raw portion handled correctly, constant-time comparison used |
 
-### `test_geolocation.py` — 11 tests
+### `test_browser_geolocation.py` — 11 tests
 
 Validates browser geolocation support: coordinate acceptance, session storage, "near me" + coords flow, and proximity query integration.
 
@@ -431,7 +433,7 @@ Validates phrase additions from the P0–P3 audit (see PHRASE_LIST_AUDIT.md). Pa
 
 Validates `_normalize_contractions()`, `_strip_intensifiers()`, and their integration with `_classify_tone()`. Covers individual contraction expansions, full sentences, multiple contractions, non-contraction preservation, frustration/confused/emotional detection via normalization, help-negator handling ("doesn't help" → frustration not help), intensifier stripping for emotion/frustration/confused classification, and confirms normalization does not affect crisis detection (which uses explicit enumeration).
 
-### `test_structural_fixes.py` — 43 tests
+### `test_crisis_and_flow_regressions.py` — 43 tests
 
 Regression tests for structural fixes across 8 test classes. Covers: PII safety warnings (SSN strong warning, phone light heads-up, combined with service flow), foster youth population (aging out → foster_youth not reentry, confirmation shows youth-friendly), pregnant ≠ with_children (pregnancy sets population tag only), youth_runaway crisis category (Runaway Safeline + Covenant House, distinct from DV), assault_victim crisis category (Safe Horizon Victim Services), safety_concern response de-DV'd (988 + 311, no DV hotlines), confirmation warm reframe ("I'll look for..." format), results personalization ("I found X option(s) for you"), and baseline warmth prefixes (random_warmth_prefix fires on routine service flows, doesn't override emotional/shame/urgent contexts).
 
@@ -439,7 +441,7 @@ Regression tests for structural fixes across 8 test classes. Covers: PII safety 
 
 Validates PR 4's LLM multi-service extraction. Covers `additional_service_types` in the LLM tool response, single-service returns empty additional list, multiple additional services, null handling, failure fallback, `extract_slots_smart` merging LLM and regex additional services, deduplication of primary service, and key cleanup.
 
-### `test_bug_fixes.py` — 30 tests
+### `test_targeted_bug_regressions.py` — 30 tests
 
 Targeted regression tests for bugs 8–14 identified during PR 19 review. Organized by bug number:
 
@@ -461,11 +463,11 @@ Post-results question handler — answers follow-up questions about displayed se
 
 Research-sourced crisis detection edge cases from C-SSRS (5 severity levels), HITS/SAFE DV screening, Polaris trafficking indicators, SAMHSA TIP 55 homeless population patterns, and Covenant House/Ali Forney youth research. Tests are organized into regex coverage (what the instant check catches), LLM-dependent gaps (xfailed with research citations), post-results safety (eval P10), and false positive guards. The 34 xfails serve as a roadmap: promoting a phrase from xfail to the regex list immediately upgrades it to instant detection.
 
-### `test_coverage_gaps.py` — 36 tests
+### `test_utility_and_session_edges.py` — 36 tests
 
 Coverage gap tests for 8 high/medium priority areas: zip code full flow (4), crisis step-down + multi-intent (2), LLM contradictory category (2), near-me sentinel safety (3), session_exists (3), get_client_ip (5), _extract_session_id (4), _normalize_url (9), feedback→stats (4).
 
-### `test_gap_coverage.py` — 43 tests
+### `test_format_pipeline_and_admin.py` — 43 tests
 
 Comprehensive gap coverage for 9 areas identified during audit: `_compute_freshness` timezone/boundary handling (8), admin `/api/stats` response shape for routing/tone/multi_intent (6), post-results through `generate_reply` end-to-end (4), `skip_llm` through chatbot pipeline (2), `also_available` in post-results detail view (4), `last_validated_at` timezone edge cases (4), multi-intent queue decline with 2-item queue (2), prompt builder function shapes and guardrails (8), `format_service_card` deduplication and filtering (5).
 
@@ -489,7 +491,7 @@ Validates the bot self-knowledge module: live capability sourcing from actual co
 | False positives | varies | Service and action messages don't match topics |
 | Bot question routing | 3 | Privacy/location/services questions route correctly through chatbot |
 
-### `test_boundary_drift.py` — 20 tests
+### `test_schema_and_mock_sync.py` — 20 tests
 
 Prevents silent data loss at serialization boundaries by asserting that mock fixtures, Pydantic models, SQL queries, and format functions all agree on the same field set. Catches the class of bug where new fields are added to one layer but not others.
 
@@ -503,7 +505,7 @@ Prevents silent data loss at serialization boundaries by asserting that mock fix
 | Admin stats drift | 5 | Top-level keys, confirmation breakdown shape, conversation quality shape, tone distribution shape, multi-intent shape |
 | Persistence failure isolation | 6 | log_conversation_turn, log_query_execution, log_feedback, save/clear session, full generate_reply all survive persistence failures |
 
-### `test_context_routing.py` — 56 tests
+### `test_multi_turn_and_context.py` — 56 tests
 
 Comprehensive regression tests for multi-turn, multi-intent, and context-aware routing. Guards against state transition bugs, _last_action lifecycle issues, frustration counting, and handler interaction patterns found in eval analysis.
 
@@ -521,7 +523,7 @@ Comprehensive regression tests for multi-turn, multi-intent, and context-aware r
 | Other service type interception | 2 | "Other" without detail is unrecognized, with detail is legitimate |
 | Implicit service change | 8 | Direct service change, negation with new service, same service different location, confirm_yes unaffected, location carries over, shows new confirmation, additive keeps primary, additive then confirm searches primary |
 
-### `test_integration_scenarios.py` — 29 tests
+### `test_narrative_and_eval_scenarios.py` — 29 tests
 
 Integration tests that send messages through the full `generate_reply` pipeline. Reproduces failing eval scenarios and tests cross-feature interactions: narrative + emotional, PII in narratives, shame prefix + narrative extraction, session isolation.
 

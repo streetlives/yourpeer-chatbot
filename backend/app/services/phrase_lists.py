@@ -145,7 +145,7 @@ _FRUSTRATION_PHRASES = [
     "already tried", "tried that", "tried those",
     "none of those", "none of them", "doesn't work",
     "doesnt work", "didn't work", "didnt work",
-    "useless", "waste of time", "not working",
+    "useless", "waste of time", "not working", "nothing works",
     "can't find anything", "cant find anything",
     "not what i needed", "not what i need",
     "wrong results", "results are bad", "results are wrong",
@@ -479,6 +479,14 @@ _CONFIRM_DENY_PHRASES = [
     "i'm good", "im good", "nah i'm good", "nah im good",
     "all good", "no need",
     "i'm fine", "im fine", "no i'm fine", "no im fine",
+]
+
+# Deny words that remain denials even with trailing text.
+# "nah food" during confirmation means "no, not food" — the user is
+# declining, not requesting food. Without this, "nah" only matches as
+# an exact phrase and "nah, food" falls through with no action detected.
+_CONFIRM_DENY_STARTSWITH = [
+    "nah ", "nope ", "no way",
 ]
 
 

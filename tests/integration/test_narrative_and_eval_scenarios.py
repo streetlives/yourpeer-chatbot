@@ -11,6 +11,12 @@ import uuid
 from conftest import send, send_multi
 from app.services.session_store import get_session_slots
 from app.privacy.pii_redactor import redact_pii
+from app.services.chatbot import _USE_LLM
+
+requires_llm = pytest.mark.skipif(
+    not _USE_LLM,
+    reason="Requires ANTHROPIC_API_KEY for LLM narrative extraction",
+)
 
 
 @pytest.fixture
@@ -26,6 +32,7 @@ class TestNarrativeIntegration:
     """Long messages should go through narrative extraction and produce
     correct service confirmations."""
 
+    @requires_llm
     def test_hospital_housing_narrative(self, sid):
         """Eval: natural_long_story — housing need misextracted as medical."""
         r = send(
@@ -47,6 +54,7 @@ class TestNarrativeIntegration:
         )
         assert r["slots"].get("service_type") == "shelter"
 
+    @requires_llm
     def test_eviction_family_narrative(self, sid):
         """Eval: wa_tell_my_story — employment prioritized over shelter."""
         r = send(
@@ -58,6 +66,7 @@ class TestNarrativeIntegration:
         assert r["slots"].get("service_type") == "shelter"
         assert "east new york" in r["slots"].get("location", "").lower()
 
+    @requires_llm
     def test_runaway_youth_narrative(self, sid):
         """Eval: multi_dycd_rhy_youth_runaway — shelter missed, only clothing."""
         r = send(
@@ -89,7 +98,7 @@ class TestNarrativeIntegration:
         )
         queued = r["slots"].get("_queued_services", [])
         # Employment or medical should be queued
-        queued_types = [s for s, _ in queued] if queued else []
+        queued_types = [s for s, *_ in queued] if queued else []
         assert len(queued_types) >= 1, \
             f"Should queue additional services, got: {queued}"
 
@@ -132,6 +141,7 @@ class TestCrossFeatureInteractions:
         assert ("shame" in resp or "strength" in resp or
                 "lot of people" in resp or "shelter" in resp.lower())
 
+    @requires_llm
     def test_intensifiers_in_narrative(self, sid):
         """Intensifiers in narratives should be stripped for phrase matching."""
         r = send(
@@ -303,6 +313,7 @@ class TestEvalScenarioApproximations:
 
     # --- Narrative (4-5 scenarios — fixed post-R18) ---
 
+    @requires_llm
     def test_eval_long_story(self, sid):
         r = send(
             "I just got out of the hospital after being there for a week "
@@ -312,6 +323,7 @@ class TestEvalScenarioApproximations:
         )
         assert r["slots"].get("service_type") == "shelter"
 
+    @requires_llm
     def test_eval_tell_my_story(self, sid):
         r = send(
             "I'm 34 years old and I just got evicted from my apartment "
