@@ -90,7 +90,7 @@ export function ConversationTable({ conversations }: ConversationTableProps) {
                   aria-label={`View transcript for session ${c.session_id.slice(0, 12)}`}
                   className="cursor-pointer hover:bg-amber-50/50 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 focus-visible:ring-offset-1"
                 >
-                  <td className="px-4 py-2.5 font-mono text-xs text-neutral-500 border-b border-neutral-100">
+                  <td className="px-4 py-2.5 font-mono text-xs text-neutral-500 border-b border-neutral-100" title={c.session_id}>
                     {c.session_id.slice(0, 12)}…
                   </td>
                   <td className="px-4 py-2.5 border-b border-neutral-100">
@@ -119,7 +119,7 @@ export function ConversationTable({ conversations }: ConversationTableProps) {
                     {slots}
                   </td>
                   <td className="px-4 py-2.5 font-mono text-xs text-neutral-400 border-b border-neutral-100">
-                    {new Date(c.last_seen).toLocaleString()}
+                    {new Date(c.last_seen).toLocaleString("en-US", { timeZone: "America/New_York" })}
                   </td>
                 </tr>
               );

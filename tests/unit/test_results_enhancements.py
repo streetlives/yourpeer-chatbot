@@ -144,19 +144,6 @@ class TestSortPatterns:
         assert dates == sorted(dates, reverse=True)
         clear_session(sid)
 
-    def test_sort_qr_offered_with_multiple_results(self):
-        """Sort QR should appear when there are multiple results."""
-        mock_many = dict(MOCK_QUERY_RESULTS)
-        mock_many["services"] = [dict(MOCK_QUERY_RESULTS["services"][0]) for _ in range(3)]
-        mock_many["result_count"] = 3
-        results = send_multi(
-            ["I need food", "Brooklyn", "Yes, search"],
-            mock_query_return=mock_many,
-        )
-        final = results[-1]
-        qr_labels = [qr["label"] for qr in final.get("quick_replies", [])]
-        assert any("recently verified" in label.lower() for label in qr_labels)
-
     def test_unrecognized_sort_falls_through(self):
         """An unrecognized sort phrase should not match."""
         sid, results = _session_with_results(3)

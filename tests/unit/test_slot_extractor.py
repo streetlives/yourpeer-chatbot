@@ -489,12 +489,18 @@ def test_merge_overrides_with_new():
     assert merged["location"] == "Brooklyn"
 
 
-def test_merge_near_me_doesnt_override_real_location():
-    """A 'near me' sentinel should NOT replace an existing real location."""
+def test_merge_near_me_overrides_stale_location():
+    """A 'near me' sentinel SHOULD replace an existing location.
+
+    When the user explicitly says 'close by' or 'near me', they want
+    proximity search — not the location from a previous search. The
+    sentinel must override to prevent silently ignoring the user's
+    explicit request.
+    """
     existing = {"location": "Brooklyn"}
     new = {"location": NEAR_ME_SENTINEL}
     merged = merge_slots(existing, new)
-    assert merged["location"] == "Brooklyn"
+    assert merged["location"] == NEAR_ME_SENTINEL
 
 
 def test_merge_real_location_replaces_near_me():

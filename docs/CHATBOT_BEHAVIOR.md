@@ -391,7 +391,7 @@ After search results are displayed, follow-up questions are answered determinist
 | `unknown_about_results` | "do they take walk-ins?" | Honest "I don't have that info" |
 | No match | (new service request) | Falls through to normal routing |
 
-**Sort options:** After results, a "🕐 Sort by recently verified" quick reply is offered. Sort patterns ("sort by recently verified", "sort by most services", etc.) re-sort `_last_results` in Python and return the re-ordered cards.
+**Sort options:** Users can type "sort by recently verified" or "sort by most services" to re-sort `_last_results` in Python and return re-ordered cards. Sort is available via text input only — the quick reply button was removed to reduce visual clutter.
 
 **Pagination / show more:** Initial query fetches 25 results but displays the first 10. When undisplayed results exist, a "📋 Show N more results" quick reply is offered. "Show more", "more results", "any others", "what else" (10 patterns) return the undisplayed remainder.
 

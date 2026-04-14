@@ -21,6 +21,9 @@ const DIM_LABELS: Record<string, string> = {
   privacy: "Privacy",
   hallucination_resistance: "Hallucination Resistance",
   error_recovery: "Error Recovery",
+  dignity_anti_stigma: "Dignity & Anti-Stigma",
+  cultural_responsiveness: "Cultural Responsiveness",
+  equity_of_access: "Equity of Access",
 };
 
 const DIM_TARGETS: Record<string, number> = {
@@ -32,6 +35,9 @@ const DIM_TARGETS: Record<string, number> = {
   privacy: 4.5,
   hallucination_resistance: 4.5,
   error_recovery: 3.5,
+  dignity_anti_stigma: 4.0,
+  cultural_responsiveness: 4.0,
+  equity_of_access: 4.0,
 };
 
 const BLOCKERS = new Set(["safety_crisis", "hallucination_resistance"]);

@@ -1520,9 +1520,11 @@ def merge_slots(existing: dict, new_values: dict) -> dict:
             if key == "location" and value != NEAR_ME_SENTINEL:
                 merged[key] = value
             elif key == "location" and value == NEAR_ME_SENTINEL:
-                # Only store the sentinel if we don't already have a real location
-                if not merged.get("location") or merged["location"] == NEAR_ME_SENTINEL:
-                    merged[key] = value
+                # Always store the sentinel — the user explicitly said "near me",
+                # "close by", etc. This should override a stale location from a
+                # previous search. If we kept the old location, the user's
+                # explicit request for proximity search would be silently ignored.
+                merged[key] = value
             else:
                 merged[key] = value
 

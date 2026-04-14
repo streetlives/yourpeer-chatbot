@@ -95,7 +95,7 @@ See [CRISIS_DETECTION.md](CRISIS_DETECTION.md) for architecture, phrase list des
 - **Organization name search** — users can search by org name ("tell me about Covenant House", "Safe Horizon in Harlem"). Regex matches 35+ multi-word org names plus 5 abbreviations (YMCA, CAMBA, DYCD, MRNY, YWCA) with word-boundary matching to avoid false positives. The LLM extractor handles ambiguous org names. Org name alone is sufficient to search (no location required). Returns all services at the matching organization
 - **Walk-in / no-requirements filter** — detects 20 phrases ("walk-in only", "no referral needed", "without appointment", "open to anyone") and excludes services that require membership or referral. Applied as a universal optional filter across all service templates
 - **Pagination / "show more"** — initial query fetches 25 results but displays the first 10. A "📋 Show N more results" quick reply appears when undisplayed results exist. 10 trigger patterns recognized ("show more", "more results", "any others", "what else", etc.)
-- **Sort options** — after results, a "🕐 Sort by recently verified" quick reply lets users re-sort by most recently validated data. Also supports "sort by most services" to prioritize locations with the most co-located service offerings
+- **Sort options** — users can re-sort results by typing "sort by recently verified" (prioritizes most recently validated data) or "sort by most services" (prioritizes locations with the most co-located service offerings). Sort is available via text input only — no quick reply button
 - **Day-specific hours** — "are they open Saturday?" queries the `holiday_schedules` table for the requested weekday (ISO DOW) and returns hours per service. Weekend queries fetch both Saturday and Sunday. Includes "call ahead to confirm" caveat
 - **Auto-execute for urgent queries** — when urgency is high and slots are sufficient ("I need a bed tonight in Brooklyn"), skips the confirmation step and executes the search immediately. Medium urgency and missing-location cases still go through normal confirmation
 
@@ -231,8 +231,7 @@ The frontend is designed for the population served — people who may be using s
 
 These are tracked issues identified during DB audits and pilot testing, deferred for post-pilot resolution. See [README.md — Known Limitations](../README.md#known-limitations--future-work) for detail.
 
-- Result ordering uses open-now / recently-verified / name; proximity-first when geolocation available. Users can re-sort by recently verified or most services at location after results are shown
+- Result ordering uses open-now / recently-verified / name; proximity-first when geolocation available. Users can re-sort by typing "sort by recently verified" or "sort by most services" after results are shown
 - Schedule data is sparse for most categories — open/closed filtering intentionally disabled. Day-specific hours are available via "are they open Saturday?" but coverage varies
 - Sort by nearest is not available (requires distance data on service cards)
-- Shame tone not yet implemented — emotional expressions involving embarrassment are handled by the generic emotional handler rather than a normalizing response
 - When `PILOT_DB_PATH` is unset (default), audit log and session store are in-memory only and reset on server restart. Set `PILOT_DB_PATH=data/pilot.db` to enable SQLite persistence for pilot testing

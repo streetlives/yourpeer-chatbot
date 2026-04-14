@@ -237,10 +237,13 @@ def get_conversations_summary(limit=50) -> list:
             crisis = any(e.get("type") == "crisis_detected" for e in events)
             categories = list({t.get("category", "") for t in turns if t.get("category")})
             last_turn = turns[-1] if turns else {}
+            queries_in_session = [e for e in events if e.get("type") == "query_execution"]
+            max_services = max((t.get("services_count", 0) for t in turns), default=0)
             summaries.append({
                 "session_id": session_id,
                 "turn_count": len(turns),
-                "services_delivered": last_turn.get("services_count", 0),
+                "services_delivered": max_services,
+                "queries_executed": len(queries_in_session),
                 "crisis_detected": crisis,
                 "categories": categories,
                 "final_slots": last_turn.get("slots", {}),
@@ -342,6 +345,31 @@ def get_stats() -> dict:
     time_of_day = _compute_time_of_day(all_events)
     post_results_eng = _compute_post_results_engagement(turns, queries)
 
+    # --- Overview headline metrics (pre-computed for overview page) ---
+    _task_completion_rate = (
+        round(len(q_sessions) / len(svc_intent), 2)
+        if svc_intent and q_sessions else None
+    )
+    # Avg turns to result: mean turn count for sessions that completed a search
+    _completed_turn_counts = []
+    _turn_counts_by_session: dict[str, int] = {}
+    for t in turns:
+        sid = t.get("session_id", "")
+        if sid:
+            _turn_counts_by_session[sid] = _turn_counts_by_session.get(sid, 0) + 1
+    for sid in q_sessions:
+        if sid in _turn_counts_by_session:
+            _completed_turn_counts.append(_turn_counts_by_session[sid])
+    _avg_turns_to_result = (
+        round(sum(_completed_turn_counts) / len(_completed_turn_counts), 1)
+        if _completed_turn_counts else None
+    )
+    _zero_result_queries = sum(1 for q in queries if q.get("result_count", 0) == 0)
+    _no_result_rate = (
+        round(_zero_result_queries / len(queries), 2)
+        if queries else None
+    )
+
     return {
         "total_events": len(all_events),
         "total_turns": len(turns),
@@ -389,6 +417,10 @@ def get_stats() -> dict:
         "repetition_rate": _compute_repetition_rate(all_events),
         # --- P3 metrics (Run 23+) ---
         "llm_metrics": _compute_llm_metrics(),
+        # --- Overview headline metrics ---
+        "task_completion_rate": _task_completion_rate,
+        "avg_turns_to_result": _avg_turns_to_result,
+        "no_result_rate": _no_result_rate,
     }
 
 
@@ -943,12 +975,40 @@ def _compute_repetition_rate(all_events: list) -> dict:
 # P3: LLM CALL METRICS
 # ---------------------------------------------------------------------------
 
-# LLM call tracking — not yet populated. When instrumentation is added
-# to claude_client.py, entries should be appended here. Each entry:
+# LLM call tracking — populated by record_llm_call() after each API call.
+# Each entry:
 #   {"timestamp": str, "session_id": str, "task": str,
 #    "model": str, "input_tokens": int, "output_tokens": int,
 #    "latency_ms": int, "success": bool}
 _llm_calls: deque = deque(maxlen=MAX_EVENTS)
+
+
+def record_llm_call(
+    task: str,
+    model: str,
+    input_tokens: int,
+    output_tokens: int,
+    latency_ms: int,
+    success: bool,
+    session_id: str = "",
+) -> None:
+    """Record an LLM API call for cost/latency/volume metrics.
+
+    Called after each Anthropic API call in claude_client.py,
+    crisis_detector.py, and llm_slot_extractor.py.
+    """
+    from datetime import datetime, timezone
+    with _lock:
+        _llm_calls.append({
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "session_id": session_id,
+            "task": task,
+            "model": model,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "latency_ms": latency_ms,
+            "success": success,
+        })
 
 
 def _compute_llm_metrics() -> dict:

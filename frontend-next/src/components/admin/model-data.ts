@@ -39,7 +39,7 @@ export interface TaskDef {
   inputTokens: number;
   outputTokens: number;
   requirements: string[];
-  recommendation: "haiku" | "sonnet";
+  recommendation: "haiku" | "sonnet" | "opus";
   rationale: string;
   isJury?: boolean;
   jurySteps?: { name: string; detail: string }[];
@@ -56,7 +56,7 @@ export interface ConfigModels {
   crisis: "haiku" | "sonnet";
   emotionalAck: "haiku" | "sonnet";
   botQuestion: "haiku" | "sonnet";
-  jury: "sonnet";
+  jury: "opus";
   futureMultilang: "sonnet";
 }
 
@@ -123,6 +123,29 @@ export const MODELS: Record<string, ModelInfo> = {
       "Slower response time than Haiku [6]",
       "Overkill for simple classification / extraction tasks",
       "Higher latency matters for real-time chat UX",
+    ],
+  },
+  opus: {
+    id: "claude-opus-4-6",
+    name: "Opus 4.6",
+    input: 5.0,
+    output: 25.0,
+    speed: "Slowest (deepest reasoning)",
+    latency: "Est. ~1.5s TTFT [3]",
+    context: "1M (beta)",
+    strengths: [
+      "Most capable reasoning model in the Claude family [9]",
+      "1M token context window \u2014 processes entire codebases in one session [9]",
+      "Adaptive thinking with deepest reasoning depth [9]",
+      "State-of-the-art on Humanity\u2019s Last Exam, Terminal-Bench 2.0, BrowseComp [9]",
+      "Outperforms GPT-5.2 by ~144 Elo on GDPval-AA (finance, legal, knowledge work) [9]",
+      "Lowest over-refusal rate among recent Claude models [9]",
+    ],
+    weaknesses: [
+      "5x input / 5x output more expensive than Haiku [8]",
+      "Highest latency \u2014 unsuitable for real-time chat",
+      "Overkill for classification, extraction, and short-form generation",
+      "Used only for evaluation judging, not production tasks",
     ],
   },
 };
@@ -224,7 +247,7 @@ export const TASKS: TaskDef[] = [
     ],
     recommendation: "haiku",
     rationale:
-      "This is a short-form generation task (2-3 sentences) with clear guardrails. The output constraints are explicit: don\u2019t list services, don\u2019t give advice, acknowledge the feeling. Haiku\u2019s instruction following is strong for well-specified tasks [5], and its 4-5x speed advantage matters because emotional messages deserve an immediate response, not a noticeable delay. The guardrails are enforced by the prompt, not by model reasoning depth \u2014 Sonnet wouldn\u2019t produce a measurably warmer response given the same constraints. If tone quality becomes a concern, this is a good candidate for A/B testing via the jury eval.",
+      "This is a short-form generation task (2-3 sentences) with clear guardrails. The output constraints are explicit: don\u2019t list services, don\u2019t give advice, acknowledge the feeling. Haiku\u2019s instruction following is strong for well-specified tasks [5], and its 4-5x speed advantage matters because emotional messages deserve an immediate response, not a noticeable delay. The guardrails are enforced by the prompt, not by model reasoning depth \u2014 Sonnet wouldn\u2019t produce a measurably warmer response given the same constraints. If tone quality becomes a concern, this is a good candidate for A/B testing via the judge eval.",
   },
   {
     id: "botQuestion",
@@ -246,11 +269,11 @@ export const TASKS: TaskDef[] = [
   },
   {
     id: "jury",
-    name: "LLM-as-a-jury evaluation",
+    name: "LLM-as-Judge evaluation",
     icon: Scale,
-    desc: "Run the existing eval suite (167 scenarios across 20 categories) with both Haiku and Sonnet performing each LLM task, then have a judge model score both. Produces empirical model-selection data to validate or override the recommendations above.",
-    inputTokens: 800,
-    outputTokens: 600,
+    desc: "Run the existing eval suite (167 scenarios across 20 categories) with both Haiku and Sonnet performing each LLM task, then have Opus score both. Produces empirical model-selection data to validate or override the recommendations above.",
+    inputTokens: 3000,
+    outputTokens: 1500,
     requirements: [
       "Run each eval scenario twice: once with Haiku, once with Sonnet on each LLM task",
       "Judge model (Opus) scores both runs on the 11 rubric dimensions (8 core + 3 domain-specific)",
@@ -258,9 +281,9 @@ export const TASKS: TaskDef[] = [
       "Focus on crisis-category scenarios \u2014 the highest-stakes decisions",
       "Produce a per-task recommendation backed by data, not just reasoning",
     ],
-    recommendation: "sonnet",
+    recommendation: "opus",
     rationale:
-      "The judge model should be MORE capable than the models being evaluated to avoid same-tier scoring bias. Claude Opus serves as the judge — it sits above both Haiku and Sonnet in Anthropic\u2019s model hierarchy. The PoLL research (Verga et al., 2024) shows a diverse jury of smaller models can outperform a single large judge, but for same-family comparison (Haiku vs Sonnet), Opus is the right choice. Use this to validate model choices before deploying \u2014 the ~$75 cost of a full jury run is cheap insurance against deploying the wrong model on crisis detection.",
+      "The judge model should be MORE capable than the models being evaluated to avoid same-tier scoring bias. Claude Opus serves as the judge \u2014 it sits above both Haiku and Sonnet in Anthropic\u2019s model hierarchy. The PoLL research (Verga et al., 2024) shows a diverse jury of smaller models can outperform a single large judge, but for same-family comparison (Haiku vs Sonnet), Opus is the right choice. Use this to validate model choices before deploying \u2014 a single eval run costs ~$15\u201325 in API credits [8].",
     isJury: true,
     jurySteps: [
       {
@@ -290,7 +313,7 @@ export const TASKS: TaskDef[] = [
       },
     ],
     juryCost:
-      "~$50-75 per full eval run (167 scenarios \u00d7 ~10 turns \u00d7 Opus judge call). Two paired runs + judging \u2248 $125-175 total.",
+      "~$15\u201325 per single eval run (167 scenarios \u00d7 Opus judge calls at $5/$25 per MTok [8]). A full paired comparison (two configs + head-to-head judging) \u2248 $50\u201375 total.",
     juryInfra:
       "eval_llm_judge.py already has the scenario bank (167 cases across 20 categories), conversation simulator, 11-dimension rubric (8 core + 3 domain-specific), weighted scoring, and Opus judge prompt. Main change: parameterize which model handles each LLM call.",
   },
@@ -308,7 +331,7 @@ export const TASKS: TaskDef[] = [
     ],
     recommendation: "sonnet",
     rationale:
-      "Sonnet 4.6 has significantly stronger multilingual capabilities. When multi-language ships, re-run the jury eval with Spanish-language scenarios to validate empirically.",
+      "Sonnet 4.6 has significantly stronger multilingual capabilities. When multi-language ships, re-run the judge eval with Spanish-language scenarios to validate empirically.",
   },
 ];
 
@@ -324,7 +347,8 @@ export const SOURCES: SourceDef[] = [
   { id: 5, text: "MindStudio \u2014 GPT-5.4 Mini vs Haiku comparison (third-party)", url: "https://www.mindstudio.ai/blog/gpt-54-mini-vs-claude-haiku-sub-agent-comparison", note: "Instruction-following and verbosity observations." },
   { id: 6, text: "Anthropic \u2014 Introducing Claude Sonnet 4.6 (Feb 2026)", url: "https://www.anthropic.com/news/claude-sonnet-4-6", note: "94% insurance benchmark is Anthropic-internal. Tool-calling and safety claims." },
   { id: 7, text: "Anthropic \u2014 Claude Sonnet product page", url: "https://www.anthropic.com/claude/sonnet", note: "\u201cZero hallucinated links\u201d and \u201c70% more token-efficient\u201d are partner/user quotes." },
-  { id: 8, text: "Claude API Pricing", url: "https://docs.anthropic.com/en/about-claude/pricing", note: "Haiku 4.5: $1/$5 per MTok. Sonnet 4.6: $3/$15 per MTok. Verified April 2026." },
+  { id: 8, text: "Claude API Pricing", url: "https://docs.anthropic.com/en/about-claude/pricing", note: "Haiku 4.5: $1/$5 per MTok. Sonnet 4.6: $3/$15 per MTok. Opus 4.6: $5/$25 per MTok. Verified April 2026." },
+  { id: 9, text: "Anthropic \u2014 Introducing Claude Opus 4.6 (Feb 2026)", url: "https://www.anthropic.com/news/claude-opus-4-6", note: "1M context window, adaptive thinking, agent teams. State-of-the-art on Terminal-Bench 2.0, HLE, BrowseComp. GDPval-AA: +144 Elo vs GPT-5.2. Used as LLM-as-judge evaluator." },
 ];
 
 // ---------------------------------------------------------------------------
@@ -332,10 +356,10 @@ export const SOURCES: SourceDef[] = [
 // ---------------------------------------------------------------------------
 
 export const CONFIGS: ConfigDef[] = [
-  { id: "recommended", name: "Recommended", tag: "Best balance", desc: "Haiku conv + slots + classification + emotional + bot Q, Sonnet crisis", models: { conv: "haiku", slots: "haiku", classification: "haiku", crisis: "sonnet", emotionalAck: "haiku", botQuestion: "haiku", jury: "sonnet", futureMultilang: "sonnet" } },
-  { id: "allHaiku", name: "All Haiku", tag: "Cheapest", desc: "Haiku for everything", models: { conv: "haiku", slots: "haiku", classification: "haiku", crisis: "haiku", emotionalAck: "haiku", botQuestion: "haiku", jury: "sonnet", futureMultilang: "sonnet" } },
-  { id: "allSonnet", name: "All Sonnet", tag: "Highest quality", desc: "Sonnet for everything", models: { conv: "sonnet", slots: "sonnet", classification: "sonnet", crisis: "sonnet", emotionalAck: "sonnet", botQuestion: "sonnet", jury: "sonnet", futureMultilang: "sonnet" } },
-  { id: "sonnetHeavy", name: "Sonnet heavy", tag: "Current pattern", desc: "Sonnet conv + slots, Haiku crisis", models: { conv: "sonnet", slots: "sonnet", classification: "sonnet", crisis: "haiku", emotionalAck: "sonnet", botQuestion: "sonnet", jury: "sonnet", futureMultilang: "sonnet" } },
+  { id: "recommended", name: "Recommended", tag: "Best balance", desc: "Haiku conv + slots + classification + emotional + bot Q, Sonnet crisis", models: { conv: "haiku", slots: "haiku", classification: "haiku", crisis: "sonnet", emotionalAck: "haiku", botQuestion: "haiku", jury: "opus", futureMultilang: "sonnet" } },
+  { id: "allHaiku", name: "All Haiku", tag: "Cheapest", desc: "Haiku for everything", models: { conv: "haiku", slots: "haiku", classification: "haiku", crisis: "haiku", emotionalAck: "haiku", botQuestion: "haiku", jury: "opus", futureMultilang: "sonnet" } },
+  { id: "allSonnet", name: "All Sonnet", tag: "Highest quality", desc: "Sonnet for everything", models: { conv: "sonnet", slots: "sonnet", classification: "sonnet", crisis: "sonnet", emotionalAck: "sonnet", botQuestion: "sonnet", jury: "opus", futureMultilang: "sonnet" } },
+  { id: "sonnetHeavy", name: "Sonnet heavy", tag: "Current pattern", desc: "Sonnet conv + slots, Haiku crisis", models: { conv: "sonnet", slots: "sonnet", classification: "sonnet", crisis: "haiku", emotionalAck: "sonnet", botQuestion: "sonnet", jury: "opus", futureMultilang: "sonnet" } },
 ];
 
 // ---------------------------------------------------------------------------
@@ -350,7 +374,7 @@ export function fmt(n: number): string {
 }
 
 export function taskCost(
-  modelKey: "haiku" | "sonnet",
+  modelKey: "haiku" | "sonnet" | "opus",
   taskId: string,
   count: number,
 ): number {

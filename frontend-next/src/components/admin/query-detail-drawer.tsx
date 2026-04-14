@@ -60,7 +60,7 @@ export function QueryDetailDrawer({ query, onClose }: QueryDetailDrawerProps) {
                 Executed at
               </div>
               <div className="text-sm text-neutral-700">
-                {new Date(query.timestamp).toLocaleString()}
+                {new Date(query.timestamp).toLocaleString("en-US", { timeZone: "America/New_York" })}
               </div>
             </div>
 
@@ -70,8 +70,8 @@ export function QueryDetailDrawer({ query, onClose }: QueryDetailDrawerProps) {
                 <div className="text-[0.7rem] font-semibold uppercase tracking-wider text-neutral-400 mb-1">
                   Session
                 </div>
-                <div className="text-sm font-mono text-neutral-500">
-                  {query.session_id}
+                <div className="text-sm font-mono text-neutral-500" title={query.session_id}>
+                  {query.session_id.slice(0, 12)}…
                 </div>
               </div>
             )}

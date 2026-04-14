@@ -166,8 +166,12 @@ export function ServiceCard({ service, isActive, index, total }: ServiceCardProp
   );
 
   const alsoItems = service.also_available || [];
-  const alsoVisible = alsoExpanded ? alsoItems : alsoItems.slice(0, ALSO_HERE_VISIBLE);
   const alsoHiddenCount = alsoItems.length - ALSO_HERE_VISIBLE;
+  // When only 1 item would be hidden, show it inline instead of "+1 more"
+  // — the button takes the same space as just showing the name.
+  const alsoVisible = alsoExpanded || alsoHiddenCount <= 1
+    ? alsoItems
+    : alsoItems.slice(0, ALSO_HERE_VISIBLE);
 
   return (
     <div
@@ -327,7 +331,7 @@ export function ServiceCard({ service, isActive, index, total }: ServiceCardProp
                 {ALSO_EMOJI[cat] || "\u2022"} {cat}
               </span>
             ))}
-            {!alsoExpanded && alsoHiddenCount > 0 && (
+            {!alsoExpanded && alsoHiddenCount > 1 && (
               <button
                 type="button"
                 onClick={() => setAlsoExpanded(true)}

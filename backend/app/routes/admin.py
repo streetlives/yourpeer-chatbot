@@ -173,7 +173,7 @@ def admin_eval_status():
 @router.post("/api/eval/run")
 async def admin_eval_run(
     scenarios: int = Query(None, ge=1, le=30, description="Max scenarios to run (default: all)"),
-    category: str = Query(None, description="Only run scenarios in this category"),
+    category: str = Query(None, pattern="^[a-z_]+$", description="Only run scenarios in this category"),
 ):
     """Trigger an LLM-as-judge eval run in the background."""
     global _eval_running, _eval_status
@@ -219,7 +219,7 @@ async def _run_eval_background(
     global _eval_running, _eval_status
 
     cmd = [
-        "python", "tests/eval_llm_judge.py",
+        "python", "tests/eval/eval_llm_judge.py",
         "--output", str(TESTS_DIR / "eval_report.json"),
     ]
     if max_scenarios:

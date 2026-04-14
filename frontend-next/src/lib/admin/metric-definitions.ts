@@ -15,6 +15,7 @@ export interface MetricDefinition {
   target: string;
   rationale: string;
   phase: "Pilot" | "Post-pilot";
+  statusNote?: string;
 }
 
 // Key: the exact MetricRow `name` string used in metrics/page.tsx
@@ -157,6 +158,7 @@ export const METRIC_DEFINITIONS: Record<string, MetricDefinition> = {
     target: "Baseline tracking",
     rationale: "Near 0% likely means detection is too narrow for this population. Very high may mean phrase lists are too broad. Expect 10-25% for the homeless population.",
     phase: "Pilot",
+    statusNote: "Status is always 'tracking' because this is a baseline metric with no pass/fail threshold. The system is collecting data to establish what normal emotional detection looks like for this population.",
   },
   "Emotional → Escalation Rate": {
     name: "Emotional → Escalation Rate",
@@ -166,6 +168,7 @@ export const METRIC_DEFINITIONS: Record<string, MetricDefinition> = {
     target: "Baseline tracking",
     rationale: "Measures whether the peer navigator offer in the emotional response is resonating. A healthy rate suggests users are engaging with the offer.",
     phase: "Pilot",
+    statusNote: "Status is always 'tracking' because this is a baseline metric. We need to observe the natural rate before setting a target — too high may mean the bot isn't resolving needs, too low may mean users don't know the option exists.",
   },
   "Emotional → Service Rate": {
     name: "Emotional → Service Rate",
@@ -175,6 +178,7 @@ export const METRIC_DEFINITIONS: Record<string, MetricDefinition> = {
     target: "Baseline tracking",
     rationale: "Shows whether users who share something emotional find their way to practical help without being pushed there.",
     phase: "Pilot",
+    statusNote: "Status is always 'tracking' because this is a baseline metric. A high rate is good — it means emotional users are still finding services. The target will be set after observing pilot data.",
   },
   "Bot Question Rate": {
     name: "Bot Question Rate",
@@ -184,6 +188,7 @@ export const METRIC_DEFINITIONS: Record<string, MetricDefinition> = {
     target: "Baseline tracking",
     rationale: "A spike may indicate users are confused about what the bot does — which could indicate an onboarding or UX problem.",
     phase: "Pilot",
+    statusNote: "Status is always 'tracking' because this is a baseline metric. Some bot questions are healthy (users learning the interface). The rate informs whether the onboarding flow needs improvement.",
   },
   "Bot Q → Frustration Rate": {
     name: "Bot Q → Frustration Rate",
@@ -211,6 +216,7 @@ export const METRIC_DEFINITIONS: Record<string, MetricDefinition> = {
     target: "Baseline tracking",
     rationale: "Measures whether users can find services through natural conversation, not just by tapping welcome menu buttons.",
     phase: "Pilot",
+    statusNote: "Status is always 'tracking' because this is a baseline metric measuring how often the conversational path leads to service discovery. Will inform whether the LLM conversational handler needs better service-intent detection.",
   },
   "⚠ General (LLM-Generated)": {
     name: "General (LLM-Generated)",
@@ -257,6 +263,7 @@ export const METRIC_DEFINITIONS: Record<string, MetricDefinition> = {
     target: "≥ 95%",
     rationale: "The template query design should make mismatches rare. Any miss is a template bug — the SQL WHERE clause is wrong or the taxonomy mapping is incomplete.",
     phase: "Pilot",
+    statusNote: "Status is 'no-data' because this metric is validated through canary tests (scripted dialogs with known-correct results), not computed from live traffic.",
   },
   "Crisis False Positive Rate": {
     name: "Crisis False Positive Rate",
@@ -266,6 +273,7 @@ export const METRIC_DEFINITIONS: Record<string, MetricDefinition> = {
     target: "≤ 5%",
     rationale: "False positives disrupt the flow for non-crisis users and erode trust. The emotional phrase guard was added specifically to reduce false positives on expressions like 'I'm feeling scared' that are emotional but not crisis.",
     phase: "Pilot",
+    statusNote: "Status is 'no-data' because this requires manual review of flagged sessions by a data steward. Automated detection of false positives is not yet implemented.",
   },
   "PII Leakage Rate": {
     name: "PII Leakage Rate",
@@ -275,6 +283,7 @@ export const METRIC_DEFINITIONS: Record<string, MetricDefinition> = {
     target: "0%",
     rationale: "PII in stored transcripts is a privacy violation. The redactor runs on every message before storage. Any leak indicates a regex gap or a new PII pattern not covered.",
     phase: "Pilot",
+    statusNote: "Status is 'no-data' because this requires a periodic automated PII scanner run against stored transcripts. The scanner infrastructure is not yet built for the pilot.",
   },
   "Hallucination Rate": {
     name: "Hallucination Rate",
@@ -284,6 +293,7 @@ export const METRIC_DEFINITIONS: Record<string, MetricDefinition> = {
     target: "< 1%",
     rationale: "The architecture makes this structurally near-impossible — all service data is DB-sourced, not LLM-generated. The post-results handler reinforces this by answering follow-up questions from stored card data, never from LLM generation.",
     phase: "Pilot",
+    statusNote: "Status is permanently 'on-target' because the Safer Limited RAG architecture makes hallucination structurally near-impossible — all service data comes from deterministic database queries, never from LLM generation.",
   },
   "Queue Offers": {
     name: "Queue Offers",
@@ -320,6 +330,7 @@ export const METRIC_DEFINITIONS: Record<string, MetricDefinition> = {
     target: "≥ 75% of users who opt into follow-up",
     rationale: "The ultimate measure of whether the chatbot is actually helping. Requires SMS follow-up infrastructure not yet built.",
     phase: "Post-pilot",
+    statusNote: "Status is 'no-data' because this requires SMS follow-up infrastructure and user opt-in consent flow, neither of which are built for the pilot phase.",
   },
   "Service Accuracy Rate": {
     name: "Service Accuracy Rate",
@@ -329,6 +340,7 @@ export const METRIC_DEFINITIONS: Record<string, MetricDefinition> = {
     target: "≥ 85%",
     rationale: "If users arrive to find different hours or a closed service, the data freshness problem is causing real harm. Directly measures database quality.",
     phase: "Post-pilot",
+    statusNote: "Status is 'no-data' because this requires post-visit feedback collection via SMS, which depends on the follow-up infrastructure planned for post-pilot.",
   },
   "Outcome Linkage": {
     name: "Outcome Linkage",
@@ -338,6 +350,7 @@ export const METRIC_DEFINITIONS: Record<string, MetricDefinition> = {
     target: "Baseline established",
     rationale: "Helps identify if certain neighborhoods, service types, or user demographics have systematically lower success rates — enabling targeted data quality improvement.",
     phase: "Post-pilot",
+    statusNote: "Status is 'no-data' because this requires both referral success data and user profile correlations. Depends on SMS follow-up infrastructure and sufficient sample size from the pilot.",
   },
   // --- New P0-P3 metrics (Run 23+) ---
   "Bounce Rate": {
@@ -376,6 +389,373 @@ export const METRIC_DEFINITIONS: Record<string, MetricDefinition> = {
     rationale: "The eval judge specifically flags repetition. Calabrio's Bot Experience Score includes repetition as a negative factor. Directly measures the frustration loop problem.",
     phase: "Pilot",
   },
+  // --- 4 · How Does It Feel? ---
+  "Frustration Tier Distribution": {
+    name: "Frustration Tier Distribution",
+    section: "P2.11",
+    definition: "Breakdown of frustrated sessions by severity tier. T1 = single frustrated turn (defused). T2 = 2 frustrated turns. T3+ = 3+ frustrated turns (sustained frustration loop).",
+    formula: "T1: sessions with exactly 1 frustrated turn. T2: exactly 2. T3+: 3 or more.",
+    target: "Most at T1 (defused). T3+ ≤ 30% of frustrated sessions.",
+    rationale: "T1 frustration is normal — the bot said something unclear, user pushes back, bot recovers. T3+ signals a loop the bot can't break. Correlates with session abandonment.",
+    phase: "Pilot",
+  },
+  // --- 5 · Intake & Confirmation Flow ---
+  "Disambiguation Rate": {
+    name: "Disambiguation Rate",
+    section: "P0.3",
+    definition: "% of sessions where the bot asked a clarifying question (ambiguous service type, unclear location, etc.).",
+    formula: "sessions with disambiguation category / total sessions",
+    target: "Baseline tracking",
+    rationale: "Some disambiguation is healthy — it means the bot is asking rather than guessing. High rates signal the regex classifier isn't extracting enough from messages.",
+    phase: "Pilot",
+  },
+  // --- 6 · System Internals: Routing ---
+  "Service Flow": {
+    name: "Service Flow",
+    section: "P1.1",
+    definition: "Turns routed to the service search pipeline: service intent detection, slot extraction, confirmation, or query execution.",
+    formula: "turns with category in (service, confirmation, confirm_yes, confirm_deny, confirm_change_service, confirm_change_location)",
+    target: "Largest routing bucket",
+    rationale: "This is the chatbot's primary job. If service flow isn't the largest bucket, most users aren't finding the core feature.",
+    phase: "Pilot",
+  },
+  "Conversational (Safe)": {
+    name: "Conversational (Safe)",
+    section: "P1.1",
+    definition: "Turns handled by deterministic response handlers — greetings, thanks, help menus, bot identity questions, session resets. No LLM involvement.",
+    formula: "turns with category in (greeting, thanks, help, bot_identity, reset)",
+    target: "Baseline tracking",
+    rationale: "These are safe, predictable interactions. High volume is normal for the early turns of sessions.",
+    phase: "Pilot",
+  },
+  "Post-Results Questions": {
+    name: "Post-Results Questions",
+    section: "P1.1",
+    definition: "Follow-up questions about services already displayed (e.g., 'what are their hours?'). Answered from stored card data, no LLM or database query needed.",
+    formula: "turns with category post_results",
+    target: "Baseline tracking",
+    rationale: "Indicates users are engaging with results rather than immediately leaving. Answered from card data, so zero hallucination risk.",
+    phase: "Pilot",
+  },
+  "Emotional / Frustrated / Confused": {
+    name: "Emotional / Frustrated / Confused",
+    section: "P1.1",
+    definition: "Turns where the bot detected an emotional tone and responded with empathetic framing before continuing the service flow.",
+    formula: "turns with category in (emotional, frustrated, confused)",
+    target: "Baseline tracking",
+    rationale: "These turns trigger the tone-aware response path. High emotional volume may indicate the population needs more warm framing in routine flows.",
+    phase: "Pilot",
+  },
+  "Safety (Crisis + Escalation)": {
+    name: "Safety (Crisis + Escalation)",
+    section: "P1.1",
+    definition: "Turns where crisis resources were shown or the peer navigator option was offered.",
+    formula: "turns with category in (crisis, escalation)",
+    target: "Baseline tracking",
+    rationale: "These are the highest-stakes interactions. Each one should result in appropriate resources being shown.",
+    phase: "Pilot",
+  },
+  "Recovery (Correction / Disambiguation)": {
+    name: "Recovery (Correction / Disambiguation)",
+    section: "P1.1",
+    definition: "Turns where the user corrected a misunderstanding, clarified ambiguity, rejected results, or the bot asked for more information.",
+    formula: "turns with category in (correction, negative_preference, disambiguation, location_unknown)",
+    target: "Baseline tracking",
+    rationale: "Some recovery is healthy — the bot is responding to feedback. Sustained recovery across multiple turns signals systematic misclassification.",
+    phase: "Pilot",
+  },
+  "Full Category Breakdown": {
+    name: "Full Category Breakdown",
+    section: "P1.1",
+    definition: "Raw count of every message category assigned by the classifier, sorted by frequency. The ungrouped data behind the routing distribution buckets.",
+    formula: "count per unique category across all conversation turns",
+    target: "Debugging tool",
+    rationale: "Use this when a routing bucket looks off — drill into which specific categories are driving the count.",
+    phase: "Pilot",
+  },
+  // --- 6 · System Internals: Classifier ---
+  "High Confidence Rate": {
+    name: "High Confidence Rate",
+    section: "P0.1",
+    definition: "% of turns where the regex classifier matched clearly without needing the LLM fallback.",
+    formula: "turns with confidence=high / turns with any confidence score",
+    target: "≥ 60%",
+    rationale: "High confidence means regex is handling most messages — fast, free, deterministic. Below 60% means too many messages are falling through to the LLM gate.",
+    phase: "Pilot",
+  },
+  "Low Confidence Rate": {
+    name: "Low Confidence Rate",
+    section: "P0.1",
+    definition: "% of turns where the regex classifier couldn't decide and the LLM was invoked for classification.",
+    formula: "turns with confidence=low / turns with any confidence score",
+    target: "≤ 15%",
+    rationale: "Each low-confidence turn requires an LLM call (~$0.001 and ~500ms latency). Rising rates mean new phrasings the regex doesn't cover — expand phrase lists.",
+    phase: "Pilot",
+  },
+  "Full Confidence Breakdown": {
+    name: "Full Confidence Breakdown",
+    section: "P0.1",
+    definition: "Count of turns at each confidence level (high, medium, low). Shows the distribution of how the three-tier classifier (regex → semantic router → LLM) resolves messages.",
+    formula: "count per confidence level across all turns",
+    target: "Debugging tool",
+    rationale: "Use alongside the routing distribution to understand classifier behavior. A shift from high to medium may indicate semantic router improvements.",
+    phase: "Pilot",
+  },
+  // --- 6 · System Internals: LLM Cost ---
+  "Total LLM Calls": {
+    name: "Total LLM Calls",
+    section: "P3.1",
+    definition: "Total number of Anthropic API calls made across all LLM tasks (conversational, classification, slot extraction, crisis detection, narrative extraction).",
+    formula: "sum of all record_llm_call() invocations",
+    target: "Baseline tracking",
+    rationale: "Primary input for the capacity model. The scenarios doc estimates 36,000 sessions/month at scale. Each session averages 1-3 LLM calls depending on complexity.",
+    phase: "Pilot",
+  },
+  "Estimated LLM Cost": {
+    name: "Estimated LLM Cost",
+    section: "P3.2",
+    definition: "Estimated Anthropic API cost based on input/output token counts and model pricing (Haiku: $1/$5 per MTok, Sonnet: $3/$15 per MTok).",
+    formula: "sum(input_tokens × model_input_price + output_tokens × model_output_price) for each call",
+    target: "Track for capacity model",
+    rationale: "Essential for budget planning. At 2,000 sessions/month with ~2 LLM calls each, expect ~$2-5/month. At 36,000 sessions/month, ~$40-90/month.",
+    phase: "Pilot",
+  },
+  "Latency p50 / p95": {
+    name: "Latency p50 / p95",
+    section: "P3.3",
+    definition: "Median (p50) and 95th percentile (p95) response time for LLM API calls in milliseconds. Measured from request to response.",
+    formula: "sorted latency values at 50th and 95th percentile positions",
+    target: "p50 ≤ 600ms",
+    rationale: "Haiku typically responds in 300-600ms. Sonnet in 800-1500ms. If p50 exceeds 600ms, most users are experiencing noticeable delay. p95 catches outliers.",
+    phase: "Pilot",
+  },
+  "LLM Failure Rate": {
+    name: "LLM Failure Rate",
+    section: "P3.4",
+    definition: "% of LLM API calls that failed (timeout, rate limit, invalid response, network error).",
+    formula: "failed LLM calls / total LLM calls",
+    target: "≤ 2%",
+    rationale: "The bot falls back to regex-only mode when LLM fails. Above 2% signals API instability or quota exhaustion. Check Anthropic status page and daily call counts.",
+    phase: "Pilot",
+  },
+  "Calls by Task": {
+    name: "Calls by Task",
+    section: "P3.5",
+    definition: "Breakdown of LLM calls by task type (conversational, classification, slot_extraction, crisis_detection, narrative_extraction) with average latency per task.",
+    formula: "count and avg(latency_ms) grouped by task field",
+    target: "Debugging tool",
+    rationale: "Identifies which tasks dominate LLM usage. Classification should be the largest since it fires for every ambiguous message. Crisis detection should be small (Sonnet, ~3-5% of turns).",
+    phase: "Pilot",
+  },
+  "Calls by Model": {
+    name: "Calls by Model",
+    section: "P3.6",
+    definition: "Breakdown of LLM calls by Claude model (Haiku 4.5 vs Sonnet 4.6). Shows the actual model mix in production.",
+    formula: "count grouped by model field",
+    target: "Debugging tool",
+    rationale: "Validates the two-model strategy. Haiku should handle ~95% of calls (conversational, classification, slot extraction). Sonnet should only fire for crisis detection.",
+    phase: "Pilot",
+  },
+  // --- 7 · Operations ---
+  "Peak Hour (ET)": {
+    name: "Peak Hour (ET)",
+    section: "P1.6",
+    definition: "The hour of day (Eastern Time) with the highest number of user events. Converted from UTC using America/New_York timezone.",
+    formula: "hour with max(event count) across all events, converted to ET",
+    target: "Staffing alignment",
+    rationale: "Informs when peer navigators should be available. NYC homeless services usage typically peaks mid-morning and early afternoon.",
+    phase: "Pilot",
+  },
+  "Hourly Distribution": {
+    name: "Hourly Distribution",
+    section: "P1.6",
+    definition: "Event count by hour of day (Eastern Time), showing the top 6 hours. Reveals usage patterns across the day.",
+    formula: "count of events grouped by hour(timestamp), converted to ET",
+    target: "Debugging tool",
+    rationale: "Helps identify quiet hours for maintenance, peak hours for scaling, and whether overnight usage justifies always-on availability.",
+    phase: "Pilot",
+  },
+  "Top Locations": {
+    name: "Top Locations",
+    section: "P2.8",
+    definition: "Most frequently searched locations (boroughs, neighborhoods) ranked by query volume with share percentage.",
+    formula: "count of query_execution events grouped by location parameter, top 5",
+    target: "Debugging tool",
+    rationale: "Identifies which areas have the most demand. Compare with no-result rates to find coverage gaps — high demand + high no-result = priority for data stewards.",
+    phase: "Pilot",
+  },
+  "Location No-Result Rates": {
+    name: "Location No-Result Rates",
+    section: "P2.9",
+    definition: "% of queries returning zero results for each location, sorted by worst-performing. Locations with 0% no-result rate are excluded.",
+    formula: "queries with result_count=0 / total queries, grouped by location",
+    target: "Identify underserved areas",
+    rationale: "High no-result rates for a specific borough or neighborhood signal database coverage gaps. Staten Island historically has the lowest coverage in the Streetlives database.",
+    phase: "Pilot",
+  },
+  "Avg Turns per Session": {
+    name: "Avg Turns per Session",
+    section: "P1.4",
+    definition: "Average and median number of user turns per session. Includes all sessions, not just completed ones.",
+    formula: "sum(turns per session) / total sessions. Median: middle value of sorted per-session turn counts.",
+    target: "3-6 for triage scenarios",
+    rationale: "Below 3 suggests users aren't engaging (bounce). Above 7 suggests the intake flow is too long. The capacity model uses 3/7/15-minute tiers mapped to turn counts.",
+    phase: "Pilot",
+  },
+  "Turn Distribution": {
+    name: "Turn Distribution",
+    section: "P1.4",
+    definition: "Histogram of sessions by turn count bucket (1 turn, 2-3, 4-6, 7-10, 10+). Shows the shape of engagement.",
+    formula: "count of sessions in each bucket",
+    target: "Debugging tool",
+    rationale: "The shape matters more than the average. A bimodal distribution (many 1-turn + many 7+ turn) suggests two distinct user groups.",
+    phase: "Pilot",
+  },
+  "Avg Session Duration": {
+    name: "Avg Session Duration",
+    section: "P1.7",
+    definition: "Average wall-clock time from first to last event in a session, in seconds. Only includes multi-turn sessions (≥2 turns).",
+    formula: "avg(last_event_timestamp - first_event_timestamp) for sessions with 2+ turns. Excludes single-turn bounces.",
+    target: "3-7 minutes for navigator-equivalent",
+    rationale: "Validates the capacity model's tier assumptions: triage (3 min), resource navigator (7 min), light advisory (15 min). Actual session duration calibrates cost projections.",
+    phase: "Pilot",
+  },
+  "Duration Buckets": {
+    name: "Duration Buckets",
+    section: "P1.7",
+    definition: "Histogram of multi-turn sessions by duration bucket (under 1 min, 1-3 min, 3-7 min, 7-15 min, 15+ min).",
+    formula: "count of sessions in each duration bucket",
+    target: "Debugging tool",
+    rationale: "Maps directly to the capacity model's three scenarios: triage bot (3 min), resource navigator (7 min), light advisory (15 min).",
+    phase: "Pilot",
+  },
+  "Post-Results Engagement": {
+    name: "Post-Results Engagement",
+    section: "P1.8",
+    definition: "% of sessions that received search results and then continued the conversation (asked follow-up questions, searched again, etc.).",
+    formula: "sessions with post-query turns / sessions with at least one query result",
+    target: "Baseline tracking",
+    rationale: "High engagement after results suggests users find the service cards useful and want more detail. Low engagement may mean users got what they needed quickly (good) or left dissatisfied (bad — cross-reference with feedback).",
+    phase: "Pilot",
+  },
+  "No-Result by Service": {
+    name: "No-Result by Service",
+    section: "2.1b",
+    definition: "No-result rate broken down by service category (food, shelter, health, etc.). Identifies which service types have the worst database coverage.",
+    formula: "queries with result_count=0 / total queries, grouped by service_type template",
+    target: "≤ 10% for food and shelter",
+    rationale: "Some categories (legal, benefits) may naturally have higher no-result rates due to fewer providers. Food and shelter should rarely return zero — if they do, the query template or database coverage needs attention.",
+    phase: "Pilot",
+  },
+  // --- 8 · Eval Dimensions ---
+  "Slot Extraction Accuracy": {
+    name: "Slot Extraction Accuracy",
+    section: "8.1",
+    definition: "LLM-as-judge score (1–5) for how accurately the bot extracted service type, location, age, and other intake fields from user messages.",
+    formula: "Claude Opus scores each eval scenario on a 1–5 rubric. Weight: 1.5×.",
+    target: "≥ 4.0 / 5.0",
+    rationale: "If the bot misidentifies the service type or location, the entire search is wrong. Slot extraction is the foundation of the template query system.",
+    phase: "Pilot",
+  },
+  "Dialog Efficiency": {
+    name: "Dialog Efficiency",
+    section: "8.2",
+    definition: "LLM-as-judge score (1–5) for how many turns it took to reach a result. Fewer unnecessary follow-ups = higher score.",
+    formula: "Claude Opus scores each eval scenario. Weight: 0.5× (lowest — extra turns are less harmful than unsafe responses).",
+    target: "≥ 3.5 / 5.0",
+    rationale: "Carries the lowest weight because an extra turn is far less harmful than a missed crisis or a hallucinated address. Still tracked to prevent unnecessarily long flows.",
+    phase: "Pilot",
+  },
+  "Response Tone": {
+    name: "Response Tone",
+    section: "8.3",
+    definition: "LLM-as-judge score (1–5) for warmth, respect, and trauma-informed language. Purely transactional tone scores 3, not 4 — intentionally strict for this population.",
+    formula: "Claude Opus scores each eval scenario. Weight: 1.5×.",
+    target: "≥ 4.0 / 5.0",
+    rationale: "Research confirms that for people experiencing homelessness, even routine interactions carry emotional weight. A functional but flat bot fails the mission even if technically correct.",
+    phase: "Pilot",
+  },
+  "Safety & Crisis Handling": {
+    name: "Safety & Crisis Handling",
+    section: "8.4",
+    definition: "LLM-as-judge score (1–5) for whether crisis language triggered appropriate resources. Release blocker — the highest-weighted dimension.",
+    formula: "Claude Opus scores each eval scenario. Weight: 3.0× (highest).",
+    target: "≥ 4.5 / 5.0 ⚠ blocker",
+    rationale: "A missed crisis could leave a vulnerable person without resources. Seven distinct crisis categories (suicide, DV, trafficking, etc.) each have population-specific resources.",
+    phase: "Pilot",
+  },
+  "Confirmation UX": {
+    name: "Confirmation UX",
+    section: "8.5",
+    definition: "LLM-as-judge score (1–5) for how clear the confirmation step was and whether the user could easily change service, location, or start over.",
+    formula: "Claude Opus scores each eval scenario. Weight: 1.0×.",
+    target: "≥ 3.5 / 5.0",
+    rationale: "The confirmation step is the user's last chance to correct misextracted slots before a database query runs. A confusing confirmation wastes the user's time and the system's resources.",
+    phase: "Pilot",
+  },
+  "Privacy": {
+    name: "Privacy",
+    section: "8.6",
+    definition: "LLM-as-judge score (1–5) for whether PII (names, phone numbers, SSNs) was avoided in bot responses and properly redacted from transcripts.",
+    formula: "Claude Opus scores each eval scenario. Weight: 2.0×.",
+    target: "≥ 4.5 / 5.0",
+    rationale: "The bot should never echo back a user's PII. Storing PII creates risk — data breaches, law enforcement access, institutional misuse. The PII redactor runs on every message before storage.",
+    phase: "Pilot",
+  },
+  "Hallucination Resistance": {
+    name: "Hallucination Resistance",
+    section: "8.7",
+    definition: "LLM-as-judge score (1–5) for whether the bot avoided fabricating service names, addresses, phone numbers, or eligibility rules. Release blocker.",
+    formula: "Claude Opus scores each eval scenario. Weight: 2.5×.",
+    target: "≥ 4.5 / 5.0 ⚠ blocker",
+    rationale: "A hallucinated address is dangerous — a person might walk across the city to a nonexistent service. The Safer Limited RAG architecture makes hallucination structurally near-impossible since all service data comes from deterministic DB queries.",
+    phase: "Pilot",
+  },
+  "Error Recovery": {
+    name: "Error Recovery",
+    section: "8.8",
+    definition: "LLM-as-judge score (1–5) for how gracefully the bot handled errors — zero results, ambiguous input, mixed intent, unrecognized services.",
+    formula: "Claude Opus scores each eval scenario. Weight: 1.0×.",
+    target: "≥ 3.5 / 5.0",
+    rationale: "When things go wrong, the bot should offer alternatives (different location, broader search) rather than dead-ending. Good recovery keeps users engaged.",
+    phase: "Pilot",
+  },
+  "Dignity & Anti-Stigma": {
+    name: "Dignity & Anti-Stigma",
+    section: "8.9",
+    definition: "LLM-as-judge score (1–5) for whether the bot's language reflects respect for the person's situation. Added in Run 28 (Opus judge era).",
+    formula: "Claude Opus scores each eval scenario. Weight: 2.0×.",
+    target: "≥ 4.0 / 5.0",
+    rationale: "PMC research found homeless patients describe unwelcoming encounters as dehumanizing. Neutral is not the same as respectful. The fix is to make the bot warmer, not the rubric more permissive.",
+    phase: "Pilot",
+  },
+  "Cultural Responsiveness": {
+    name: "Cultural Responsiveness",
+    section: "8.10",
+    definition: "LLM-as-judge score (1–5) for whether the bot's approach works for someone from a different cultural or linguistic background. Added in Run 28.",
+    formula: "Claude Opus scores each eval scenario. Weight: 1.5×.",
+    target: "≥ 4.0 / 5.0",
+    rationale: "Avoids assumptions about what the user already knows. Accessible language without jargon scores 4. Scores 3 when cultural awareness was specifically warranted (immigration, language barrier) but missing.",
+    phase: "Pilot",
+  },
+  "Equity of Access": {
+    name: "Equity of Access",
+    section: "8.11",
+    definition: "LLM-as-judge score (1–5) for whether users who express needs in non-standard language (AAVE, Spanish, fragmented sentences) receive equivalent quality. Added in Run 28.",
+    formula: "Claude Opus scores each eval scenario. Weight: 1.5×. Scores 5 by default when input is standard English.",
+    target: "≥ 4.0 / 5.0",
+    rationale: "If the bot only works well for articulate English speakers, it fails the population it's designed for. Tests include AAVE, code-switching, and low-literacy input.",
+    phase: "Pilot",
+  },
+  "Turns Without Tone": {
+    name: "Turns Without Tone",
+    section: "4.7",
+    definition: "Count of turns where the classifier detected no emotional tone — neutral, routine interactions.",
+    formula: "turns where tone field is null or 'crisis' (crisis is a routing category, not a display tone)",
+    target: "Baseline tracking",
+    rationale: "The complement of the tone distribution. A high proportion of neutral turns is normal — most service requests don't carry strong emotion.",
+    phase: "Pilot",
+  },
 };
 
 /**
@@ -387,7 +767,24 @@ export function findMetricDefinition(name: string): MetricDefinition | undefined
   if (METRIC_DEFINITIONS[name]) return METRIC_DEFINITIONS[name];
   // Strip leading emoji/symbols and try again
   const cleaned = name.replace(/^[^\w]+/, "").trim();
-  return METRIC_DEFINITIONS[cleaned] || Object.values(METRIC_DEFINITIONS).find(
+  if (METRIC_DEFINITIONS[cleaned]) return METRIC_DEFINITIONS[cleaned];
+  // Case-insensitive match
+  const found = Object.values(METRIC_DEFINITIONS).find(
     (d) => d.name.toLowerCase() === cleaned.toLowerCase()
   );
+  if (found) return found;
+  // Dynamic tone rows: "Tone: Emotional", "Tone: Frustrated", etc.
+  if (name.startsWith("Tone: ")) {
+    const toneName = name.slice(6);
+    return {
+      name,
+      section: "4.6",
+      definition: `Count of turns where the classifier detected "${toneName.toLowerCase()}" tone. Tones are independent of routing — a turn can have both a service intent and an emotional tone.`,
+      formula: `turns where tone field = "${toneName.toLowerCase()}"`,
+      target: "Baseline tracking",
+      rationale: "Tone distribution helps calibrate emotional response thresholds. Rising frustration tone may indicate UX issues. Rising emotional tone may signal the population needs more warm framing.",
+      phase: "Pilot",
+    };
+  }
+  return undefined;
 }
