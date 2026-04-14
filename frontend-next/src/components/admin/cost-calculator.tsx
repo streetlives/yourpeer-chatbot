@@ -122,7 +122,7 @@ export function CostCalculator() {
 
   const config = configsWithCost.find((c) => c.id === activeConfig)!;
 
-  const activeTasks: { key: string; label: string; model: "haiku" | "sonnet"; cost: number; count: number }[] = [
+  const activeTasks: { key: string; label: string; model: "haiku" | "sonnet" | "opus"; cost: number; count: number }[] = [
     { key: "conv", label: "Conversational", model: config.models.conv, cost: config.breakdown.conv, count: conversationalTurns },
     { key: "slots", label: "Slot extraction", model: config.models.slots, cost: config.breakdown.slots, count: slotTurns },
     { key: "classification", label: "Unified gate", model: config.models.classification, cost: config.breakdown.classification, count: classificationTurns },
