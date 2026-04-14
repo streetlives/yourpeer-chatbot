@@ -22,16 +22,12 @@ const NYC_TZ = "America/New_York";
 
 /** Convert a UTC hour (0–23) to an Eastern Time label like "9 AM" */
 function utcHourToET(utcHour: number): string {
-  const d = new Date(Date.UTC(2026, 0, 1, utcHour, 0, 0));
+  const now = new Date();
+  const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), utcHour, 0, 0));
   return d.toLocaleTimeString("en-US", {
     hour: "numeric",
     timeZone: NYC_TZ,
   });
-}
-
-/** Format an ISO timestamp in Eastern Time */
-function fmtET(iso: string): string {
-  return new Date(iso).toLocaleString("en-US", { timeZone: NYC_TZ });
 }
 
 export default function MetricsPage() {
