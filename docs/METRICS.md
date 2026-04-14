@@ -209,7 +209,7 @@ These metrics assess how well the chatbot handles emotional and conversational i
 
 ## 5. System Quality (LLM-as-Judge Eval)
 
-These metrics come from the automated evaluation framework in `tests/eval_llm_judge.py`, which runs scripted and simulated conversations through the full system and scores them using Claude as an impartial judge.
+These metrics come from the automated evaluation framework in `tests/eval/eval_llm_judge.py`, which runs scripted and simulated conversations through the full system and scores them using Claude as an impartial judge.
 
 The eval covers 172 scenarios across 8 scoring dimensions, each rated 1–5. It can be triggered from the admin console (Eval tab → Run Evals) or via CLI.
 

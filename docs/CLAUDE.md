@@ -97,7 +97,7 @@ information, preventing hallucination.
 | `frontend-next/src/app/admin/` | Staff console pages (overview, conversations, metrics, queries, evals, models) |
 | `frontend-next/next.config.js` | CSP + HSTS headers, security config |
 | `tests/conftest.py` | Pytest fixtures, mock data, test helpers |
-| `tests/eval_llm_judge.py` | LLM-as-judge evaluation (167 scenarios, 11 dimensions, Opus judge, weighted scoring) |
+| `tests/eval/eval_llm_judge.py` | LLM-as-judge evaluation (167 scenarios, 11 dimensions, Opus judge, weighted scoring) |
 
 ## What's Working
 

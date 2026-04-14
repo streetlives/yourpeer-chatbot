@@ -219,7 +219,7 @@ async def _run_eval_background(
     global _eval_running, _eval_status
 
     cmd = [
-        "python", "tests/eval_llm_judge.py",
+        "python", "tests/eval/eval_llm_judge.py",
         "--output", str(TESTS_DIR / "eval_report.json"),
     ]
     if max_scenarios:
