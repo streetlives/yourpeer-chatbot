@@ -10,7 +10,6 @@ import type { ChatMessage as ChatMessageType, FeedbackRating } from "@/lib/chat/
 import { ServiceCarousel } from "./service-carousel";
 import { ServiceCarouselBoundary } from "./service-carousel-boundary";
 import { QuickReplies } from "./quick-replies";
-import { FeedbackRow } from "./feedback-row";
 
 import { RotateCcw } from "lucide-react";
 
@@ -61,8 +60,6 @@ export function ChatMessage({ message, onQuickReply, onFeedback, onRetry }: Chat
           <ServiceCarousel services={message.services} />
         </ServiceCarouselBoundary>
       )}
-
-      {message.showFeedback && <FeedbackRow onFeedback={onFeedback} />}
 
       {message.quick_replies && message.quick_replies.length > 0 && (
         <QuickReplies replies={message.quick_replies} onSelect={onQuickReply} />

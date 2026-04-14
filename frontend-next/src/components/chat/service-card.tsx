@@ -238,83 +238,7 @@ export function ServiceCard({ service, isActive, index, total }: ServiceCardProp
       )}
 
       {/* ── Collapsible Details ── */}
-      {hasDetails && (
-        <div className="border-t border-neutral-100 pt-1">
-          <button
-            type="button"
-            onClick={() => setDetailsOpen(!detailsOpen)}
-            aria-expanded={detailsOpen}
-            className="flex items-center justify-between w-full py-1.5 text-xs font-semibold uppercase tracking-wider text-neutral-400 hover:text-neutral-600 transition-colors"
-          >
-            <span>Details</span>
-            <ChevronDown
-              size={14}
-              className={`transition-transform duration-200 ${detailsOpen ? "rotate-180" : ""}`}
-              aria-hidden="true"
-            />
-          </button>
-
-          {detailsOpen && (
-            <div className="flex flex-col gap-2 pb-1 animate-in fade-in slide-in-from-top-1 duration-150">
-              {/* Address */}
-              {service.address && (
-                <div className="flex items-start gap-2 text-xs text-neutral-500 leading-snug">
-                  <MapPin size={14} className="text-neutral-400 mt-0.5 flex-shrink-0" aria-hidden="true" />
-                  <span>{service.address}</span>
-                </div>
-              )}
-
-              {/* Phone */}
-              {service.phone && (
-                <div className="flex items-start gap-2 text-xs text-neutral-500">
-                  <Phone size={14} className="text-neutral-400 mt-0.5 flex-shrink-0" aria-hidden="true" />
-                  <span>{service.phone}</span>
-                </div>
-              )}
-
-              {/* Email */}
-              {service.email && (
-                <div className="flex items-start gap-2 text-sm text-neutral-500">
-                  <Mail size={14} className="text-neutral-400 mt-0.5 flex-shrink-0" aria-hidden="true" />
-                  <span>{service.email}</span>
-                </div>
-              )}
-
-              {/* Accessibility */}
-              {service.accessibility && (
-                <div className="flex items-start gap-2 text-sm text-neutral-500 leading-snug">
-                  <span className="mt-0.5 flex-shrink-0 text-sm" aria-hidden="true">♿</span>
-                  <span>{service.accessibility}</span>
-                </div>
-              )}
-
-              {/* Description */}
-              {service.description && (
-                <div className="text-xs text-neutral-500 leading-relaxed">
-                  {service.description}
-                </div>
-              )}
-
-              {/* Required documents */}
-              {service.required_documents && service.required_documents.length > 0 && (
-                <div className="flex items-start gap-2 text-xs text-neutral-500 leading-snug">
-                  <span className="mt-0.5 flex-shrink-0" aria-hidden="true">📄</span>
-                  <span>Bring: {service.required_documents.join(", ")}</span>
-                </div>
-              )}
-
-              {/* Languages spoken */}
-              {service.languages && service.languages.length > 0 &&
-                !(service.languages.length === 1 && service.languages[0] === "English") && (
-                <div className="flex items-start gap-2 text-xs text-neutral-500 leading-snug">
-                  <span className="mt-0.5 flex-shrink-0" aria-hidden="true">🗣️</span>
-                  <span>{service.languages.join(", ")}</span>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-      )}
+      <DetailsSection service={service} hasDetails={hasDetails} detailsOpen={detailsOpen} setDetailsOpen={setDetailsOpen} />
 
       {/* Also available at this location — limited to 3 with expand */}
       {alsoItems.length > 0 && (
@@ -345,39 +269,7 @@ export function ServiceCard({ service, isActive, index, total }: ServiceCardProp
       )}
 
       {/* Action buttons — mt-auto pins buttons + footer to card bottom */}
-      <div className="flex gap-1.5 pt-1 mt-auto" role="group" aria-label={`Actions for ${name}`}>
-        {service.phone && (
-          <a
-            href={`tel:${service.phone.split(/\s*ext/i)[0].replace(/\D/g, "")}`}
-            aria-label={`Call ${name}`}
-            className="flex-1 py-2 rounded-lg border border-neutral-900 bg-neutral-900 text-center text-xs font-semibold text-white transition hover:bg-neutral-700"
-          >
-            Call
-          </a>
-        )}
-        {service.address && (
-          <a
-            href={`https://maps.google.com/?q=${encodeURIComponent(service.address)}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            aria-label={`Get directions to ${name}`}
-            className="flex-1 py-2 rounded-lg border border-amber-300 bg-amber-300 text-center text-xs font-semibold text-neutral-900 transition hover:bg-amber-400 hover:border-amber-400"
-          >
-            Directions
-          </a>
-        )}
-        {service.website && (
-          <a
-            href={service.website}
-            target="_blank"
-            rel="noopener noreferrer"
-            aria-label={`Visit ${name} website`}
-            className="flex-1 py-2 rounded-lg border border-neutral-200 bg-neutral-50 text-center text-xs font-semibold text-neutral-900 transition hover:bg-neutral-100 hover:border-neutral-300"
-          >
-            Website
-          </a>
-        )}
-      </div>
+      <ActionButtons service={service} name={name} />
 
       {/* Footer: Learn More + Rate — shared row */}
       {(service.yourpeer_url || service.service_id) && (
@@ -385,6 +277,304 @@ export function ServiceCard({ service, isActive, index, total }: ServiceCardProp
           serviceId={service.service_id || ""}
           locationName={name}
           learnMoreUrl={service.yourpeer_url}
+        />
+      )}
+    </div>
+  );
+}
+
+
+// ---------------------------------------------------------------------------
+// SHARED SUB-COMPONENTS (used by both ServiceCard and LocationCard)
+// ---------------------------------------------------------------------------
+
+function DetailsSection({ service, hasDetails, detailsOpen, setDetailsOpen }: {
+  service: ServiceResult;
+  hasDetails: boolean;
+  detailsOpen: boolean;
+  setDetailsOpen: (v: boolean) => void;
+}) {
+  if (!hasDetails) return null;
+  return (
+    <div className="border-t border-neutral-100 pt-1">
+      <button
+        type="button"
+        onClick={() => setDetailsOpen(!detailsOpen)}
+        aria-expanded={detailsOpen}
+        className="flex items-center justify-between w-full py-1.5 text-xs font-semibold uppercase tracking-wider text-neutral-400 hover:text-neutral-600 transition-colors"
+      >
+        <span>Details</span>
+        <ChevronDown
+          size={14}
+          className={`transition-transform duration-200 ${detailsOpen ? "rotate-180" : ""}`}
+          aria-hidden="true"
+        />
+      </button>
+
+      {detailsOpen && (
+        <div className="flex flex-col gap-2 pb-1 animate-in fade-in slide-in-from-top-1 duration-150">
+          {service.address && (
+            <div className="flex items-start gap-2 text-xs text-neutral-500 leading-snug">
+              <MapPin size={14} className="text-neutral-400 mt-0.5 flex-shrink-0" aria-hidden="true" />
+              <span>{service.address}</span>
+            </div>
+          )}
+          {service.phone && (
+            <div className="flex items-start gap-2 text-xs text-neutral-500">
+              <Phone size={14} className="text-neutral-400 mt-0.5 flex-shrink-0" aria-hidden="true" />
+              <span>{service.phone}</span>
+            </div>
+          )}
+          {service.email && (
+            <div className="flex items-start gap-2 text-sm text-neutral-500">
+              <Mail size={14} className="text-neutral-400 mt-0.5 flex-shrink-0" aria-hidden="true" />
+              <span>{service.email}</span>
+            </div>
+          )}
+          {service.accessibility && (
+            <div className="flex items-start gap-2 text-sm text-neutral-500 leading-snug">
+              <span className="mt-0.5 flex-shrink-0 text-sm" aria-hidden="true">♿</span>
+              <span>{service.accessibility}</span>
+            </div>
+          )}
+          {service.description && (
+            <div className="text-xs text-neutral-500 leading-relaxed">
+              {service.description}
+            </div>
+          )}
+          {service.required_documents && service.required_documents.length > 0 && (
+            <div className="flex items-start gap-2 text-xs text-neutral-500 leading-snug">
+              <span className="mt-0.5 flex-shrink-0" aria-hidden="true">📄</span>
+              <span>Bring: {service.required_documents.join(", ")}</span>
+            </div>
+          )}
+          {service.languages && service.languages.length > 0 &&
+            !(service.languages.length === 1 && service.languages[0] === "English") && (
+            <div className="flex items-start gap-2 text-xs text-neutral-500 leading-snug">
+              <span className="mt-0.5 flex-shrink-0" aria-hidden="true">🗣️</span>
+              <span>{service.languages.join(", ")}</span>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ActionButtons({ service, name }: { service: ServiceResult; name: string }) {
+  return (
+    <div className="flex gap-1.5 pt-1 mt-auto" role="group" aria-label={`Actions for ${name}`}>
+      {service.phone && (
+        <a
+          href={`tel:${service.phone.split(/\s*ext/i)[0].replace(/\D/g, "")}`}
+          aria-label={`Call ${name}`}
+          className="flex-1 py-2 rounded-lg border border-neutral-900 bg-neutral-900 text-center text-xs font-semibold text-white transition hover:bg-neutral-700"
+        >
+          Call
+        </a>
+      )}
+      {service.address && (
+        <a
+          href={`https://maps.google.com/?q=${encodeURIComponent(service.address)}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          aria-label={`Get directions to ${name}`}
+          className="flex-1 py-2 rounded-lg border border-amber-300 bg-amber-300 text-center text-xs font-semibold text-neutral-900 transition hover:bg-amber-400 hover:border-amber-400"
+        >
+          Directions
+        </a>
+      )}
+      {service.website && (
+        <a
+          href={service.website}
+          target="_blank"
+          rel="noopener noreferrer"
+          aria-label={`Visit ${name} website`}
+          className="flex-1 py-2 rounded-lg border border-neutral-200 bg-neutral-50 text-center text-xs font-semibold text-neutral-900 transition hover:bg-neutral-100 hover:border-neutral-300"
+        >
+          Website
+        </a>
+      )}
+    </div>
+  );
+}
+
+
+// ---------------------------------------------------------------------------
+// LOCATION CARD — groups multiple services at the same physical location
+// ---------------------------------------------------------------------------
+
+interface LocationCardProps {
+  services: ServiceResult[];
+  isActive?: boolean;
+  index?: number;
+  total?: number;
+}
+
+export function LocationCard({ services, isActive, index, total }: LocationCardProps) {
+  const [detailsOpen, setDetailsOpen] = useState(false);
+
+  const primary = services[0];
+  const orgName = primary.organization || "Location";
+  const cardLabel =
+    index !== undefined && total !== undefined
+      ? `${orgName} (${services.length} services), result ${index + 1} of ${total}`
+      : orgName;
+
+  const bestVerified = services.reduce((best, svc) => {
+    if (!svc.last_validated_at) return best;
+    if (!best) return svc.last_validated_at;
+    return svc.last_validated_at > best ? svc.last_validated_at : best;
+  }, null as string | null);
+
+  const review = services.find((s) => s.review_highlight)?.review_highlight;
+
+  const hasDetails = !!(
+    primary.address ||
+    primary.phone ||
+    primary.email ||
+    primary.accessibility ||
+    (primary.languages && primary.languages.length > 0 &&
+      !(primary.languages.length === 1 && primary.languages[0] === "English"))
+  );
+
+  // Detect shared fields — if all services have the same value, show once
+  const allSameHours =
+    services.every((s) => s.hours_today === primary.hours_today && s.is_open === primary.is_open);
+  const allSameBadges =
+    services.every(
+      (s) =>
+        s.requires_membership === primary.requires_membership &&
+        s.eligibility_summary === primary.eligibility_summary &&
+        s.fees === primary.fees,
+    );
+
+  return (
+    <div
+      role="listitem"
+      aria-label={cardLabel}
+      aria-current={isActive ? "true" : undefined}
+      className="flex-shrink-0 w-[280px] snap-start bg-white border border-neutral-200 rounded-2xl p-4 flex flex-col gap-2.5 transition-all hover:border-neutral-300 hover:shadow-md"
+    >
+      {/* Organization header */}
+      <div className="flex flex-col gap-0.5">
+        <div className="text-[0.95rem] font-semibold tracking-tight text-neutral-900 leading-snug">
+          {orgName}
+        </div>
+        <ValidatedBadge dateStr={bestVerified ?? undefined} />
+      </div>
+
+      {/* Shared hours — shown once when identical */}
+      {allSameHours && (
+        <div className="flex items-center gap-2">
+          <StatusBadge status={primary.is_open} />
+          {primary.hours_today && (
+            <span className="inline-flex items-center gap-1 text-xs text-neutral-500 whitespace-nowrap">
+              <Clock size={14} className="text-neutral-400 flex-shrink-0" aria-hidden="true" />
+              <span>{primary.hours_today}</span>
+            </span>
+          )}
+        </div>
+      )}
+
+      {/* Shared badges — shown once when identical */}
+      {allSameBadges && (primary.fees || primary.requires_membership || primary.eligibility_summary) && (
+        <div className="flex items-center gap-1.5 flex-wrap">
+          {primary.requires_membership && (
+            <span className="inline-block text-xs font-semibold text-amber-800 bg-amber-100 px-2 py-0.5 rounded-lg">
+              Ref. may be required
+            </span>
+          )}
+          {primary.eligibility_summary && (
+            <span className="inline-block text-xs font-semibold text-blue-800 bg-blue-50 px-2 py-0.5 rounded-lg">
+              {primary.eligibility_summary}
+            </span>
+          )}
+          {primary.fees && (
+            <span className="inline-block text-xs font-semibold text-green-800 bg-green-100 px-2 py-0.5 rounded-lg">
+              {primary.fees}
+            </span>
+          )}
+        </div>
+      )}
+
+      {/* Service list */}
+      <div className="pt-1 border-t border-neutral-100">
+        <div className="text-[0.65rem] font-semibold uppercase tracking-wider text-neutral-400 mb-1.5">
+          Services
+        </div>
+        <div className="flex flex-col gap-2">
+          {services.map((svc, i) => {
+            const hasPerServiceInfo = !allSameHours || !allSameBadges;
+            return (
+              <div
+                key={svc.service_id || i}
+                className={`flex flex-col gap-1.5 ${i > 0 && hasPerServiceInfo ? "pt-2 border-t border-neutral-100" : ""}`}
+              >
+                {/* Service name */}
+                <div className="text-xs font-semibold text-neutral-700">
+                  {ALSO_EMOJI[svc.service_name || ""] ? `${ALSO_EMOJI[svc.service_name || ""]} ` : ""}{svc.service_name || "Service"}
+                </div>
+
+                {/* Per-service hours — only when they differ */}
+                {!allSameHours && (
+                  <div className="flex items-center gap-2">
+                    <StatusBadge status={svc.is_open} />
+                    {svc.hours_today && (
+                      <span className="inline-flex items-center gap-1 text-xs text-neutral-500 whitespace-nowrap">
+                        <Clock size={12} className="text-neutral-400 flex-shrink-0" aria-hidden="true" />
+                        <span>{svc.hours_today}</span>
+                      </span>
+                    )}
+                  </div>
+                )}
+
+                {/* Per-service badges — only when they differ */}
+                {!allSameBadges && (svc.fees || svc.requires_membership || svc.eligibility_summary) && (
+                  <div className="flex items-center gap-1 flex-wrap">
+                    {svc.requires_membership && (
+                      <span className="inline-block text-[0.65rem] font-semibold text-amber-800 bg-amber-100 px-1.5 py-0.5 rounded-md">
+                        Ref. may be required
+                      </span>
+                    )}
+                    {svc.eligibility_summary && (
+                      <span className="inline-block text-[0.65rem] font-semibold text-blue-800 bg-blue-50 px-1.5 py-0.5 rounded-md">
+                        {svc.eligibility_summary}
+                      </span>
+                    )}
+                    {svc.fees && (
+                      <span className="inline-block text-[0.65rem] font-semibold text-green-800 bg-green-100 px-1.5 py-0.5 rounded-md">
+                        {svc.fees}
+                      </span>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Review highlight */}
+      {review && (
+        <div className="text-xs text-neutral-500 leading-relaxed bg-neutral-50 border border-neutral-100 rounded-lg px-3 py-2 italic">
+          <span aria-hidden="true">💬 </span>
+          {review.length > 120 ? review.slice(0, 117) + "…" : review}
+        </div>
+      )}
+
+      {/* Shared details */}
+      <DetailsSection service={primary} hasDetails={hasDetails} detailsOpen={detailsOpen} setDetailsOpen={setDetailsOpen} />
+
+      {/* Shared action buttons */}
+      <ActionButtons service={primary} name={orgName} />
+
+      {/* Footer */}
+      {(primary.yourpeer_url || primary.service_id) && (
+        <LocationFeedbackRow
+          serviceId={primary.service_id || ""}
+          locationName={orgName}
+          learnMoreUrl={primary.yourpeer_url}
         />
       )}
     </div>

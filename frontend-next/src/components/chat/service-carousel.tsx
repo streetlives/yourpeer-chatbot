@@ -8,16 +8,35 @@
 
 import { useRef, useState, useCallback } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
-import { ServiceCard } from "./service-card";
+import { ServiceCard, LocationCard } from "./service-card";
 import type { ServiceResult } from "@/lib/chat/types";
 
 interface ServiceCarouselProps {
   services: ServiceResult[];
 }
 
+/** Group services by org+address so co-located services render as one card. */
+type LocationGroup = { key: string; services: ServiceResult[] };
+
+function groupByLocation(services: ServiceResult[]): LocationGroup[] {
+  const map = new Map<string, ServiceResult[]>();
+  const order: string[] = [];
+  for (const svc of services) {
+    const key = `${(svc.organization || "").toLowerCase().trim()}||${(svc.address || "").toLowerCase().trim()}`;
+    if (!map.has(key)) {
+      map.set(key, []);
+      order.push(key);
+    }
+    map.get(key)!.push(svc);
+  }
+  return order.map((key) => ({ key, services: map.get(key)! }));
+}
+
 export function ServiceCarousel({ services }: ServiceCarouselProps) {
   const trackRef = useRef<HTMLDivElement>(null);
   const [currentIndex, setCurrentIndex] = useState(0);
+
+  const groups = groupByLocation(services);
 
   const scrollToIndex = useCallback(
     (index: number) => {
@@ -32,7 +51,7 @@ export function ServiceCarousel({ services }: ServiceCarouselProps) {
     if (!trackRef.current || !trackRef.current.firstElementChild) return;
     const cardWidth = (trackRef.current.firstElementChild as HTMLElement).offsetWidth;
     const idx = Math.round(trackRef.current.scrollLeft / (cardWidth + 12));
-    const clamped = Math.min(idx, services.length - 1);
+    const clamped = Math.min(idx, groups.length - 1);
     if (clamped !== currentIndex) setCurrentIndex(clamped);
   }
 
@@ -40,7 +59,7 @@ export function ServiceCarousel({ services }: ServiceCarouselProps) {
     if (e.key === "ArrowLeft" && currentIndex > 0) {
       e.preventDefault();
       scrollToIndex(currentIndex - 1);
-    } else if (e.key === "ArrowRight" && currentIndex < services.length - 1) {
+    } else if (e.key === "ArrowRight" && currentIndex < groups.length - 1) {
       e.preventDefault();
       scrollToIndex(currentIndex + 1);
     }
@@ -61,7 +80,9 @@ export function ServiceCarousel({ services }: ServiceCarouselProps) {
           aria-atomic="true"
           className="text-xs text-neutral-400 font-medium"
         >
-          Result {currentIndex + 1} of {services.length}
+          {groups.length === services.length
+            ? `Result ${currentIndex + 1} of ${groups.length}`
+            : `Location ${currentIndex + 1} of ${groups.length} (${services.length} services)`}
         </span>
         <div className="flex gap-1" role="group" aria-label="Carousel navigation">
           <button
@@ -75,7 +96,7 @@ export function ServiceCarousel({ services }: ServiceCarouselProps) {
           </button>
           <button
             type="button"
-            disabled={currentIndex >= services.length - 1}
+            disabled={currentIndex >= groups.length - 1}
             onClick={() => scrollToIndex(currentIndex + 1)}
             aria-label="Next result"
             className="w-8 h-8 rounded-full border border-neutral-200 bg-white text-neutral-500 flex items-center justify-center transition hover:bg-neutral-50 hover:border-neutral-300 disabled:opacity-30 disabled:cursor-default"
@@ -94,21 +115,31 @@ export function ServiceCarousel({ services }: ServiceCarouselProps) {
         aria-label="Service cards"
         className="flex gap-3 overflow-x-auto snap-x snap-mandatory scroll-smooth pb-2 scrollbar-hide focus:outline-none focus:ring-2 focus:ring-amber-300/30 rounded-2xl"
       >
-        {services.map((svc, i) => (
-          <ServiceCard
-            key={i}
-            service={svc}
-            isActive={i === currentIndex}
-            index={i}
-            total={services.length}
-          />
-        ))}
+        {groups.map((group, i) =>
+          group.services.length === 1 ? (
+            <ServiceCard
+              key={group.key}
+              service={group.services[0]}
+              isActive={i === currentIndex}
+              index={i}
+              total={groups.length}
+            />
+          ) : (
+            <LocationCard
+              key={group.key}
+              services={group.services}
+              isActive={i === currentIndex}
+              index={i}
+              total={groups.length}
+            />
+          ),
+        )}
       </div>
 
       {/* Dots */}
-      {services.length > 1 && (
+      {groups.length > 1 && (
         <div className="flex justify-center gap-1.5 pt-1" aria-hidden="true">
-          {services.map((_, i) => (
+          {groups.map((_, i) => (
             <div
               key={i}
               className={`h-1.5 rounded-full transition-all ${
