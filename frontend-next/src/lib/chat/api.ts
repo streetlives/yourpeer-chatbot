@@ -163,6 +163,11 @@ export async function fetchEvalResults(): Promise<EvalReport | null> {
 }
 
 export async function uploadEvalReport(file: File): Promise<{ detail: string }> {
+  // Client-side size check — backend limit is 10 MB
+  const MAX_UPLOAD_MB = 10;
+  if (file.size > MAX_UPLOAD_MB * 1024 * 1024) {
+    throw new Error(`File is too large (${(file.size / (1024 * 1024)).toFixed(1)} MB). Maximum is ${MAX_UPLOAD_MB} MB.`);
+  }
   const text = await file.text();
   // Validate JSON client-side before sending
   try {

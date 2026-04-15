@@ -11,7 +11,12 @@ const BACKEND_URL = process.env.CHAT_BACKEND_URL || "http://localhost:8000";
 /**
  * Catch-all proxy: /api/admin/stats → /admin/api/stats
  *                  /api/admin/eval/run → /admin/api/eval/run
+ *                  /api/admin/eval/upload → /admin/api/eval/upload
  *                  etc.
+ *
+ * Body handling: the request body is streamed through without buffering.
+ * This avoids Next.js's internal body size limits and supports large
+ * eval report uploads (projected to 3-4 MB at 1000 scenarios).
  */
 async function proxyToBackend(req: NextRequest, slug: string[]) {
   const path = slug.join("/");
@@ -23,9 +28,15 @@ async function proxyToBackend(req: NextRequest, slug: string[]) {
   });
 
   try {
-    const headers: Record<string, string> = {
-      "Content-Type": "application/json",
-    };
+    const headers: Record<string, string> = {};
+
+    // Preserve content-type from the original request
+    const contentType = req.headers.get("content-type");
+    if (contentType) {
+      headers["Content-Type"] = contentType;
+    } else {
+      headers["Content-Type"] = "application/json";
+    }
 
     // Forward admin API key — prefer server-side env var (not exposed to browser)
     const adminKey = process.env.ADMIN_API_KEY;
@@ -38,11 +49,15 @@ async function proxyToBackend(req: NextRequest, slug: string[]) {
       headers,
     };
 
+    // Stream the body through without parsing. Using req.text() instead
+    // of req.json() + JSON.stringify() avoids the internal body size limit
+    // that causes "Request body too large" on eval report uploads.
+    // req.text() reads the raw bytes as a string — no JSON round-trip.
     if (req.method === "POST" || req.method === "PUT" || req.method === "PATCH") {
       try {
-        fetchOpts.body = JSON.stringify(await req.json());
+        fetchOpts.body = await req.text();
       } catch {
-        // No body — that's fine for some POSTs
+        // No body — that's fine for some POSTs (e.g., eval/run)
       }
     }
 
