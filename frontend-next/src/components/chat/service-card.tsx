@@ -271,7 +271,7 @@ export function ServiceCard({ service, isActive, index, total }: ServiceCardProp
       )}
 
       {/* Action buttons — mt-auto pins buttons + footer to card bottom */}
-      <ActionButtons service={service} name={name} />
+      <ActionButtons service={service} name={service.organization || name} />
 
       {/* Footer: Learn More + Rate — shared row */}
       {(service.yourpeer_url || service.service_id) && (
@@ -303,7 +303,7 @@ function DetailsSection({ service, hasDetails, detailsOpen, setDetailsOpen }: {
         type="button"
         onClick={() => setDetailsOpen(!detailsOpen)}
         aria-expanded={detailsOpen}
-        className="flex items-center justify-between w-full py-1.5 text-xs font-semibold uppercase tracking-wider text-neutral-400 hover:text-neutral-600 transition-colors"
+        className="flex items-center justify-between w-full py-1.5 text-xs font-semibold uppercase tracking-wider text-blue-600 underline underline-offset-2 hover:text-blue-800 transition-colors"
       >
         <span>Details</span>
         <ChevronDown
