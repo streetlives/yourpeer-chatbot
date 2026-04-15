@@ -13,8 +13,89 @@ Design principles:
 import re
 import logging
 from typing import Optional
+from collections import deque
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# FILTER MONITORING
+# ---------------------------------------------------------------------------
+# Tracks filter_subcategory events for miss-rate monitoring.
+# Queryable via get_filter_stats() from the admin panel.
+# Design doc threshold: if miss rate exceeds 15% after 30 days,
+# evaluate Tier 2 LLM keyword extraction effectiveness.
+
+_MAX_FILTER_EVENTS = 5000
+
+_filter_events: deque = deque(maxlen=_MAX_FILTER_EVENTS)
+
+
+def record_filter_event(
+    tier: str,
+    phrase: str,
+    match_count: int,
+    total: int,
+    negated: bool = False,
+) -> None:
+    """Record a filter_subcategory event for monitoring."""
+    from datetime import datetime, timezone
+    _filter_events.append({
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "tier": tier,
+        "phrase": phrase[:100],
+        "match_count": match_count,
+        "total": total,
+        "negated": negated,
+        "miss": match_count == 0,
+    })
+
+
+def get_filter_stats() -> dict:
+    """Compute filter monitoring metrics.
+
+    Returns:
+        {
+            "total_events": int,
+            "misses": int,
+            "miss_rate": float,       # 0.0–1.0
+            "above_threshold": bool,  # True if miss_rate > 0.15
+            "by_tier": {tier: {"total": N, "misses": N}},
+            "recent_misses": [last 10 missed phrases],
+        }
+    """
+    events = list(_filter_events)
+    if not events:
+        return {
+            "total_events": 0, "misses": 0, "miss_rate": 0.0,
+            "above_threshold": False, "by_tier": {}, "recent_misses": [],
+        }
+
+    total = len(events)
+    misses = sum(1 for e in events if e["miss"])
+    miss_rate = misses / total if total > 0 else 0.0
+
+    by_tier: dict = {}
+    for e in events:
+        t = e["tier"]
+        if t not in by_tier:
+            by_tier[t] = {"total": 0, "misses": 0}
+        by_tier[t]["total"] += 1
+        if e["miss"]:
+            by_tier[t]["misses"] += 1
+
+    recent_misses = [
+        e["phrase"] for e in reversed(events) if e["miss"]
+    ][:10]
+
+    return {
+        "total_events": total,
+        "misses": misses,
+        "miss_rate": round(miss_rate, 3),
+        "above_threshold": miss_rate > 0.15,
+        "by_tier": by_tier,
+        "recent_misses": recent_misses,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -357,26 +438,29 @@ def _filter_by_colocated(cards: list[dict], message: str) -> tuple[list[dict], s
 
 
 def _text_search_cards(cards: list[dict], keywords: list[str]) -> list[dict]:
-    """Filter cards where service_name or description contains ANY keyword.
+    """Filter cards where card fields contain ANY keyword.
 
-    Case-insensitive. service_name matches weighted 2× vs description.
-    Returns cards sorted by match score (best matches first).
+    Fields searched (with weights):
+      - service_name: 2×
+      - description: 1×
+      - organization: 1×
+      - address: 1×
+      - city: 1×
+
+    Case-insensitive. Returns cards sorted by match score (best first).
 
     NOTE: ANY-keyword matching can produce loose results when the user's
-    refinement phrase contains common words. "adult families intake"
-    works well because all 3 words are specific. A phrase like
-    "the one with the good program" would match any card containing
-    "good" or "program" — potentially all of them.
-
-    Mitigation: taxonomy matching (Tier 1a) fires first and catches
-    most structured refinements before text search runs. Text search
-    is the fallback for unstructured/unique phrases.
+    refinement phrase contains common words. Mitigation: taxonomy matching
+    (Tier 1a) fires first and catches most structured refinements before
+    text search runs.
     """
     results = []
     for card in cards:
         name = (card.get("service_name") or "").lower()
         desc = (card.get("description") or "").lower()
         org = (card.get("organization") or "").lower()
+        addr = (card.get("address") or "").lower()
+        city = (card.get("city") or "").lower()
 
         match_score = 0
         for kw in keywords:
@@ -385,6 +469,10 @@ def _text_search_cards(cards: list[dict], keywords: list[str]) -> list[dict]:
             if kw in desc:
                 match_score += 1
             if kw in org:
+                match_score += 1
+            if kw in addr:
+                match_score += 1
+            if kw in city:
                 match_score += 1
 
         if match_score > 0:
@@ -1034,10 +1122,17 @@ def _handle_filter_subcategory(intent: dict, services: list[dict]) -> dict:
         matched = [c for c in services if c.get("service_id") not in matched_ids]
         filter_tier += "_negated"
 
-    # --- Log filter operation ---
+    # --- Log and record filter operation ---
     logger.info(
         f"filter_subcategory: tier={filter_tier} phrase='{raw_phrase}' "
         f"matched={len(matched)}/{total} negated={is_negation}"
+    )
+    record_filter_event(
+        tier=filter_tier,
+        phrase=raw_phrase,
+        match_count=len(matched),
+        total=total,
+        negated=is_negation,
     )
 
     # --- Build response ---

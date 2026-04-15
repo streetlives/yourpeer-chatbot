@@ -356,16 +356,40 @@ def generate_reply(
 
             else:  # confirm_deny
                 # "nah I'm good" / "no thanks" after results
-                existing.pop("_last_results", None)
-                existing.pop("_filtered_results", None)
-                existing.pop("_filter_phrase", None)
-                save_session_slots(session_id, existing)
-                result = _empty_reply(
-                    session_id,
-                    "No problem! Let me know if you need anything else.",
-                    existing,
-                    quick_replies=list(_WELCOME_QUICK_REPLIES),
-                )
+                if existing.get("_filtered_results"):
+                    # Filter active — "no thanks" means "undo filter", not "reject all"
+                    existing.pop("_filtered_results", None)
+                    existing.pop("_filter_phrase", None)
+                    existing["_displayed_count"] = min(len(_last_results), _DISPLAY_PAGE_SIZE)
+                    save_session_slots(session_id, existing)
+                    _remaining = len(_last_results) - _DISPLAY_PAGE_SIZE
+                    qr = [
+                        {"label": "🔍 New search", "value": "Start over"},
+                        {"label": "🤝 Peer navigator", "value": "Connect with peer navigator"},
+                    ]
+                    if _remaining > 0:
+                        _sn = min(_remaining, _DISPLAY_PAGE_SIZE)
+                        qr.insert(0, {"label": f"📋 Show {_sn} more result{'s' if _sn != 1 else ''}",
+                                       "value": "Show more results"})
+                    result = _empty_reply(
+                        session_id,
+                        f"No problem — here are all {len(_last_results)} results again:",
+                        existing,
+                        quick_replies=qr,
+                    )
+                    result["services"] = _last_results[:_DISPLAY_PAGE_SIZE]
+                    result["result_count"] = len(_last_results[:_DISPLAY_PAGE_SIZE])
+                else:
+                    existing.pop("_last_results", None)
+                    existing.pop("_filtered_results", None)
+                    existing.pop("_filter_phrase", None)
+                    save_session_slots(session_id, existing)
+                    result = _empty_reply(
+                        session_id,
+                        "No problem! Let me know if you need anything else.",
+                        existing,
+                        quick_replies=list(_WELCOME_QUICK_REPLIES),
+                    )
                 _log_turn(session_id, redacted_message, result, "post_results_decline",
                           request_id=request_id, tone=tone)
                 return result
@@ -377,10 +401,17 @@ def generate_reply(
                 or _action_pre == "correction"
             )
             if _is_frustration_or_rejection:
-                existing.pop("_last_results", None)
-                existing.pop("_filtered_results", None)
-                existing.pop("_filter_phrase", None)
-                save_session_slots(session_id, existing)
+                if existing.get("_filtered_results"):
+                    # Filter active — frustration/rejection clears filter only.
+                    # User can still "show all results" to recover.
+                    existing.pop("_filtered_results", None)
+                    existing.pop("_filter_phrase", None)
+                    save_session_slots(session_id, existing)
+                else:
+                    existing.pop("_last_results", None)
+                    existing.pop("_filtered_results", None)
+                    existing.pop("_filter_phrase", None)
+                    save_session_slots(session_id, existing)
             elif early_extracted.get("location"):
                 existing.pop("_last_results", None)
                 existing.pop("_filtered_results", None)
@@ -479,21 +510,22 @@ def generate_reply(
                     return result
 
                 if _msg_lower in _show_more_patterns:
-                    # Clear filter — "show more" means show more from full set
-                    existing.pop("_filtered_results", None)
-                    existing.pop("_filter_phrase", None)
+                    # Page through whichever set is active
+                    _active_set = existing.get("_filtered_results") or _last_results
                     displayed = existing.get("_displayed_count", 0)
-                    if displayed and displayed < len(_last_results):
-                        next_page = _last_results[displayed:displayed + _DISPLAY_PAGE_SIZE]
+                    if displayed and displayed < len(_active_set):
+                        next_page = _active_set[displayed:displayed + _DISPLAY_PAGE_SIZE]
                         new_displayed = displayed + len(next_page)
                         existing["_displayed_count"] = new_displayed
                         save_session_slots(session_id, existing)
 
-                        still_remaining = len(_last_results) - new_displayed
+                        still_remaining = len(_active_set) - new_displayed
                         qr = [
                             {"label": "🔍 New search", "value": "Start over"},
                             {"label": "🤝 Peer navigator", "value": "Connect with peer navigator"},
                         ]
+                        if existing.get("_filtered_results"):
+                            qr.insert(0, {"label": "📋 Show all results", "value": "Show all results"})
                         if still_remaining > 0:
                             show_next = min(still_remaining, _DISPLAY_PAGE_SIZE)
                             qr.insert(0, {
@@ -512,16 +544,16 @@ def generate_reply(
                             "quick_replies": qr,
                         }
                     else:
-                        # No more to show — re-display first page
-                        existing["_displayed_count"] = min(len(_last_results), _DISPLAY_PAGE_SIZE)
+                        # No more to show — re-display first page of active set
+                        existing["_displayed_count"] = min(len(_active_set), _DISPLAY_PAGE_SIZE)
                         save_session_slots(session_id, existing)
                         result = {
                             "session_id": session_id,
                             "response": "Here are all the results again:",
                             "follow_up_needed": False,
                             "slots": existing,
-                            "services": _last_results[:_DISPLAY_PAGE_SIZE],
-                            "result_count": min(len(_last_results), _DISPLAY_PAGE_SIZE),
+                            "services": _active_set[:_DISPLAY_PAGE_SIZE],
+                            "result_count": min(len(_active_set), _DISPLAY_PAGE_SIZE),
                             "relaxed_search": False,
                             "quick_replies": [
                                 {"label": "🔍 New search", "value": "Start over"},
@@ -608,9 +640,42 @@ def generate_reply(
                     if pr is not None:
                         # Store filtered results for subsequent turns
                         if pr.get("_filter_matched") and pr.get("services"):
-                            existing["_filtered_results"] = pr["services"]
+                            all_filtered = pr["services"]
+                            existing["_filtered_results"] = all_filtered
                             existing["_filter_phrase"] = pr.get("_filter_phrase", "")
+
+                            # Paginate: display first page, track position
+                            page = all_filtered[:_DISPLAY_PAGE_SIZE]
+                            existing["_displayed_count"] = len(page)
                             save_session_slots(session_id, existing)
+
+                            # Rewrite response if we're paginating
+                            remaining = len(all_filtered) - len(page)
+                            qrs = list(pr.get("quick_replies", []))
+                            if remaining > 0:
+                                show_next = min(remaining, _DISPLAY_PAGE_SIZE)
+                                pr["response"] = pr["response"].rstrip(":") + (
+                                    f" — showing the first {len(page)}:"
+                                )
+                                qrs.insert(0, {
+                                    "label": f"📋 Show {show_next} more result{'s' if show_next != 1 else ''}",
+                                    "value": "Show more results",
+                                })
+
+                            result = {
+                                "session_id": session_id,
+                                "response": pr["response"],
+                                "follow_up_needed": False,
+                                "slots": existing,
+                                "services": page,
+                                "result_count": len(page),
+                                "relaxed_search": False,
+                                "quick_replies": qrs,
+                            }
+                            _log_turn(session_id, redacted_message, result,
+                                      pr.get("category", "post_results"),
+                                      request_id=request_id)
+                            return result
 
                         result = {
                             "session_id": session_id,

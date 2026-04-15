@@ -796,6 +796,148 @@ class TestFilteredResultsPagination:
 
 
 # =======================================================================
+# EDGE CASE FIXES (design doc section 6)
+# =======================================================================
+
+class TestAddressCityTextSearch:
+    """6.3/6.5: Text search includes address and city fields."""
+
+    def test_text_search_finds_by_city(self):
+        from app.services.post_results import _text_search_cards
+        cards = [
+            {"service_name": "Shelter A", "description": "", "organization": "",
+             "address": "400 E 30th St", "city": "Manhattan"},
+            {"service_name": "Shelter B", "description": "", "organization": "",
+             "address": "151 E 151st St", "city": "Bronx"},
+        ]
+        matched = _text_search_cards(cards, ["bronx"])
+        assert len(matched) == 1
+        assert matched[0]["service_name"] == "Shelter B"
+
+    def test_text_search_finds_by_address(self):
+        from app.services.post_results import _text_search_cards
+        cards = [
+            {"service_name": "Shelter A", "description": "", "organization": "",
+             "address": "1000 Blake Ave, Brooklyn", "city": "Brooklyn"},
+            {"service_name": "Shelter B", "description": "", "organization": "",
+             "address": "400 E 30th St", "city": "Manhattan"},
+        ]
+        matched = _text_search_cards(cards, ["blake"])
+        assert len(matched) == 1
+        assert matched[0]["service_name"] == "Shelter A"
+
+    def test_negation_excludes_by_city(self):
+        """'Anywhere but the Bronx' → text search 'bronx', then invert."""
+        from app.services.post_results import _text_search_cards
+        cards = [
+            {"service_id": "1", "service_name": "A", "description": "",
+             "organization": "", "address": "", "city": "Manhattan"},
+            {"service_id": "2", "service_name": "B", "description": "",
+             "organization": "", "address": "", "city": "Bronx"},
+            {"service_id": "3", "service_name": "C", "description": "",
+             "organization": "", "address": "", "city": "Brooklyn"},
+        ]
+        matched = _text_search_cards(cards, ["bronx"])
+        matched_ids = {c["service_id"] for c in matched}
+        inverted = [c for c in cards if c["service_id"] not in matched_ids]
+        assert len(inverted) == 2
+        assert all(c["city"] != "Bronx" for c in inverted)
+
+
+class TestNeverMindAfterFilter:
+    """6.4: 'Never mind' after filtering clears filter only, preserves results."""
+
+    def test_no_thanks_with_filter_shows_full_results(self):
+        sid = _fresh()
+        services = _build_shelter_results(10)["services"]
+        save_session_slots(sid, {
+            "service_type": "shelter",
+            "location": "manhattan",
+            "_last_results": services,
+            "_filtered_results": services[:3],
+            "_filter_phrase": "families",
+            "_displayed_count": 3,
+        })
+        result = _send("no thanks", sid)
+        slots = get_session_slots(sid)
+        assert slots.get("_filtered_results") is None, \
+            "Filter should be cleared"
+        assert slots.get("_last_results") is not None, \
+            "_last_results must survive for recovery"
+        # Should show full results, not welcome screen
+        assert len(result.get("services", [])) > 0, \
+            "Should re-display full results, not empty welcome"
+
+    def test_no_thanks_without_filter_clears_everything(self):
+        sid = _fresh()
+        services = _build_shelter_results(10)["services"]
+        save_session_slots(sid, {
+            "service_type": "shelter",
+            "location": "manhattan",
+            "_last_results": services,
+            "_displayed_count": 5,
+        })
+        result = _send("no thanks", sid)
+        slots = get_session_slots(sid)
+        assert slots.get("_last_results") is None, \
+            "Without filter, _last_results should be cleared"
+
+
+class TestFrustrationPreservesResults:
+    """6.9: Frustration after filtering clears filter but keeps _last_results."""
+
+    def test_frustration_with_filter_preserves_last_results(self):
+        sid = _fresh()
+        services = _build_shelter_results(10)["services"]
+        save_session_slots(sid, {
+            "service_type": "shelter",
+            "location": "manhattan",
+            "_last_results": services,
+            "_filtered_results": services[:3],
+            "_filter_phrase": "families",
+            "_displayed_count": 3,
+        })
+        _send("this is useless", sid)
+        slots = get_session_slots(sid)
+        assert slots.get("_filtered_results") is None, \
+            "Filter should be cleared on frustration"
+        assert slots.get("_last_results") is not None, \
+            "_last_results must survive for 'show all results' recovery"
+
+    def test_show_all_works_after_frustration(self):
+        """User can recover with 'show all results' after frustration."""
+        sid = _fresh()
+        services = _build_shelter_results(10)["services"]
+        save_session_slots(sid, {
+            "service_type": "shelter",
+            "location": "manhattan",
+            "_last_results": services,
+            "_filtered_results": services[:3],
+            "_filter_phrase": "families",
+            "_displayed_count": 3,
+        })
+        _send("this is useless", sid)  # frustration — clears filter, keeps results
+        result = _send("show all results", sid)  # should show full results
+        assert len(result.get("services", [])) > 0, \
+            "Should show results after frustration recovery"
+
+    def test_frustration_without_filter_clears_everything(self):
+        """Without filter, frustration still clears _last_results (existing behavior)."""
+        sid = _fresh()
+        services = _build_shelter_results(10)["services"]
+        save_session_slots(sid, {
+            "service_type": "shelter",
+            "location": "manhattan",
+            "_last_results": services,
+            "_displayed_count": 5,
+        })
+        _send("this is useless", sid)
+        slots = get_session_slots(sid)
+        assert slots.get("_last_results") is None, \
+            "Without filter, _last_results should still be cleared"
+
+
+# =======================================================================
 # SERVICE_TAXONOMIES: card field present
 # =======================================================================
 
@@ -861,6 +1003,72 @@ class TestServiceTaxonomiesField:
         }
         card = format_service_card(row)
         assert card["service_taxonomies"] is None
+
+
+# =======================================================================
+# FILTER MONITORING
+# =======================================================================
+
+class TestFilterMonitoring:
+    """Miss-rate tracking for filter_subcategory events."""
+
+    def test_get_filter_stats_empty(self):
+        from app.services.post_results import get_filter_stats, _filter_events
+        _filter_events.clear()
+        stats = get_filter_stats()
+        assert stats["total_events"] == 0
+        assert stats["miss_rate"] == 0.0
+        assert stats["above_threshold"] is False
+
+    def test_record_and_retrieve(self):
+        from app.services.post_results import (
+            record_filter_event, get_filter_stats, _filter_events,
+        )
+        _filter_events.clear()
+        record_filter_event(tier="taxonomy", phrase="families",
+                           match_count=3, total=10)
+        record_filter_event(tier="text_search", phrase="weird thing",
+                           match_count=0, total=10)
+        record_filter_event(tier="structured", phrase="no referral",
+                           match_count=5, total=10)
+
+        stats = get_filter_stats()
+        assert stats["total_events"] == 3
+        assert stats["misses"] == 1
+        assert abs(stats["miss_rate"] - 0.333) < 0.01
+        assert stats["above_threshold"] is True  # 33% > 15%
+        assert "weird thing" in stats["recent_misses"]
+
+    def test_by_tier_breakdown(self):
+        from app.services.post_results import (
+            record_filter_event, get_filter_stats, _filter_events,
+        )
+        _filter_events.clear()
+        record_filter_event(tier="taxonomy", phrase="a", match_count=2, total=10)
+        record_filter_event(tier="taxonomy", phrase="b", match_count=0, total=10)
+        record_filter_event(tier="text_search", phrase="c", match_count=1, total=10)
+
+        stats = get_filter_stats()
+        assert stats["by_tier"]["taxonomy"]["total"] == 2
+        assert stats["by_tier"]["taxonomy"]["misses"] == 1
+        assert stats["by_tier"]["text_search"]["total"] == 1
+        assert stats["by_tier"]["text_search"]["misses"] == 0
+
+    def test_below_threshold(self):
+        from app.services.post_results import (
+            record_filter_event, get_filter_stats, _filter_events,
+        )
+        _filter_events.clear()
+        # 1 miss out of 10 = 10% < 15%
+        for i in range(9):
+            record_filter_event(tier="taxonomy", phrase=f"hit-{i}",
+                               match_count=2, total=10)
+        record_filter_event(tier="text_search", phrase="miss",
+                           match_count=0, total=10)
+
+        stats = get_filter_stats()
+        assert stats["miss_rate"] == 0.1
+        assert stats["above_threshold"] is False
 
 
 # =======================================================================
