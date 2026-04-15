@@ -97,10 +97,14 @@ export function SystemHealth() {
           name: "Semantic router",
           status: health.checks.semantic_router?.status ?? "not_loaded",
           detail: health.checks.semantic_router?.status === "up"
-            ? (health.checks.semantic_router.route_count != null
-              ? `${health.checks.semantic_router.route_count} routes · ${health.checks.semantic_router.model}`
-              : "Loaded")
-            : "Model not loaded",
+            ? (health.checks.semantic_router.total_utterances != null
+              ? `${health.checks.semantic_router.total_utterances} utterances · ${health.checks.semantic_router.service_routes ?? "?"}+${health.checks.semantic_router.population_routes ?? "?"} routes · ${health.checks.semantic_router.model}`
+              : health.checks.semantic_router.route_count != null
+                ? `${health.checks.semantic_router.route_count} routes · ${health.checks.semantic_router.model}`
+                : "Loaded")
+            : health.checks.semantic_router?.status === "degraded"
+              ? "Model loaded but functional check failed"
+              : "Model not loaded",
         },
       ]
     : [];

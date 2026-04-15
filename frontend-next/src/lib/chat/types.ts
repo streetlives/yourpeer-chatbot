@@ -326,6 +326,12 @@ export interface HealthComponentStatus {
   mode?: string;
   model?: string;
   route_count?: number;
+  service_routes?: number;
+  population_routes?: number;
+  total_utterances?: number;
+  embedding_dim?: number;
+  functional?: boolean;
+  required?: boolean;
 }
 
 export interface HealthCheckResponse {

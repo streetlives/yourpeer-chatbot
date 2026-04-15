@@ -229,10 +229,18 @@ def health(request: Request):
         from app.services.semantic_router import get_status as _sr_status
         sr = _sr_status()
         if sr["available"]:
-            checks["semantic_router"] = {"status": "up"}
+            if sr.get("functional", True):
+                checks["semantic_router"] = {"status": "up"}
+            else:
+                checks["semantic_router"] = {"status": "degraded"}
             if _is_admin:
                 checks["semantic_router"]["model"] = sr["model"]
                 checks["semantic_router"]["route_count"] = sr["route_count"]
+                checks["semantic_router"]["service_routes"] = sr.get("service_routes")
+                checks["semantic_router"]["population_routes"] = sr.get("population_routes")
+                checks["semantic_router"]["total_utterances"] = sr.get("total_utterances")
+                checks["semantic_router"]["embedding_dim"] = sr.get("embedding_dim")
+                checks["semantic_router"]["functional"] = sr.get("functional")
         else:
             checks["semantic_router"] = {"status": "not_loaded", "required": False}
     except Exception:
