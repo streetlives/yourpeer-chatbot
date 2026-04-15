@@ -173,6 +173,22 @@ def classify_post_results_question(message: str) -> Optional[dict]:
     if _RESULT_REFERENCE_RE.search(lower):
         return {"type": "unknown_about_results"}
 
+    # --- Refinement / sub-category filter ---
+    # User wants to narrow displayed results to a sub-type, or wants
+    # "more like" a specific result. This must fire AFTER the new-request
+    # escape hatch (above) and AFTER specific-index / field matchers,
+    # but BEFORE falling through to None (which would let the message
+    # escape to the ungrounded LLM fallback).
+    _REFINE_RE = re.compile(
+        r"\b(only the|just the|just show|only show|narrow|filter|"
+        r"more like that|more like those|more like this|"
+        r"locate more|can you locate|"
+        r"similar to|ones like|ones that|only.*(?:is|are) relevant|"
+        r"the.*intake|sub.?categor|refine)\b", re.I
+    )
+    if _REFINE_RE.search(lower):
+        return {"type": "refine_results"}
+
     # Not a post-results question
     return None
 
@@ -250,6 +266,8 @@ def answer_from_results(intent: dict, services: list[dict]) -> dict:
         return _handle_filter_open(services)
     elif intent_type == "filter_free":
         return _handle_filter_free(services)
+    elif intent_type == "refine_results":
+        return _handle_refine_results(services)
     elif intent_type == "specific_index":
         return _handle_specific_index(intent["index"], services)
     elif intent_type == "specific_name":
@@ -358,6 +376,30 @@ def _handle_filter_free(services: list[dict]) -> dict:
         ),
         "services": [],
         "quick_replies": [_NAVIGATOR_QR, _NEW_SEARCH_QR],
+        "category": "post_results",
+    }
+
+
+def _handle_refine_results(services: list[dict]) -> dict:
+    """Handle requests to narrow or filter displayed results by sub-category.
+
+    The chatbot does not yet support sub-category filtering (e.g., "only
+    adult families intake" within shelter results). Rather than falling
+    through to the ungrounded LLM fallback — which would fabricate a
+    response about sub-categories it can't actually filter — this handler
+    acknowledges the limitation and offers concrete alternatives.
+    """
+    count = len(services)
+    return {
+        "response": (
+            f"I'm not able to filter these {count} results by sub-category "
+            f"yet — but I can help in a couple of ways. You can tap on any "
+            f"service card to see details about what they offer, or I can "
+            f"start a new search. A peer navigator can also help you figure "
+            f"out which option best fits your situation."
+        ),
+        "services": [],
+        "quick_replies": [_SHOW_ALL_QR, _NAVIGATOR_QR, _NEW_SEARCH_QR],
         "category": "post_results",
     }
 

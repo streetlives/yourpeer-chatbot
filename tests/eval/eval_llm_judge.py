@@ -6,7 +6,7 @@ Claude as an impartial judge to score each conversation across multiple
 quality dimensions.
 
 Architecture:
-    1. SCENARIO BANK — 30+ test scenarios covering all personas, service
+    1. SCENARIO BANK — 150+ test scenarios covering all personas, service
        categories, edge cases, crisis paths, and adversarial inputs.
     2. SIMULATOR — Drives multi-turn conversations through generate_reply(),
        with an LLM playing the "user" role to respond naturally to follow-ups.
@@ -3070,6 +3070,121 @@ SCENARIOS = [
             "notes": "'Wash' is a personal_care keyword via word boundary "
                      "matching. Should extract correctly. Drop-in centers "
                      "often have laundry facilities.",
+        },
+    },
+
+    # --- BUG 1: Crisis step-down "shelter in None" ---
+    {
+        "id": "peer_dv_toddler_no_location",
+        "name": "DV crisis step-down — no location in initial message",
+        "category": "crisis",
+        "description": "User fleeing DV with a child and needing shelter, but does "
+                       "NOT mention a location in the initial message. The crisis "
+                       "step-down message should say 'your area' not 'None'. "
+                       "Tests the loc_label fix in crisis step-down.",
+        "user_turns": [
+            "I'm 19 with a toddler fleeing domestic violence need "
+            "somewhere safe tonight.",
+            "Yes, search",
+            "Manhattan",
+            "Yes, search",
+        ],
+        "expected": {
+            "service_type": "shelter",
+            "should_detect_crisis": True,
+            "crisis_category": "domestic_violence",
+            "age": 19,
+            "family_status": "with_children",
+            "urgency": "high",
+            "should_reach_confirmation": True,
+            "should_not_contain": ["in None", "in null"],
+            "notes": "The crisis step-down message MUST say 'your area' when "
+                     "no location is provided. 'shelter in None' is a critical "
+                     "display bug — the user sees raw Python None. After the "
+                     "user provides Manhattan, the flow should reach confirmation "
+                     "and deliver results.",
+        },
+    },
+
+    # --- BUG 2: Post-results refinement ---
+    {
+        "id": "peer_dv_post_results_refinement",
+        "name": "Post-results sub-category refinement request",
+        "category": "multi_turn",
+        "description": "After receiving shelter results, the user asks to filter to "
+                       "a specific sub-category ('adult families intake'). The bot "
+                       "should NOT fall through to the ungrounded LLM. It should "
+                       "acknowledge the limitation and offer alternatives.",
+        "user_turns": [
+            "I need shelter in Manhattan",
+            "Yes, search",
+            "Only the adult families intake is relevant. Can you locate "
+            "more like that?",
+        ],
+        "expected": {
+            "service_type": "shelter",
+            "location_contains": "manhattan",
+            "should_not_hallucinate": True,
+            "notes": "After results are shown, the refinement request should be "
+                     "caught by the post-results handler — not fall through to "
+                     "the LLM fallback which fabricates responses about sub-"
+                     "categories it can't filter. The response should acknowledge "
+                     "the limitation honestly and offer alternatives (tap cards, "
+                     "new search, or peer navigator).",
+        },
+    },
+
+    # --- BUG 3: Location re-statement frustration loop ---
+    {
+        "id": "peer_location_restatement_frustration",
+        "name": "User re-states location after bot re-asks",
+        "category": "multi_turn",
+        "description": "User provides a location, but the bot re-asks for it. "
+                       "The user says 'I already said Manhattan.' The bot should "
+                       "NOT wipe the location and re-ask again. It should use "
+                       "the existing location and proceed.",
+        "user_turns": [
+            "I need shelter",
+            "Manhattan",
+            # Simulate the bot re-asking for location (e.g., after a
+            # post-results refinement fell through to LLM fallback)
+            "I already said Manhattan.",
+        ],
+        "expected": {
+            "service_type": "shelter",
+            "location_contains": "manhattan",
+            "should_not_contain": [
+                "What neighborhood or borough",
+                "where would you like me to search",
+            ],
+            "notes": "'I already said Manhattan' should be detected as "
+                     "frustration (not confirm_change_location). The bot "
+                     "should acknowledge the frustration and proceed with "
+                     "the existing search parameters, not re-ask for the "
+                     "borough. This tests Fix 4 (frustration phrase) and "
+                     "Fix 5 (frustration handler context recovery).",
+        },
+    },
+
+    # --- REGRESSION: Confirm change location WITH new location ---
+    {
+        "id": "confirm_change_location_with_value",
+        "name": "Change location with inline new location",
+        "category": "confirmation",
+        "description": "User says 'change to Brooklyn' during confirmation. The "
+                       "bot should switch to Brooklyn directly — not wipe and "
+                       "re-ask.",
+        "user_turns": [
+            "I need food in Manhattan",
+            "Actually, change to Brooklyn",
+            "Yes, search",
+        ],
+        "expected": {
+            "service_type": "food",
+            "location_contains": "brooklyn",
+            "notes": "When the user says 'change to [location]', the bot should "
+                     "update to the new location directly and re-confirm, not "
+                     "wipe to None and show the borough picker.",
         },
     },
 

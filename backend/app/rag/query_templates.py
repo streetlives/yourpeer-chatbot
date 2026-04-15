@@ -136,7 +136,20 @@ SELECT
      FROM languages lang
      JOIN service_languages sl ON lang.id = sl.language_id
      WHERE sl.service_id = s.id
-    ) AS languages_spoken
+    ) AS languages_spoken,
+
+    -- This service's own taxonomy tags (not co-located — this service itself).
+    -- Enables client-side sub-category filtering in post-results handler.
+    -- Unlike also_available (which shows OTHER services at the same location),
+    -- this shows what THIS service is classified as in the Streetlives taxonomy.
+    -- Example: a shelter service might be tagged ["Shelter", "Families", "Intake"].
+    -- Excludes "Other service" (catch-all with no filtering value).
+    (SELECT ARRAY_AGG(DISTINCT t_own.name ORDER BY t_own.name)
+     FROM service_taxonomy st_own
+       JOIN taxonomies t_own ON st_own.taxonomy_id = t_own.id
+     WHERE st_own.service_id = s.id
+       AND t_own.name NOT IN ('Other service')
+    ) AS service_taxonomies
 
 FROM services s
     JOIN service_at_locations sal  ON s.id = sal.service_id
@@ -1131,6 +1144,11 @@ def format_service_card(row: dict) -> dict:
         "review_highlight": _safe_str(row.get("review_highlight")),
         "required_documents": _clean_list(row.get("required_documents")),
         "languages": _clean_list(row.get("languages_spoken")),
+        # This service's own taxonomy tags — used for post-results
+        # sub-category filtering. Kept as raw DB names (not display-
+        # label-mapped) so filters match against canonical values.
+        # Example: ["Shelter", "Families", "Intake"]
+        "service_taxonomies": _clean_list(row.get("service_taxonomies")),
     }
 
 

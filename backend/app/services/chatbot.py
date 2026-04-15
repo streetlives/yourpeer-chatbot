@@ -97,6 +97,16 @@ else:
 
 
 # ---------------------------------------------------------------------------
+# DISPLAY CONFIGURATION
+# ---------------------------------------------------------------------------
+# How many service cards to show per page. The DB query fetches more
+# (up to _FETCH_LIMIT in _execute_and_respond) to support client-side
+# filtering, but we paginate the display to avoid overwhelming users —
+# especially in crisis situations where cognitive load is high.
+_DISPLAY_PAGE_SIZE = 5
+
+
+# ---------------------------------------------------------------------------
 # EMPTY RESPONSE HELPER
 # ---------------------------------------------------------------------------
 
@@ -379,22 +389,33 @@ def generate_reply(
                 if message.lower().strip() in _show_patterns:
                     displayed = existing.get("_displayed_count", 0)
                     if displayed and displayed < len(_last_results):
-                        # Show the undisplayed remainder
-                        remaining = _last_results[displayed:]
-                        existing["_displayed_count"] = len(_last_results)
+                        # Show the next page of results (not all remaining)
+                        next_page = _last_results[displayed:displayed + _DISPLAY_PAGE_SIZE]
+                        new_displayed = displayed + len(next_page)
+                        existing["_displayed_count"] = new_displayed
                         save_session_slots(session_id, existing)
+
+                        still_remaining = len(_last_results) - new_displayed
+                        qr = [
+                            {"label": "🔍 New search", "value": "Start over"},
+                            {"label": "🤝 Peer navigator", "value": "Connect with peer navigator"},
+                        ]
+                        if still_remaining > 0:
+                            show_next = min(still_remaining, _DISPLAY_PAGE_SIZE)
+                            qr.insert(0, {
+                                "label": f"📋 Show {show_next} more result{'s' if show_next != 1 else ''}",
+                                "value": "Show more results",
+                            })
+
                         result = {
                             "session_id": session_id,
-                            "response": f"Here are {len(remaining)} more result{'s' if len(remaining) != 1 else ''}:",
+                            "response": f"Here are {len(next_page)} more result{'s' if len(next_page) != 1 else ''}:",
                             "follow_up_needed": False,
                             "slots": existing,
-                            "services": remaining,
-                            "result_count": len(remaining),
+                            "services": next_page,
+                            "result_count": len(next_page),
                             "relaxed_search": False,
-                            "quick_replies": [
-                                {"label": "🔍 New search", "value": "Start over"},
-                                {"label": "🤝 Peer navigator", "value": "Connect with peer navigator"},
-                            ],
+                            "quick_replies": qr,
                         }
                     else:
                         # No more to show — re-display all
@@ -437,20 +458,31 @@ def generate_reply(
                             reverse=True,
                         )
                     existing["_last_results"] = sorted_results
-                    existing["_displayed_count"] = len(sorted_results)
+                    _sort_page = sorted_results[:_DISPLAY_PAGE_SIZE]
+                    existing["_displayed_count"] = len(_sort_page)
                     save_session_slots(session_id, existing)
+
+                    _sort_remaining = len(sorted_results) - len(_sort_page)
+                    _sort_qr = [
+                        {"label": "🔍 New search", "value": "Start over"},
+                        {"label": "🤝 Peer navigator", "value": "Connect with peer navigator"},
+                    ]
+                    if _sort_remaining > 0:
+                        _show_next = min(_sort_remaining, _DISPLAY_PAGE_SIZE)
+                        _sort_qr.insert(0, {
+                            "label": f"📋 Show {_show_next} more result{'s' if _show_next != 1 else ''}",
+                            "value": "Show more results",
+                        })
+
                     result = {
                         "session_id": session_id,
                         "response": f"Here are the results sorted by {'most recently verified' if _sort_key == 'verified' else 'most services at location'}:",
                         "follow_up_needed": False,
                         "slots": existing,
-                        "services": sorted_results[:10],
-                        "result_count": len(sorted_results[:10]),
+                        "services": _sort_page,
+                        "result_count": len(_sort_page),
                         "relaxed_search": False,
-                        "quick_replies": [
-                            {"label": "🔍 New search", "value": "Start over"},
-                            {"label": "🤝 Peer navigator", "value": "Connect with peer navigator"},
-                        ],
+                        "quick_replies": _sort_qr,
                     }
                     _log_turn(session_id, redacted_message, result, "post_results", request_id=request_id)
                     return result
@@ -987,6 +1019,46 @@ def generate_reply(
     # --- Handle "change location" / "change service" outside pending ---
     if not existing.get("_pending_confirmation"):
         if category == "confirm_change_location":
+            # If the user's message CONTAINS a new location (e.g.,
+            # "I already said Manhattan"), use it directly instead of
+            # wiping and re-asking. This prevents frustration loops.
+            new_loc = early_extracted.get("location")
+            if new_loc:
+                existing["location"] = new_loc
+                save_session_slots(session_id, existing)
+                if is_enough_to_answer(existing):
+                    existing["_pending_confirmation"] = True
+                    save_session_slots(session_id, existing)
+                    confirm_msg = _build_confirmation_message(existing)
+                    result = {
+                        "session_id": session_id,
+                        "response": confirm_msg,
+                        "follow_up_needed": True,
+                        "slots": existing,
+                        "services": [],
+                        "result_count": 0,
+                        "relaxed_search": False,
+                        "quick_replies": _confirmation_quick_replies(existing),
+                    }
+                    _log_turn(session_id, redacted_message, result, "confirmation",
+                              request_id=request_id, tone=tone)
+                    return result
+                else:
+                    follow_up = next_follow_up_question(existing)
+                    result = {
+                        "session_id": session_id,
+                        "response": follow_up,
+                        "follow_up_needed": True,
+                        "slots": existing,
+                        "services": [],
+                        "result_count": 0,
+                        "relaxed_search": False,
+                        "quick_replies": _follow_up_quick_replies(existing),
+                    }
+                    _log_turn(session_id, redacted_message, result, "service",
+                              request_id=request_id, tone=tone)
+                    return result
+            # No location in message — ask for one
             existing["location"] = None
             save_session_slots(session_id, existing)
             result = _empty_reply(
@@ -1022,7 +1094,7 @@ def generate_reply(
     pending = existing.get("_pending_confirmation")
     confirm_result = _handle_pending_confirmation(
         session_id, message, redacted_message, existing, pending,
-        category, tone, request_id,
+        category, tone, request_id, early_extracted=early_extracted,
     )
     if confirm_result:
         return confirm_result
@@ -1348,7 +1420,7 @@ def generate_reply(
         merged["_unrecognized_count"] = _unrec_count
         save_session_slots(session_id, merged)
 
-        location_label = merged.get("location", "your area")
+        location_label = merged.get("location") or "your area"
         if location_label == NEAR_ME_SENTINEL:
             location_label = "your area"
         if _unrec_count >= 3:
@@ -1469,7 +1541,7 @@ def _handle_crisis(
             early_extracted.get("service_type", ""),
             early_extracted.get("service_type", "services"),
         )
-        loc_label = early_extracted.get("location", "your area")
+        loc_label = early_extracted.get("location") or "your area"
         step_down_msg = (
             f"\n\nI can also help you find {svc_label} in "
             f"{loc_label} — would you like me to search?"
@@ -1502,11 +1574,22 @@ def _handle_crisis(
 
 
 def _handle_frustration(session_id, redacted_message, existing, tone, request_id):
-    """Handle frustration with escalating responses."""
+    """Handle frustration with escalating responses.
+
+    When the user is frustrated because the bot re-asked for info they
+    already provided, and the session already has enough to search,
+    offer to proceed instead of just apologizing.
+    """
     frust_count = existing.get("_frustration_count", 0) + 1
     existing["_frustration_count"] = frust_count
     existing["_last_action"] = "frustration"
     save_session_slots(session_id, existing)
+
+    # Context recovery: if we already have enough info to search,
+    # acknowledge the frustration AND offer to proceed immediately.
+    _has_enough = is_enough_to_answer(existing)
+    _svc = existing.get("service_type")
+    _loc = existing.get("location")
 
     if frust_count >= 3:
         result = _empty_reply(
@@ -1531,6 +1614,21 @@ def _handle_frustration(session_id, redacted_message, existing, tone, request_id
                 {"label": "🔄 Start over", "value": "Start over"},
             ],
         )
+    elif _has_enough and _svc and _loc:
+        # First frustration AND we have enough info — acknowledge the
+        # mistake and offer to proceed with what we already know.
+        svc_label = _SERVICE_LABELS.get(_svc, _svc)
+        loc_label = _loc if _loc != NEAR_ME_SENTINEL else "your area"
+        result = _empty_reply(
+            session_id,
+            f"You're right, I apologize for the confusion. "
+            f"I already have what I need — I'll look for "
+            f"{svc_label} in {loc_label}. Sound good?",
+            existing,
+            quick_replies=_confirmation_quick_replies(existing),
+        )
+        existing["_pending_confirmation"] = True
+        save_session_slots(session_id, existing)
     else:
         result = _empty_reply(
             session_id, _FRUSTRATION_RESPONSE, existing,
@@ -1653,7 +1751,7 @@ def _handle_context_aware_confirm(
 
 def _handle_pending_confirmation(
     session_id, message, redacted_message, existing, pending,
-    category, tone, request_id,
+    category, tone, request_id, early_extracted=None,
 ):
     """Handle confirm_yes, confirm_change_*, confirm_deny during pending confirmation.
 
@@ -1708,6 +1806,31 @@ def _handle_pending_confirmation(
 
     if category == "confirm_change_location":
         existing.pop("_pending_confirmation", None)
+        # If the user's message contains a new location (e.g., "change
+        # to Brooklyn" or "I already said Manhattan"), use it directly
+        # instead of wiping and re-asking.
+        new_loc = (early_extracted or {}).get("location")
+        if new_loc:
+            existing["location"] = new_loc
+            save_session_slots(session_id, existing)
+            if is_enough_to_answer(existing):
+                existing["_pending_confirmation"] = True
+                save_session_slots(session_id, existing)
+                confirm_msg = _build_confirmation_message(existing)
+                result = {
+                    "session_id": session_id,
+                    "response": confirm_msg,
+                    "follow_up_needed": True,
+                    "slots": existing,
+                    "services": [],
+                    "result_count": 0,
+                    "relaxed_search": False,
+                    "quick_replies": _confirmation_quick_replies(existing),
+                }
+                _log_turn(session_id, redacted_message, result, "confirmation",
+                          request_id=request_id, tone=tone)
+                return result
+        # No location in message — ask for one
         existing["location"] = None
         save_session_slots(session_id, existing)
         result = _empty_reply(
@@ -1860,7 +1983,6 @@ def _execute_and_respond(session_id: str, message: str, slots: dict, request_id:
     all_services = []
     result_count = 0
     relaxed = False
-    _DISPLAY_LIMIT = 10
     _FETCH_LIMIT = 25
 
     try:
@@ -1932,8 +2054,9 @@ def _execute_and_respond(session_id: str, message: str, slots: dict, request_id:
             )
         elif results["result_count"] > 0:
             all_services = results["services"]
-            services_list = all_services[:_DISPLAY_LIMIT]
+            services_list = all_services[:_DISPLAY_PAGE_SIZE]
             result_count = len(services_list)
+            total_found = len(all_services)
             relaxed = results.get("relaxed", False)
 
             qualifier = ""
@@ -1954,13 +2077,19 @@ def _execute_and_respond(session_id: str, message: str, slots: dict, request_id:
                     ", ".join(all_labels[:-1]) + ", and " + all_labels[-1]
                 )
                 bot_response = (
-                    f"I found {result_count} location(s) that offer both "
+                    f"I found {total_found} location(s) that offer both "
                     f"{combined.lower()}{qualifier} \u2014 here\u2019s what\u2019s available:"
                 )
             else:
-                bot_response = (
-                    f"I found {result_count} option(s) for you{qualifier}:"
-                )
+                if total_found > result_count:
+                    bot_response = (
+                        f"I found {total_found} option(s) for you{qualifier} "
+                        f"\u2014 here are the top {result_count}:"
+                    )
+                else:
+                    bot_response = (
+                        f"I found {result_count} option(s) for you{qualifier}:"
+                    )
         else:
             bot_response = _no_results_message(slots)
 
@@ -2040,11 +2169,14 @@ def _execute_and_respond(session_id: str, message: str, slots: dict, request_id:
         slots["_displayed_count"] = len(services_list)  # Track what user has seen
         save_session_slots(session_id, slots)
 
-        # If there are undisplayed results, add "show more" quick reply
+        # If there are undisplayed results, add "show more" quick reply.
+        # Cap the button label at _DISPLAY_PAGE_SIZE — user sees the next
+        # page, not the total remaining (which could be 20 and feel overwhelming).
         _undisplayed = len(all_services) - len(services_list)
         if _undisplayed > 0 and not queued:
+            _show_next = min(_undisplayed, _DISPLAY_PAGE_SIZE)
             after_results_qr.insert(0, {
-                "label": f"📋 Show {_undisplayed} more result{'s' if _undisplayed != 1 else ''}",
+                "label": f"📋 Show {_show_next} more result{'s' if _show_next != 1 else ''}",
                 "value": "Show more results",
             })
 
