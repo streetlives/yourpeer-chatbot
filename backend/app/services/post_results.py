@@ -89,6 +89,299 @@ _RESULT_REFERENCE_RE = re.compile(
 )
 
 
+# ---------------------------------------------------------------------------
+# SUB-CATEGORY FILTERING ENGINE (Phase 1)
+# ---------------------------------------------------------------------------
+# All filtering operates on DB-sourced card data. The LLM is never used
+# to generate, rank, or select services. It may be used in Tier 2 (deferred)
+# to EXTRACT search keywords from the user's natural language — but the
+# actual matching is always deterministic.
+
+# --- Taxonomy aliases: user-facing terms → canonical DB taxonomy names ---
+# Built from PROD query (70 taxonomies). Case-insensitive matching.
+_TAXONOMY_FILTER_ALIASES = {
+    # Shelter sub-types
+    "intake": "Intake", "intakes": "Intake",
+    "families": "Families", "family": "Families",
+    "single adult": "Single Adult", "singles": "Single Adult",
+    "single adults": "Single Adult",
+    "youth": "Youth", "young adult": "Youth",
+    "senior": "Senior", "seniors": "Senior",
+    "safe haven": "Safe Haven",
+    "warming center": "Warming Center",
+    "drop-in": "Drop-in Center", "drop in": "Drop-in Center",
+    "drop-in center": "Drop-in Center",
+    "assessment": "Assessment",
+    "veterans": "Veterans", "vet": "Veterans", "vets": "Veterans",
+    "lgbtq": "LGBTQ Young Adult", "lgbtq+": "LGBTQ Young Adult",
+    "transitional": "Transitional Independent Living (TIL)",
+    "til": "Transitional Independent Living (TIL)",
+    "supportive housing": "Supportive Housing",
+    "residential recovery": "Residential Recovery",
+    # Food sub-types
+    "soup kitchen": "Soup Kitchen", "soup kitchens": "Soup Kitchen",
+    "food pantry": "Food Pantry", "food pantries": "Food Pantry",
+    "pantry": "Food Pantry", "pantries": "Food Pantry",
+    "mobile pantry": "Mobile Pantry",
+    "brown bag": "Brown Bag",
+    "food benefits": "Food Benefits",
+    "snap": "Food Benefits", "wic": "Food Benefits",
+    "farmers market": "Farmer's Markets",
+    # Personal care sub-types
+    "shower": "Shower", "showers": "Shower",
+    "laundry": "Laundry",
+    "haircut": "Haircut", "haircuts": "Haircut",
+    "toiletries": "Toiletries",
+    "restrooms": "Restrooms", "restroom": "Restrooms",
+    # Clothing sub-types
+    "clothing pantry": "Clothing Pantry",
+    "interview clothing": "Interview-Ready Clothing",
+    "coat drive": "Coat Drive",
+    "thrift shop": "Thrift Shop",
+    # Health sub-types
+    "substance use": "Substance Use Treatment",
+    "detox": "Substance Use Treatment",
+    "mental health": "Mental Health",
+    "counseling": "Mental Health",
+    "support groups": "Support Groups",
+    # Other sub-types
+    "education": "Education",
+    "employment": "Employment",
+    "legal": "Legal Services", "legal services": "Legal Services",
+    "immigration": "Immigration Services",
+    "benefits": "Benefits",
+    "case management": "Case Workers", "case workers": "Case Workers",
+    "mail": "Mail",
+}
+
+# --- Negation detection ---
+_NEGATION_RE = re.compile(
+    r"\b(not the|without|don.t show|exclude|skip|remove|"
+    r"none of the|anything (?:but|except)|other than|"
+    r"not.*(?:ones?|services?|places?|results?)|"
+    r"no (?:referral|id|appointment|membership))\b", re.I
+)
+
+# --- Structured field filters ---
+# Each: (regex_pattern, filter_function, description)
+# These check card fields directly — deterministic, no text search.
+_STRUCTURED_FILTERS = [
+    (re.compile(r"\b(no referral|walk.?in|no appointment|drop.?in|no membership)\b", re.I),
+     lambda card: not card.get("requires_membership"),
+     "no referral needed"),
+
+    (re.compile(r"\b(no id|no identification|don.t need id|without id|no documents?)\b", re.I),
+     lambda card: not card.get("required_documents"),
+     "no ID required"),
+
+    (re.compile(r"\b(good review|highly rated|well reviewed|has reviews?)\b", re.I),
+     lambda card: bool(card.get("review_highlight")),
+     "has reviews"),
+
+    (re.compile(r"\b(wheelchair|accessible|ada)\b", re.I),
+     lambda card: bool(card.get("accessibility")) or _desc_contains(card, "accessible", "wheelchair"),
+     "accessible"),
+
+    (re.compile(r"\b(speaks? spanish|habla español|en español)\b", re.I),
+     lambda card: _lang_contains(card, "Spanish") or _desc_contains(card, "spanish"),
+     "speaks Spanish"),
+
+    (re.compile(r"\b(for famil|takes? kids|with children|accept.*children)\b", re.I),
+     lambda card: _has_taxonomy(card, "Families") or _elig_contains(card, "families"),
+     "for families"),
+
+    (re.compile(r"\b(for (?:women|females?)|women.?only)\b", re.I),
+     lambda card: _has_taxonomy(card, "Single Adult") or _elig_contains(card, "female", "women"),
+     "for women"),
+
+    (re.compile(r"\b(for (?:men|males?)|men.?only)\b", re.I),
+     lambda card: _has_taxonomy(card, "Single Adult") or _elig_contains(card, "male", "men"),
+     "for men"),
+
+    (re.compile(r"\b(for youth|for young|under 25|under 21|teens?|teenagers?)\b", re.I),
+     lambda card: _has_taxonomy(card, "Youth") or _has_taxonomy(card, "LGBTQ Young Adult"),
+     "for youth"),
+
+    (re.compile(r"\b(for seniors?|for older|elderly|over 60|over 65)\b", re.I),
+     lambda card: _has_taxonomy(card, "Senior"),
+     "for seniors"),
+
+    (re.compile(r"\b(for veterans?|for vets?|military)\b", re.I),
+     lambda card: _has_taxonomy(card, "Veterans") or _has_taxonomy(card, "Veterans Short-Term Housing"),
+     "for veterans"),
+]
+
+
+def _has_taxonomy(card: dict, taxonomy_name: str) -> bool:
+    """Check if card's service_taxonomies contains the given taxonomy."""
+    tags = card.get("service_taxonomies") or []
+    return taxonomy_name in tags
+
+
+def _elig_contains(card: dict, *terms: str) -> bool:
+    """Check if eligibility_summary contains any of the given terms."""
+    summary = (card.get("eligibility_summary") or "").lower()
+    return any(t.lower() in summary for t in terms)
+
+
+def _lang_contains(card: dict, language: str) -> bool:
+    """Check if languages list contains the given language."""
+    langs = card.get("languages") or []
+    return language in langs
+
+
+def _desc_contains(card: dict, *terms: str) -> bool:
+    """Check if description contains any of the given terms."""
+    desc = (card.get("description") or "").lower()
+    return any(t.lower() in desc for t in terms)
+
+
+def _also_has(card: dict, service_label: str) -> bool:
+    """Check if also_available includes the given service label."""
+    also = card.get("also_available") or []
+    return any(service_label.lower() in a.lower() for a in also)
+
+
+# --- Phrase extraction: strip intent signal words to get filter concept ---
+_STRIP_INTENT_RE = re.compile(
+    r"^(only the|just the|just show me the|show me only the|just show me|"
+    r"just show the|only show me the|only show the|only show me|"
+    r"can you locate more like|can you locate more|can you locate similar|"
+    r"more like|filter to|narrow to|narrow down to|"
+    r"i only need|i just need|i just want|"
+    r"locate more like|show only)\s*", re.I
+)
+
+_STOP_WORDS = {
+    "the", "a", "an", "is", "are", "was", "were", "be", "been",
+    "only", "just", "more", "like", "that", "this", "those",
+    "these", "relevant", "ones", "one", "can", "you", "locate",
+    "find", "show", "filter", "narrow", "similar", "with",
+    "for", "and", "or", "of", "in", "to", "me", "my",
+}
+
+
+def _extract_raw_phrase(message: str) -> str:
+    """Extract the filter concept from a refinement message.
+
+    Strips intent signal words and returns the core phrase.
+    Example: "Only the adult families intake is relevant"
+             → "adult families intake is relevant"
+             → keywords: ["adult", "families", "intake"]
+    """
+    stripped = _STRIP_INTENT_RE.sub("", message.strip())
+    # Remove trailing filler
+    stripped = re.sub(
+        r"\s*(?:is|are)\s+(?:relevant|important|what i need|good)\.?\s*$",
+        "", stripped, flags=re.I,
+    )
+    return stripped.strip() or message.strip()
+
+
+def _extract_keywords(raw_phrase: str) -> list[str]:
+    """Extract meaningful search keywords from raw_phrase.
+
+    Strips stop words. Returns lowercase keywords of 3+ characters.
+    """
+    words = re.findall(r"[a-zA-Z]+", raw_phrase.lower())
+    return [w for w in words if w not in _STOP_WORDS and len(w) >= 3]
+
+
+def _filter_by_taxonomy(cards: list[dict], raw_phrase: str) -> tuple[list[dict], set[str]]:
+    """Filter cards by matching raw_phrase against service_taxonomies.
+
+    Tries exact phrase, individual words, and bigrams against
+    _TAXONOMY_FILTER_ALIASES. Returns (matched_cards, matched_taxonomy_names).
+    """
+    phrase_lower = raw_phrase.lower().strip()
+
+    # Build candidate list: full phrase, individual words, bigrams
+    candidates = [phrase_lower]
+    words = phrase_lower.split()
+    candidates.extend(words)
+    for i in range(len(words) - 1):
+        candidates.append(f"{words[i]} {words[i+1]}")
+
+    matched_taxonomies = set()
+    for candidate in candidates:
+        taxonomy_name = _TAXONOMY_FILTER_ALIASES.get(candidate)
+        if taxonomy_name:
+            matched_taxonomies.add(taxonomy_name)
+
+    if not matched_taxonomies:
+        return [], set()
+
+    matched = [
+        card for card in cards
+        if card.get("service_taxonomies")
+        and any(t in card["service_taxonomies"] for t in matched_taxonomies)
+    ]
+    return matched, matched_taxonomies
+
+
+def _filter_by_structured(cards: list[dict], message: str) -> tuple[list[dict], str]:
+    """Apply structured field filters from dispatch table.
+
+    Returns (matched_cards, filter_description) or ([], "") if no match.
+    """
+    lower = message.lower()
+    for pattern, filter_fn, description in _STRUCTURED_FILTERS:
+        if pattern.search(lower):
+            matched = [c for c in cards if filter_fn(c)]
+            return matched, description
+    return [], ""
+
+
+def _filter_by_colocated(cards: list[dict], message: str) -> tuple[list[dict], str]:
+    """Filter by co-located services ('also has food', 'with showers')."""
+    m = re.search(r"\balso (?:has|have|offers?|provides?)\s+(\w+)", message, re.I)
+    if not m:
+        m = re.search(r"\bwith\s+(food|shelter|shower|clothing|health|legal)\b", message, re.I)
+    if m:
+        service_label = m.group(1).strip()
+        matched = [c for c in cards if _also_has(c, service_label)]
+        return matched, f"also has {service_label}"
+    return [], ""
+
+
+def _text_search_cards(cards: list[dict], keywords: list[str]) -> list[dict]:
+    """Filter cards where service_name or description contains ANY keyword.
+
+    Case-insensitive. service_name matches weighted 2× vs description.
+    Returns cards sorted by match score (best matches first).
+
+    NOTE: ANY-keyword matching can produce loose results when the user's
+    refinement phrase contains common words. "adult families intake"
+    works well because all 3 words are specific. A phrase like
+    "the one with the good program" would match any card containing
+    "good" or "program" — potentially all of them.
+
+    Mitigation: taxonomy matching (Tier 1a) fires first and catches
+    most structured refinements before text search runs. Text search
+    is the fallback for unstructured/unique phrases.
+    """
+    results = []
+    for card in cards:
+        name = (card.get("service_name") or "").lower()
+        desc = (card.get("description") or "").lower()
+        org = (card.get("organization") or "").lower()
+
+        match_score = 0
+        for kw in keywords:
+            if kw in name:
+                match_score += 2
+            if kw in desc:
+                match_score += 1
+            if kw in org:
+                match_score += 1
+
+        if match_score > 0:
+            results.append((match_score, card))
+
+    results.sort(key=lambda x: x[0], reverse=True)
+    return [card for _, card in results]
+
+
 def classify_post_results_question(message: str) -> Optional[dict]:
     """Detect whether a message is a follow-up about displayed results.
 
@@ -113,7 +406,8 @@ def classify_post_results_question(message: str) -> Optional[dict]:
         r"\b(i need|i'm looking|im looking|looking for|can i get|find me|"
         r"help me find|search for|can you find|can you search|"
         r"where can i (?:go|find|get)|i want to find|"
-        r"do you have|is there)\b", re.I
+        r"can you locate(?! more| like| similar)"
+        r"|do you have|is there)\b", re.I
     )
     if _NEW_REQUEST_RE.search(lower):
         return None
@@ -173,24 +467,123 @@ def classify_post_results_question(message: str) -> Optional[dict]:
     if _RESULT_REFERENCE_RE.search(lower):
         return {"type": "unknown_about_results"}
 
-    # --- Refinement / sub-category filter ---
-    # User wants to narrow displayed results to a sub-type, or wants
-    # "more like" a specific result. This must fire AFTER the new-request
-    # escape hatch (above) and AFTER specific-index / field matchers,
-    # but BEFORE falling through to None (which would let the message
-    # escape to the ungrounded LLM fallback).
+    # --- Tier 1: Unambiguous refinement (regex, <1ms) ---
+    # These signals ONLY appear in refinement context — they inherently
+    # reference the displayed results. No false positives possible.
+    #
+    # IMPORTANT: patterns like "just show", "only the", "the X intake"
+    # are intentionally NOT here — they're ambiguous between refinement
+    # and new request depending on what follows. Those go to Tier 2 (LLM).
     _REFINE_RE = re.compile(
-        r"\b(only the|just the|just show|only show|narrow|filter|"
-        r"more like that|more like those|more like this|"
-        r"locate more|can you locate|"
-        r"similar to|ones like|ones that|only.*(?:is|are) relevant|"
-        r"the.*intake|sub.?categor|refine)\b", re.I
+        r"\b(more like that|more like those|more like this"
+        r"|locate more|locate similar"
+        r"|similar to"
+        r"|ones like|ones that|ones with|ones for"
+        r"|(?:filter|narrow|refine)(?:ing)?\b"
+        r"|only.*(?:is|are) relevant)\b", re.I
     )
     if _REFINE_RE.search(lower):
-        return {"type": "refine_results"}
+        return {"type": "filter_subcategory", "raw_phrase": _extract_raw_phrase(message)}
+
+    # --- Tier 2: Ambiguous intent — LLM classification (~100ms) ---
+    # Messages that MIGHT be refinements or MIGHT be new requests.
+    # A single bounded Haiku call classifies the intent. This avoids
+    # both failure modes:
+    #   - Broad regex catching new requests as refinements (extra taps)
+    #   - Falling through to the ungrounded conversational LLM (hallucination)
+    #
+    # Only fires when there's enough content to be ambiguous (4+ words)
+    # and the message wasn't already handled by the patterns above.
+    if len(message.split()) >= 3:
+        llm_intent = _classify_post_results_llm(message)
+        if llm_intent == "refine":
+            return {"type": "filter_subcategory", "raw_phrase": _extract_raw_phrase(message)}
+        elif llm_intent == "new_request":
+            return None  # escape to main router
+        elif llm_intent == "about_results":
+            return {"type": "unknown_about_results"}
+        # "other" or None (LLM unavailable) → fall through
 
     # Not a post-results question
     return None
+
+
+# ---------------------------------------------------------------------------
+# POST-RESULTS LLM INTENT CLASSIFICATION
+# ---------------------------------------------------------------------------
+
+_POST_RESULTS_CLASSIFY_PROMPT = """\
+You are classifying a follow-up message in a social services chatbot. \
+The user has already received service results and is now sending another message.
+
+Classify the message into exactly ONE category:
+
+- refine: The user wants to narrow or filter the results they're looking at. \
+They're referencing the displayed results and want a subset. \
+Examples: "just the family ones", "only show me intake", "the ones for youth", \
+"just show me the DHS ones", "only the ones that are open"
+
+- new_request: The user wants to search for a DIFFERENT type of service. \
+They're not filtering results — they want something new entirely. \
+Examples: "show me food pantries", "I want dental care", \
+"what about legal help", "can I get clothing too"
+
+- about_results: The user is asking a question about the displayed results \
+but not trying to filter them. \
+Examples: "which one is closest", "are any of these safe", \
+"what's the difference between them"
+
+- other: None of the above. General conversation, frustration, or unrelated.
+
+Return ONLY the category name. No explanation."""
+
+
+def _classify_post_results_llm(message: str) -> Optional[str]:
+    """Classify a post-results message using a bounded Haiku call.
+
+    Only fires for ambiguous messages that regex couldn't classify.
+    Returns one of: "refine", "new_request", "about_results", "other",
+    or None if the LLM is unavailable.
+
+    Cost: ~$0.0005 per call. Bounded to 4 possible outputs.
+    """
+    try:
+        from app.llm.claude_client import get_client, CLASSIFICATION_MODEL
+        from app.services.audit_log import record_llm_call
+        import time
+
+        client = get_client()
+        if client is None:
+            return None
+
+        t0 = time.perf_counter()
+        response = client.messages.create(
+            model=CLASSIFICATION_MODEL,
+            max_tokens=15,
+            system=_POST_RESULTS_CLASSIFY_PROMPT,
+            messages=[{"role": "user", "content": message}],
+        )
+        latency = round((time.perf_counter() - t0) * 1000)
+
+        raw = response.content[0].text.strip().lower()
+        record_llm_call(
+            task="post_results_classify", model=CLASSIFICATION_MODEL,
+            input_tokens=response.usage.input_tokens,
+            output_tokens=response.usage.output_tokens,
+            latency_ms=latency, success=True,
+        )
+
+        _VALID = {"refine", "new_request", "about_results", "other"}
+        if raw in _VALID:
+            logger.info(f"Post-results LLM classified '{message[:50]}' as '{raw}'")
+            return raw
+
+        logger.warning(f"Post-results LLM returned unexpected: '{raw}'")
+        return None
+
+    except Exception as e:
+        logger.error(f"Post-results LLM classification failed: {e}")
+        return None
 
 
 def _extract_service_index(text: str) -> Optional[int]:
@@ -266,8 +659,13 @@ def answer_from_results(intent: dict, services: list[dict]) -> dict:
         return _handle_filter_open(services)
     elif intent_type == "filter_free":
         return _handle_filter_free(services)
+    elif intent_type == "filter_subcategory":
+        return _handle_filter_subcategory(intent, services)
     elif intent_type == "refine_results":
-        return _handle_refine_results(services)
+        # Legacy compat — treat as filter_subcategory with no raw_phrase
+        return _handle_filter_subcategory(
+            {"type": "filter_subcategory", "raw_phrase": ""}, services
+        )
     elif intent_type == "specific_index":
         return _handle_specific_index(intent["index"], services)
     elif intent_type == "specific_name":
@@ -380,27 +778,123 @@ def _handle_filter_free(services: list[dict]) -> dict:
     }
 
 
-def _handle_refine_results(services: list[dict]) -> dict:
-    """Handle requests to narrow or filter displayed results by sub-category.
+def _handle_filter_subcategory(intent: dict, services: list[dict]) -> dict:
+    """Filter displayed results by sub-category.
 
-    The chatbot does not yet support sub-category filtering (e.g., "only
-    adult families intake" within shelter results). Rather than falling
-    through to the ungrounded LLM fallback — which would fabricate a
-    response about sub-categories it can't actually filter — this handler
-    acknowledges the limitation and offers concrete alternatives.
+    Three-tier deterministic filtering pipeline:
+      Tier 1a: Structured field filters (open, referral, population)
+      Tier 1a: Taxonomy tag matching (service_taxonomies)
+      Tier 1a: Co-located service filter (also_available)
+      Tier 1c: Weighted text search (service_name + description)
+
+    All filtering operates on DB-sourced card data. Zero hallucination.
+    The LLM is never used to select or rank services.
     """
-    count = len(services)
+    raw_phrase = intent.get("raw_phrase", "")
+    original_message = intent.get("_original_message", raw_phrase)
+    total = len(services)
+
+    if total <= 2:
+        return {
+            "response": (
+                f"I only found {total} result{'s' if total != 1 else ''} for "
+                f"this search, so there isn't much to filter. You can tap on "
+                f"the card{'s' if total != 1 else ''} for more details, or I "
+                f"can try a new search."
+            ),
+            "services": [],
+            "quick_replies": [_SHOW_ALL_QR, _NAVIGATOR_QR, _NEW_SEARCH_QR],
+            "category": "post_results_filter",
+        }
+
+    # --- Detect negation ---
+    is_negation = bool(_NEGATION_RE.search(original_message))
+
+    # --- Tier 1a: Structured field filters ---
+    matched, filter_desc = _filter_by_structured(services, original_message)
+    filter_tier = "structured"
+
+    # --- Tier 1a: Co-located service filter ---
+    if not matched:
+        matched, filter_desc = _filter_by_colocated(services, original_message)
+        filter_tier = "colocated"
+
+    # --- Tier 1a: Taxonomy tag matching ---
+    if not matched and raw_phrase:
+        matched, matched_taxonomies = _filter_by_taxonomy(services, raw_phrase)
+        if matched:
+            filter_tier = "taxonomy"
+            filter_desc = ", ".join(sorted(matched_taxonomies))
+
+    # --- Tier 1c: Weighted text search ---
+    if not matched and raw_phrase:
+        keywords = _extract_keywords(raw_phrase)
+        if keywords:
+            matched = _text_search_cards(services, keywords)
+            if matched:
+                filter_tier = "text_search"
+                filter_desc = " ".join(keywords)
+
+    # --- Apply negation ---
+    if is_negation and matched:
+        # Invert: show everything EXCEPT matched
+        matched_ids = {c.get("service_id") for c in matched}
+        matched = [c for c in services if c.get("service_id") not in matched_ids]
+        filter_tier += "_negated"
+
+    # --- Log filter operation ---
+    logger.info(
+        f"filter_subcategory: tier={filter_tier} phrase='{raw_phrase}' "
+        f"matched={len(matched)}/{total} negated={is_negation}"
+    )
+
+    # --- Build response ---
+    if matched:
+        count = len(matched)
+        display_phrase = raw_phrase[:50] if raw_phrase else filter_desc
+
+        if is_negation:
+            response = (
+                f"Here {'is' if count == 1 else 'are'} {count} of the "
+                f"{total} results excluding '{display_phrase}':"
+            )
+        elif count == 1:
+            response = (
+                f"One of the {total} results matches '{display_phrase}':"
+            )
+        else:
+            response = (
+                f"I found {count} of the {total} results matching "
+                f"'{display_phrase}':"
+            )
+
+        return {
+            "response": response,
+            "services": matched,
+            "quick_replies": [_SHOW_ALL_QR, _NAVIGATOR_QR, _NEW_SEARCH_QR],
+            "category": "post_results_filter",
+            # Metadata for chatbot.py to store _filtered_results
+            "_filter_matched": True,
+            "_filter_tier": filter_tier,
+            "_filter_phrase": raw_phrase,
+        }
+
+    # --- No matches ---
+    display_phrase = raw_phrase[:50] if raw_phrase else "that"
     return {
         "response": (
-            f"I'm not able to filter these {count} results by sub-category "
-            f"yet — but I can help in a couple of ways. You can tap on any "
-            f"service card to see details about what they offer, or I can "
-            f"start a new search. A peer navigator can also help you figure "
-            f"out which option best fits your situation."
+            f"None of the {total} results I showed match "
+            f"'{display_phrase}'. This might mean the specific "
+            f"service you're looking for isn't in my current results. "
+            f"Would you like to try a new search, or would a peer "
+            f"navigator be helpful?"
         ),
         "services": [],
-        "quick_replies": [_SHOW_ALL_QR, _NAVIGATOR_QR, _NEW_SEARCH_QR],
-        "category": "post_results",
+        "quick_replies": [_SHOW_ALL_QR, _NEW_SEARCH_QR, _NAVIGATOR_QR],
+        "category": "post_results_filter",
+        "_filter_matched": False,
+        "_filter_tier": filter_tier,
+        "_filter_phrase": raw_phrase,
     }
 
 
