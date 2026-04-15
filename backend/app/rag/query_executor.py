@@ -264,7 +264,17 @@ def execute_service_query(
     sql_relaxed, relaxed_params = build_relaxed_query(template_key, params)
 
     start = time.monotonic()
-    rows_relaxed = _execute_sql(sql_relaxed, relaxed_params)
+    try:
+        rows_relaxed = _execute_sql(sql_relaxed, relaxed_params)
+    except QueryTimeoutError:
+        # Both strict AND relaxed timed out — DB is under heavy load.
+        # Return empty results so the chatbot shows a no-results message
+        # instead of the scarier "I'm having trouble connecting" error.
+        logger.error(
+            f"Relaxed query for '{template_key}' also timed out. "
+            f"Database may be under heavy load."
+        )
+        rows_relaxed = []
     elapsed_ms += int((time.monotonic() - start) * 1000)
 
     results_relaxed = deduplicate_results(rows_relaxed)
