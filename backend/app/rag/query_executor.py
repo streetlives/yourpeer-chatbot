@@ -40,6 +40,16 @@ from app.rag.query_templates import (
 load_dotenv()
 logger = logging.getLogger(__name__)
 
+
+class QueryTimeoutError(Exception):
+    """Raised when a database query exceeds the statement_timeout.
+
+    Distinguished from other query errors so execute_service_query()
+    can fall back to a faster relaxed query immediately rather than
+    treating it as 'no results found'.
+    """
+    pass
+
 # ---------------------------------------------------------------------------
 # DATABASE CONNECTION
 # ---------------------------------------------------------------------------
@@ -210,8 +220,16 @@ def execute_service_query(
     # --- Strict query ---
     sql, bound_params = build_query(template_key, params)
 
+    timed_out = False
     start = time.monotonic()
-    rows = _execute_sql(sql, bound_params)
+    try:
+        rows = _execute_sql(sql, bound_params)
+    except QueryTimeoutError:
+        # Proximity query timed out — skip straight to relaxed fallback.
+        # Don't waste time processing 0 rows; go directly to the faster
+        # borough-level query that strips lat/lon/radius.
+        timed_out = True
+        rows = []
     elapsed_ms = int((time.monotonic() - start) * 1000)
 
     results = deduplicate_results(rows)
@@ -230,15 +248,33 @@ def execute_service_query(
         }
 
     # --- Relaxed fallback ---
-    logger.info(
-        f"Strict query for '{template_key}' returned 0 results. "
-        f"Retrying with relaxed filters."
-    )
+    if timed_out:
+        _has_proximity = "lat" in params and "lon" in params
+        logger.warning(
+            f"{'Proximity' if _has_proximity else 'Strict'} query for "
+            f"'{template_key}' timed out after {elapsed_ms}ms. "
+            f"Falling back to relaxed query (strips proximity filters)."
+        )
+    else:
+        logger.info(
+            f"Strict query for '{template_key}' returned 0 results. "
+            f"Retrying with relaxed filters."
+        )
 
     sql_relaxed, relaxed_params = build_relaxed_query(template_key, params)
 
     start = time.monotonic()
-    rows_relaxed = _execute_sql(sql_relaxed, relaxed_params)
+    try:
+        rows_relaxed = _execute_sql(sql_relaxed, relaxed_params)
+    except QueryTimeoutError:
+        # Both strict AND relaxed timed out — DB is under heavy load.
+        # Return empty results so the chatbot shows a no-results message
+        # instead of the scarier "I'm having trouble connecting" error.
+        logger.error(
+            f"Relaxed query for '{template_key}' also timed out. "
+            f"Database may be under heavy load."
+        )
+        rows_relaxed = []
     elapsed_ms += int((time.monotonic() - start) * 1000)
 
     results_relaxed = deduplicate_results(rows_relaxed)
@@ -251,6 +287,7 @@ def execute_service_query(
         "template_used": TEMPLATES[template_key]["name"],
         "params_applied": relaxed_params,
         "relaxed": True,
+        "proximity_timeout": timed_out,
         "execution_ms": elapsed_ms,
         "freshness": freshness,
     }
@@ -262,6 +299,10 @@ def _execute_sql(sql: str, params: dict) -> list[dict]:
 
     All SQL passed here MUST come from query_templates.py.
     This function never constructs SQL — it only executes it.
+
+    Raises QueryTimeoutError when the statement_timeout is exceeded,
+    so the caller can fall back to a faster query immediately.
+    Other exceptions return [] for backward compatibility.
     """
     engine = _get_engine()
     try:
@@ -270,6 +311,18 @@ def _execute_sql(sql: str, params: dict) -> list[dict]:
             columns = list(result.keys())
             return [dict(zip(columns, row)) for row in result.fetchall()]
     except Exception as e:
+        error_str = str(e).lower()
+        # Detect statement_timeout (psycopg2.errors.QueryCanceled).
+        # Check the string because psycopg2 might not be importable in
+        # all environments, and the exception is wrapped by SQLAlchemy.
+        if "querycanceled" in type(e).__name__.lower() or \
+           "statement timeout" in error_str or \
+           "canceling statement" in error_str:
+            logger.warning(f"Query timed out (statement_timeout exceeded)")
+            logger.debug(f"SQL: {sql}")
+            logger.debug(f"Params: {params}")
+            raise QueryTimeoutError("Query exceeded statement_timeout") from e
+
         logger.error(f"Query execution error: {e}")
         logger.debug(f"SQL: {sql}")
         logger.debug(f"Params: {params}")

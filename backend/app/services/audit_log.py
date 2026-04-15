@@ -113,7 +113,7 @@ def log_conversation_turn(
 def log_query_execution(
     session_id="", template_name="", params=None, result_count=0,
     relaxed=False, execution_ms=0, freshness=None, request_id=None,
-    **kwargs,
+    proximity_timeout=False, **kwargs,
 ):
     clean_params = dict(params or {})
     clean_params.pop("max_results", None)
@@ -125,6 +125,7 @@ def log_query_execution(
         "params": clean_params,
         "result_count": result_count,
         "relaxed": relaxed,
+        "proximity_timeout": proximity_timeout,
         "execution_ms": execution_ms,
         "freshness": freshness,
         "request_id": request_id,

@@ -7,6 +7,8 @@ import { useState } from "react";
 import { MapPin, Phone, Mail, Clock, CheckCircle, AlertTriangle, ChevronDown } from "lucide-react";
 import type { ServiceResult } from "@/lib/chat/types";
 import { LocationFeedbackRow } from "./location-feedback-row";
+import { CallConfirmDialog } from "./call-confirm-dialog";
+import { SafeHtml } from "./safe-html";
 
 interface ServiceCardProps {
   service: ServiceResult;
@@ -269,7 +271,7 @@ export function ServiceCard({ service, isActive, index, total }: ServiceCardProp
       )}
 
       {/* Action buttons — mt-auto pins buttons + footer to card bottom */}
-      <ActionButtons service={service} name={name} />
+      <ActionButtons service={service} name={service.organization || name} />
 
       {/* Footer: Learn More + Rate — shared row */}
       {(service.yourpeer_url || service.service_id) && (
@@ -301,12 +303,12 @@ function DetailsSection({ service, hasDetails, detailsOpen, setDetailsOpen }: {
         type="button"
         onClick={() => setDetailsOpen(!detailsOpen)}
         aria-expanded={detailsOpen}
-        className="flex items-center justify-between w-full py-1.5 text-xs font-semibold uppercase tracking-wider text-blue-600 hover:text-blue-800 transition-colors"
+        className="flex items-center justify-between w-full py-1.5 text-xs font-semibold uppercase tracking-wider text-blue-600 underline underline-offset-2 hover:text-blue-800 transition-colors"
       >
-        <span className="border-b border-blue-400 hover:border-blue-600 pb-px">Details</span>
+        <span>Details</span>
         <ChevronDown
           size={14}
-          className={`text-blue-500 transition-transform duration-200 ${detailsOpen ? "rotate-180" : ""}`}
+          className={`transition-transform duration-200 ${detailsOpen ? "rotate-180" : ""}`}
           aria-hidden="true"
         />
       </button>
@@ -338,9 +340,10 @@ function DetailsSection({ service, hasDetails, detailsOpen, setDetailsOpen }: {
             </div>
           )}
           {service.description && (
-            <div className="text-xs text-neutral-500 leading-relaxed">
-              {service.description}
-            </div>
+            <SafeHtml
+              html={service.description}
+              className="text-xs text-neutral-500 leading-relaxed [&_ul]:list-disc [&_ul]:pl-4 [&_ol]:list-decimal [&_ol]:pl-4 [&_li]:mb-0.5 [&_a]:text-blue-600 [&_a]:underline [&_p]:mb-1 last:[&_p]:mb-0"
+            />
           )}
           {service.required_documents && service.required_documents.length > 0 && (
             <div className="flex items-start gap-2 text-xs text-neutral-500 leading-snug">
@@ -362,40 +365,54 @@ function DetailsSection({ service, hasDetails, detailsOpen, setDetailsOpen }: {
 }
 
 function ActionButtons({ service, name }: { service: ServiceResult; name: string }) {
+  const [showCallConfirm, setShowCallConfirm] = useState(false);
+
   return (
-    <div className="flex gap-1.5 pt-1 mt-auto" role="group" aria-label={`Actions for ${name}`}>
-      {service.phone && (
-        <a
-          href={`tel:${service.phone.split(/\s*ext/i)[0].replace(/\D/g, "")}`}
-          aria-label={`Call ${name}`}
-          className="flex-1 py-2 rounded-lg border border-neutral-900 bg-neutral-900 text-center text-xs font-semibold text-white transition hover:bg-neutral-700"
-        >
-          Call
-        </a>
+    <>
+      <div className="flex gap-1.5 pt-1 mt-auto" role="group" aria-label={`Actions for ${name}`}>
+        {service.phone && (
+          <button
+            type="button"
+            onClick={() => setShowCallConfirm(true)}
+            aria-label={`Call ${name}`}
+            className="flex-1 py-2 rounded-lg border border-neutral-900 bg-neutral-900 text-center text-xs font-semibold text-white transition hover:bg-neutral-700"
+          >
+            Call
+          </button>
+        )}
+        {service.address && (
+          <a
+            href={`https://maps.google.com/?q=${encodeURIComponent(service.address)}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label={`Get directions to ${name}`}
+            className="flex-1 py-2 rounded-lg border border-amber-300 bg-amber-300 text-center text-xs font-semibold text-neutral-900 transition hover:bg-amber-400 hover:border-amber-400"
+          >
+            Directions
+          </a>
+        )}
+        {service.website && (
+          <a
+            href={service.website}
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label={`Visit ${name} website`}
+            className="flex-1 py-2 rounded-lg border border-neutral-200 bg-neutral-50 text-center text-xs font-semibold text-neutral-900 transition hover:bg-neutral-100 hover:border-neutral-300"
+          >
+            Website
+          </a>
+        )}
+      </div>
+
+      {showCallConfirm && service.phone && (
+        <CallConfirmDialog
+          phone={service.phone}
+          name={name}
+          onConfirm={() => setShowCallConfirm(false)}
+          onCancel={() => setShowCallConfirm(false)}
+        />
       )}
-      {service.address && (
-        <a
-          href={`https://maps.google.com/?q=${encodeURIComponent(service.address)}`}
-          target="_blank"
-          rel="noopener noreferrer"
-          aria-label={`Get directions to ${name}`}
-          className="flex-1 py-2 rounded-lg border border-amber-300 bg-amber-300 text-center text-xs font-semibold text-neutral-900 transition hover:bg-amber-400 hover:border-amber-400"
-        >
-          Directions
-        </a>
-      )}
-      {service.website && (
-        <a
-          href={service.website}
-          target="_blank"
-          rel="noopener noreferrer"
-          aria-label={`Visit ${name} website`}
-          className="flex-1 py-2 rounded-lg border border-neutral-200 bg-neutral-50 text-center text-xs font-semibold text-neutral-900 transition hover:bg-neutral-100 hover:border-neutral-300"
-        >
-          Website
-        </a>
-      )}
-    </div>
+    </>
   );
 }
 

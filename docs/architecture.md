@@ -21,10 +21,13 @@ User (browser)
       +-- POST /chat/
       |   +-- PII redaction (every message)
       |   +-- Crisis detection (regex + Claude Sonnet)
-      |   +-- Message classification (3-tier cascade):
-      |   |   1. Regex keywords (<1ms, ~85% of messages)
-      |   |   2. Semantic embedding -- all-MiniLM-L6-v2 (~2-5ms, ~10%)
-      |   |   3. LLM -- Claude Haiku (1-3s, ~5%)
+      |   +-- Message classification (hybrid 3-tier):
+      |   |   1. Regex keywords (<1ms) ──┐
+      |   |   2. Semantic embedding ─────┤── both always run, results merge
+      |   |      all-MiniLM-L6-v2        │   (~95% of intents resolved here)
+      |   |      (~2-5ms, zero cost)     │
+      |   |   3. LLM — Claude Haiku ─────┘── only when 1+2 find nothing (~5%)
+      |   |      (1-3s, ~$0.001/call)
       |   +-- Slot extraction -> confirmation -> query execution
       |   +-- Structured service cards (from DB, never LLM-generated)
       |
@@ -61,7 +64,7 @@ User message
   -> Crisis check (regex -> Sonnet LLM if needed)
   -> Action classification (greeting/reset/thanks/help/escalation)
   -> Tone classification (emotional/frustrated/confused/urgent)
-  -> Slot extraction (3-tier: regex -> semantic -> Haiku LLM)
+  -> Slot extraction (hybrid: regex + semantic both run, LLM if both miss)
   -> Routing decision (confidence tagged: high/semantic/medium/low)
   -> Handler:
       +-- Service flow -> confirmation -> SQL query -> service cards
@@ -78,8 +81,8 @@ User message
 | Component | Failure Impact | Health Check |
 |---|---|---|
 | PostgreSQL DB | **Critical** -- no search results possible | SELECT 1 connectivity test |
-| Anthropic API | Degraded -- regex-only mode, no LLM features | API key presence check |
-| Semantic router | Degraded -- skips Tier 2, falls to LLM or regex | Model loaded + route count |
+| Anthropic API | Degraded -- regex-only mode, no LLM features | Live ping via minimal Haiku call (cached 90s), classifies 5 error types |
+| Semantic router | Degraded -- skips Tier 2, falls to LLM or regex | Model loaded + route counts + utterance count + embedding dimensions |
 | SQLite (pilot DB) | In-memory only -- no data loss, resets on restart | Optional, not checked |
 
 See [CHATBOT_BEHAVIOR.md](CHATBOT_BEHAVIOR.md) for the full routing pipeline and [SEMANTIC_ROUTING_DESIGN.md](SEMANTIC_ROUTING_DESIGN.md) for the embedding model design.

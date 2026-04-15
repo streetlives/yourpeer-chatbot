@@ -49,6 +49,11 @@ export function QueryDetailDrawer({ query, onClose }: QueryDetailDrawerProps) {
                   Relaxed
                 </span>
               )}
+              {query.proximity_timeout && (
+                <span className="inline-block px-2.5 py-1 rounded-lg text-xs font-semibold bg-red-50 text-red-600">
+                  Proximity timeout
+                </span>
+              )}
               <span className="inline-block px-2.5 py-1 rounded-lg text-xs font-semibold bg-neutral-100 text-neutral-500">
                 {query.execution_ms}ms
               </span>

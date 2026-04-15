@@ -10,7 +10,7 @@ The system uses two sequential stages:
 
 **Stage 1 — Regex pre-check** (<1ms, deterministic): A curated list of phrases covers the most common explicit crisis expressions. If any phrase matches, the response is returned immediately and the LLM is never called.
 
-**Stage 2 — LLM classification** (1–3s, only when regex misses): Claude Sonnet classifies the message against all six crisis categories. This catches indirect, paraphrased, and culturally specific language that cannot be enumerated in a keyword list — "I've been on the streets for months and nothing helps anymore", "no one would even notice if I disappeared", "he said he'd come back tonight".
+**Stage 2 — LLM classification** (1–3s, only when regex misses): Claude Sonnet classifies the message against all eight crisis categories. This catches indirect, paraphrased, and culturally specific language that cannot be enumerated in a keyword list — "I've been on the streets for months and nothing helps anymore", "no one would even notice if I disappeared", "he said he'd come back tonight".
 
 This two-stage approach mirrors the slot extraction architecture: regex handles the common case cheaply and deterministically; the LLM handles the ambiguous case accurately.
 
@@ -24,10 +24,12 @@ This two-stage approach mirrors the slot extraction architecture: regex handles 
 |---|---|---|
 | `suicide_self_harm` | Suicidal ideation (direct or indirect), self-harm, passive hopelessness | 988 Suicide & Crisis Lifeline, Crisis Text Line, Trevor Project |
 | `domestic_violence` | Abuse by a partner or family member, threats, fleeing a dangerous home situation | National DV Hotline, NYC DV Hotline, Safe Horizon |
-| `safety_concern` | Feeling unsafe, running away from home, being kicked out, unsafe living situation | DV hotlines, 988, shelter offer |
+| `safety_concern` | Feeling unsafe, being followed, unsafe living situation (general — not runaway-specific) | 988, Crisis Text Line, 311 |
 | `trafficking` | Being controlled, unable to leave, documents taken, forced labor or sex work | National Human Trafficking Hotline (1-888-373-7888) |
 | `medical_emergency` | Immediate physical danger requiring emergency services | 911, Poison Control |
 | `violence` | Threats to harm others, weapons | 911, 988 |
+| `youth_runaway` | Ran away, kicked out by parents, unsafe at home, can't go home (Run 31+) | National Runaway Safeline (1-800-786-2929), Covenant House |
+| `assault_victim` | Got beat up, was attacked, got jumped, physically assaulted (Run 31+) | Safe Horizon Victim Services (1-800-621-HOPE) |
 
 ## Fail-Open Policy
 
@@ -69,6 +71,8 @@ Each response is a static string constant — never LLM-generated. To update the
 | `_TRAFFICKING_RESPONSE` | [L263](../backend/app/services/crisis_detector.py#L263) | `trafficking` detected |
 | `_MEDICAL_EMERGENCY_RESPONSE` | [L273](../backend/app/services/crisis_detector.py#L273) | `medical_emergency` detected |
 | `_SAFETY_CONCERN_RESPONSE` | [L281](../backend/app/services/crisis_detector.py#L281) | `safety_concern` detected |
+| `_YOUTH_RUNAWAY_RESPONSE` | — | `youth_runaway` detected (Run 31+) |
+| `_ASSAULT_VICTIM_RESPONSE` | — | `assault_victim` detected (Run 31+) |
 | `_FAILOPEN_RESPONSE` | [L320](../backend/app/services/crisis_detector.py#L320) | LLM unavailable (aliased to `_SAFETY_CONCERN_RESPONSE`) |
 
 ### LLM stage
@@ -181,7 +185,7 @@ User: "My family kicked me out and I need shelter in Brooklyn"
                   _last_action="crisis" SET
 ```
 
-**Which categories get step-down:** `safety_concern`, `domestic_violence`, and `youth_runaway` (Run 23+). These are situations where the user may need both safety resources AND practical help finding services. A 17-year-old runaway needs crisis hotline numbers AND shelter — the step-down provides both. Acute categories (`suicide_self_harm`, `medical_emergency`, `trafficking`, `violence`) always show crisis resources only — the immediate safety concern overrides everything.
+**Which categories get step-down:** `safety_concern`, `domestic_violence`, `youth_runaway`, and `assault_victim` (Run 31+). These are situations where the user may need both safety resources AND practical help finding services. A 17-year-old runaway needs crisis hotline numbers AND shelter — the step-down provides both. Acute categories (`suicide_self_harm`, `medical_emergency`, `trafficking`, `violence`) always show crisis resources only — the immediate safety concern overrides everything.
 
 **"Yes" after step-down:** Executes the service search using the preserved slots. If enough slots are present, goes directly to results. If not, asks the follow-up question for the missing slot.
 

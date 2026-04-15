@@ -165,11 +165,11 @@ export function useChat() {
         return;
       }
 
-      // Handle "Yes, search for shelter" from crisis step-down.
+      // Handle "Yes, search" from crisis step-down.
       // Request geolocation FIRST, then send "Yes, search" with coords
       // so the backend crisis handler can execute immediately.
       if (message === CRISIS_GEO_TRIGGER) {
-        addMessage({ id: nextMsgId(), role: "user", text: "Yes, search for shelter" });
+        addMessage({ id: nextMsgId(), role: "user", text: "Yes, search nearby" });
         setLoading(true);
 
         // Request geolocation — show progress while browser dialog is open
@@ -190,7 +190,7 @@ export function useChat() {
         const coordsToSend = "error" in geoResult ? null : geoResult;
 
         const searchProgressId = nextMsgId();
-        addMessage({ id: searchProgressId, role: "bot", text: "Searching for nearby shelter…", transient: true });
+        addMessage({ id: searchProgressId, role: "bot", text: "Searching nearby…", transient: true });
 
         try {
           const data = await withRetry(() => sendChatMessage("Yes, search", sessionId, coordsToSend));

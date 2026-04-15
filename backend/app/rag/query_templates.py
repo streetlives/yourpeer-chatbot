@@ -270,8 +270,19 @@ FILTER_BY_STATE_NY = (
 
 # PostGIS proximity search (requires lat/lon).
 # Returns services within :radius_meters of the given point.
+#
+# The bounding box filter (&&) runs FIRST using the GiST spatial index,
+# quickly eliminating distant locations (~2,400 → ~20 candidates). Then
+# the accurate ST_DWithin(::geography) check runs only on those candidates.
+# Without the bbox pre-filter, the ::geography cast forces a full table
+# scan and exceeds the 5-second statement_timeout on Render's starter tier.
+#
+# ST_Expand buffer (0.025 degrees ≈ 2.1 km at NYC latitude) is deliberately
+# larger than the default radius (1,600 m) to ensure no false negatives.
+_PROXIMITY_BBOX_BUFFER_DEG = 0.025
 FILTER_BY_PROXIMITY = (
-    "ST_DWithin(l.position::geography, ST_MakePoint(:lon, :lat)::geography, :radius_meters)",
+    f"l.position && ST_Expand(ST_SetSRID(ST_MakePoint(:lon, :lat), 4326), {_PROXIMITY_BBOX_BUFFER_DEG}) "
+    f"AND ST_DWithin(l.position::geography, ST_MakePoint(:lon, :lat)::geography, :radius_meters)",
     ["lat", "lon", "radius_meters"],
 )
 

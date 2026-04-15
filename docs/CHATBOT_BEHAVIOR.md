@@ -18,17 +18,19 @@ The regex keyword set has been audited for collision risk (see `REGEX_AUDIT.md`)
 
 When multiple services are detected with different locations (e.g. "food in Brooklyn and shelter in Manhattan"), per-service location binding matches each service to its nearest location by text position within the same priority tier. Services are sorted by need-based priority (Maslow/Housing First/SAMHSA): shelter and medical first, then food, then clothing, then stability services. Text position is tiebreaker within the same tier. The primary service gets the highest-need location; queued services get their bound locations stored as 3-tuples `(service_type, detail, location)`.
 
-### Stage 1a — Semantic Routing (when regex finds no service_type)
+### Stage 1a — Semantic Routing (runs on every message)
 
-When regex finds no `service_type`, the semantic router (`semantic_router.py`) embeds the user's message using `all-MiniLM-L6-v2` (a 22M-parameter sentence embedding model running locally on CPU) and compares it against pre-embedded example utterances for each service category. The closest match above a confidence threshold (default 0.75, with per-route overrides) determines the service type.
+The semantic router (`semantic_router.py`) runs on every message — not just when regex misses. It embeds the user's message using `all-MiniLM-L6-v2` (a 22M-parameter sentence embedding model running locally on CPU) and compares it against pre-embedded example utterances for each service category via `classify_all_services()`. Every match above a confidence threshold (default 0.75, with per-route overrides) is returned. An `exclude` parameter skips service categories that regex already found, avoiding duplicate extraction.
 
-This eliminates the "missing keyword" class of failures. "I ran out of insulin" has no keyword overlap with the medical phrase list, but its embedding is semantically close to "I need my medication" and "where can I get a prescription filled." The semantic router also detects population context (veteran, reentry, disabled, etc.) at a lower threshold (0.70) and merges it with regex-detected populations.
+This makes Tiers 1 and 2 complementary rather than sequential. Regex catches exact keyword matches ("eat" → food), while the semantic router catches novel phrasings from the same message ("anywhere to sleep" → shelter). Neither tier alone would find both intents in "I just got out of Rikers and I don't have anywhere to sleep or anything to eat."
+
+The semantic router also detects population context (veteran, reentry, disabled, etc.) at a lower threshold (0.70) and merges it with regex-detected populations.
 
 For short messages (≤8 words), a semantic match skips the LLM entirely (~2-5ms total). For longer messages, the semantic router sets the `service_type` and the LLM still runs to extract location, age, urgency, and other slots — with the semantic service type preserved by the regex-override logic.
 
 Route definitions live in `semantic_routes.py` — 10–20 example utterances per service category. Adding new utterances requires no code changes, no model retraining, and no deployment — just edit the file and restart. The model generalizes immediately from examples.
 
-Runtime cost: ~2-5ms per message (embedding + cosine similarity). Model load: ~1-2 seconds at startup (amortized). Memory: ~100 MB. The semantic layer handles ~15% of messages — those where regex misses but the intent is clearly within a known category.
+Runtime cost: ~2-5ms per message (embedding + cosine similarity). Model load: ~1-2 seconds at startup (amortized). Memory: ~100 MB.
 
 ### Stage 1b — Unified LLM Classification Gate (Run 23+)
 

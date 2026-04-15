@@ -86,6 +86,11 @@ export function QueryLogTable({ queries }: QueryLogTableProps) {
                     {q.execution_ms}ms
                   </td>
                   <td className="px-4 py-2.5 border-b border-neutral-100">
+                    {q.proximity_timeout && (
+                      <span className="inline-block px-2 py-0.5 rounded-full text-xs font-semibold bg-red-50 text-red-600 mr-1">
+                        timeout
+                      </span>
+                    )}
                     {q.relaxed && (
                       <span className="inline-block px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-50 text-amber-600">
                         yes
