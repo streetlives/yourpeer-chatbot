@@ -317,9 +317,12 @@ export interface EvalRunStatus {
 // ---------------------------------------------------------------------------
 
 export interface HealthComponentStatus {
-  status: "up" | "down" | "unavailable" | "not_loaded";
+  status: "up" | "down" | "degraded" | "unavailable" | "not_loaded";
   latency_ms?: number;
   error?: string;
+  detail?: string;
+  error_type?: string;
+  cached?: boolean;
   mode?: string;
   model?: string;
   route_count?: number;

@@ -23,8 +23,8 @@ function StatusDot({ status }: { status: string }) {
       ? "bg-green-500"
       : status === "down"
         ? "bg-red-500"
-        : "bg-amber-400";
-  return <span className={`inline-block w-2 h-2 rounded-full ${color}`} />;
+        : "bg-amber-400"; // degraded, unavailable, not_loaded
+  return <span className={`inline-block w-2 h-2 rounded-full ${color}`} aria-label={status} />;
 }
 
 export function SystemHealth() {
@@ -84,8 +84,14 @@ export function SystemHealth() {
           name: "LLM (Anthropic)",
           status: health.checks.llm.status,
           detail: health.checks.llm.status === "up"
-            ? "API key configured"
-            : "Not configured — regex-only mode",
+            ? (health.checks.llm.latency_ms != null
+              ? `Responding (${health.checks.llm.latency_ms}ms)${health.checks.llm.cached ? " · cached" : ""}`
+              : "Connected")
+            : health.checks.llm.status === "unavailable"
+              ? (health.checks.llm.detail || "Not configured — regex-only mode")
+              : health.checks.llm.status === "degraded"
+                ? (health.checks.llm.detail || "API issue")
+                : "Unknown",
         },
         {
           name: "Semantic router",
