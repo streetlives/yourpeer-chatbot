@@ -20,6 +20,39 @@ from app.services.phrase_lists import (
 
 
 # ---------------------------------------------------------------------------
+# LOCATION DISPLAY FORMATTING
+# ---------------------------------------------------------------------------
+# _KNOWN_LOCATIONS stores names lowercase for matching. This formatter
+# converts them to proper display casing for user-facing messages.
+
+_LOCATION_DISPLAY_OVERRIDES = {
+    "soho": "SoHo",
+    "noho": "NoHo",
+    "nolita": "NoLiTa",
+    "dumbo": "DUMBO",
+    "tribeca": "TriBeCa",
+    "bed-stuy": "Bed-Stuy",
+    "bedford-stuyvesant": "Bedford-Stuyvesant",
+    "nycha": "NYCHA",
+    "the bronx": "the Bronx",
+}
+
+
+def _display_location(location: str) -> str:
+    """Convert a lowercase location to proper display casing.
+
+    Handles NYC-specific casing (SoHo, DUMBO, NoHo) and falls
+    back to title case for standard names.
+    """
+    if not location:
+        return location
+    override = _LOCATION_DISPLAY_OVERRIDES.get(location.lower())
+    if override:
+        return override
+    return location.title()
+
+
+# ---------------------------------------------------------------------------
 # CONFIRMATION MESSAGE
 # ---------------------------------------------------------------------------
 
@@ -44,7 +77,7 @@ def _build_confirmation_message(slots: dict) -> str:
             msg = f"I\u2019ll look for services at {org_name}"
         if location and location != "your area" and location != NEAR_ME_SENTINEL:
             location_clean, _ = redact_pii(location)
-            msg += f" in {location_clean}"
+            msg += f" in {_display_location(location_clean)}"
         msg += " \u2014 does that sound right?"
         return msg
     age = slots.get("age")
@@ -61,6 +94,8 @@ def _build_confirmation_message(slots: dict) -> str:
     else:
         # Redact any PII that may have been captured in slot values
         location, _ = redact_pii(location)
+        # Proper display casing (lowercase "manhattan" → "Manhattan")
+        location = _display_location(location)
 
     # "near your location" reads naturally without "in", but borough/
     # neighborhood names need "in" ("in Brooklyn", "in Harlem").
@@ -198,7 +233,7 @@ def _no_results_message(slots: dict) -> str:
         nearby = _get_nearby_boroughs(service, normalized)
 
     parts = [
-        f"I wasn't able to find {service} services in {location} "
+        f"I wasn't able to find {service} services in {_display_location(location)} "
         f"matching your criteria."
     ]
 

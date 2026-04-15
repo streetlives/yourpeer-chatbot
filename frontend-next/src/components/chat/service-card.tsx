@@ -301,12 +301,12 @@ function DetailsSection({ service, hasDetails, detailsOpen, setDetailsOpen }: {
         type="button"
         onClick={() => setDetailsOpen(!detailsOpen)}
         aria-expanded={detailsOpen}
-        className="flex items-center justify-between w-full py-1.5 text-xs font-semibold uppercase tracking-wider text-neutral-400 hover:text-neutral-600 transition-colors"
+        className="flex items-center justify-between w-full py-1.5 text-xs font-semibold uppercase tracking-wider text-blue-600 hover:text-blue-800 transition-colors"
       >
-        <span>Details</span>
+        <span className="border-b border-blue-400 hover:border-blue-600 pb-px">Details</span>
         <ChevronDown
           size={14}
-          className={`transition-transform duration-200 ${detailsOpen ? "rotate-180" : ""}`}
+          className={`text-blue-500 transition-transform duration-200 ${detailsOpen ? "rotate-180" : ""}`}
           aria-hidden="true"
         />
       </button>

@@ -13,6 +13,7 @@ import { useGeolocation } from "./use-geolocation";
 import type { FeedbackRating } from "@/lib/chat/types";
 
 const GEOLOCATION_TRIGGER = "__use_geolocation__";
+const CRISIS_GEO_TRIGGER = "__crisis_geo_search__";
 
 /** Wait ms milliseconds. */
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -142,6 +143,83 @@ export function useChat() {
             role: "bot",
             text: msg.includes("wait") ? msg : "Sorry, something went wrong.",
             retryMessage: msg.includes("wait") ? undefined : GEOLOCATION_TRIGGER,
+          });
+        } finally {
+          setLoading(false);
+        }
+        return;
+      }
+
+      // Handle "Yes, search for shelter" from crisis step-down.
+      // Request geolocation FIRST, then send "Yes, search" with coords
+      // so the backend crisis handler can execute immediately.
+      if (message === CRISIS_GEO_TRIGGER) {
+        addMessage({ id: nextMsgId(), role: "user", text: "Yes, search for shelter" });
+        setLoading(true);
+
+        // Request geolocation — show progress while browser dialog is open
+        const geoProgressId = nextMsgId();
+        if (!hasCoords) {
+          addMessage({ id: geoProgressId, role: "bot", text: "Getting your location…", transient: true });
+        }
+
+        const geoResult = hasCoords
+          ? { latitude: latitude!, longitude: longitude! }
+          : await requestLocation();
+
+        if (!hasCoords) removeMessage(geoProgressId);
+
+        // Send "Yes, search" to backend — with or without coords.
+        // If coords available, backend executes search immediately.
+        // If denied, backend falls back to asking for borough.
+        const coordsToSend = "error" in geoResult ? null : geoResult;
+
+        const searchProgressId = nextMsgId();
+        addMessage({ id: searchProgressId, role: "bot", text: "Searching for nearby shelter…", transient: true });
+
+        try {
+          const data = await withRetry(() => sendChatMessage("Yes, search", sessionId, coordsToSend));
+          removeMessage(searchProgressId);
+          if (data.session_id) setSessionId(data.session_id);
+
+          addMessage({
+            id: nextMsgId(),
+            role: "bot",
+            text: data.response || "(No response text)",
+            services: data.services,
+            quick_replies: data.quick_replies,
+            showFeedback: (data.services?.length ?? 0) > 0,
+          });
+        } catch (err: any) {
+          removeMessage(searchProgressId);
+
+          if (err.message?.includes("403") && sessionId) {
+            try {
+              useChatStore.getState().setSessionId(null);
+              const data = await sendChatMessage("Yes, search", null, coordsToSend);
+              if (data.session_id) setSessionId(data.session_id);
+              addMessage({
+                id: nextMsgId(),
+                role: "bot",
+                text: data.response || "(No response text)",
+                services: data.services,
+                quick_replies: data.quick_replies,
+                showFeedback: (data.services?.length ?? 0) > 0,
+              });
+              setLoading(false);
+              return;
+            } catch {
+              // Fall through
+            }
+          }
+
+          const msg = err.message || "Something went wrong";
+          setError(`Error: ${msg}`);
+          addMessage({
+            id: nextMsgId(),
+            role: "bot",
+            text: msg.includes("wait") ? msg : "Sorry, something went wrong.",
+            retryMessage: msg.includes("wait") ? undefined : CRISIS_GEO_TRIGGER,
           });
         } finally {
           setLoading(false);

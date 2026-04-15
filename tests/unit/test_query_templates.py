@@ -1163,6 +1163,87 @@ def test_sort_open_first_single():
 
 
 # -----------------------------------------------------------------------
+# FRESHNESS TIER RANKING
+# -----------------------------------------------------------------------
+
+def test_freshness_tier_constant_is_90_days():
+    """Freshness threshold must be 90 days, aligned with _compute_freshness."""
+    from app.rag.query_templates import _FRESHNESS_DAYS
+    from app.rag.query_executor import _FRESHNESS_DAYS as EXECUTOR_DAYS
+    assert _FRESHNESS_DAYS == 90
+    assert _FRESHNESS_DAYS == EXECUTOR_DAYS, \
+        "query_templates and query_executor must use the same freshness threshold"
+
+
+def test_freshness_tier_in_generated_sql():
+    """Generated SQL must include the freshness tier CASE expression in ORDER BY."""
+    sql, _ = build_query("food", {})
+    assert "CURRENT_DATE - INTERVAL" in sql, \
+        "Freshness tier CASE expression missing from generated SQL"
+    assert "90 days" in sql, \
+        "Freshness tier should use 90-day interval"
+
+
+def test_freshness_tier_three_tiers():
+    """Freshness CASE must produce 3 distinct tiers: 0 (fresh), 1 (stale), 2 (null)."""
+    from app.rag.query_templates import _FRESHNESS_TIER_RANK
+    assert "THEN 0" in _FRESHNESS_TIER_RANK, "Tier 0 (fresh) missing"
+    assert "THEN 1" in _FRESHNESS_TIER_RANK, "Tier 1 (stale) missing"
+    assert "ELSE 2" in _FRESHNESS_TIER_RANK, "Tier 2 (never verified) missing"
+
+
+def test_base_order_has_four_parts():
+    """_BASE_ORDER_PARTS should have 4 elements: open-now, freshness tier, recency, name."""
+    from app.rag.query_templates import _BASE_ORDER_PARTS
+    assert len(_BASE_ORDER_PARTS) == 4, \
+        f"Expected 4 sort parts, got {len(_BASE_ORDER_PARTS)}"
+
+
+def test_freshness_tier_after_open_now_before_timestamp():
+    """Sort priority: open-now (idx 0) > freshness tier (idx 1) > timestamp (idx 2) > name (idx 3)."""
+    from app.rag.query_templates import _BASE_ORDER_PARTS
+    # Index 0: open-now CASE
+    assert "CURRENT_TIME" in _BASE_ORDER_PARTS[0], \
+        "Index 0 should be open-now rank"
+    # Index 1: freshness tier CASE
+    assert "CURRENT_DATE" in _BASE_ORDER_PARTS[1], \
+        "Index 1 should be freshness tier rank"
+    # Index 2: raw timestamp tiebreaker
+    assert "last_validated_at DESC" in _BASE_ORDER_PARTS[2], \
+        "Index 2 should be timestamp tiebreaker"
+    # Index 3: name
+    assert "s.name" in _BASE_ORDER_PARTS[3], \
+        "Index 3 should be name"
+
+
+def test_freshness_tier_in_all_templates():
+    """Every template's generated SQL should include the freshness tier."""
+    for key in TEMPLATES:
+        sql, _ = build_query(key, {})
+        assert "CURRENT_DATE - INTERVAL" in sql, \
+            f"Template '{key}' missing freshness tier in ORDER BY"
+
+
+def test_freshness_tier_survives_with_boosts():
+    """Freshness tier should remain in ORDER BY even with population/distance boosts."""
+    # With LGBTQ boost + distance
+    sql, _ = build_query("shelter", {
+        "lgbtq_boost": True,
+        "lat": 40.7128,
+        "lon": -74.0060,
+        "radius_meters": 2000,
+    })
+    assert "CURRENT_DATE - INTERVAL" in sql, \
+        "Freshness tier dropped when boosts are active"
+    # Verify boost comes before freshness tier in the ORDER BY
+    order_start = sql.index("ORDER BY")
+    lgbtq_pos = sql.index("lgbtq", order_start)
+    freshness_pos = sql.index("CURRENT_DATE", order_start)
+    assert lgbtq_pos < freshness_pos, \
+        "Population boost should sort before freshness tier"
+
+
+# -----------------------------------------------------------------------
 # format_service_card — also_available and last_validated_at
 # -----------------------------------------------------------------------
 

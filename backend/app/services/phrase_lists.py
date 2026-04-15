@@ -174,6 +174,14 @@ _FRUSTRATION_PHRASES = [
     "smh",
     "bruh", "this ain't working", "this aint working",
     "yo this trash", "this is trash",
+    # Re-statement frustration — user already provided info and the bot
+    # re-asked. These MUST fire before the LLM classifier, which might
+    # misroute "I already said Manhattan" as confirm_change_location.
+    "i already said", "i already told you", "i just told you",
+    "i just said", "you already know", "i already gave you",
+    "already told you that", "already answered that",
+    "why are you asking me this", "why are you asking again",
+    "you're giving me the same", "youre giving me the same",
 ]
 
 # Emotional expressions — sub-crisis distress that deserves warm
