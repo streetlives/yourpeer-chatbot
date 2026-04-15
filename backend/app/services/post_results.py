@@ -113,7 +113,7 @@ _ORDINAL_MAP = {
 }
 
 _FILTER_OPEN_RE = re.compile(
-    r"\b(open now|open today|which.*open|are.*open|any.*open|"
+    r"\b(open (?:right )?now|open today|which.*open|are.*open|any.*open|"
     r"who.*open|still open|currently open)\b", re.I
 )
 _FILTER_FREE_RE = re.compile(
@@ -429,7 +429,7 @@ def _filter_by_colocated(cards: list[dict], message: str) -> tuple[list[dict], s
     """Filter by co-located services ('also has food', 'with showers')."""
     m = re.search(r"\balso (?:has|have|offers?|provides?)\s+(\w+)", message, re.I)
     if not m:
-        m = re.search(r"\bwith\s+(food|shelter|shower|clothing|health|legal)\b", message, re.I)
+        m = re.search(r"\bwith\s+(food|shelters?|showers?|clothing|health|legal|laundry|mail)\b", message, re.I)
     if m:
         service_label = m.group(1).strip()
         matched = [c for c in cards if _also_has(c, service_label)]
@@ -1190,8 +1190,8 @@ def _handle_filter_subcategory(intent: dict, services: list[dict]) -> dict:
                 ),
                 "services": [],
                 "quick_replies": [
-                    {"label": f"📋 Show {_compound_desc_parts[0]} results",
-                     "value": f"ones for {_compound_desc_parts[0]}"},
+                    {"label": f"📋 Show without {open_label} filter",
+                     "value": f"ones for {raw_phrase[:30]}"},
                     _SHOW_ALL_QR, _NEW_SEARCH_QR,
                 ],
                 "category": "post_results_filter",

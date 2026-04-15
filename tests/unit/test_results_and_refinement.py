@@ -1161,6 +1161,227 @@ class TestFilterMonitoring:
 
 
 # =======================================================================
+# CORE FILTERING FUNCTION UNIT TESTS
+# =======================================================================
+
+class TestExtractRawPhrase:
+    """Unit tests for _extract_raw_phrase."""
+
+    def test_strips_positive_intent(self):
+        from app.services.post_results import _extract_raw_phrase
+        assert _extract_raw_phrase("Only the adult families intake") == "adult families intake"
+
+    def test_strips_negation_intent(self):
+        from app.services.post_results import _extract_raw_phrase
+        assert _extract_raw_phrase("Exclude the veterans shelter") == "veterans"
+
+    def test_strips_trailing_filler(self):
+        from app.services.post_results import _extract_raw_phrase
+        result = _extract_raw_phrase("Only the intake is relevant")
+        assert "relevant" not in result.lower()
+        assert "intake" in result.lower()
+
+    def test_strips_trailing_result_words(self):
+        from app.services.post_results import _extract_raw_phrase
+        assert _extract_raw_phrase("Not the DHS ones") == "DHS"
+
+    def test_returns_original_if_nothing_left(self):
+        from app.services.post_results import _extract_raw_phrase
+        result = _extract_raw_phrase("only the")
+        assert len(result) > 0  # should not be empty
+
+
+class TestExtractKeywords:
+    """Unit tests for _extract_keywords."""
+
+    def test_removes_stop_words(self):
+        from app.services.post_results import _extract_keywords
+        kw = _extract_keywords("the adult families intake")
+        assert "the" not in kw
+        assert "adult" in kw
+        assert "families" in kw
+        assert "intake" in kw
+
+    def test_removes_short_words(self):
+        from app.services.post_results import _extract_keywords
+        kw = _extract_keywords("no id needed")
+        # "id" has length 2, "no" is a stop word
+        assert "id" not in kw
+        assert "needed" in kw
+
+    def test_empty_input(self):
+        from app.services.post_results import _extract_keywords
+        assert _extract_keywords("") == []
+
+    def test_all_stop_words(self):
+        from app.services.post_results import _extract_keywords
+        assert _extract_keywords("the ones for me") == []
+
+
+class TestFilterByTaxonomy:
+    """Unit tests for _filter_by_taxonomy."""
+
+    def test_single_word_alias(self):
+        from app.services.post_results import _filter_by_taxonomy
+        cards = [
+            {"service_taxonomies": ["Shelter", "Families"]},
+            {"service_taxonomies": ["Shelter", "Single Adult"]},
+        ]
+        matched, taxes = _filter_by_taxonomy(cards, "families")
+        assert len(matched) == 1
+        assert "Families" in taxes
+
+    def test_bigram_alias(self):
+        from app.services.post_results import _filter_by_taxonomy
+        cards = [
+            {"service_taxonomies": ["Shelter", "Single Adult"]},
+            {"service_taxonomies": ["Shelter", "Families"]},
+        ]
+        matched, taxes = _filter_by_taxonomy(cards, "single adult shelters")
+        assert len(matched) == 1
+        assert "Single Adult" in taxes
+
+    def test_multiple_taxonomies_matched(self):
+        from app.services.post_results import _filter_by_taxonomy
+        cards = [
+            {"service_taxonomies": ["Shelter", "Families", "Intake"]},
+            {"service_taxonomies": ["Shelter", "Intake"]},
+            {"service_taxonomies": ["Shelter"]},
+        ]
+        matched, taxes = _filter_by_taxonomy(cards, "families intake")
+        assert len(matched) == 2  # first two cards match
+        assert "Families" in taxes
+        assert "Intake" in taxes
+
+    def test_no_match(self):
+        from app.services.post_results import _filter_by_taxonomy
+        cards = [{"service_taxonomies": ["Shelter"]}]
+        matched, taxes = _filter_by_taxonomy(cards, "dental care")
+        assert len(matched) == 0
+        assert len(taxes) == 0
+
+    def test_null_taxonomies_skipped(self):
+        from app.services.post_results import _filter_by_taxonomy
+        cards = [
+            {"service_taxonomies": None},
+            {"service_taxonomies": ["Shelter", "Families"]},
+        ]
+        matched, _ = _filter_by_taxonomy(cards, "families")
+        assert len(matched) == 1
+
+
+class TestFilterByColocated:
+    """Unit tests for _filter_by_colocated."""
+
+    def test_also_has_food(self):
+        from app.services.post_results import _filter_by_colocated
+        cards = [
+            {"also_available": ["Food", "Health"]},
+            {"also_available": ["Shower"]},
+            {"also_available": None},
+        ]
+        matched, desc = _filter_by_colocated(cards, "also has food")
+        assert len(matched) == 1
+        assert "food" in desc.lower()
+
+    def test_with_showers_plural(self):
+        from app.services.post_results import _filter_by_colocated
+        cards = [
+            {"also_available": ["Shower", "Laundry"]},
+            {"also_available": ["Food"]},
+        ]
+        matched, _ = _filter_by_colocated(cards, "with showers")
+        assert len(matched) == 1
+
+    def test_no_match(self):
+        from app.services.post_results import _filter_by_colocated
+        cards = [{"also_available": ["Food"]}]
+        matched, _ = _filter_by_colocated(cards, "something else entirely")
+        assert len(matched) == 0
+
+
+class TestResponseTemplates:
+    """Verify response wording for each filter outcome."""
+
+    def test_match_banner_wording(self):
+        from app.services.post_results import _handle_filter_subcategory
+        cards = _build_shelter_results(10)["services"]
+        for i in range(3):
+            cards[i]["service_taxonomies"] = ["Shelter", "Families"]
+        result = _handle_filter_subcategory(
+            {"raw_phrase": "families", "_original_message": "ones for families"},
+            cards,
+        )
+        assert "3" in result["response"]
+        assert "10" in result["response"]
+        assert "matching" in result["response"].lower()
+
+    def test_single_match_wording(self):
+        from app.services.post_results import _handle_filter_subcategory
+        cards = _build_shelter_results(10)["services"]
+        cards[0]["service_taxonomies"] = ["Shelter", "Veterans"]
+        result = _handle_filter_subcategory(
+            {"raw_phrase": "veterans", "_original_message": "ones for veterans"},
+            cards,
+        )
+        assert "one of the" in result["response"].lower()
+
+    def test_no_match_wording(self):
+        from app.services.post_results import _handle_filter_subcategory
+        cards = _build_shelter_results(5)["services"]
+        result = _handle_filter_subcategory(
+            {"raw_phrase": "dental care", "_original_message": "dental care"},
+            cards,
+        )
+        assert "none of the" in result["response"].lower()
+        assert result["_filter_matched"] is False
+
+    def test_sparse_guard(self):
+        from app.services.post_results import _handle_filter_subcategory
+        cards = _build_shelter_results(2)["services"]
+        result = _handle_filter_subcategory(
+            {"raw_phrase": "anything", "_original_message": "anything"},
+            cards,
+        )
+        assert "not much to filter" in result["response"].lower()
+
+
+class TestNewSearchClearsFilter:
+    """State management: new search clears both _last_results and _filtered_results."""
+
+    def test_new_service_intent_clears_filter(self):
+        sid = _fresh()
+        services = _build_shelter_results(10)["services"]
+        save_session_slots(sid, {
+            "service_type": "shelter",
+            "location": "manhattan",
+            "_last_results": services,
+            "_filtered_results": services[:3],
+            "_filter_phrase": "families",
+            "_displayed_count": 3,
+        })
+        result = _send("I need food in Brooklyn", sid)
+        slots = get_session_slots(sid)
+        assert slots.get("_filtered_results") is None
+        assert slots.get("_filter_phrase") is None
+
+    def test_reset_clears_filter(self):
+        sid = _fresh()
+        services = _build_shelter_results(10)["services"]
+        save_session_slots(sid, {
+            "service_type": "shelter",
+            "location": "manhattan",
+            "_last_results": services,
+            "_filtered_results": services[:3],
+            "_filter_phrase": "families",
+        })
+        _send("start over", sid)
+        slots = get_session_slots(sid)
+        assert slots.get("_filtered_results") is None
+        assert slots.get("_last_results") is None
+
+
+# =======================================================================
 # EXISTING TEST UPDATES NEEDED
 # =======================================================================
 # NOTE: test_service_card_display.py has tests that assert <= 10 and == 10
