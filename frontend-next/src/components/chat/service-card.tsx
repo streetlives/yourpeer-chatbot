@@ -7,6 +7,7 @@ import { useState } from "react";
 import { MapPin, Phone, Mail, Clock, CheckCircle, AlertTriangle, ChevronDown } from "lucide-react";
 import type { ServiceResult } from "@/lib/chat/types";
 import { LocationFeedbackRow } from "./location-feedback-row";
+import { CallConfirmDialog } from "./call-confirm-dialog";
 
 interface ServiceCardProps {
   service: ServiceResult;
@@ -301,12 +302,12 @@ function DetailsSection({ service, hasDetails, detailsOpen, setDetailsOpen }: {
         type="button"
         onClick={() => setDetailsOpen(!detailsOpen)}
         aria-expanded={detailsOpen}
-        className="flex items-center justify-between w-full py-1.5 text-xs font-semibold uppercase tracking-wider text-blue-600 hover:text-blue-800 transition-colors"
+        className="flex items-center justify-between w-full py-1.5 text-xs font-semibold uppercase tracking-wider text-neutral-400 hover:text-neutral-600 transition-colors"
       >
-        <span className="border-b border-blue-400 hover:border-blue-600 pb-px">Details</span>
+        <span>Details</span>
         <ChevronDown
           size={14}
-          className={`text-blue-500 transition-transform duration-200 ${detailsOpen ? "rotate-180" : ""}`}
+          className={`transition-transform duration-200 ${detailsOpen ? "rotate-180" : ""}`}
           aria-hidden="true"
         />
       </button>
@@ -362,40 +363,54 @@ function DetailsSection({ service, hasDetails, detailsOpen, setDetailsOpen }: {
 }
 
 function ActionButtons({ service, name }: { service: ServiceResult; name: string }) {
+  const [showCallConfirm, setShowCallConfirm] = useState(false);
+
   return (
-    <div className="flex gap-1.5 pt-1 mt-auto" role="group" aria-label={`Actions for ${name}`}>
-      {service.phone && (
-        <a
-          href={`tel:${service.phone.split(/\s*ext/i)[0].replace(/\D/g, "")}`}
-          aria-label={`Call ${name}`}
-          className="flex-1 py-2 rounded-lg border border-neutral-900 bg-neutral-900 text-center text-xs font-semibold text-white transition hover:bg-neutral-700"
-        >
-          Call
-        </a>
+    <>
+      <div className="flex gap-1.5 pt-1 mt-auto" role="group" aria-label={`Actions for ${name}`}>
+        {service.phone && (
+          <button
+            type="button"
+            onClick={() => setShowCallConfirm(true)}
+            aria-label={`Call ${name}`}
+            className="flex-1 py-2 rounded-lg border border-neutral-900 bg-neutral-900 text-center text-xs font-semibold text-white transition hover:bg-neutral-700"
+          >
+            Call
+          </button>
+        )}
+        {service.address && (
+          <a
+            href={`https://maps.google.com/?q=${encodeURIComponent(service.address)}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label={`Get directions to ${name}`}
+            className="flex-1 py-2 rounded-lg border border-amber-300 bg-amber-300 text-center text-xs font-semibold text-neutral-900 transition hover:bg-amber-400 hover:border-amber-400"
+          >
+            Directions
+          </a>
+        )}
+        {service.website && (
+          <a
+            href={service.website}
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label={`Visit ${name} website`}
+            className="flex-1 py-2 rounded-lg border border-neutral-200 bg-neutral-50 text-center text-xs font-semibold text-neutral-900 transition hover:bg-neutral-100 hover:border-neutral-300"
+          >
+            Website
+          </a>
+        )}
+      </div>
+
+      {showCallConfirm && service.phone && (
+        <CallConfirmDialog
+          phone={service.phone}
+          name={name}
+          onConfirm={() => setShowCallConfirm(false)}
+          onCancel={() => setShowCallConfirm(false)}
+        />
       )}
-      {service.address && (
-        <a
-          href={`https://maps.google.com/?q=${encodeURIComponent(service.address)}`}
-          target="_blank"
-          rel="noopener noreferrer"
-          aria-label={`Get directions to ${name}`}
-          className="flex-1 py-2 rounded-lg border border-amber-300 bg-amber-300 text-center text-xs font-semibold text-neutral-900 transition hover:bg-amber-400 hover:border-amber-400"
-        >
-          Directions
-        </a>
-      )}
-      {service.website && (
-        <a
-          href={service.website}
-          target="_blank"
-          rel="noopener noreferrer"
-          aria-label={`Visit ${name} website`}
-          className="flex-1 py-2 rounded-lg border border-neutral-200 bg-neutral-50 text-center text-xs font-semibold text-neutral-900 transition hover:bg-neutral-100 hover:border-neutral-300"
-        >
-          Website
-        </a>
-      )}
-    </div>
+    </>
   );
 }
 
