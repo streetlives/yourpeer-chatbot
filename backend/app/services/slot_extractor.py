@@ -34,9 +34,12 @@ SERVICE_KEYWORDS = {
     "shelter": [
         "shelter", "place to stay", "somewhere to stay", "housing",
         "sleep tonight",
-        "place to sleep", "somewhere to sleep", "homeless", "unhoused",
+        "place to sleep", "somewhere to sleep",
+        # "homeless" moved to semantic layer — identity descriptor, not service request (REGEX_AUDIT_2)
+        # "unhoused" moved to semantic layer — identity descriptor, not service request (REGEX_AUDIT_2)
         "drop-in center", "drop in center", "warming center",
-        "overnight", "transitional housing", "safe haven",
+        # "overnight" moved to semantic layer — "overnight delivery" collision (REGEX_AUDIT_2)
+        "transitional housing", "safe haven",
         # "room" moved to _WORD_BOUNDARY_KEYWORDS — "classroom" collision (REGEX_AUDIT)
         "place to live", "somewhere to live",
         # "intake" retired — generic term, collides with all services (REGEX_AUDIT)
@@ -62,34 +65,42 @@ SERVICE_KEYWORDS = {
     "clothing": [
         "clothing", "clothes", "jacket", "coat", "shoes", "boots",
         "socks", "underwear", "warm clothes", "winter clothes",
-        "free clothes", "outfit", "shirt",
+        "free clothes", "shirt",
+        # "outfit" moved to semantic layer — fashion-ambiguous (REGEX_AUDIT_2)
         # "pants" moved to _WORD_BOUNDARY_KEYWORDS — "participants" collision (REGEX_AUDIT)
-        "sweater", "sweatshirt", "hoodie", "gloves",
-        "winter gear", "sneakers",
+        "sweater", "sweatshirt", "gloves",
+        # "hoodie" moved to semantic layer — fashion-ambiguous (REGEX_AUDIT_2)
+        # "sneakers" moved to semantic layer — fashion-ambiguous (REGEX_AUDIT_2)
+        "winter gear",
     ],
 
     # --- Personal Care (taxonomy: Personal Care → Shower, Laundry, etc.) ---
     "personal_care": [
-        "shower", "showers", "hygiene", "clean up", "laundry",
+        "shower", "showers", "hygiene", "laundry",
         "toiletries", "restroom", "bathroom", "haircut", "barber",
         "toothbrush", "toothpaste", "shampoo", "deodorant",
         # "soap" moved to _WORD_BOUNDARY_KEYWORDS — "soap opera" collision (REGEX_AUDIT)
         # "pads" moved to _WORD_BOUNDARY_KEYWORDS — "iPads" collision (REGEX_AUDIT)
-        "personal care", "grooming",
+        # "clean up" moved to semantic layer — "clean up your code" collision (REGEX_AUDIT_2)
+        # "grooming" moved to semantic layer — "grooming standards" collision (REGEX_AUDIT_2)
+        "personal care",
         "hygiene kit", "feminine products", "tampons",
         "menstrual", "razors", "freshen up", "get clean",
     ],
 
     # --- Health Care (taxonomy: Health) ---
     "medical": [
-        "doctor", "clinic", "medical", "hospital", "medicine", "health",
+        "doctor", "clinic", "medical", "hospital", "medicine",
+        # "health" moved to semantic layer — "health of economy" collision (REGEX_AUDIT_2)
         "health care", "healthcare", "prescription", "dental", "dentist",
         "eye doctor", "glasses", "urgent care", "checkup",
         # "vision" retired — "I have a vision for my future" collision (REGEX_AUDIT)
         # "physical" retired — "physical abuse" collision (REGEX_AUDIT)
         # "sick" moved to _WORD_BOUNDARY_KEYWORDS — "homesick" collision (REGEX_AUDIT)
         "vaccination", "vaccine", "std testing", "hiv testing",
-        "nurse", "wound", "injury", "infection",
+        # "nurse" moved to semantic layer — "nurse a grudge" collision (REGEX_AUDIT_2)
+        # "infection" moved to semantic layer — "infection rate" collision (REGEX_AUDIT_2)
+        "wound", "injury",
         "medication", "blood pressure", "sti testing",
         # Harm reduction / community health (P3 audit)
         "methadone", "suboxone", "narcan", "naloxone",
@@ -114,7 +125,8 @@ SERVICE_KEYWORDS = {
         "aa meeting", "na meeting", "narcotics anonymous", "alcoholics anonymous",
         "support group", "emotional support", "psychiatric",
         "psychiatrist", "crisis counseling",
-        "grief", "grieving",
+        # "grief" moved to semantic layer — "good grief" collision (REGEX_AUDIT_2)
+        "grieving",
         # NOTE: "struggling", "having a hard time", "someone to talk to",
         # and "peer support" removed — they are emotional expressions or
         # escalation signals, not mental health service requests. Keeping
@@ -136,7 +148,9 @@ SERVICE_KEYWORDS = {
         "legal aid", "legal help", "legal services", "tenant rights",
         "asylum", "deportation", "green card", "work permit",
         # "visa" moved to _WORD_BOUNDARY_KEYWORDS (REGEX_AUDIT)
-        "public defender", "advocate", "rights",
+        "public defender",
+        # "advocate" moved to semantic layer — "I advocate for" collision (REGEX_AUDIT_2)
+        # "rights" moved to semantic layer — "civil rights" discussion collision (REGEX_AUDIT_2)
         "landlord", "tenant", "custody",
         "housing court", "discrimination",
         # DV-specific services (Phase 1 audit — 59 services searchable,
@@ -145,13 +159,16 @@ SERVICE_KEYWORDS = {
         "order of protection", "protective order",
         "legal clinic", "legal representation",
         # Immigration advanced (Phase 1 audit — 66 services)
-        "citizenship", "naturalization", "daca", "tps",
+        "citizenship", "naturalization", "daca",
+        # "tps" moved to _WORD_BOUNDARY_KEYWORDS — 3 chars (REGEX_AUDIT_2)
         "work authorization",
     ],
 
     # --- Employment (taxonomy: Employment) ---
     "employment": [
-        "jobs", "employment", "hiring", "career",
+        "jobs", "employment",
+        # "hiring" moved to semantic layer — "they're hiring" collision (REGEX_AUDIT_2)
+        # "career" moved to semantic layer — "career change" discussion collision (REGEX_AUDIT_2)
         # "job" moved to _WORD_BOUNDARY_KEYWORDS — "good job" collision (REGEX_AUDIT)
         "resume", "interview", "job training", "vocational",
         "workforce", "job placement", "temp work", "day labor",
@@ -188,13 +205,16 @@ SERVICE_KEYWORDS = {
     # --- Other Services (taxonomy: Other service) ---
     "other": [
         "other services", "other service",
-        "benefits", "ebt", "food stamps", "medicaid",
+        "benefits", "food stamps", "medicaid",
+        # "ebt" moved to _WORD_BOUNDARY_KEYWORDS — 3 chars (REGEX_AUDIT_2)
         # "snap" moved to _WORD_BOUNDARY_KEYWORDS — "Snapchat" collision (REGEX_AUDIT)
         "social security", "disability", "public assistance",
         "identification", "birth certificate", "need an id",
-        "free phone", "wifi", "internet", "charging",
+        "free phone", "wifi", "internet",
+        # "charging" moved to semantic layer — "charging my phone" collision (REGEX_AUDIT_2)
         # "mail" moved to _WORD_BOUNDARY_KEYWORDS — "email"/"gmail" collision (REGEX_AUDIT)
-        "mailing address", "storage", "locker",
+        "mailing address", "locker",
+        # "storage" moved to semantic layer — "cloud storage" collision (REGEX_AUDIT_2)
         "welfare", "cash assistance", "state id", "nyc id",
         "metro card", "charger", "charging station",
         # "transit" moved to _WORD_BOUNDARY_KEYWORDS — "transition" collision (REGEX_AUDIT)
@@ -278,6 +298,9 @@ _WORD_BOUNDARY_KEYWORDS = {
     "visa": "legal",           # ambiguous (credit card vs immigration)
     "meal": "food",            # "oatmeal" collision (benign but inconsistent)
     "pants": "clothing",        # "participants" collision
+    # --- REGEX_AUDIT_2: moved from SERVICE_KEYWORDS (short/collision risk) ---
+    "tps": "legal",             # "Temporary Protected Status" — 3 chars
+    "ebt": "other",             # "Electronic Benefits Transfer" — 3 chars
     # --- REGEX_AUDIT: removed (collision risk outweighs value) ---
     # "prep" — PrEP collides with "food prep", "test prep". Semantic layer handles.
     # "parole" — population phrase only, not a service request. Stays in _POPULATION_PHRASES.

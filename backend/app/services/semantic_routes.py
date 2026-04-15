@@ -54,6 +54,12 @@ SERVICE_ROUTES = {
         "I need a physical exam",
         "my vision is getting worse and I need glasses",
         "I'm not feeling well and need medical help",
+        # Coverage for moved regex keywords (REGEX_AUDIT_2)
+        "I need help with my health",
+        "where can I go for health services",
+        "I need to see a nurse",
+        "I think I have an infection",
+        "my wound looks infected",
     ],
 
     "shelter": [
@@ -77,6 +83,12 @@ SERVICE_ROUTES = {
         "I need somewhere warm to stay",
         "I need a cot for tonight",
         "is there an overnight shelter I can go to",
+        # Coverage for moved regex keywords (REGEX_AUDIT_2)
+        "I need an overnight place to stay",
+        "is there somewhere I can stay overnight",
+        "I'm homeless and need help",
+        "I'm unhoused and looking for services",
+        "I've been homeless for a while and need a bed",
         # Coverage for retired regex keywords (REGEX_AUDIT)
         "I need a room for tonight",
         "where can I do intake for a shelter",
@@ -115,6 +127,11 @@ SERVICE_ROUTES = {
         "I need a jacket",
         "where can I get gloves and a hat",
         "I need professional clothes for work",
+        # Coverage for moved regex keywords (REGEX_AUDIT_2)
+        "I need an outfit",
+        "I need a hoodie or sweatshirt",
+        "where can I get sneakers",
+        "I need sneakers that fit",
     ],
 
     "personal_care": [
@@ -132,6 +149,11 @@ SERVICE_ROUTES = {
         "I need pads and tampons",
         "where can I get deodorant",
         "I need to clean up before my appointment",
+        # Coverage for moved regex keywords (REGEX_AUDIT_2)
+        "I need somewhere to clean up",
+        "is there a place I can get cleaned up",
+        "I need grooming services",
+        "where can I get groomed for an interview",
     ],
 
     "mental_health": [
@@ -152,6 +174,9 @@ SERVICE_ROUTES = {
         "I need sober living housing",
         "I need someone to talk to about my anxiety",
         "I need to detox from opiates",
+        # Coverage for moved regex keywords (REGEX_AUDIT_2)
+        "I'm dealing with grief and need help",
+        "I lost someone and need grief counseling",
     ],
 
     "legal": [
@@ -174,6 +199,11 @@ SERVICE_ROUTES = {
         "I have to go to court next week",
         "I need help posting bail",
         "I need a visa to stay in the country",
+        # Coverage for moved regex keywords (REGEX_AUDIT_2)
+        "I need an advocate to help with my case",
+        "I need someone to advocate for me",
+        "I need help understanding my rights",
+        "I don't know my rights as a tenant",
     ],
 
     "employment": [
@@ -192,6 +222,11 @@ SERVICE_ROUTES = {
         "where can I get an apprenticeship",
         "I need job readiness training",
         "I need help preparing for interviews",
+        # Coverage for moved regex keywords (REGEX_AUDIT_2)
+        "I need career help",
+        "I'm looking for a career change",
+        "I heard they're hiring somewhere nearby",
+        "where is hiring right now",
     ],
 
     "housing_assistance": [
@@ -229,6 +264,11 @@ SERVICE_ROUTES = {
         "I need to learn English",
         # Coverage for retired regex keywords (REGEX_AUDIT)
         "I need help getting a transit pass",
+        # Coverage for moved regex keywords (REGEX_AUDIT_2)
+        "I need a place to store my belongings",
+        "is there storage for my stuff",
+        "where can I charge my phone",
+        "I need to charge my phone and it's dead",
     ],
 }
 
