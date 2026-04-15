@@ -93,9 +93,9 @@ _RESULT_REFERENCE_RE = re.compile(
 # SUB-CATEGORY FILTERING ENGINE (Phase 1)
 # ---------------------------------------------------------------------------
 # All filtering operates on DB-sourced card data. The LLM is never used
-# to generate, rank, or select services. It may be used in Tier 2 (deferred)
-# to EXTRACT search keywords from the user's natural language — but the
-# actual matching is always deterministic.
+# to generate, rank, or select services. It is used in Tier 2 to EXTRACT
+# search keywords from the user's natural language when regex-based
+# extraction fails — but the actual matching is always deterministic.
 
 # --- Taxonomy aliases: user-facing terms → canonical DB taxonomy names ---
 # Built from PROD query (70 taxonomies). Case-insensitive matching.
@@ -617,6 +617,138 @@ def _classify_post_results_llm(message: str) -> Optional[str]:
         return None
 
 
+# ---------------------------------------------------------------------------
+# TIER 2: LLM KEYWORD EXTRACTION
+# ---------------------------------------------------------------------------
+
+_KEYWORD_EXTRACT_PROMPT = """\
+You are extracting filter terms from a user's message in a social services chatbot.
+
+The user has already seen a list of services and wants to narrow the results. \
+Your job is to identify which taxonomy tags or search keywords best match \
+what they're asking for.
+
+Available taxonomy tags in the current results:
+{taxonomies}
+
+Available service names:
+{service_names}
+
+Rules:
+- taxonomy_matches: Return ONLY tags from the "Available taxonomy tags" list above \
+that match the user's intent. Empty list if none match.
+- keywords: Return 1-3 lowercase search terms to match against service names and \
+descriptions. These should be concrete nouns, not verbs or filler.
+- Return ONLY valid JSON. No explanation.
+
+Example: User says "the one my case worker mentioned"
+Output: {{"taxonomy_matches": ["Case Workers"], "keywords": ["case"]}}
+
+Example: User says "somewhere with a shower"
+Output: {{"taxonomy_matches": ["Shower"], "keywords": ["shower"]}}
+
+Example: User says "the DHS one"
+Output: {{"taxonomy_matches": [], "keywords": ["dhs"]}}"""
+
+
+def _extract_keywords_llm(
+    raw_phrase: str, services: list[dict]
+) -> Optional[dict]:
+    """Extract filter keywords using a bounded Haiku call.
+
+    Sends the user's phrase alongside the available taxonomy tags and
+    service names from the current results. Returns structured terms
+    for taxonomy matching and text search.
+
+    Only fires when Tier 1 (regex) keyword extraction produced no
+    matches — typically for indirect language, synonyms, or
+    abbreviations that stop-word stripping can't handle.
+
+    Returns:
+        {"taxonomies": ["Intake", ...], "keywords": ["intake", ...]}
+        or None if LLM is unavailable or response is unparseable.
+
+    Cost: ~$0.001 per call. Bounded to small JSON output.
+    """
+    try:
+        from app.llm.claude_client import get_client, CLASSIFICATION_MODEL
+        from app.services.audit_log import record_llm_call
+        import time
+        import json as _json
+
+        client = get_client()
+        if client is None:
+            return None
+
+        # Build compact context from current service cards
+        all_taxonomies: set[str] = set()
+        all_names: list[str] = []
+        for card in services:
+            tags = card.get("service_taxonomies") or []
+            all_taxonomies.update(tags)
+            name = card.get("service_name", "")
+            if name and name not in all_names:
+                all_names.append(name)
+
+        if not all_taxonomies and not all_names:
+            return None
+
+        prompt = _KEYWORD_EXTRACT_PROMPT.format(
+            taxonomies=", ".join(sorted(all_taxonomies)),
+            service_names="\n".join(f"- {n}" for n in all_names[:20]),
+        )
+
+        t0 = time.perf_counter()
+        response = client.messages.create(
+            model=CLASSIFICATION_MODEL,
+            max_tokens=100,
+            system=prompt,
+            messages=[{"role": "user", "content": raw_phrase}],
+        )
+        latency = round((time.perf_counter() - t0) * 1000)
+
+        raw = response.content[0].text.strip()
+        record_llm_call(
+            task="filter_keyword_extract", model=CLASSIFICATION_MODEL,
+            input_tokens=response.usage.input_tokens,
+            output_tokens=response.usage.output_tokens,
+            latency_ms=latency, success=True,
+        )
+
+        # Parse JSON — strip markdown fences if present
+        cleaned = raw.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+        parsed = _json.loads(cleaned)
+
+        # Validate structure
+        result = {}
+        if isinstance(parsed.get("taxonomy_matches"), list):
+            # Only keep taxonomies that actually exist in the card data
+            valid = [t for t in parsed["taxonomy_matches"] if t in all_taxonomies]
+            if valid:
+                result["taxonomies"] = valid
+        if isinstance(parsed.get("keywords"), list):
+            # Lowercase, non-empty strings only
+            valid = [str(k).lower().strip() for k in parsed["keywords"] if str(k).strip()]
+            if valid:
+                result["keywords"] = valid[:3]
+
+        if result:
+            logger.info(
+                f"LLM keyword extraction: phrase='{raw_phrase[:50]}' "
+                f"taxonomies={result.get('taxonomies', [])} "
+                f"keywords={result.get('keywords', [])} "
+                f"latency={latency}ms"
+            )
+            return result
+
+        logger.info(f"LLM keyword extraction returned empty for '{raw_phrase[:50]}'")
+        return None
+
+    except Exception as e:
+        logger.error(f"LLM keyword extraction failed: {e}")
+        return None
+
+
 def _extract_service_index(text: str) -> Optional[int]:
     """Extract a service index from ordinals or numbers."""
     m = _SPECIFIC_INDEX_RE.search(text)
@@ -868,6 +1000,32 @@ def _handle_filter_subcategory(intent: dict, services: list[dict]) -> dict:
             if matched:
                 filter_tier = "text_search"
                 filter_desc = " ".join(keywords)
+
+    # --- Tier 2: LLM keyword extraction ---
+    # When regex-based extraction misses (indirect language, synonyms,
+    # abbreviations), ask Haiku to map the user's phrase to taxonomy
+    # names and search keywords using the actual card data as context.
+    if not matched and raw_phrase:
+        llm_result = _extract_keywords_llm(raw_phrase, services)
+        if llm_result:
+            # Try taxonomy match with LLM-extracted terms
+            if llm_result.get("taxonomies"):
+                llm_tax = set(llm_result["taxonomies"])
+                matched = [
+                    c for c in services
+                    if c.get("service_taxonomies")
+                    and any(t in c["service_taxonomies"] for t in llm_tax)
+                ]
+                if matched:
+                    filter_tier = "llm_taxonomy"
+                    filter_desc = ", ".join(sorted(llm_tax))
+
+            # Try text search with LLM-extracted keywords
+            if not matched and llm_result.get("keywords"):
+                matched = _text_search_cards(services, llm_result["keywords"])
+                if matched:
+                    filter_tier = "llm_text_search"
+                    filter_desc = " ".join(llm_result["keywords"])
 
     # --- Apply negation ---
     if is_negation and matched:

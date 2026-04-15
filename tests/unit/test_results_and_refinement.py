@@ -655,6 +655,147 @@ class TestDisplayPagination:
 
 
 # =======================================================================
+# FILTERED RESULTS PAGINATION
+# =======================================================================
+
+class TestFilteredResultsPagination:
+    """Filtered results also paginate by _DISPLAY_PAGE_SIZE."""
+
+    def test_filter_displays_first_page_only(self):
+        """8 filtered matches should display only first 5."""
+        sid = _fresh()
+        # Build 15 results where 8 have "Families" taxonomy
+        services = _build_shelter_results(15)["services"]
+        for i in range(8):
+            services[i]["service_taxonomies"] = ["Shelter", "Families"]
+        save_session_slots(sid, {
+            "service_type": "shelter",
+            "location": "manhattan",
+            "_last_results": services,
+            "_displayed_count": 5,
+        })
+        result = _send("ones for families", sid)
+        assert len(result["services"]) == 5, \
+            f"Should display 5 of 8 filtered, got {len(result['services'])}"
+
+    def test_filter_stores_full_set(self):
+        """All filtered matches stored in _filtered_results for 'which is open?'."""
+        sid = _fresh()
+        services = _build_shelter_results(15)["services"]
+        for i in range(8):
+            services[i]["service_taxonomies"] = ["Shelter", "Families"]
+        save_session_slots(sid, {
+            "service_type": "shelter",
+            "location": "manhattan",
+            "_last_results": services,
+            "_displayed_count": 5,
+        })
+        _send("ones for families", sid)
+        slots = get_session_slots(sid)
+        assert len(slots.get("_filtered_results", [])) == 8, \
+            "Full filtered set should be stored"
+        assert slots.get("_displayed_count") == 5
+
+    def test_filter_show_more_button(self):
+        """'Show N more' button appears when filtered results exceed page size."""
+        sid = _fresh()
+        services = _build_shelter_results(15)["services"]
+        for i in range(8):
+            services[i]["service_taxonomies"] = ["Shelter", "Families"]
+        save_session_slots(sid, {
+            "service_type": "shelter",
+            "location": "manhattan",
+            "_last_results": services,
+            "_displayed_count": 5,
+        })
+        result = _send("ones for families", sid)
+        qr_labels = [qr["label"] for qr in result.get("quick_replies", [])]
+        more_labels = [l for l in qr_labels if "more result" in l.lower()]
+        assert len(more_labels) == 1, f"Expected show-more button, got: {qr_labels}"
+        assert "3 more" in more_labels[0], \
+            f"Should say '3 more' (8-5=3), got: {more_labels[0]}"
+
+    def test_filter_no_show_more_when_all_fit(self):
+        """3 filtered matches all fit — no show-more button."""
+        sid = _fresh()
+        services = _build_shelter_results(15)["services"]
+        for i in range(3):
+            services[i]["service_taxonomies"] = ["Shelter", "Veterans"]
+        save_session_slots(sid, {
+            "service_type": "shelter",
+            "location": "manhattan",
+            "_last_results": services,
+            "_displayed_count": 5,
+        })
+        result = _send("ones for veterans", sid)
+        qr_labels = [qr["label"] for qr in result.get("quick_replies", [])]
+        assert not any("more result" in l.lower() for l in qr_labels), \
+            f"No show-more when all fit, got: {qr_labels}"
+
+    def test_show_more_pages_through_filtered_set(self):
+        """'Show more' after filter pages through _filtered_results, not _last_results."""
+        sid = _fresh()
+        services = _build_shelter_results(15)["services"]
+        for i in range(8):
+            services[i]["service_taxonomies"] = ["Shelter", "Families"]
+            services[i]["service_name"] = f"Family Shelter {i+1}"
+        save_session_slots(sid, {
+            "service_type": "shelter",
+            "location": "manhattan",
+            "_last_results": services,
+            "_displayed_count": 5,
+        })
+        _send("ones for families", sid)  # shows first 5 of 8 filtered
+        result = _send("show more", sid)  # should show remaining 3
+        assert len(result["services"]) == 3, \
+            f"Should show 3 remaining filtered results, got {len(result['services'])}"
+        # All shown services should be from the filtered set (families)
+        for svc in result["services"]:
+            assert "Family" in svc["service_name"], \
+                f"Service '{svc['service_name']}' is not from filtered set"
+
+    def test_show_all_clears_filter_after_pagination(self):
+        """'Show all' after filtered pagination resets to full results."""
+        sid = _fresh()
+        services = _build_shelter_results(15)["services"]
+        for i in range(8):
+            services[i]["service_taxonomies"] = ["Shelter", "Families"]
+        save_session_slots(sid, {
+            "service_type": "shelter",
+            "location": "manhattan",
+            "_last_results": services,
+            "_displayed_count": 5,
+        })
+        _send("ones for families", sid)
+        result = _send("show all results", sid)
+        slots = get_session_slots(sid)
+        assert slots.get("_filtered_results") is None, \
+            "Filter should be cleared"
+        assert len(result["services"]) == 5, \
+            "Should show first page of full results"
+
+    def test_subsequent_question_uses_full_filtered_set(self):
+        """'Which is open?' after filter uses ALL filtered matches, not just displayed page."""
+        sid = _fresh()
+        services = _build_shelter_results(15)["services"]
+        # 8 family shelters, 3 of which are open (including one past page boundary)
+        for i in range(8):
+            services[i]["service_taxonomies"] = ["Shelter", "Families"]
+            services[i]["is_open"] = "open" if i in (0, 2, 6) else "closed"
+        save_session_slots(sid, {
+            "service_type": "shelter",
+            "location": "manhattan",
+            "_last_results": services,
+            "_displayed_count": 5,
+        })
+        _send("ones for families", sid)  # displays 5 of 8, but stores all 8
+        result = _send("which are open", sid)
+        # Should find 3 open across ALL 8 filtered, not just the displayed 5
+        assert len(result["services"]) == 3, \
+            f"Should find 3 open in full filtered set, got {len(result['services'])}"
+
+
+# =======================================================================
 # SERVICE_TAXONOMIES: card field present
 # =======================================================================
 
