@@ -21,14 +21,17 @@ The chatbot originally assumed one service type per message. Classification gate
 **`_extract_all_service_types(text)`** scans for ALL service keywords in a message with:
 - Span tracking to prevent sub-matches ("mental health" doesn't also match "health")
 - Forward scanning past overlapping spans ("food stamps and food" finds both)
-- Text-position ordering (user's first-mentioned service is primary)
+- Need-based priority ordering (Maslow/Housing First/SAMHSA — shelter before food, medical before clothing; text position is tiebreaker within the same tier)
 - Category deduplication ("food" and "food pantry" → one "food" entry)
 
-**`extract_slots(message)`** returns `additional_services` — a list of `(service_type, service_detail)` tuples beyond the primary. `merge_slots()` skips this field; `has_new_slots` checks exclude it.
+**Hybrid multi-intent extraction:** The semantic router now runs on every message via `classify_all_services()`, scoring all routes against the message embedding. Services that regex missed (e.g., "anywhere to sleep" → shelter) are merged into `additional_services`. The `exclude` parameter skips routes regex already found.
+
+**`extract_slots(message)`** returns `additional_services` — a list of `(service_type, service_detail, location)` tuples beyond the primary. `merge_slots()` skips this field; `has_new_slots` checks exclude it.
 
 **Bug fixes applied during audit:**
 - `find()` only returned first occurrence — now scans forward past overlapping spans
-- Order reflected keyword length, not text position — now sorted by position
+- Order reflected keyword length, not text position — now sorted by need-based priority
+- Added 7 negation phrasings to shelter keywords ("anywhere to sleep", "nowhere to go", etc.)
 
 **Tests:** 17 covering multi-service extraction, ordering, overlap, deduplication, additional_services in extract_slots/merge_slots.
 

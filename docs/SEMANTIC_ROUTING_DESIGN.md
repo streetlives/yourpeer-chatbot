@@ -115,26 +115,36 @@ Route every message through Claude Haiku or GPT-3.5 for intent extraction. Most 
 
 The semantic router fires at **two points** in the pipeline for maximum coverage:
 
-**1. Early extraction in `chatbot.py`** (before routing decisions):
+**1. Hybrid multi-intent extraction in `chatbot.py`** (runs on every message):
 
 ```python
-# After regex extraction, before the unified LLM gate
+# After regex extraction — semantic always runs, even when regex found something
 early_extracted = extract_slots(message)
-if early_extracted.get("service_type") is None:
-    from app.services.semantic_router import classify_service, is_available
-    if is_available():
-        match = classify_service(message)
-        if match:
-            early_extracted["service_type"] = match.service_type
-            _extraction_source = "semantic"
+
+from app.services.semantic_router import classify_all_services, is_available
+if is_available():
+    regex_found = set()
+    if early_extracted.get("service_type"):
+        regex_found.add(early_extracted["service_type"])
+    for addl in (early_extracted.get("additional_services") or []):
+        regex_found.add(addl[0])
+
+    semantic_matches = classify_all_services(message, exclude=regex_found)
+    for sm in semantic_matches:
+        if early_extracted.get("service_type") is None:
+            early_extracted["service_type"] = sm.service_type  # semantic becomes primary
+        else:
+            queued = early_extracted.get("additional_services") or []
+            queued.append((sm.service_type, None, None))  # semantic adds to queue
+            early_extracted["additional_services"] = queued
 ```
 
-This fires **even in regex-only mode** (no API key), preventing "general" fallthrough for messages that regex misses. It also saves an LLM call when semantic matches — the unified gate skips because `has_service_intent` is already `True`.
+The `exclude` parameter skips routes that regex already found, avoiding duplicate work. The embedding is computed once (~5ms); scoring against ~10 routes is <0.1ms. This enables multi-intent extraction: regex catches "eat" → food, while semantic catches "anywhere to sleep" → shelter from the same message.
 
-**2. Inside `extract_slots_smart()` in `llm_slot_extractor.py`** (safety net):
+**2. Inside `extract_slots_smart()` in `llm_slot_extractor.py`** (safety net, single-match fallback):
 
 ```python
-# After regex, before LLM — same cascade logic
+# After regex, before LLM — single-match for backward compat
 if regex_result.get("service_type") is None:
     match = classify_service(message)
     if match:
@@ -287,7 +297,16 @@ def initialize():
         _route_embeddings[f"pop_{pop_name}"] = embeddings
 
 def classify_service(message: str, threshold: float = 0.75) -> SemanticMatch | None:
-    """Classify a message by semantic similarity to route utterances."""
+    """Classify a message by semantic similarity to route utterances.
+    Returns the single best match above threshold. Used as fallback
+    in extract_slots_smart() when regex found nothing."""
+
+def classify_all_services(message: str, threshold: float = None,
+                          exclude: set[str] = None) -> list[SemanticMatch]:
+    """Score ALL service routes and return every match above threshold.
+    Used for hybrid multi-intent extraction — runs on every message.
+    The exclude parameter skips routes already found by regex.
+    Returns list sorted by confidence (highest first)."""
     if _model is None:
         initialize()
 
