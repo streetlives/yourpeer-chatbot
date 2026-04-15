@@ -33,6 +33,9 @@ export interface ServiceResult {
   review_highlight?: string;
   required_documents?: string[];
   languages?: string[];
+  /** Raw taxonomy tags for this service — used by post-results
+   *  sub-category filtering. Example: ["Shelter", "Families", "Intake"] */
+  service_taxonomies?: string[];
 }
 
 export interface ChatResponse {
@@ -40,6 +43,10 @@ export interface ChatResponse {
   response: string;
   services?: ServiceResult[];
   quick_replies?: QuickReply[];
+  /** True when the bot needs more info (location, family status) before searching. */
+  follow_up_needed?: boolean;
+  /** Total results found before pagination (e.g., 25 found, 5 shown). */
+  result_count?: number;
 }
 
 export interface ChatMessage {
