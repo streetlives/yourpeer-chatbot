@@ -267,7 +267,7 @@ _STRUCTURED_FILTERS = [
      lambda card: _lang_contains(card, "Spanish") or _desc_contains(card, "spanish"),
      "speaks Spanish"),
 
-    (re.compile(r"\b(for famil|takes? kids|with children|accept.*children)\b", re.I),
+    (re.compile(r"\b(for famil\w*|takes? kids|with children|accept\w* children)\b", re.I),
      lambda card: _has_taxonomy(card, "Families") or _elig_contains(card, "families"),
      "for families"),
 
@@ -548,6 +548,36 @@ def classify_post_results_question(message: str) -> Optional[dict]:
             return {"type": "ask_hours_day", "weekday": weekday}
     if weekend_match and _day_hours_signal:
         return {"type": "ask_hours_day", "weekday": 6, "weekend": True}
+
+    # --- Compound filter detection ---
+    # If the message has BOTH an open/free signal AND a subcategory signal,
+    # route to filter_subcategory which applies all filters as AND.
+    # "Open now and for families" → filter_subcategory (not filter_open).
+    # "Which are open?" alone → still filter_open (no subcategory signal).
+    _COMPOUND_SUBCAT_RE = re.compile(
+        r"\b(for famil\w*|takes? kids|with children|accept\w* children"
+        r"|for (?:women|females?|men|males?|youth|young|seniors?|older|veterans?|vets?)"
+        r"|under \d+|over \d+|teens?|teenagers?|elderly|military"
+        r"|no referral|walk.?in|no appointment|drop.?in|no membership"
+        r"|no id|without id|no documents?"
+        r"|wheelchair|accessible|ada"
+        r"|speaks? spanish|habla|en espa"
+        r"|also (?:has|have|offers?|provides?)"
+        r"|(?:famil\w*|intake|youth|senior|veteran|soup kitchen"
+        r"|food pantry|pantries|shower|laundry|detox|mental health))\b", re.I
+    )
+    _has_open = bool(_FILTER_OPEN_RE.search(lower))
+    _has_free = bool(_FILTER_FREE_RE.search(lower))
+    _has_subcat = bool(_COMPOUND_SUBCAT_RE.search(lower))
+
+    if (_has_open or _has_free) and _has_subcat:
+        return {
+            "type": "filter_subcategory",
+            "raw_phrase": _extract_raw_phrase(message),
+            "_compound": True,
+            "_has_open": _has_open,
+            "_has_free": _has_free,
+        }
 
     if _FILTER_OPEN_RE.search(lower):
         return {"type": "filter_open"}
@@ -1114,6 +1144,61 @@ def _handle_filter_subcategory(intent: dict, services: list[dict]) -> dict:
                 if matched:
                     filter_tier = "llm_text_search"
                     filter_desc = " ".join(llm_result["keywords"])
+
+    # --- Compound filter: apply open/free on top of matched set ---
+    # "Open now and for families" → first filter finds family cards,
+    # then this step intersects with open cards.
+    _compound = intent.get("_compound", False)
+    _compound_desc_parts = [filter_desc] if (matched and filter_desc) else []
+
+    if _compound and matched:
+        pre_compound_count = len(matched)
+
+        if intent.get("_has_open"):
+            matched = [c for c in matched if c.get("is_open") == "open"]
+            _compound_desc_parts.append("open now")
+        if intent.get("_has_free"):
+            matched = [c for c in matched
+                       if c.get("fees") and "free" in c["fees"].lower()]
+            _compound_desc_parts.append("free")
+
+        if matched:
+            filter_tier += "_compound"
+            filter_desc = " + ".join(_compound_desc_parts)
+        else:
+            # Compound intersection is empty — helpful message
+            filter_tier += "_compound_empty"
+            filter_desc = " + ".join(_compound_desc_parts)
+            logger.info(
+                f"filter_subcategory: compound intersection empty. "
+                f"{pre_compound_count} matched subcategory but 0 matched "
+                f"open/free constraint."
+            )
+            record_filter_event(
+                tier=filter_tier, phrase=raw_phrase,
+                match_count=0, total=total, negated=is_negation,
+            )
+            open_label = "open" if intent.get("_has_open") else "free"
+            isnt = "isn't" if pre_compound_count == 1 else "none are"
+            return {
+                "response": (
+                    f"I found {pre_compound_count} result{'s' if pre_compound_count != 1 else ''} "
+                    f"matching '{_compound_desc_parts[0]}', but "
+                    f"{isnt} "
+                    f"{open_label} right now. Would you like to see "
+                    f"{'them' if pre_compound_count != 1 else 'it'} anyway?"
+                ),
+                "services": [],
+                "quick_replies": [
+                    {"label": f"📋 Show {_compound_desc_parts[0]} results",
+                     "value": f"ones for {_compound_desc_parts[0]}"},
+                    _SHOW_ALL_QR, _NEW_SEARCH_QR,
+                ],
+                "category": "post_results_filter",
+                "_filter_matched": False,
+                "_filter_tier": filter_tier,
+                "_filter_phrase": raw_phrase,
+            }
 
     # --- Apply negation ---
     if is_negation and matched:

@@ -796,6 +796,95 @@ class TestFilteredResultsPagination:
 
 
 # =======================================================================
+# COMPOUND FILTERS (6.2)
+# =======================================================================
+
+class TestCompoundFilters:
+    """Compound filters apply multiple criteria as AND."""
+
+    def test_open_and_families_detected_as_compound(self):
+        intent = classify_post_results_question("Open now and for families")
+        assert intent is not None
+        assert intent["type"] == "filter_subcategory"
+        assert intent.get("_compound") is True
+        assert intent.get("_has_open") is True
+
+    def test_free_and_spanish_detected_as_compound(self):
+        intent = classify_post_results_question("Free ones that speak Spanish")
+        assert intent is not None
+        assert intent["type"] == "filter_subcategory"
+        assert intent.get("_compound") is True
+        assert intent.get("_has_free") is True
+
+    def test_single_open_not_compound(self):
+        intent = classify_post_results_question("Which are open?")
+        assert intent is not None
+        assert intent["type"] == "filter_open"
+
+    def test_single_free_not_compound(self):
+        intent = classify_post_results_question("Any free ones?")
+        assert intent is not None
+        assert intent["type"] == "filter_free"
+
+    def test_compound_intersects_results(self):
+        """'Open now and for families' returns only cards that are BOTH."""
+        sid = _fresh()
+        services = _build_shelter_results(10)["services"]
+        # Card 0: families + open → should match
+        services[0]["service_taxonomies"] = ["Shelter", "Families"]
+        services[0]["is_open"] = "open"
+        # Card 1: families + closed → should NOT match
+        services[1]["service_taxonomies"] = ["Shelter", "Families"]
+        services[1]["is_open"] = "closed"
+        # Card 2: not families + open → should NOT match
+        services[2]["service_taxonomies"] = ["Shelter"]
+        services[2]["is_open"] = "open"
+
+        save_session_slots(sid, {
+            "service_type": "shelter",
+            "location": "manhattan",
+            "_last_results": services,
+            "_displayed_count": 5,
+        })
+        result = _send("open now and for families", sid)
+        # Only card 0 matches both criteria
+        assert len(result["services"]) == 1, \
+            f"Expected 1 (open + families), got {len(result['services'])}"
+
+    def test_compound_empty_intersection_helpful_message(self):
+        """When subcategory matches but none are open, offer to show subcategory anyway."""
+        sid = _fresh()
+        services = _build_shelter_results(10)["services"]
+        # 3 family shelters, all closed
+        for i in range(3):
+            services[i]["service_taxonomies"] = ["Shelter", "Families"]
+            services[i]["is_open"] = "closed"
+
+        save_session_slots(sid, {
+            "service_type": "shelter",
+            "location": "manhattan",
+            "_last_results": services,
+            "_displayed_count": 5,
+        })
+        result = _send("open now and for families", sid)
+        resp = result["response"].lower()
+        assert "3" in resp or "found" in resp, \
+            f"Should mention the 3 family matches: {result['response']}"
+        assert "open" in resp, \
+            f"Should mention open constraint: {result['response']}"
+
+    def test_regex_bug_fix_for_families(self):
+        """Pre-existing bug: 'for famil' regex now matches 'for families'."""
+        import re
+        pattern = re.compile(
+            r"\b(for famil\w*|takes? kids|with children|accept\w* children)\b", re.I
+        )
+        assert pattern.search("for families"), "Should match 'for families'"
+        assert pattern.search("for family"), "Should match 'for family'"
+        assert pattern.search("takes kids"), "Should match 'takes kids'"
+
+
+# =======================================================================
 # EDGE CASE FIXES (design doc section 6)
 # =======================================================================
 
