@@ -81,6 +81,26 @@ export function ChatContainer() {
         </span>
       </div>
 
+      {/* Connection status banner — only shown when degraded or offline */}
+      {connectionState === "offline" && (
+        <div role="alert" className="mx-1 mb-2 px-3 py-2 rounded-lg bg-red-50 border border-red-200 text-sm text-red-700">
+          {!isOnline
+            ? "You're offline. Check your connection to search for services."
+            : "Can't reach the server right now. Service search is unavailable."}
+        </div>
+      )}
+      {connectionState === "degraded" && (
+        <div role="status" className="mx-1 mb-2 px-3 py-2 rounded-lg bg-amber-50 border border-amber-200 text-sm text-amber-700">
+          {statusDetail.includes("API key")
+            ? "Running in basic mode — service search still works."
+            : statusDetail.includes("Rate limit")
+              ? "Temporarily limited — service search still works."
+              : statusDetail.includes("Claude") || statusDetail.includes("Anthropic") || statusDetail.includes("API")
+                ? "AI features temporarily limited — service search still works."
+                : "Some features may be limited — service search still works."}
+        </div>
+      )}
+
       {/* Chat area wrapper — relative for floating feedback positioning */}
       <div className="relative flex-1">
         <div

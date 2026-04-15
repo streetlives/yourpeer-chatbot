@@ -185,11 +185,62 @@ def get_status() -> dict:
 
     Used by the /api/health endpoint to report component status
     without accessing private module variables.
+
+    Returns:
+        available: bool — ready to classify
+        model: str | None — model name (e.g., "all-MiniLM-L6-v2")
+        route_count: int — total routes (service + population)
+        service_routes: int — number of service routes
+        population_routes: int — number of population routes
+        total_utterances: int — total pre-embedded utterances
+        embedding_dim: int | None — embedding dimension (384 for MiniLM)
+        functional: bool — True if a test embedding succeeds
     """
+    if not is_available():
+        return {
+            "available": False,
+            "model": None,
+            "route_count": 0,
+        }
+
+    service_count = sum(
+        1 for k in _route_embeddings if not k.startswith("pop_")
+    )
+    pop_count = sum(
+        1 for k in _route_embeddings if k.startswith("pop_")
+    )
+    total_utterances = sum(len(emb) for emb in _route_embeddings.values())
+
+    # Embedding dimension from the first route's embeddings
+    embedding_dim = None
+    if _route_embeddings:
+        first_emb = next(iter(_route_embeddings.values()))
+        if len(first_emb) > 0:
+            embedding_dim = int(first_emb[0].shape[0])
+
+    # Lightweight functional check — embed a short string and verify shape.
+    # Adds ~2ms. Catches model corruption without external dependencies.
+    functional = False
+    try:
+        test_vec = _model.encode("test", normalize_embeddings=True)
+        functional = (
+            test_vec is not None
+            and hasattr(test_vec, "shape")
+            and len(test_vec.shape) == 1
+            and test_vec.shape[0] == embedding_dim
+        )
+    except Exception:
+        functional = False
+
     return {
-        "available": is_available(),
+        "available": True,
         "model": MODEL_NAME.split("/")[-1] if _model else None,
         "route_count": len(_route_embeddings),
+        "service_routes": service_count,
+        "population_routes": pop_count,
+        "total_utterances": total_utterances,
+        "embedding_dim": embedding_dim,
+        "functional": functional,
     }
 
 

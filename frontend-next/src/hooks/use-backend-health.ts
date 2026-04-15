@@ -73,14 +73,25 @@ export function useBackendHealth(): BackendHealth {
   let statusDetail = "Connected";
   if (backendStatus === "degraded") {
     const parts: string[] = [];
-    if (health?.checks.llm.status !== "up") {
-      parts.push("LLM unavailable — using keyword matching only");
+    const llmStatus = health?.checks.llm.status;
+    const llmDetail = (health?.checks.llm as any)?.detail;
+    if (llmStatus === "degraded") {
+      // Live ping detected a specific issue — use it
+      parts.push(llmDetail || "LLM issue detected");
+      parts.push("Search still works");
+    } else if (llmStatus === "unavailable") {
+      parts.push(llmDetail || "LLM not configured");
+      parts.push("Using keyword matching only");
+    } else if (llmStatus !== "up") {
+      parts.push("LLM unavailable");
+      parts.push("Search still works");
     }
-    if (health?.checks.semantic_router.status !== "up") {
+    if (health?.checks.semantic_router?.status !== "up"
+        && health?.checks.semantic_router?.status !== undefined) {
       parts.push("Semantic routing not loaded");
     }
     statusDetail = parts.length > 0
-      ? `Degraded: ${parts.join("; ")}`
+      ? parts.join(" · ")
       : "Degraded";
   } else if (backendStatus === "unreachable") {
     const dbError = health?.checks?.database?.error;

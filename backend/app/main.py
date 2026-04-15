@@ -190,11 +190,37 @@ def health(request: Request):
         overall = "unhealthy"
 
     # --- LLM / Anthropic API (non-critical — regex-only fallback) ---
-    _use_llm = bool(os.getenv("ANTHROPIC_API_KEY"))
-    if _use_llm:
-        checks["llm"] = {"status": "up"}
-    else:
-        checks["llm"] = {"status": "unavailable"}
+    try:
+        from app.llm.claude_client import ping_llm
+        llm_health = ping_llm()
+        llm_status = llm_health["status"]
+
+        # Map fine-grained statuses to health check semantics
+        if llm_status == "up":
+            checks["llm"] = {"status": "up"}
+            if _is_admin:
+                checks["llm"]["latency_ms"] = llm_health.get("latency_ms")
+                checks["llm"]["detail"] = llm_health.get("detail")
+                checks["llm"]["cached"] = llm_health.get("cached", False)
+        elif llm_status == "unavailable":
+            checks["llm"] = {"status": "unavailable"}
+            if _is_admin:
+                checks["llm"]["detail"] = llm_health.get("detail")
+            if overall == "healthy":
+                overall = "degraded"
+        else:
+            # auth_error, rate_limited, timeout, api_error
+            checks["llm"] = {"status": "degraded"}
+            if _is_admin:
+                checks["llm"]["detail"] = llm_health.get("detail")
+                checks["llm"]["error_type"] = llm_status
+                checks["llm"]["cached"] = llm_health.get("cached", False)
+            if overall == "healthy":
+                overall = "degraded"
+    except Exception as e:
+        checks["llm"] = {"status": "degraded"}
+        if _is_admin:
+            checks["llm"]["detail"] = f"Health check error: {str(e)[:80]}"
         if overall == "healthy":
             overall = "degraded"
 
@@ -203,10 +229,18 @@ def health(request: Request):
         from app.services.semantic_router import get_status as _sr_status
         sr = _sr_status()
         if sr["available"]:
-            checks["semantic_router"] = {"status": "up"}
+            if sr.get("functional", True):
+                checks["semantic_router"] = {"status": "up"}
+            else:
+                checks["semantic_router"] = {"status": "degraded"}
             if _is_admin:
                 checks["semantic_router"]["model"] = sr["model"]
                 checks["semantic_router"]["route_count"] = sr["route_count"]
+                checks["semantic_router"]["service_routes"] = sr.get("service_routes")
+                checks["semantic_router"]["population_routes"] = sr.get("population_routes")
+                checks["semantic_router"]["total_utterances"] = sr.get("total_utterances")
+                checks["semantic_router"]["embedding_dim"] = sr.get("embedding_dim")
+                checks["semantic_router"]["functional"] = sr.get("functional")
         else:
             checks["semantic_router"] = {"status": "not_loaded", "required": False}
     except Exception:

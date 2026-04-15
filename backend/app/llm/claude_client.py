@@ -266,3 +266,121 @@ def classify_message_llm(text: str) -> str | None:
     except Exception as e:
         logger.error(f"LLM message classification failed: {e}")
         return None
+
+
+# ---------------------------------------------------------------------------
+# HEALTH PING — lightweight live check for the /api/health endpoint
+# ---------------------------------------------------------------------------
+# Makes a minimal Haiku call (max_tokens=1, ~10 input tokens) to verify:
+#   1. API key is valid (not revoked)
+#   2. Anthropic API is reachable (not in outage)
+#   3. Rate limits are not exceeded
+#   4. Network path is clear
+#
+# Cost: ~$0.000012 per ping (Haiku input: 10 tokens × $0.80/M + 1 output × $4/M)
+# At 90s TTL: ~960 pings/day ≈ $0.01/day
+#
+# Results are cached with a TTL so the frontend's 30s polling doesn't
+# trigger a new API call every time. The cache stores the full result
+# including latency and error details.
+
+import dataclasses
+
+_LLM_HEALTH_CACHE_TTL = 90  # seconds — ping at most once per 90s
+_llm_health_cache: dict | None = None
+_llm_health_cache_time: float = 0
+
+
+def ping_llm() -> dict:
+    """Lightweight live health check against the Anthropic API.
+
+    Returns a dict with:
+        status: "up" | "auth_error" | "rate_limited" | "timeout" |
+                "api_error" | "unavailable"
+        latency_ms: round-trip time (only when status is "up")
+        detail: human-readable description
+        cached: True if this result was served from cache
+
+    The result is cached for _LLM_HEALTH_CACHE_TTL seconds.
+    """
+    global _llm_health_cache, _llm_health_cache_time
+
+    now = time.time()
+    if _llm_health_cache and (now - _llm_health_cache_time) < _LLM_HEALTH_CACHE_TTL:
+        return {**_llm_health_cache, "cached": True}
+
+    # No API key → not configured (not an error)
+    if not os.getenv("ANTHROPIC_API_KEY"):
+        result = {"status": "unavailable", "detail": "API key not configured"}
+        _llm_health_cache = result
+        _llm_health_cache_time = now
+        return {**result, "cached": False}
+
+    if not _anthropic_available:
+        result = {"status": "unavailable", "detail": "anthropic SDK not installed"}
+        _llm_health_cache = result
+        _llm_health_cache_time = now
+        return {**result, "cached": False}
+
+    try:
+        client = get_client()
+        t0 = time.perf_counter()
+        response = client.messages.create(
+            model=CONVERSATIONAL_MODEL,
+            max_tokens=1,
+            messages=[{"role": "user", "content": "hi"}],
+        )
+        latency_ms = round((time.perf_counter() - t0) * 1000)
+
+        result = {
+            "status": "up",
+            "latency_ms": latency_ms,
+            "detail": f"Responding ({latency_ms}ms)",
+        }
+
+    except Exception as e:
+        error_name = type(e).__name__
+        error_msg = str(e)[:120]
+
+        if _anthropic_available:
+            if isinstance(e, anthropic.AuthenticationError):
+                result = {
+                    "status": "auth_error",
+                    "detail": "API key invalid or revoked",
+                }
+            elif isinstance(e, anthropic.RateLimitError):
+                result = {
+                    "status": "rate_limited",
+                    "detail": "Rate limit exceeded",
+                }
+            elif isinstance(e, anthropic.APITimeoutError):
+                result = {
+                    "status": "timeout",
+                    "detail": "API request timed out",
+                }
+            elif isinstance(e, anthropic.APIConnectionError):
+                result = {
+                    "status": "api_error",
+                    "detail": "Cannot reach Anthropic API",
+                }
+            elif isinstance(e, anthropic.APIStatusError) and e.status_code >= 500:
+                result = {
+                    "status": "api_error",
+                    "detail": f"Anthropic API error ({e.status_code})",
+                }
+            else:
+                result = {
+                    "status": "api_error",
+                    "detail": f"{error_name}: {error_msg}",
+                }
+        else:
+            result = {
+                "status": "api_error",
+                "detail": f"{error_name}: {error_msg}",
+            }
+
+        logger.warning(f"LLM health ping failed: {result['status']} — {result['detail']}")
+
+    _llm_health_cache = result
+    _llm_health_cache_time = now
+    return {**result, "cached": False}

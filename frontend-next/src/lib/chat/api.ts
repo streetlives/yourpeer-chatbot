@@ -61,7 +61,17 @@ export async function sendChatMessage(
         : data.detail;
       throw new Error(msg);
     }
-    throw new Error(`Request failed with status ${res.status}`);
+    if (res.status === 503) {
+      throw new Error(
+        "The service is temporarily unavailable. Try again in a moment, or call 311 for help."
+      );
+    }
+    if (res.status >= 500) {
+      throw new Error(
+        "Something went wrong on our end. Try again in a moment."
+      );
+    }
+    throw new Error(`Request failed (${res.status}). Try again in a moment.`);
   }
   return res.json();
 }
@@ -150,6 +160,27 @@ export async function fetchEvalResults(): Promise<EvalReport | null> {
   if (!res.ok) throw new Error("Failed to load eval results");
   const data = await res.json();
   return data.results === null ? null : data;
+}
+
+export async function uploadEvalReport(file: File): Promise<{ detail: string }> {
+  const text = await file.text();
+  // Validate JSON client-side before sending
+  try {
+    JSON.parse(text);
+  } catch {
+    throw new Error("File is not valid JSON.");
+  }
+  const res = await fetch(`${ADMIN_API}/eval/upload`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: text,
+    signal: timeoutSignal(60_000), // 60s for large files
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => null);
+    throw new Error(data?.detail || `Upload failed (${res.status})`);
+  }
+  return res.json();
 }
 
 export async function triggerEvalRun(
