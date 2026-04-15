@@ -1775,7 +1775,7 @@ def _handle_crisis(
             merged_crisis,
             quick_replies=[
                 {"label": f"✅ Yes, search for {svc_label}",
-                 "value": "Yes, search"},
+                 "value": "__crisis_geo_search__"},
                 {"label": "🤝 Peer navigator",
                  "value": "Connect with peer navigator"},
             ],
@@ -1895,8 +1895,21 @@ def _handle_context_aware_confirm(
 
     if last_action == "crisis" and category == "confirm_yes":
         existing.pop("_last_action", None)
+
+        # Check for geolocation coordinates — if the user tapped
+        # "Yes, search for shelter" and the browser provided lat/lon,
+        # execute the search immediately without asking for a borough.
+        _has_crisis_coords = (
+            existing.get("_latitude") is not None
+            and existing.get("_longitude") is not None
+            and existing.get("service_type")
+        )
+        if _has_crisis_coords and not existing.get("location"):
+            existing["location"] = NEAR_ME_SENTINEL
+
         save_session_slots(session_id, existing)
-        if is_enough_to_answer(existing):
+
+        if is_enough_to_answer(existing) or _has_crisis_coords:
             result = _execute_and_respond(session_id, message, existing, request_id=request_id)
         else:
             follow_up = next_follow_up_question(existing)

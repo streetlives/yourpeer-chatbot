@@ -298,13 +298,13 @@ _VIOLENCE_RESPONSE = (
 
 _DOMESTIC_VIOLENCE_RESPONSE = (
     "I'm sorry you're going through this. You deserve to be safe, "
-    "and there is help available.\n\n"
+    "and there is help available. I can connect you with a peer "
+    "navigator if you would like.\n\n"
     "• National Domestic Violence Hotline — 1-800-799-7233 (24/7) "
     "or text START to 88788\n"
     "• NYC Domestic Violence Hotline — 1-800-621-4673 (24/7, multilingual)\n"
     "• Safe Horizon — 1-800-621-HOPE (4673)\n\n"
-    "If you're in immediate danger, please call 911.\n\n"
-    "I can also help you find shelter or connect you with a peer navigator."
+    "If you're in immediate danger, please call 911."
 )
 
 _TRAFFICKING_RESPONSE = (
@@ -331,8 +331,7 @@ _SAFETY_CONCERN_RESPONSE = (
     "• 988 Suicide & Crisis Lifeline — call or text 988 (24/7)\n"
     "• Crisis Text Line — text HOME to 741741\n"
     "• NYC 311 — call 311 for shelter intake and social services\n\n"
-    "If you need shelter right away, I can help you find somewhere safe. "
-    "Just let me know what area you're in."
+    "If you need shelter right away, I can help you find somewhere safe nearby. "
 )
 
 _YOUTH_RUNAWAY_RESPONSE = (
