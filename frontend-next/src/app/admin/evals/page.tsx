@@ -38,8 +38,8 @@ export default function EvalsPage() {
           <div className="text-3xl mb-3">🧪</div>
           <p>No evaluation results yet.</p>
           <p className="mt-2 font-mono text-xs text-amber-600 bg-neutral-50 inline-block px-4 py-2 rounded-lg">
-            Use the Run Evals button above, or run: python tests/eval/eval_llm_judge.py
-            --output tests/eval_report.json
+            Use the Run Evals button above, upload a local eval_report.json, or run: python
+            tests/eval/eval_llm_judge.py --output tests/eval_report.json
           </p>
         </div>
       )}

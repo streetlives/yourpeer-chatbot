@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import JSONResponse
 
 from app.dependencies import require_admin_key
@@ -212,6 +212,73 @@ async def admin_eval_run(
     task.add_done_callback(_background_tasks.discard)
 
     return {"detail": "Eval started. Poll /admin/api/eval/status for progress."}
+
+
+@router.post("/api/eval/upload")
+async def admin_eval_upload(request):
+    """Upload a locally-run eval_report.json and store it for display.
+
+    Accepts the JSON file as the raw request body (Content-Type: application/json).
+    Validates that the report has the expected structure before storing.
+    """
+    try:
+        body = await request.body()
+        if len(body) > 10 * 1024 * 1024:  # 10 MB limit
+            return JSONResponse(
+                status_code=413,
+                content={"detail": "File too large. Maximum size is 10 MB."},
+            )
+
+        try:
+            data = json.loads(body)
+        except json.JSONDecodeError as e:
+            return JSONResponse(
+                status_code=400,
+                content={"detail": f"Invalid JSON: {str(e)[:100]}"},
+            )
+
+        # Validate expected structure
+        if not isinstance(data, dict):
+            return JSONResponse(
+                status_code=400,
+                content={"detail": "Expected a JSON object at the top level."},
+            )
+
+        summary = data.get("summary")
+        if not summary or not isinstance(summary, dict):
+            return JSONResponse(
+                status_code=400,
+                content={"detail": "Missing or invalid 'summary' field. Is this an eval_report.json?"},
+            )
+
+        required_summary_fields = ["overall_average", "scenarios_evaluated"]
+        missing = [f for f in required_summary_fields if f not in summary]
+        if missing:
+            return JSONResponse(
+                status_code=400,
+                content={"detail": f"Summary is missing required fields: {', '.join(missing)}"},
+            )
+
+        set_eval_results(data)
+
+        # Also save to disk so it survives restarts
+        try:
+            eval_path = TESTS_DIR / "eval_report.json"
+            eval_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(eval_path, "w") as f:
+                json.dump(data, f, indent=2)
+            logger.info(f"Eval report uploaded and saved to {eval_path}")
+        except Exception as e:
+            logger.warning(f"Eval report stored in memory but failed to save to disk: {e}")
+
+        scenario_count = summary.get("scenarios_evaluated", "?")
+        avg = summary.get("overall_average", "?")
+        return {
+            "detail": f"Eval report uploaded successfully. {scenario_count} scenarios, {avg} average.",
+        }
+
+    except Exception as e:
+        return _admin_error("/api/eval/upload", e)
 
 
 async def _run_eval_background(

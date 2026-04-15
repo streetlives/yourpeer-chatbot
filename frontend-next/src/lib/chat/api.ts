@@ -162,6 +162,27 @@ export async function fetchEvalResults(): Promise<EvalReport | null> {
   return data.results === null ? null : data;
 }
 
+export async function uploadEvalReport(file: File): Promise<{ detail: string }> {
+  const text = await file.text();
+  // Validate JSON client-side before sending
+  try {
+    JSON.parse(text);
+  } catch {
+    throw new Error("File is not valid JSON.");
+  }
+  const res = await fetch(`${ADMIN_API}/eval/upload`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: text,
+    signal: timeoutSignal(60_000), // 60s for large files
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => null);
+    throw new Error(data?.detail || `Upload failed (${res.status})`);
+  }
+  return res.json();
+}
+
 export async function triggerEvalRun(
   scenarios?: number,
   category?: string,

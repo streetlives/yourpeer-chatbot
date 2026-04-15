@@ -7,7 +7,7 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import { triggerEvalRun, fetchEvalStatus } from "@/lib/chat/api";
+import { triggerEvalRun, fetchEvalStatus, uploadEvalReport } from "@/lib/chat/api";
 import type { EvalReport } from "@/lib/chat/types";
 import { StatCard } from "./stat-card";
 import * as Dialog from "@radix-ui/react-dialog";
@@ -53,7 +53,9 @@ export function EvalRunner({ onComplete }: EvalRunnerProps) {
   const [status, setStatus] = useState("");
   const [scenarioCount, setScenarioCount] = useState("");
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [uploading, setUploading] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const stopPolling = useCallback(() => {
     if (pollRef.current) {
@@ -99,6 +101,25 @@ export function EvalRunner({ onComplete }: EvalRunnerProps) {
   const scenarioLabel = scenarioCount
     ? `${scenarioCount} scenarios`
     : "all scenarios (~150+)";
+
+  async function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    // Reset input so the same file can be re-selected
+    e.target.value = "";
+
+    setUploading(true);
+    setStatus("Uploading eval report…");
+    try {
+      const result = await uploadEvalReport(file);
+      setStatus(result.detail || "Upload complete.");
+      onComplete();
+    } catch (err: any) {
+      setStatus(`Upload failed: ${err.message}`);
+    } finally {
+      setUploading(false);
+    }
+  }
 
   return (
     <div className="flex items-center gap-3 mb-5 flex-wrap">
@@ -163,6 +184,24 @@ export function EvalRunner({ onComplete }: EvalRunnerProps) {
         <option value="10">10 scenarios</option>
         <option value="20">20 scenarios</option>
       </select>
+
+      <button
+        onClick={() => fileInputRef.current?.click()}
+        disabled={running || uploading}
+        aria-label="Upload eval report from local file"
+        className="px-4 py-2 rounded-lg border border-neutral-200 bg-white text-neutral-700 font-medium text-sm transition hover:bg-neutral-50 disabled:opacity-50 disabled:cursor-not-allowed"
+      >
+        {uploading ? "⏳ Uploading…" : "📄 Upload Report"}
+      </button>
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".json,application/json"
+        onChange={handleUpload}
+        className="hidden"
+        aria-hidden="true"
+      />
+
       {status && (
         <span className="text-sm text-neutral-500">{status}</span>
       )}
