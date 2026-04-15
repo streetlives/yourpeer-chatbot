@@ -202,32 +202,62 @@ def generate_reply(
     early_extracted = extract_slots(message)
     _extraction_source = "regex" if early_extracted.get("service_type") else None
 
-    # --- TIER 2: SEMANTIC ROUTING (before LLM gate) ---
-    # The semantic router is a LOCAL model — no API key needed.
-    # It runs here (not just inside extract_slots_smart) so that:
-    #   1. It fires in regex-only mode (no ANTHROPIC_API_KEY)
-    #   2. It fires before the unified LLM gate (saving an LLM call)
-    #   3. It fires before routing, preventing "general" fallthrough
-    if early_extracted.get("service_type") is None:
-        from app.services.semantic_router import classify_service as _semantic_classify
-        from app.services.semantic_router import is_available as _semantic_available
+    # --- TIER 2: SEMANTIC ROUTING (hybrid multi-intent) ---
+    # The semantic router runs on EVERY message — not just when regex
+    # found nothing. This enables multi-intent extraction: regex catches
+    # "eat" → food, semantic catches "anywhere to sleep" → shelter.
+    #
+    # The `exclude` parameter skips routes that regex already found,
+    # avoiding duplicate work. The embedding is computed once (~5ms);
+    # scoring against ~10 routes is <0.1ms.
+    from app.services.semantic_router import (
+        classify_all_services as _semantic_classify_all,
+        is_available as _semantic_available,
+    )
 
-        if _semantic_available():
-            _semantic_match = _semantic_classify(message)
-            if _semantic_match is not None:
-                logger.info(
-                    f"Session {session_id}: semantic router matched "
-                    f"'{_semantic_match.service_type}' "
-                    f"(confidence={_semantic_match.confidence:.3f})"
-                )
-                early_extracted["service_type"] = _semantic_match.service_type
+    if _semantic_available():
+        # Collect service types that regex already found
+        _regex_found: set[str] = set()
+        if early_extracted.get("service_type"):
+            _regex_found.add(early_extracted["service_type"])
+        for _addl in (early_extracted.get("additional_services") or []):
+            _regex_found.add(_addl[0])
+
+        _semantic_matches = _semantic_classify_all(
+            message, exclude=_regex_found,
+        )
+
+        for _sm in _semantic_matches:
+            if _sm.service_type in _regex_found:
+                continue  # safety dedup
+
+            if early_extracted.get("service_type") is None:
+                # No regex primary — semantic becomes primary
+                early_extracted["service_type"] = _sm.service_type
                 _extraction_source = "semantic"
+                logger.info(
+                    f"Session {session_id}: semantic router set primary "
+                    f"'{_sm.service_type}' "
+                    f"(confidence={_sm.confidence:.3f})"
+                )
+            else:
+                # Regex already has primary — semantic adds to queue
+                queued = early_extracted.get("additional_services") or []
+                queued.append((_sm.service_type, None, None))
+                early_extracted["additional_services"] = queued
+                logger.info(
+                    f"Session {session_id}: semantic router queued "
+                    f"'{_sm.service_type}' "
+                    f"(confidence={_sm.confidence:.3f})"
+                )
 
-                # Merge population from semantic router
-                if _semantic_match.population:
-                    existing_pops = set(early_extracted.get("_populations") or [])
-                    existing_pops.add(_semantic_match.population)
-                    early_extracted["_populations"] = sorted(existing_pops)
+            _regex_found.add(_sm.service_type)
+
+            # Merge population from semantic router
+            if _sm.population:
+                existing_pops = set(early_extracted.get("_populations") or [])
+                existing_pops.add(_sm.population)
+                early_extracted["_populations"] = sorted(existing_pops)
 
     has_service_intent = (
         early_extracted.get("service_type") is not None

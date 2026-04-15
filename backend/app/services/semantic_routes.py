@@ -60,6 +60,12 @@ SERVICE_ROUTES = {
         "I need to see a nurse",
         "I think I have an infection",
         "my wound looks infected",
+        # Negation phrasings (HYBRID_MULTI_INTENT)
+        "I can't get my medication",
+        "I don't have health insurance",
+        "I can't afford to see a doctor",
+        "I have no way to get my prescription",
+        "I don't have access to medical care",
     ],
 
     "shelter": [
@@ -92,6 +98,13 @@ SERVICE_ROUTES = {
         # Coverage for retired regex keywords (REGEX_AUDIT)
         "I need a room for tonight",
         "where can I do intake for a shelter",
+        # Negation phrasings (HYBRID_MULTI_INTENT)
+        "I don't have anywhere to sleep",
+        "I have nowhere to go tonight",
+        "I don't have a place to stay",
+        "I can't find a place to sleep",
+        "I have no home to go back to",
+        "I don't have anywhere to stay tonight",
     ],
 
     "food": [
@@ -110,6 +123,12 @@ SERVICE_ROUTES = {
         "I'm starving and need something to eat",
         "where can I grab a bite around here",
         "is there a mobile pantry this week",
+        # Negation phrasings (HYBRID_MULTI_INTENT)
+        "I don't have anything to eat",
+        "I have nothing to eat",
+        "I can't afford food",
+        "I don't have money for groceries",
+        "I have no food at home",
     ],
 
     "clothing": [
@@ -132,6 +151,11 @@ SERVICE_ROUTES = {
         "I need a hoodie or sweatshirt",
         "where can I get sneakers",
         "I need sneakers that fit",
+        # Negation phrasings (HYBRID_MULTI_INTENT)
+        "I don't have any clean clothes",
+        "I can't afford to buy clothes",
+        "I have nothing warm to wear",
+        "I don't have a coat for winter",
     ],
 
     "personal_care": [
@@ -154,6 +178,11 @@ SERVICE_ROUTES = {
         "is there a place I can get cleaned up",
         "I need grooming services",
         "where can I get groomed for an interview",
+        # Negation phrasings (HYBRID_MULTI_INTENT)
+        "I haven't been able to shower in days",
+        "I don't have anywhere to wash up",
+        "I can't do my laundry anywhere",
+        "I have no toiletries",
     ],
 
     "mental_health": [
@@ -177,6 +206,11 @@ SERVICE_ROUTES = {
         # Coverage for moved regex keywords (REGEX_AUDIT_2)
         "I'm dealing with grief and need help",
         "I lost someone and need grief counseling",
+        # Negation phrasings (HYBRID_MULTI_INTENT)
+        "I can't stop drinking and need help",
+        "I don't know how to cope anymore",
+        "I can't handle this on my own",
+        "I don't have anyone to talk to",
     ],
 
     "legal": [
@@ -204,6 +238,11 @@ SERVICE_ROUTES = {
         "I need someone to advocate for me",
         "I need help understanding my rights",
         "I don't know my rights as a tenant",
+        # Negation phrasings (HYBRID_MULTI_INTENT)
+        "I can't afford a lawyer",
+        "I don't have papers and need help",
+        "I don't know how to fight my eviction",
+        "I have no legal status in this country",
     ],
 
     "employment": [
@@ -227,6 +266,11 @@ SERVICE_ROUTES = {
         "I'm looking for a career change",
         "I heard they're hiring somewhere nearby",
         "where is hiring right now",
+        # Negation phrasings (HYBRID_MULTI_INTENT)
+        "I can't find a job anywhere",
+        "nobody will hire me",
+        "I don't have any work experience",
+        "I can't get hired because of my record",
     ],
 
     "housing_assistance": [
@@ -241,6 +285,17 @@ SERVICE_ROUTES = {
         "I need a housing voucher",
         "I need help with Housing Connect",
         "I need homeless prevention services",
+        # Expanded coverage (HYBRID_MULTI_INTENT)
+        "I'm about to lose my apartment",
+        "I got an eviction notice and need help",
+        "I need help finding an apartment I can afford",
+        "where can I apply for public housing",
+        "I need emergency rental assistance",
+        # Negation phrasings (HYBRID_MULTI_INTENT)
+        "I can't afford my rent anymore",
+        "I don't have enough for next month's rent",
+        "I can't find an affordable place to live",
+        "I have nowhere to move because rent is too high",
     ],
 
     "other": [
@@ -269,6 +324,11 @@ SERVICE_ROUTES = {
         "is there storage for my stuff",
         "where can I charge my phone",
         "I need to charge my phone and it's dead",
+        # Negation phrasings (HYBRID_MULTI_INTENT)
+        "I don't have an ID",
+        "I can't get my benefits without help",
+        "I don't have anywhere to keep my things",
+        "I have no phone and need one",
     ],
 }
 
@@ -316,6 +376,10 @@ POPULATION_ROUTES = {
         "senior center near me",
         "aging services",
         "help for elderly people",
+        # Expanded coverage (HYBRID_MULTI_INTENT)
+        "I'm a senior citizen and need support",
+        "services for people over 60",
+        "I need meals on wheels or senior meals",
     ],
 
     "pregnant": [
@@ -325,6 +389,11 @@ POPULATION_ROUTES = {
         "prenatal care for uninsured",
         "I'm pregnant and homeless",
         "I need help with my pregnancy",
+        # Expanded coverage (HYBRID_MULTI_INTENT)
+        "I just found out I'm pregnant",
+        "I need a place to stay while I'm pregnant",
+        "I'm having a baby and need diapers and supplies",
+        "I need prenatal vitamins and checkups",
     ],
 
     "disabled": [

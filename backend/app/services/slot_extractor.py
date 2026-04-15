@@ -35,6 +35,10 @@ SERVICE_KEYWORDS = {
         "shelter", "place to stay", "somewhere to stay", "housing",
         "sleep tonight",
         "place to sleep", "somewhere to sleep",
+        # Negation phrasings — "I don't have anywhere to sleep" (Rikers reentry gap)
+        "anywhere to sleep", "nowhere to sleep", "no place to sleep",
+        "anywhere to stay", "nowhere to stay", "no place to stay",
+        "nowhere to go",
         # "homeless" moved to semantic layer — identity descriptor, not service request (REGEX_AUDIT_2)
         # "unhoused" moved to semantic layer — identity descriptor, not service request (REGEX_AUDIT_2)
         "drop-in center", "drop in center", "warming center",
