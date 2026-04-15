@@ -539,6 +539,86 @@ class TestFrustrationContextRecovery:
 
 
 # =======================================================================
+# FRUSTRATED + SERVICE INTENT (Block 3 immediate search)
+# =======================================================================
+
+class TestFrustratedWithServiceIntent:
+    """When frustrated user restates intent with results showing,
+    skip confirmation and search immediately."""
+
+    def test_frustrated_restatement_searches_immediately(self):
+        """'I already told you I need food' should search, not confirm."""
+        sid = _fresh()
+        save_session_slots(sid, {
+            "service_type": "shelter",
+            "location": "manhattan",
+            "_last_results": [{"service_name": "Old result"}],
+            "_displayed_count": 1,
+        })
+        result = _send("I already told you I need food in Brooklyn", sid)
+        # Should return search results, NOT a confirmation question
+        assert result.get("result_count", 0) >= 1 or \
+            "option" in result["response"].lower() or \
+            "found" in result["response"].lower(), \
+            f"Should execute search immediately, got: {result['response']}"
+        # Should NOT ask "does that sound right?"
+        assert "sound right" not in result["response"].lower(), \
+            "Should skip confirmation for frustrated user"
+
+    def test_frustrated_restatement_acknowledges_frustration(self):
+        """Response should have empathetic prefix, not be purely transactional."""
+        sid = _fresh()
+        save_session_slots(sid, {
+            "service_type": "shelter",
+            "location": "manhattan",
+            "_last_results": [{"service_name": "Old result"}],
+            "_displayed_count": 1,
+        })
+        result = _send("ugh just find me shelter in Queens already", sid)
+        resp = result["response"].lower()
+        assert "hear you" in resp or "searching" in resp, \
+            f"Should acknowledge frustration, got: {result['response']}"
+
+    def test_frustrated_without_enough_slots_still_asks_follow_up(self):
+        """'I already said I need food' without location → follow-up, not search."""
+        sid = _fresh()
+        save_session_slots(sid, {
+            "service_type": "shelter",
+            "location": "manhattan",
+            "_last_results": [{"service_name": "Old result"}],
+            "_displayed_count": 1,
+        })
+        # "I need food" has service intent but no location
+        result = _send("I already said I need food", sid)
+        # Should ask for location with empathetic tone
+        assert result.get("follow_up_needed", False) or \
+            "where" in result["response"].lower() or \
+            "location" in result["response"].lower() or \
+            result.get("result_count", 0) >= 1, \
+            f"Should ask for location or search, got: {result['response']}"
+        # Should NOT skip to search without location
+        assert "sound right" not in result["response"].lower() or \
+            result.get("result_count", 0) >= 1, \
+            "Should not show confirmation without location"
+
+    def test_non_frustrated_service_intent_still_confirms(self):
+        """Normal service intent after results → standard confirmation."""
+        sid = _fresh()
+        save_session_slots(sid, {
+            "service_type": "shelter",
+            "location": "manhattan",
+            "_last_results": [{"service_name": "Old result"}],
+            "_displayed_count": 1,
+        })
+        result = _send("I need food in Brooklyn", sid)
+        slots = get_session_slots(sid)
+        # Should show confirmation (not immediate search)
+        # because the user is NOT frustrated
+        assert slots.get("_frustrated_with_intent") is None, \
+            "Flag should not be set for non-frustrated message"
+
+
+# =======================================================================
 # PAGINATION: _DISPLAY_PAGE_SIZE = 5
 # =======================================================================
 

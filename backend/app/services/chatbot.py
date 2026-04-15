@@ -674,7 +674,11 @@ def generate_reply(
                             }
                             _log_turn(session_id, redacted_message, result,
                                       pr.get("category", "post_results"),
-                                      request_id=request_id)
+                                      request_id=request_id,
+                                      filter_tier=pr.get("_filter_tier"),
+                                      filter_phrase=pr.get("_filter_phrase"),
+                                      filter_matched=len(all_filtered),
+                                      filter_total=len(_last_results))
                             return result
 
                         result = {
@@ -689,7 +693,11 @@ def generate_reply(
                         }
                         _log_turn(session_id, redacted_message, result,
                                   pr.get("category", "post_results"),
-                                  request_id=request_id)
+                                  request_id=request_id,
+                                  filter_tier=pr.get("_filter_tier"),
+                                  filter_phrase=pr.get("_filter_phrase"),
+                                  filter_matched=len(pr.get("services", [])),
+                                  filter_total=len(_last_results))
                         return result
                     if post_intent.get("type") == "specific_name":
                         query = post_intent.get("query", "that")
@@ -725,6 +733,12 @@ def generate_reply(
                 existing.pop("_queue_offer_pending", None)
                 existing.pop("_pending_confirmation", None)
                 existing.pop("_displayed_count", None)
+                # When frustrated + service intent, skip confirmation and
+                # search immediately. The user already told us what they want
+                # and is frustrated about repeating it — asking "does that
+                # sound right?" is the exact pattern causing the frustration.
+                if tone == "frustrated":
+                    existing["_frustrated_with_intent"] = True
             save_session_slots(session_id, existing)
 
     # --- COMBINE INTO ROUTING CATEGORY ---
@@ -1522,8 +1536,30 @@ def generate_reply(
     if _prefix_prepend:
         _tone_prefix = _prefix_prepend + _tone_prefix
 
-    # If enough detail → CONFIRMATION step
+    # If enough detail → CONFIRMATION step (or immediate search if frustrated)
     if (is_enough_to_answer(merged) or _geolocation_ready) and has_new_slots:
+
+        # Frustrated restatement: user said "I already told you I need food"
+        # while results were showing. They've already told us what they want —
+        # asking "does that sound right?" is the pattern causing frustration.
+        # Execute search immediately with an empathetic prefix.
+        if merged.get("_frustrated_with_intent"):
+            merged.pop("_frustrated_with_intent", None)
+            merged.pop("_pending_confirmation", None)
+            merged.pop("_queue_offer_pending", None)
+            save_session_slots(session_id, merged)
+            result = _execute_and_respond(
+                session_id, message, merged, request_id=request_id,
+            )
+            # Prepend empathetic acknowledgment to the response
+            result["response"] = (
+                "I hear you — searching right now. "
+                + result.get("response", "")
+            )
+            _log_turn(session_id, redacted_message, result, "frustrated_immediate_search",
+                      request_id=request_id, tone=tone)
+            return result
+
         merged["_pending_confirmation"] = True
         merged.pop("_queue_offer_pending", None)
         merged.pop("_queued_services_original", None)
@@ -1545,6 +1581,9 @@ def generate_reply(
 
     # Need more slots — service request
     if category == "service":
+        # Clear frustrated flag — can't search immediately without all slots,
+        # but keep the empathetic tone prefix from line 1477
+        merged.pop("_frustrated_with_intent", None)
         follow_up = _tone_prefix + next_follow_up_question(merged)
         result = {
             "session_id": session_id,
@@ -2386,7 +2425,8 @@ def _execute_and_respond(session_id: str, message: str, slots: dict, request_id:
 # ---------------------------------------------------------------------------
 
 def _log_turn(session_id: str, user_msg: str, result: dict, category: str,
-              request_id: str | None = None, tone=None, confidence: str = "high"):
+              request_id: str | None = None, tone=None, confidence: str = "high",
+              **kwargs):
     """Log a conversation turn to the audit log."""
     try:
         bot_response_redacted, _ = redact_pii(result.get("response", ""))
@@ -2402,6 +2442,7 @@ def _log_turn(session_id: str, user_msg: str, result: dict, category: str,
             request_id=request_id,
             tone=tone,
             confidence=confidence,
+            **kwargs,
         )
     except Exception as e:
         logger.error(f"Failed to log conversation turn: {e}")
