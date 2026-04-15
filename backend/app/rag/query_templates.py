@@ -390,8 +390,9 @@ FILTER_BY_NO_REQUIREMENTS = (
 # ---------------------------------------------------------------------------
 # Sorting priority:
 #   1. Open now — services open right now appear first (when schedule exists)
-#   2. Recently verified — freshest data first (NULLS LAST)
-#   3. Service name — stable tiebreaker
+#   2. Freshness tier — verified within 90 days > verified older > never verified
+#   3. Recently verified — within same tier, most recent first (NULLS LAST)
+#   4. Service name — stable tiebreaker
 #
 # When proximity (lat/lon) is available, distance is the primary sort and
 # open-now becomes secondary.
@@ -404,6 +405,19 @@ _OPEN_NOW_RANK = """CASE
          AND today_sched.opens_at <= CURRENT_TIME
          AND today_sched.closes_at >= CURRENT_TIME
     THEN 0 ELSE 1
+END"""
+
+# Freshness tier rank: verified within 90 days > verified older > never verified.
+# This is a PRIMARY sort factor (not just a tiebreaker) so recently verified
+# services consistently outrank stale ones within each open/closed group.
+# Stale results are NOT filtered out — they may be the only option available.
+_FRESHNESS_DAYS = 90
+_FRESHNESS_TIER_RANK = f"""CASE
+    WHEN l.last_validated_at >= (CURRENT_DATE - INTERVAL '{_FRESHNESS_DAYS} days')
+    THEN 0
+    WHEN l.last_validated_at IS NOT NULL
+    THEN 1
+    ELSE 2
 END"""
 
 # LGBTQ taxonomy boost: returns 0 for services tagged "LGBTQ Young Adult",
@@ -443,9 +457,10 @@ _DISTANCE_RANK = (
     "ST_Distance(l.position::geography, ST_MakePoint(:lon, :lat)::geography)"
 )
 
-# Base sort tiebreakers: open-now first, then freshness, then name.
+# Base sort: open-now first, then freshness tier, then recency, then name.
 _BASE_ORDER_PARTS = [
     _OPEN_NOW_RANK,
+    _FRESHNESS_TIER_RANK,
     "l.last_validated_at DESC NULLS LAST",
     "s.name",
 ]
@@ -868,7 +883,7 @@ def build_query(template_key: str, user_params: dict) -> tuple[str, dict]:
     if _has_distance:
         order_parts.append(_DISTANCE_RANK)
 
-    # 3. Base tiebreakers: open-now, freshness, name
+    # 3. Base sort: open-now, freshness tier, recency, name
     order_parts.extend(_BASE_ORDER_PARTS)
 
     order_clause = f"\nORDER BY {', '.join(order_parts)}\nLIMIT :max_results\n"
