@@ -34,6 +34,21 @@ async function withRetry<T>(fn: () => Promise<T>, retryDelayMs = 1500): Promise<
   }
 }
 
+/** Convert a caught error into a user-friendly message. */
+function userFacingError(err: any): string {
+  const msg = err?.message || "";
+  // Rate-limit messages include "wait" — pass through verbatim
+  if (msg.includes("wait")) return msg;
+  // API layer errors (503, 500) already have good messages — pass through
+  if (msg.includes("temporarily unavailable") || msg.includes("on our end") || msg.includes("Try again")) return msg;
+  // Network error — fetch itself failed (no response)
+  if (err?.name === "TypeError" || msg.includes("fetch")) return "Can't reach the server right now. Check your connection and try again.";
+  // Timeout — AbortSignal.timeout fired
+  if (err?.name === "TimeoutError" || err?.name === "AbortError") return "The search is taking longer than expected. Try again in a moment.";
+  // Fallback
+  return "Sorry, something went wrong. Try again in a moment.";
+}
+
 export function useChat() {
   const {
     sessionId,
@@ -136,13 +151,13 @@ export function useChat() {
             }
           }
 
-          const msg = err.message || "Something went wrong";
-          setError(`Error: ${msg}`);
+          const friendlyMsg = userFacingError(err);
+          setError(friendlyMsg);
           addMessage({
             id: nextMsgId(),
             role: "bot",
-            text: msg.includes("wait") ? msg : "Sorry, something went wrong.",
-            retryMessage: msg.includes("wait") ? undefined : GEOLOCATION_TRIGGER,
+            text: friendlyMsg,
+            retryMessage: friendlyMsg.includes("wait") ? undefined : GEOLOCATION_TRIGGER,
           });
         } finally {
           setLoading(false);
@@ -213,13 +228,13 @@ export function useChat() {
             }
           }
 
-          const msg = err.message || "Something went wrong";
-          setError(`Error: ${msg}`);
+          const friendlyMsg = userFacingError(err);
+          setError(friendlyMsg);
           addMessage({
             id: nextMsgId(),
             role: "bot",
-            text: msg.includes("wait") ? msg : "Sorry, something went wrong.",
-            retryMessage: msg.includes("wait") ? undefined : CRISIS_GEO_TRIGGER,
+            text: friendlyMsg,
+            retryMessage: friendlyMsg.includes("wait") ? undefined : CRISIS_GEO_TRIGGER,
           });
         } finally {
           setLoading(false);
@@ -271,15 +286,15 @@ export function useChat() {
           }
         }
 
-        const msg = err.message || "Something went wrong";
-        setError(`Error: ${msg}`);
+        const friendlyMsg = userFacingError(err);
+        setError(friendlyMsg);
         // Rate-limit errors include timing info — show as-is, no retry.
         // Other errors get a Retry button via retryMessage.
         addMessage({
           id: nextMsgId(),
           role: "bot",
-          text: msg.includes("wait") ? msg : "Sorry, something went wrong.",
-          retryMessage: msg.includes("wait") ? undefined : message,
+          text: friendlyMsg,
+          retryMessage: friendlyMsg.includes("wait") ? undefined : message,
         });
       } finally {
         setLoading(false);
@@ -343,13 +358,13 @@ export function useChat() {
           });
         } catch (err: any) {
           removeMessage(searchProgressId);
-          const msg = err.message || "Something went wrong";
-          setError(`Error: ${msg}`);
+          const friendlyMsg = userFacingError(err);
+          setError(friendlyMsg);
           addMessage({
             id: nextMsgId(),
             role: "bot",
-            text: msg.includes("wait") ? msg : "Sorry, something went wrong.",
-            retryMessage: msg.includes("wait") ? undefined : GEOLOCATION_TRIGGER,
+            text: friendlyMsg,
+            retryMessage: friendlyMsg.includes("wait") ? undefined : GEOLOCATION_TRIGGER,
           });
         } finally {
           setLoading(false);
@@ -373,13 +388,13 @@ export function useChat() {
           showFeedback: (data.services?.length ?? 0) > 0,
         });
       } catch (err: any) {
-        const msg = err.message || "Something went wrong";
-        setError(`Error: ${msg}`);
+        const friendlyMsg = userFacingError(err);
+        setError(friendlyMsg);
         addMessage({
           id: nextMsgId(),
           role: "bot",
-          text: msg.includes("wait") ? msg : "Sorry, something went wrong.",
-          retryMessage: msg.includes("wait") ? undefined : originalText,
+          text: friendlyMsg,
+          retryMessage: friendlyMsg.includes("wait") ? undefined : originalText,
         });
       } finally {
         setLoading(false);

@@ -61,7 +61,17 @@ export async function sendChatMessage(
         : data.detail;
       throw new Error(msg);
     }
-    throw new Error(`Request failed with status ${res.status}`);
+    if (res.status === 503) {
+      throw new Error(
+        "The service is temporarily unavailable. Try again in a moment, or call 311 for help."
+      );
+    }
+    if (res.status >= 500) {
+      throw new Error(
+        "Something went wrong on our end. Try again in a moment."
+      );
+    }
+    throw new Error(`Request failed (${res.status}). Try again in a moment.`);
   }
   return res.json();
 }
