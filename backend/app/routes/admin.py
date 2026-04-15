@@ -215,13 +215,20 @@ async def admin_eval_run(
 
 
 @router.post("/api/eval/upload")
-async def admin_eval_upload(request):
+async def admin_eval_upload(request: Request):
     """Upload a locally-run eval_report.json and store it for display.
 
     Accepts the JSON file as the raw request body (Content-Type: application/json).
     Validates that the report has the expected structure before storing.
     """
     try:
+        with _eval_lock:
+            if _eval_running:
+                return JSONResponse(
+                    status_code=409,
+                    content={"detail": "An eval run is in progress. Wait for it to finish before uploading."},
+                )
+
         body = await request.body()
         if len(body) > 10 * 1024 * 1024:  # 10 MB limit
             return JSONResponse(

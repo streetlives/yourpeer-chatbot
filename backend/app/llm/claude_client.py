@@ -284,8 +284,6 @@ def classify_message_llm(text: str) -> str | None:
 # trigger a new API call every time. The cache stores the full result
 # including latency and error details.
 
-import dataclasses
-
 _LLM_HEALTH_CACHE_TTL = 90  # seconds — ping at most once per 90s
 _llm_health_cache: dict | None = None
 _llm_health_cache_time: float = 0

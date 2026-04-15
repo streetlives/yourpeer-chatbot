@@ -74,7 +74,7 @@ export function useBackendHealth(): BackendHealth {
   if (backendStatus === "degraded") {
     const parts: string[] = [];
     const llmStatus = health?.checks.llm.status;
-    const llmDetail = (health?.checks.llm as any)?.detail;
+    const llmDetail = health?.checks.llm.detail;
     if (llmStatus === "degraded") {
       // Live ping detected a specific issue — use it
       parts.push(llmDetail || "LLM issue detected");

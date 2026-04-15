@@ -95,7 +95,7 @@ export function ChatContainer() {
             ? "Running in basic mode — service search still works."
             : statusDetail.includes("Rate limit")
               ? "Temporarily limited — service search still works."
-              : statusDetail.includes("Claude") || statusDetail.includes("Anthropic") || statusDetail.includes("API")
+              : statusDetail.includes("Anthropic") || statusDetail.includes("API")
                 ? "AI features temporarily limited — service search still works."
                 : "Some features may be limited — service search still works."}
         </div>
