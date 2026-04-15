@@ -281,6 +281,9 @@ export interface QueryLogEntry {
   result_count: number;
   execution_ms: number;
   relaxed: boolean;
+  /** True when the proximity (geolocation) query exceeded statement_timeout
+   *  and the system fell back to a borough-level search. */
+  proximity_timeout?: boolean;
 }
 
 export interface EvalDimensionScore {

@@ -2318,6 +2318,7 @@ def _execute_and_respond(session_id: str, message: str, slots: dict, request_id:
             execution_ms=results.get("execution_ms", 0),
             freshness=results.get("freshness"),
             request_id=request_id,
+            proximity_timeout=results.get("proximity_timeout", False),
         )
 
         if results.get("error"):
@@ -2332,9 +2333,12 @@ def _execute_and_respond(session_id: str, message: str, slots: dict, request_id:
             result_count = len(services_list)
             total_found = len(all_services)
             relaxed = results.get("relaxed", False)
+            proximity_timeout = results.get("proximity_timeout", False)
 
             qualifier = ""
-            if relaxed:
+            if proximity_timeout:
+                qualifier = " (showing your wider area — nearby search was slow)"
+            elif relaxed:
                 qualifier = " (I broadened the search a bit)"
 
             if colocated_success and colocated_types:
