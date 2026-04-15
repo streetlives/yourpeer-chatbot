@@ -427,6 +427,7 @@ def build_capability_context() -> str:
         "mental_health": "Mental health: counseling, therapy, substance use, AA/NA",
         "legal": "Legal help: immigration, eviction, asylum, legal aid",
         "employment": "Jobs: employment programs, job training, resume help",
+        "housing_assistance": "Housing help: rental assistance, Section 8, eviction prevention, NYCHA",
         "other": "Other: benefits (SNAP/EBT/Medicaid), IDs, drop-in centers, free phones",
     }
     for cat in service_cats:
@@ -450,16 +451,25 @@ def build_capability_context() -> str:
         f"- If a user says 'I don't know', 'anywhere', or 'here' when asked for location, "
         f"you offer geolocation and borough buttons — you don't treat it as confusion",
         f"- Multiple services: you can handle requests like 'food and shelter in Brooklyn'. "
-        f"You search the first service, show results, then offer to search for the next one",
-        f"- Long messages: you understand narrative descriptions of situations and prioritize "
-        f"by urgency (shelter/safety before food before employment)",
+        f"You prioritize by need — shelter and medical first, then food, then clothing, "
+        f"then employment and legal. You search the highest-need service first, show results, "
+        f"then offer to search for the next one",
+        f"- Long messages: you understand narrative descriptions like 'I just got out of "
+        f"Rikers and I don't have anywhere to sleep or anything to eat'. You extract all "
+        f"services mentioned, even when phrased as negations ('don't have', 'nowhere to')",
         f"- Follow-up questions: after showing results, you can answer questions like "
-        f"'are any open now?', 'what's the phone number?', or 'tell me about the first one' "
-        f"directly from the displayed results — no extra database query needed",
+        f"'are any open now?', 'only the pantries', 'not the DHS ones', 'for families', "
+        f"or 'the one on 3rd street'. You filter the displayed results without a new "
+        f"database search",
         f"- Co-located services: result cards show other services at the same location "
         f"(e.g., 'Also here: Shower · Clothing')",
         f"- Family composition: for shelter searches, you ask about family/children to "
         f"find appropriate sub-category matches (youth, family, single adult)",
+        f"- Recently verified services appear first — you sort results by how recently "
+        f"they were verified by the Streetlives team",
+        f"- Crisis geolocation: after showing crisis resources (DV hotlines, runaway "
+        f"services), tapping 'Yes, search for shelter' uses the browser's GPS to find "
+        f"the nearest services immediately — no extra steps",
         f"- Privacy protections:",
         f"  • Not connected to any government agency, including ICE",
         f"  • No information shared with law enforcement",

@@ -4,8 +4,14 @@ Semantic Router — Tier 2 classification for YourPeer chatbot.
 Sits between the regex keyword matcher (Tier 1) and the LLM fallback
 (Tier 3). Converts user messages into 384-dimensional vectors and
 compares against pre-embedded example utterances for each service
-category. The closest match above a confidence threshold determines
-the service type.
+category.
+
+Two classification modes:
+    classify_service()       — Single best match (original, used for
+                               fallback when regex found nothing).
+    classify_all_services()  — Multi-label: returns ALL routes above
+                               threshold. Used for multi-intent extraction
+                               alongside regex results (hybrid approach).
 
 This eliminates the "missing keyword" class of failures. When a user
 says "I ran out of insulin," the embedding is semantically close to
@@ -19,14 +25,21 @@ Performance:
     - Memory footprint: ~100 MB
 
 Usage:
-    from app.services.semantic_router import classify_service, is_available
+    from app.services.semantic_router import (
+        classify_service, classify_all_services, is_available,
+    )
 
     if is_available():
+        # Single-intent (backward compat)
         match = classify_service("I ran out of insulin")
-        if match:
-            print(match.service_type)   # "medical"
-            print(match.confidence)     # 0.83
-            print(match.population)     # None
+
+        # Multi-intent (hybrid with regex)
+        regex_found = {"food"}  # regex already found food
+        matches = classify_all_services(
+            "I need somewhere to sleep and something to eat",
+            exclude=regex_found,
+        )
+        # → [SemanticMatch(service_type="shelter", confidence=0.87)]
 
 Graceful degradation:
     If sentence-transformers is not installed, the module logs a warning
@@ -289,6 +302,102 @@ def classify_service(
     except Exception as e:
         logger.error(f"Semantic router classification failed: {e}")
         return None
+
+
+def classify_all_services(
+    message: str,
+    threshold: float | None = None,
+    exclude: set[str] | None = None,
+) -> list[SemanticMatch]:
+    """Score ALL service routes and return every match above threshold.
+
+    Unlike classify_service() which returns only the single best match,
+    this function returns multiple matches — enabling multi-intent
+    extraction from compound messages like "I need somewhere to sleep
+    and something to eat."
+
+    The embedding is computed once; scoring is cosine similarity against
+    each route's pre-embedded utterances (~0.1ms per route).
+
+    Args:
+        message: The user's message text.
+        threshold: Override the default service threshold. If None, uses
+            DEFAULT_SERVICE_THRESHOLD (with per-route overrides).
+        exclude: Set of service_type names to skip (e.g., types already
+            found by regex). Avoids duplicate work.
+
+    Returns:
+        List of SemanticMatch objects, sorted by confidence (highest first).
+        Empty list if no routes exceed the threshold.
+    """
+    if not _initialized:
+        if not initialize():
+            return []
+
+    if _model is None:
+        return []
+
+    exclude = exclude or set()
+
+    try:
+        query_embedding = _model.encode(message, normalize_embeddings=True)
+
+        matches: list[SemanticMatch] = []
+
+        for route_name, route_embeddings in _route_embeddings.items():
+            if route_name.startswith("pop_"):
+                continue
+            if route_name in exclude:
+                continue
+
+            similarities = np.dot(route_embeddings, query_embedding)
+            max_sim = float(np.max(similarities))
+
+            effective_threshold = threshold
+            if effective_threshold is None:
+                effective_threshold = ROUTE_THRESHOLDS.get(
+                    route_name, DEFAULT_SERVICE_THRESHOLD
+                )
+
+            if max_sim >= effective_threshold:
+                matches.append(SemanticMatch(
+                    service_type=route_name,
+                    confidence=max_sim,
+                ))
+
+        matches.sort(key=lambda m: m.confidence, reverse=True)
+
+        # --- Population matching (same as classify_service) ---
+        best_pop = None
+        best_pop_score = 0.0
+        for route_name, route_embeddings in _route_embeddings.items():
+            if not route_name.startswith("pop_"):
+                continue
+            similarities = np.dot(route_embeddings, query_embedding)
+            max_sim = float(np.max(similarities))
+            if max_sim >= DEFAULT_POPULATION_THRESHOLD and max_sim > best_pop_score:
+                best_pop = route_name.replace("pop_", "")
+                best_pop_score = max_sim
+
+        # Attach population to all matches
+        if best_pop:
+            for m in matches:
+                m.population = best_pop
+
+        if matches:
+            route_str = ", ".join(
+                f"{m.service_type}({m.confidence:.3f})" for m in matches
+            )
+            logger.info(
+                f"Semantic router (multi): [{route_str}]"
+                f"{f', pop={best_pop}' if best_pop else ''}"
+            )
+
+        return matches
+
+    except Exception as e:
+        logger.error(f"Semantic router multi-classification failed: {e}")
+        return []
 
 
 # ---------------------------------------------------------------------------
