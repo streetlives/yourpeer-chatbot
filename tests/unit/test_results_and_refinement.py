@@ -310,6 +310,44 @@ class TestRefineREClassification:
         intent = classify_post_results_question("can you locate a food pantry")
         assert intent is None
 
+    # --- Targeted negation refinement ---
+    # Only unambiguous patterns are regex-caught. Natural language negation
+    # ("not the DHS ones", "without referrals") routes through the LLM tier.
+
+    @pytest.mark.parametrize("msg", [
+        "Exclude the veterans shelter",
+        "Anything but DHS",
+        "Everything except Safe Horizon",
+    ])
+    def test_unambiguous_negation_caught_by_regex(self, msg):
+        """Unambiguous negation signals are caught without LLM."""
+        intent = classify_post_results_question(msg)
+        assert intent is not None, \
+            f"'{msg}' was not caught — would fall to LLM tier"
+        assert intent["type"] == "filter_subcategory"
+        assert intent.get("_is_negation") is True
+
+    @pytest.mark.parametrize("msg", [
+        "None of those work",
+        "I don't want any of those",
+        "None of these are helpful",
+        "I don't like those options",
+        "Those aren't what I need",
+    ])
+    def test_blanket_rejection_not_caught(self, msg):
+        """Blanket rejections must NOT be caught as filter_subcategory.
+        They're handled upstream by negative_preference."""
+        intent = classify_post_results_question(msg)
+        if intent is not None:
+            assert intent["type"] != "filter_subcategory", \
+                f"'{msg}' caught as filter_subcategory — should be negative_preference"
+
+    # NOTE: Natural language negation ("not the DHS ones", "without
+    # referrals", "don't show me the closed ones") is handled by the
+    # LLM tier in classify_post_results_question. These cannot be unit
+    # tested without mocking the LLM. Integration tests with LLM mocking
+    # should cover: "not the DHS ones" → refine → filter inverted.
+
 
 # =======================================================================
 # FIX 3: confirm_change_location uses extracted location

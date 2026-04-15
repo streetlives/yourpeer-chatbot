@@ -249,7 +249,13 @@ _STRIP_INTENT_RE = re.compile(
     r"can you locate more like|can you locate more|can you locate similar|"
     r"more like|filter to|narrow to|narrow down to|"
     r"i only need|i just need|i just want|"
-    r"locate more like|show only)\s*", re.I
+    r"locate more like|show only"
+    # Negation prefixes
+    r"|not the|don.t show me the|don.t show me|don.t show the"
+    r"|exclude the|exclude|remove the|remove|skip the|skip"
+    r"|anything but|anything except|everything but|everything except"
+    r"|other than the|other than"
+    r"|without)\s*", re.I
 )
 
 _STOP_WORDS = {
@@ -266,13 +272,19 @@ def _extract_raw_phrase(message: str) -> str:
 
     Strips intent signal words and returns the core phrase.
     Example: "Only the adult families intake is relevant"
-             → "adult families intake is relevant"
-             → keywords: ["adult", "families", "intake"]
+             → "adult families intake"
+    Example: "Not the DHS ones"
+             → "DHS"
     """
     stripped = _STRIP_INTENT_RE.sub("", message.strip())
-    # Remove trailing filler
+    # Remove trailing filler: "is relevant", "is important", etc.
     stripped = re.sub(
         r"\s*(?:is|are)\s+(?:relevant|important|what i need|good)\.?\s*$",
+        "", stripped, flags=re.I,
+    )
+    # Remove trailing result-reference words: "ones", "services", "shelters"
+    stripped = re.sub(
+        r"\s+(?:ones?|services?|places?|results?|shelters?|options?|locations?)\s*$",
         "", stripped, flags=re.I,
     )
     return stripped.strip() or message.strip()
@@ -485,6 +497,21 @@ def classify_post_results_question(message: str) -> Optional[dict]:
     if _REFINE_RE.search(lower):
         return {"type": "filter_subcategory", "raw_phrase": _extract_raw_phrase(message)}
 
+    # --- Targeted negation refinement (regex — only unambiguous signals) ---
+    # Most negation messages ("not the DHS ones", "without referrals") are
+    # natural language best handled by the LLM tier below. Only the patterns
+    # that are NEVER ambiguous in a post-results context go here.
+    _NEGATION_REFINE_RE = re.compile(
+        r"\b(exclude \w|anything (?:but|except) \w|everything (?:but|except) \w)\b",
+        re.I,
+    )
+    if _NEGATION_REFINE_RE.search(lower):
+        return {
+            "type": "filter_subcategory",
+            "raw_phrase": _extract_raw_phrase(message),
+            "_is_negation": True,
+        }
+
     # --- Tier 2: Ambiguous intent — LLM classification (~100ms) ---
     # Messages that MIGHT be refinements or MIGHT be new requests.
     # A single bounded Haiku call classifies the intent. This avoids
@@ -520,8 +547,12 @@ Classify the message into exactly ONE category:
 
 - refine: The user wants to narrow or filter the results they're looking at. \
 They're referencing the displayed results and want a subset. \
+This includes BOTH positive filters ("only the family ones") AND \
+negative filters / exclusions ("not the DHS ones", "without referrals"). \
 Examples: "just the family ones", "only show me intake", "the ones for youth", \
-"just show me the DHS ones", "only the ones that are open"
+"just show me the DHS ones", "only the ones that are open", \
+"not the DHS ones", "without referrals", "skip the ones that need ID", \
+"don't show me the closed ones", "other than the intake"
 
 - new_request: The user wants to search for a DIFFERENT type of service. \
 They're not filtering results — they want something new entirely. \
@@ -808,7 +839,10 @@ def _handle_filter_subcategory(intent: dict, services: list[dict]) -> dict:
         }
 
     # --- Detect negation ---
-    is_negation = bool(_NEGATION_RE.search(original_message))
+    is_negation = (
+        intent.get("_is_negation", False)
+        or bool(_NEGATION_RE.search(original_message))
+    )
 
     # --- Tier 1a: Structured field filters ---
     matched, filter_desc = _filter_by_structured(services, original_message)
