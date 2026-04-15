@@ -8,6 +8,7 @@ import { MapPin, Phone, Mail, Clock, CheckCircle, AlertTriangle, ChevronDown } f
 import type { ServiceResult } from "@/lib/chat/types";
 import { LocationFeedbackRow } from "./location-feedback-row";
 import { CallConfirmDialog } from "./call-confirm-dialog";
+import { SafeHtml } from "./safe-html";
 
 interface ServiceCardProps {
   service: ServiceResult;
@@ -339,9 +340,10 @@ function DetailsSection({ service, hasDetails, detailsOpen, setDetailsOpen }: {
             </div>
           )}
           {service.description && (
-            <div className="text-xs text-neutral-500 leading-relaxed">
-              {service.description}
-            </div>
+            <SafeHtml
+              html={service.description}
+              className="text-xs text-neutral-500 leading-relaxed [&_ul]:list-disc [&_ul]:pl-4 [&_ol]:list-decimal [&_ol]:pl-4 [&_li]:mb-0.5 [&_a]:text-blue-600 [&_a]:underline [&_p]:mb-1 last:[&_p]:mb-0"
+            />
           )}
           {service.required_documents && service.required_documents.length > 0 && (
             <div className="flex items-start gap-2 text-xs text-neutral-500 leading-snug">
