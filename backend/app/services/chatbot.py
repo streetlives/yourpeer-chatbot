@@ -72,6 +72,7 @@ from app.services.confirmation import (
     _follow_up_quick_replies,
     _get_nearby_boroughs,
     _no_results_message,
+    _display_location,
 )
 
 from app.services.audit_log import (
@@ -893,7 +894,7 @@ def generate_reply(
             location = None
         context = ""
         if service_type and location:
-            context = f" I was searching for {service_type} in {location}."
+            context = f" I was searching for {service_type} in {_display_location(location)}."
         elif service_type:
             context = f" I was searching for {service_type}."
         result = _empty_reply(
@@ -1646,6 +1647,8 @@ def generate_reply(
         location_label = merged.get("location") or "your area"
         if location_label == NEAR_ME_SENTINEL:
             location_label = "your area"
+        else:
+            location_label = _display_location(location_label)
         if _unrec_count >= 3:
             # Tier 3: direct to navigator
             response = (
@@ -1764,7 +1767,7 @@ def _handle_crisis(
             early_extracted.get("service_type", ""),
             early_extracted.get("service_type", "services"),
         )
-        loc_label = early_extracted.get("location") or "your area"
+        loc_label = _display_location(early_extracted.get("location") or "your area")
         step_down_msg = (
             f"\n\nI can also help you find {svc_label} in "
             f"{loc_label} — would you like me to search?"
@@ -1841,7 +1844,7 @@ def _handle_frustration(session_id, redacted_message, existing, tone, request_id
         # First frustration AND we have enough info — acknowledge the
         # mistake and offer to proceed with what we already know.
         svc_label = _SERVICE_LABELS.get(_svc, _svc)
-        loc_label = _loc if _loc != NEAR_ME_SENTINEL else "your area"
+        loc_label = _display_location(_loc) if _loc != NEAR_ME_SENTINEL else "your area"
         result = _empty_reply(
             session_id,
             f"You're right, I apologize for the confusion. "
@@ -2391,7 +2394,7 @@ def _execute_and_respond(session_id: str, message: str, slots: dict, request_id:
         label = next_detail or _SERVICE_LABELS.get(next_service, next_service)
         loc_suffix = ""
         if next_location and next_location != slots.get("location"):
-            loc_suffix = f" in {next_location}"
+            loc_suffix = f" in {_display_location(next_location)}"
         bot_response += (
             f"\n\nYou also mentioned {label}{loc_suffix} — would you like me to "
             f"search for that too?"
