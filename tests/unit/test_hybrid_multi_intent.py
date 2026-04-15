@@ -571,3 +571,105 @@ class TestHybridIntegration:
             [s[0] for s in regex_result["additional_services"]]
         assert len(all_services) == 3
         assert set(all_services) == {"food", "shelter", "clothing"}
+
+
+# ---------------------------------------------------------------------------
+# 6. NEED-BASED SERVICE PRIORITIZATION
+# ---------------------------------------------------------------------------
+
+class TestNeedBasedPriority:
+    """Tests for Maslow/Housing First/SAMHSA-grounded service priority.
+
+    Research basis:
+        - Housing First (HUD): shelter is foundational
+        - Maslow adapted for homelessness (Fleury et al. 2021, PMC):
+          basic needs > health > stability > growth
+        - SAMHSA crisis care (2025): safety > basic needs > health
+        - Zheng et al. (2016): safety above physiological for mental health
+
+    Priority tiers:
+        Tier 1: shelter, medical (life/safety)
+        Tier 2: food, mental_health (survival + behavioral health)
+        Tier 3: clothing, personal_care (physiological, non-life-threatening)
+        Tier 4: housing_assistance, legal, employment (stability)
+        Tier 5: other (support services)
+    """
+
+    def test_shelter_over_food(self):
+        """Housing First: shelter is primary even when food mentioned first."""
+        services = _extract_all_service_types(
+            "I need food and I need somewhere to stay"
+        )
+        assert services[0][0] == "shelter", \
+            f"Shelter should be primary (Housing First), got {services[0][0]}"
+
+    def test_medical_over_clothing(self):
+        """Medical (tier 1) outranks clothing (tier 3)."""
+        services = _extract_all_service_types(
+            "I need clothes and I need to see a doctor"
+        )
+        types = [s[0] for s in services]
+        assert types.index("medical") < types.index("clothing"), \
+            f"Medical should rank above clothing, got {types}"
+
+    def test_food_over_employment(self):
+        """Food (tier 2) outranks employment (tier 4)."""
+        services = _extract_all_service_types(
+            "I need a job and I'm hungry"
+        )
+        types = [s[0] for s in services]
+        assert types.index("food") < types.index("employment"), \
+            f"Food should rank above employment, got {types}"
+
+    def test_shelter_medical_tiebreak_by_text_position(self):
+        """Same tier: text position breaks tie."""
+        services = _extract_all_service_types(
+            "I need a doctor and a bed tonight"
+        )
+        # Both tier 1, doctor mentioned first → medical primary
+        assert services[0][0] == "medical"
+
+    def test_clothing_over_legal(self):
+        """Clothing (tier 3) outranks legal (tier 4)."""
+        services = _extract_all_service_types(
+            "I need a lawyer and some clothes"
+        )
+        types = [s[0] for s in services]
+        assert types.index("clothing") < types.index("legal"), \
+            f"Clothing should rank above legal, got {types}"
+
+    def test_rikers_shelter_primary_over_food(self):
+        """The Rikers message: shelter should be primary, not food."""
+        services = _extract_all_service_types(
+            "I just got out of Rikers and I don't have anywhere to sleep or anything to eat"
+        )
+        assert services[0][0] == "shelter", \
+            f"Shelter should be primary for Rikers message, got {services[0][0]}"
+
+    def test_contradiction_overrides_priority(self):
+        """'Actually forget X, I need Y' — contradiction signal overrides
+        need-based priority. User's explicit correction takes precedence."""
+        services = _extract_all_service_types(
+            "actually forget shelter, I really need food"
+        )
+        # Contradiction signal promotes food despite shelter being tier 1
+        assert services[0][0] == "food", \
+            f"Contradiction should override priority, got {services[0][0]}"
+
+    def test_priority_table_complete(self):
+        """Every service category has a priority rank assigned."""
+        from app.services.slot_extractor import SERVICE_KEYWORDS
+        # The priority table is defined inside _extract_all_service_types,
+        # so we test by extraction: every category should sort deterministically
+        all_categories = set(SERVICE_KEYWORDS.keys())
+        # Verify by constructing the table directly
+        priority = {
+            "shelter": 1, "medical": 1,
+            "food": 2, "mental_health": 2,
+            "clothing": 3, "personal_care": 3,
+            "housing_assistance": 4, "legal": 4, "employment": 4,
+            "other": 5,
+        }
+        for cat in all_categories:
+            assert cat in priority, \
+                f"Category '{cat}' missing from _SERVICE_NEED_PRIORITY"

@@ -694,7 +694,9 @@ def _extract_all_service_types(text: str) -> list[tuple[str, Optional[str]]]:
     """Extract ALL service type categories from a message.
 
     Returns a list of (service_type, service_detail) tuples, deduplicated
-    by category. Order reflects first appearance in text.
+    by category. Order reflects need-based priority (Maslow / Housing First /
+    SAMHSA): shelter and medical first, then food, then clothing, then
+    stability services. Text position is tiebreaker within the same tier.
 
     Negation-aware: keywords preceded by "not", "forget", "don't want",
     "instead of", "skip" are excluded. This prevents "not food, shelter"
@@ -775,9 +777,52 @@ def _extract_all_service_types(text: str) -> list[tuple[str, Optional[str]]]:
                 found.append((m.start(), service, detail))
                 seen_categories.add(service)
 
-    # Sort by text position so the primary service is what the user
-    # mentioned first, not whichever keyword happens to be longest.
-    found.sort(key=lambda x: x[0])
+    # ---------------------------------------------------------------
+    # NEED-BASED PRIORITY — Maslow + Housing First + SAMHSA
+    # ---------------------------------------------------------------
+    # Sort by need urgency, NOT text position. Research basis:
+    #
+    #   Tier 1: Shelter, Medical
+    #     - Housing First (HUD): "people need a stable place to live
+    #       before attending to any secondary issues" (Third Door Coalition)
+    #     - Medical at same tier: physical health emergencies can be
+    #       life-threatening (Zheng et al. 2016 — safety above physiology)
+    #
+    #   Tier 2: Food, Mental Health
+    #     - Immediate survival (Maslow L1: physiological)
+    #     - Mental health / substance use: SAMHSA behavioral health
+    #       crisis care guidelines (2025) — active addiction and
+    #       psychiatric crisis are safety-adjacent
+    #
+    #   Tier 3: Clothing, Personal Care
+    #     - Physiological but not life-threatening (Maslow L1 lower)
+    #     - IGH Hub: "food, clothes to wear, get some rest" as first
+    #       response, but after shelter
+    #
+    #   Tier 4: Housing Assistance, Legal, Employment
+    #     - Stability and self-sufficiency (Maslow L2–3)
+    #     - Housing assistance ≠ emergency shelter (rent help, Section 8)
+    #
+    #   Tier 5: Other (benefits, ID, phone, education)
+    #     - Support services (Maslow L3+)
+    #
+    # Text position is tiebreaker within the same tier — if someone
+    # mentions both medical and shelter, whichever they said first is
+    # slightly more likely to be foremost on their mind.
+    _SERVICE_NEED_PRIORITY = {
+        "shelter": 1,
+        "medical": 1,
+        "food": 2,
+        "mental_health": 2,
+        "clothing": 3,
+        "personal_care": 3,
+        "housing_assistance": 4,
+        "legal": 4,
+        "employment": 4,
+        "other": 5,
+    }
+
+    found.sort(key=lambda x: (_SERVICE_NEED_PRIORITY.get(x[1], 5), x[0]))
 
     # Contradiction reordering: when the user signals a change of mind
     # ("actually", "instead", "I changed my mind") and multiple services
