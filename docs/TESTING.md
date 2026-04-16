@@ -202,7 +202,7 @@ Validates query template correctness, SQL structure, service card formatting, sc
 | Deduplication | 5 | Removes by service_id, keeps first, edge cases |
 | Generated SQL | 4 | Parameterized (no injection), strict vs relaxed params |
 | Result sorting | 6 | Open-now priority, proximity-first with distance, freshness ordering, relaxed sort consistency |
-| Shelter taxonomy enrichment | 8 | Youth (age<18), senior (age≥62), families (with_children), single adult (alone), LGBTQ Young Adult (always), base taxonomies preserved, food queries not enriched, TEMPLATES default_params not mutated |
+| Shelter taxonomy enrichment | 8 | Youth (always, age eligibility handles exclusion), senior (age≥62), families (with_children), single adult (alone), LGBTQ Young Adult (always), base taxonomies preserved, food queries not enriched, TEMPLATES default_params not mutated |
 
 ### `test_crisis_detector.py` — 36 tests
 

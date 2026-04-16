@@ -72,7 +72,6 @@ from app.services.confirmation import (
     _follow_up_quick_replies,
     _get_nearby_boroughs,
     _no_results_message,
-    _display_location,
 )
 
 from app.services.audit_log import (
@@ -105,6 +104,18 @@ else:
 # filtering, but we paginate the display to avoid overwhelming users —
 # especially in crisis situations where cognitive load is high.
 _DISPLAY_PAGE_SIZE = 5
+
+
+def _count_unique_locations(services: list[dict]) -> int:
+    """Count unique locations by org+address — mirrors the frontend's
+    ``groupByLocation()`` which renders co-located services as one card.
+    Without this, text says "5 results" while the carousel shows 4 cards
+    because two services share the same location."""
+    seen: set[str] = set()
+    for svc in services:
+        key = f"{(svc.get('organization') or '').lower().strip()}||{(svc.get('address') or '').lower().strip()}"
+        seen.add(key)
+    return len(seen)
 
 
 # ---------------------------------------------------------------------------
@@ -196,68 +207,44 @@ def generate_reply(
     if has_coords:
         existing["_latitude"] = latitude
         existing["_longitude"] = longitude
+        # When coordinates arrive, treat location as answered.  Without
+        # this, coords are stored but existing["location"] stays None —
+        # is_enough_to_answer() returns False and the bot still asks
+        # "What neighborhood?" even though it already has GPS coords.
+        if not existing.get("location"):
+            existing["location"] = NEAR_ME_SENTINEL
         save_session_slots(session_id, existing)
 
     # --- EXTRACT SLOTS FIRST (before classification) ---
     early_extracted = extract_slots(message)
     _extraction_source = "regex" if early_extracted.get("service_type") else None
 
-    # --- TIER 2: SEMANTIC ROUTING (hybrid multi-intent) ---
-    # The semantic router runs on EVERY message — not just when regex
-    # found nothing. This enables multi-intent extraction: regex catches
-    # "eat" → food, semantic catches "anywhere to sleep" → shelter.
-    #
-    # The `exclude` parameter skips routes that regex already found,
-    # avoiding duplicate work. The embedding is computed once (~5ms);
-    # scoring against ~10 routes is <0.1ms.
-    from app.services.semantic_router import (
-        classify_all_services as _semantic_classify_all,
-        is_available as _semantic_available,
-    )
+    # --- TIER 2: SEMANTIC ROUTING (before LLM gate) ---
+    # The semantic router is a LOCAL model — no API key needed.
+    # It runs here (not just inside extract_slots_smart) so that:
+    #   1. It fires in regex-only mode (no ANTHROPIC_API_KEY)
+    #   2. It fires before the unified LLM gate (saving an LLM call)
+    #   3. It fires before routing, preventing "general" fallthrough
+    if early_extracted.get("service_type") is None:
+        from app.services.semantic_router import classify_service as _semantic_classify
+        from app.services.semantic_router import is_available as _semantic_available
 
-    if _semantic_available():
-        # Collect service types that regex already found
-        _regex_found: set[str] = set()
-        if early_extracted.get("service_type"):
-            _regex_found.add(early_extracted["service_type"])
-        for _addl in (early_extracted.get("additional_services") or []):
-            _regex_found.add(_addl[0])
-
-        _semantic_matches = _semantic_classify_all(
-            message, exclude=_regex_found,
-        )
-
-        for _sm in _semantic_matches:
-            if _sm.service_type in _regex_found:
-                continue  # safety dedup
-
-            if early_extracted.get("service_type") is None:
-                # No regex primary — semantic becomes primary
-                early_extracted["service_type"] = _sm.service_type
+        if _semantic_available():
+            _semantic_match = _semantic_classify(message)
+            if _semantic_match is not None:
+                logger.info(
+                    f"Session {session_id}: semantic router matched "
+                    f"'{_semantic_match.service_type}' "
+                    f"(confidence={_semantic_match.confidence:.3f})"
+                )
+                early_extracted["service_type"] = _semantic_match.service_type
                 _extraction_source = "semantic"
-                logger.info(
-                    f"Session {session_id}: semantic router set primary "
-                    f"'{_sm.service_type}' "
-                    f"(confidence={_sm.confidence:.3f})"
-                )
-            else:
-                # Regex already has primary — semantic adds to queue
-                queued = early_extracted.get("additional_services") or []
-                queued.append((_sm.service_type, None, None))
-                early_extracted["additional_services"] = queued
-                logger.info(
-                    f"Session {session_id}: semantic router queued "
-                    f"'{_sm.service_type}' "
-                    f"(confidence={_sm.confidence:.3f})"
-                )
 
-            _regex_found.add(_sm.service_type)
-
-            # Merge population from semantic router
-            if _sm.population:
-                existing_pops = set(early_extracted.get("_populations") or [])
-                existing_pops.add(_sm.population)
-                early_extracted["_populations"] = sorted(existing_pops)
+                # Merge population from semantic router
+                if _semantic_match.population:
+                    existing_pops = set(early_extracted.get("_populations") or [])
+                    existing_pops.add(_semantic_match.population)
+                    early_extracted["_populations"] = sorted(existing_pops)
 
     has_service_intent = (
         early_extracted.get("service_type") is not None
@@ -362,13 +349,12 @@ def generate_reply(
                 and not existing.get("_pending_confirmation")
                 and not existing.get("_queue_offer_pending")
                 and not existing.get("_queued_services")
+                and not existing.get("_last_action")
                 and not has_service_intent):
 
             if _action_pre == "confirm_yes":
                 # "Yes, search" after results already shown
                 existing.pop("_last_results", None)
-                existing.pop("_filtered_results", None)
-                existing.pop("_filter_phrase", None)
                 save_session_slots(session_id, existing)
                 result = _empty_reply(
                     session_id,
@@ -387,204 +373,90 @@ def generate_reply(
 
             else:  # confirm_deny
                 # "nah I'm good" / "no thanks" after results
-                if existing.get("_filtered_results"):
-                    # Filter active — "no thanks" means "undo filter", not "reject all"
-                    existing.pop("_filtered_results", None)
-                    existing.pop("_filter_phrase", None)
-                    existing["_displayed_count"] = min(len(_last_results), _DISPLAY_PAGE_SIZE)
-                    save_session_slots(session_id, existing)
-                    _remaining = len(_last_results) - _DISPLAY_PAGE_SIZE
-                    qr = [
-                        {"label": "🔍 New search", "value": "Start over"},
-                        {"label": "🤝 Peer navigator", "value": "Connect with peer navigator"},
-                    ]
-                    if _remaining > 0:
-                        _sn = min(_remaining, _DISPLAY_PAGE_SIZE)
-                        qr.insert(0, {"label": f"📋 Show {_sn} more result{'s' if _sn != 1 else ''}",
-                                       "value": "Show more results"})
-                    result = _empty_reply(
-                        session_id,
-                        f"No problem — here are all {len(_last_results)} results again:",
-                        existing,
-                        quick_replies=qr,
-                    )
-                    result["services"] = _last_results[:_DISPLAY_PAGE_SIZE]
-                    result["result_count"] = len(_last_results[:_DISPLAY_PAGE_SIZE])
-                else:
-                    existing.pop("_last_results", None)
-                    existing.pop("_filtered_results", None)
-                    existing.pop("_filter_phrase", None)
-                    save_session_slots(session_id, existing)
-                    result = _empty_reply(
-                        session_id,
-                        "No problem! Let me know if you need anything else.",
-                        existing,
-                        quick_replies=list(_WELCOME_QUICK_REPLIES),
-                    )
+                existing.pop("_last_results", None)
+                save_session_slots(session_id, existing)
+                result = _empty_reply(
+                    session_id,
+                    "No problem! Let me know if you need anything else.",
+                    existing,
+                    quick_replies=list(_WELCOME_QUICK_REPLIES),
+                )
                 _log_turn(session_id, redacted_message, result, "post_results_decline",
                           request_id=request_id, tone=tone)
                 return result
 
         if _last_results and not has_service_intent and not _is_confirmation_action:
+            # Clear stale _last_action: if the user is interacting with
+            # results (asking questions, sorting, paginating), any prior
+            # emotional/escalation/crisis context is no longer relevant.
+            # Without this, _last_action persists because post-results
+            # handlers return before the stale-action cleaner at line 636.
+            if existing.get("_last_action"):
+                existing.pop("_last_action", None)
+                save_session_slots(session_id, existing)
+
             _is_frustration_or_rejection = (
                 tone == "frustrated"
                 or _action_pre == "negative_preference"
                 or _action_pre == "correction"
             )
             if _is_frustration_or_rejection:
-                if existing.get("_filtered_results"):
-                    # Filter active — frustration/rejection clears filter only.
-                    # User can still "show all results" to recover.
-                    existing.pop("_filtered_results", None)
-                    existing.pop("_filter_phrase", None)
-                    save_session_slots(session_id, existing)
-                else:
-                    existing.pop("_last_results", None)
-                    existing.pop("_filtered_results", None)
-                    existing.pop("_filter_phrase", None)
-                    save_session_slots(session_id, existing)
+                existing.pop("_last_results", None)
+                save_session_slots(session_id, existing)
             elif early_extracted.get("location"):
                 existing.pop("_last_results", None)
-                existing.pop("_filtered_results", None)
-                existing.pop("_filter_phrase", None)
                 save_session_slots(session_id, existing)
             else:
                 # "Show all results" / "Show more results"
-                _show_all_patterns = (
+                _show_patterns = (
                     "show all results", "show results", "show all",
-                )
-                _show_more_patterns = (
                     "show more results", "show more", "more results",
                     "any others", "what else", "next results",
                     "any more", "see more",
                 )
-                _msg_lower = message.lower().strip()
-
-                if _msg_lower in _show_all_patterns:
-                    _had_filter = existing.get("_filtered_results") is not None
-                    existing.pop("_filtered_results", None)
-                    existing.pop("_filter_phrase", None)
-
-                    if _had_filter:
-                        # Clear filter → reset to first page of full results
-                        existing["_displayed_count"] = min(len(_last_results), _DISPLAY_PAGE_SIZE)
-                        save_session_slots(session_id, existing)
-                        first_page = _last_results[:_DISPLAY_PAGE_SIZE]
-                        _remaining = len(_last_results) - len(first_page)
-                        qr = [
-                            {"label": "🔍 New search", "value": "Start over"},
-                            {"label": "🤝 Peer navigator", "value": "Connect with peer navigator"},
-                        ]
-                        if _remaining > 0:
-                            _show_next = min(_remaining, _DISPLAY_PAGE_SIZE)
-                            qr.insert(0, {
-                                "label": f"📋 Show {_show_next} more result{'s' if _show_next != 1 else ''}",
-                                "value": "Show more results",
-                            })
-                        result = {
-                            "session_id": session_id,
-                            "response": f"Here are all {len(_last_results)} results — showing the first {len(first_page)}:",
-                            "follow_up_needed": False,
-                            "slots": existing,
-                            "services": first_page,
-                            "result_count": len(first_page),
-                            "relaxed_search": False,
-                            "quick_replies": qr,
-                        }
-                    else:
-                        # No filter was active — show next page (same as "show more")
-                        displayed = existing.get("_displayed_count", 0)
-                        if displayed and displayed < len(_last_results):
-                            next_page = _last_results[displayed:displayed + _DISPLAY_PAGE_SIZE]
-                            new_displayed = displayed + len(next_page)
-                            existing["_displayed_count"] = new_displayed
-                            save_session_slots(session_id, existing)
-                            still_remaining = len(_last_results) - new_displayed
-                            qr = [
-                                {"label": "🔍 New search", "value": "Start over"},
-                                {"label": "🤝 Peer navigator", "value": "Connect with peer navigator"},
-                            ]
-                            if still_remaining > 0:
-                                _sn = min(still_remaining, _DISPLAY_PAGE_SIZE)
-                                qr.insert(0, {
-                                    "label": f"📋 Show {_sn} more result{'s' if _sn != 1 else ''}",
-                                    "value": "Show more results",
-                                })
-                            result = {
-                                "session_id": session_id,
-                                "response": f"Here are {len(next_page)} more result{'s' if len(next_page) != 1 else ''}:",
-                                "follow_up_needed": False,
-                                "slots": existing,
-                                "services": next_page,
-                                "result_count": len(next_page),
-                                "relaxed_search": False,
-                                "quick_replies": qr,
-                            }
-                        else:
-                            # All already shown — re-display first page
-                            existing["_displayed_count"] = min(len(_last_results), _DISPLAY_PAGE_SIZE)
-                            save_session_slots(session_id, existing)
-                            result = {
-                                "session_id": session_id,
-                                "response": "Here are all the results again:",
-                                "follow_up_needed": False,
-                                "slots": existing,
-                                "services": _last_results[:_DISPLAY_PAGE_SIZE],
-                                "result_count": min(len(_last_results), _DISPLAY_PAGE_SIZE),
-                                "relaxed_search": False,
-                                "quick_replies": [
-                                    {"label": "🔍 New search", "value": "Start over"},
-                                    {"label": "🤝 Peer navigator", "value": "Connect with peer navigator"},
-                                ],
-                            }
-                    _log_turn(session_id, redacted_message, result, "post_results", request_id=request_id)
-                    return result
-
-                if _msg_lower in _show_more_patterns:
-                    # Page through whichever set is active
-                    _active_set = existing.get("_filtered_results") or _last_results
+                if message.lower().strip() in _show_patterns:
                     displayed = existing.get("_displayed_count", 0)
-                    if displayed and displayed < len(_active_set):
-                        next_page = _active_set[displayed:displayed + _DISPLAY_PAGE_SIZE]
+                    if displayed and displayed < len(_last_results):
+                        # Show the next page of results (not all remaining)
+                        next_page = _last_results[displayed:displayed + _DISPLAY_PAGE_SIZE]
                         new_displayed = displayed + len(next_page)
                         existing["_displayed_count"] = new_displayed
                         save_session_slots(session_id, existing)
 
-                        still_remaining = len(_active_set) - new_displayed
+                        still_remaining = len(_last_results) - new_displayed
                         qr = [
                             {"label": "🔍 New search", "value": "Start over"},
                             {"label": "🤝 Peer navigator", "value": "Connect with peer navigator"},
                         ]
-                        if existing.get("_filtered_results"):
-                            qr.insert(0, {"label": "📋 Show all results", "value": "Show all results"})
                         if still_remaining > 0:
-                            show_next = min(still_remaining, _DISPLAY_PAGE_SIZE)
+                            remaining_locs = _count_unique_locations(
+                                _last_results[new_displayed:new_displayed + _DISPLAY_PAGE_SIZE]
+                            )
                             qr.insert(0, {
-                                "label": f"📋 Show {show_next} more result{'s' if show_next != 1 else ''}",
+                                "label": f"📋 Show {remaining_locs} more result{'s' if remaining_locs != 1 else ''}",
                                 "value": "Show more results",
                             })
 
+                        _page_loc_count = _count_unique_locations(next_page)
                         result = {
                             "session_id": session_id,
-                            "response": f"Here are {len(next_page)} more result{'s' if len(next_page) != 1 else ''}:",
+                            "response": f"Here are {_page_loc_count} more result{'s' if _page_loc_count != 1 else ''}:",
                             "follow_up_needed": False,
                             "slots": existing,
                             "services": next_page,
-                            "result_count": len(next_page),
+                            "result_count": _page_loc_count,
                             "relaxed_search": False,
                             "quick_replies": qr,
                         }
                     else:
-                        # No more to show — re-display first page of active set
-                        existing["_displayed_count"] = min(len(_active_set), _DISPLAY_PAGE_SIZE)
-                        save_session_slots(session_id, existing)
+                        # No more to show — re-display all
                         result = {
                             "session_id": session_id,
                             "response": "Here are all the results again:",
                             "follow_up_needed": False,
                             "slots": existing,
-                            "services": _active_set[:_DISPLAY_PAGE_SIZE],
-                            "result_count": min(len(_active_set), _DISPLAY_PAGE_SIZE),
+                            "services": _last_results,
+                            "result_count": len(_last_results),
                             "relaxed_search": False,
                             "quick_replies": [
                                 {"label": "🔍 New search", "value": "Start over"},
@@ -627,7 +499,8 @@ def generate_reply(
                         {"label": "🤝 Peer navigator", "value": "Connect with peer navigator"},
                     ]
                     if _sort_remaining > 0:
-                        _show_next = min(_sort_remaining, _DISPLAY_PAGE_SIZE)
+                        _next_sort_page = sorted_results[len(_sort_page):len(_sort_page) + _DISPLAY_PAGE_SIZE]
+                        _show_next = _count_unique_locations(_next_sort_page)
                         _sort_qr.insert(0, {
                             "label": f"📋 Show {_show_next} more result{'s' if _show_next != 1 else ''}",
                             "value": "Show more results",
@@ -656,62 +529,8 @@ def generate_reply(
                         if result:
                             return result
 
-                    # Use filtered results for subsequent questions (e.g.,
-                    # "which is open?" after filtering to "families only").
-                    # Filter_subcategory itself always operates on _last_results
-                    # (full set) so filters don't progressively narrow.
-                    if post_intent.get("type") == "filter_subcategory":
-                        active_results = _last_results
-                        # Attach original message for structured filter matching
-                        post_intent["_original_message"] = message
-                    else:
-                        active_results = existing.get("_filtered_results") or _last_results
-
-                    pr = answer_from_results(post_intent, active_results)
+                    pr = answer_from_results(post_intent, _last_results)
                     if pr is not None:
-                        # Store filtered results for subsequent turns
-                        if pr.get("_filter_matched") and pr.get("services"):
-                            all_filtered = pr["services"]
-                            existing["_filtered_results"] = all_filtered
-                            existing["_filter_phrase"] = pr.get("_filter_phrase", "")
-
-                            # Paginate: display first page, track position
-                            page = all_filtered[:_DISPLAY_PAGE_SIZE]
-                            existing["_displayed_count"] = len(page)
-                            save_session_slots(session_id, existing)
-
-                            # Rewrite response if we're paginating
-                            remaining = len(all_filtered) - len(page)
-                            qrs = list(pr.get("quick_replies", []))
-                            if remaining > 0:
-                                show_next = min(remaining, _DISPLAY_PAGE_SIZE)
-                                pr["response"] = pr["response"].rstrip(":") + (
-                                    f" — showing the first {len(page)}:"
-                                )
-                                qrs.insert(0, {
-                                    "label": f"📋 Show {show_next} more result{'s' if show_next != 1 else ''}",
-                                    "value": "Show more results",
-                                })
-
-                            result = {
-                                "session_id": session_id,
-                                "response": pr["response"],
-                                "follow_up_needed": False,
-                                "slots": existing,
-                                "services": page,
-                                "result_count": len(page),
-                                "relaxed_search": False,
-                                "quick_replies": qrs,
-                            }
-                            _log_turn(session_id, redacted_message, result,
-                                      pr.get("category", "post_results"),
-                                      request_id=request_id,
-                                      filter_tier=pr.get("_filter_tier"),
-                                      filter_phrase=pr.get("_filter_phrase"),
-                                      filter_matched=len(all_filtered),
-                                      filter_total=len(_last_results))
-                            return result
-
                         result = {
                             "session_id": session_id,
                             "response": pr["response"],
@@ -722,13 +541,7 @@ def generate_reply(
                             "relaxed_search": False,
                             "quick_replies": pr.get("quick_replies", []),
                         }
-                        _log_turn(session_id, redacted_message, result,
-                                  pr.get("category", "post_results"),
-                                  request_id=request_id,
-                                  filter_tier=pr.get("_filter_tier"),
-                                  filter_phrase=pr.get("_filter_phrase"),
-                                  filter_matched=len(pr.get("services", [])),
-                                  filter_total=len(_last_results))
+                        _log_turn(session_id, redacted_message, result, "post_results", request_id=request_id)
                         return result
                     if post_intent.get("type") == "specific_name":
                         query = post_intent.get("query", "that")
@@ -750,8 +563,6 @@ def generate_reply(
 
         if _last_results and (has_service_intent or _is_confirmation_action):
             existing.pop("_last_results", None)
-            existing.pop("_filtered_results", None)
-            existing.pop("_filter_phrase", None)
             # When results were already shown and the user asks for something
             # new, treat it as a fresh search — clear the old service slots
             # so they don't compound with the new request. Multi-service
@@ -764,12 +575,6 @@ def generate_reply(
                 existing.pop("_queue_offer_pending", None)
                 existing.pop("_pending_confirmation", None)
                 existing.pop("_displayed_count", None)
-                # When frustrated + service intent, skip confirmation and
-                # search immediately. The user already told us what they want
-                # and is frustrated about repeating it — asking "does that
-                # sound right?" is the exact pattern causing the frustration.
-                if tone == "frustrated":
-                    existing["_frustrated_with_intent"] = True
             save_session_slots(session_id, existing)
 
     # --- COMBINE INTO ROUTING CATEGORY ---
@@ -915,8 +720,6 @@ def generate_reply(
         existing.pop("_pending_confirmation", None)
         existing.pop("_last_action", None)
         existing.pop("_last_results", None)
-        existing.pop("_filtered_results", None)
-        existing.pop("_filter_phrase", None)
         save_session_slots(session_id, existing)
         service_type = existing.get("service_type")
         location = existing.get("location")
@@ -924,7 +727,7 @@ def generate_reply(
             location = None
         context = ""
         if service_type and location:
-            context = f" I was searching for {service_type} in {_display_location(location)}."
+            context = f" I was searching for {service_type} in {location}."
         elif service_type:
             context = f" I was searching for {service_type}."
         result = _empty_reply(
@@ -1380,6 +1183,33 @@ def generate_reply(
                     )
                     return result
 
+            # Auto-execute when filling a missing slot after the user already
+            # confirmed (e.g., crisis step-down "Yes, search" → location
+            # follow-up → user provides location).  The contradiction check
+            # above only fires on VALUE CHANGES (old → new).  This block
+            # handles FILLS (None → new) — the user already said yes, they're
+            # just providing the missing piece, not requesting a new search.
+            if not _changed:
+                merged_pending = merge_slots(existing, pending_extracted)
+                _geolocation_fill = (
+                    merged_pending.get("location") == NEAR_ME_SENTINEL
+                    and merged_pending.get("_latitude") is not None
+                    and merged_pending.get("_longitude") is not None
+                )
+                if is_enough_to_answer(merged_pending) or _geolocation_fill:
+                    logger.info(
+                        f"[{session_id}] Slot fill after confirmation — auto-executing"
+                    )
+                    save_session_slots(session_id, merged_pending)
+                    result = _execute_and_respond(
+                        session_id, message, merged_pending, request_id=request_id
+                    )
+                    _log_turn(
+                        session_id, redacted_message, result,
+                        "fill_auto_execute", request_id=request_id, tone=tone,
+                    )
+                    return result
+
         if not pending_has_new:
             existing["_pending_confirmation"] = True
             save_session_slots(session_id, existing)
@@ -1567,30 +1397,8 @@ def generate_reply(
     if _prefix_prepend:
         _tone_prefix = _prefix_prepend + _tone_prefix
 
-    # If enough detail → CONFIRMATION step (or immediate search if frustrated)
+    # If enough detail → CONFIRMATION step
     if (is_enough_to_answer(merged) or _geolocation_ready) and has_new_slots:
-
-        # Frustrated restatement: user said "I already told you I need food"
-        # while results were showing. They've already told us what they want —
-        # asking "does that sound right?" is the pattern causing frustration.
-        # Execute search immediately with an empathetic prefix.
-        if merged.get("_frustrated_with_intent"):
-            merged.pop("_frustrated_with_intent", None)
-            merged.pop("_pending_confirmation", None)
-            merged.pop("_queue_offer_pending", None)
-            save_session_slots(session_id, merged)
-            result = _execute_and_respond(
-                session_id, message, merged, request_id=request_id,
-            )
-            # Prepend empathetic acknowledgment to the response
-            result["response"] = (
-                "I hear you — searching right now. "
-                + result.get("response", "")
-            )
-            _log_turn(session_id, redacted_message, result, "frustrated_immediate_search",
-                      request_id=request_id, tone=tone)
-            return result
-
         merged["_pending_confirmation"] = True
         merged.pop("_queue_offer_pending", None)
         merged.pop("_queued_services_original", None)
@@ -1612,9 +1420,6 @@ def generate_reply(
 
     # Need more slots — service request
     if category == "service":
-        # Clear frustrated flag — can't search immediately without all slots,
-        # but keep the empathetic tone prefix from line 1477
-        merged.pop("_frustrated_with_intent", None)
         follow_up = _tone_prefix + next_follow_up_question(merged)
         result = {
             "session_id": session_id,
@@ -1677,8 +1482,6 @@ def generate_reply(
         location_label = merged.get("location") or "your area"
         if location_label == NEAR_ME_SENTINEL:
             location_label = "your area"
-        else:
-            location_label = _display_location(location_label)
         if _unrec_count >= 3:
             # Tier 3: direct to navigator
             response = (
@@ -1791,13 +1594,20 @@ def _handle_crisis(
         if additional and "_queued_services" not in merged_crisis:
             merged_crisis["_queued_services"] = additional
         merged_crisis["_last_action"] = "crisis"
+        # Set pending confirmation so tapping "Yes, search" routes through
+        # _handle_pending_confirmation → _execute_and_respond.  Without this,
+        # the "already shown results" guard (which checks _last_results +
+        # confirm_yes + NOT _pending_confirmation) swallows the button press
+        # and tells the user "I've already shown the results above" — even
+        # though no service cards were shown, only crisis hotline numbers.
+        merged_crisis["_pending_confirmation"] = True
         save_session_slots(session_id, merged_crisis)
 
         svc_label = _SERVICE_LABELS.get(
             early_extracted.get("service_type", ""),
             early_extracted.get("service_type", "services"),
         )
-        loc_label = _display_location(early_extracted.get("location") or "your area")
+        loc_label = early_extracted.get("location") or "your area"
         step_down_msg = (
             f"\n\nI can also help you find {svc_label} in "
             f"{loc_label} — would you like me to search?"
@@ -1874,7 +1684,7 @@ def _handle_frustration(session_id, redacted_message, existing, tone, request_id
         # First frustration AND we have enough info — acknowledge the
         # mistake and offer to proceed with what we already know.
         svc_label = _SERVICE_LABELS.get(_svc, _svc)
-        loc_label = _display_location(_loc) if _loc != NEAR_ME_SENTINEL else "your area"
+        loc_label = _loc if _loc != NEAR_ME_SENTINEL else "your area"
         result = _empty_reply(
             session_id,
             f"You're right, I apologize for the confusion. "
@@ -1884,10 +1694,11 @@ def _handle_frustration(session_id, redacted_message, existing, tone, request_id
             quick_replies=_confirmation_quick_replies(existing),
         )
         existing["_pending_confirmation"] = True
-        # IMPORTANT: Clear _last_action so the user's "Yes" routes to
-        # _handle_pending_confirmation (which executes the search),
-        # NOT to _handle_context_aware_confirm (which would show the
-        # escalation response for frustration+confirm_yes).
+        # Clear _last_action: the frustration context has been resolved —
+        # the bot is now asking a confirmation question ("Sound good?").
+        # Without this, _handle_context_aware_confirm sees last_action=
+        # "frustration" + confirm_yes and routes to escalation instead of
+        # _handle_pending_confirmation which executes the search.
         existing.pop("_last_action", None)
         save_session_slots(session_id, existing)
     else:
@@ -1910,7 +1721,7 @@ def _handle_context_aware_confirm(
 
     Returns a result dict, or None if no context-aware handling applies.
     """
-    if last_action in ("escalation", "emotional") and category == "confirm_yes":
+    if last_action == "escalation" and category == "confirm_yes":
         existing.pop("_last_action", None)
         save_session_slots(session_id, existing)
         result = _empty_reply(
@@ -1926,23 +1737,29 @@ def _handle_context_aware_confirm(
         _log_turn(session_id, redacted_message, result, "escalation", request_id=request_id, tone=tone)
         return result
 
+    if last_action == "emotional" and category == "confirm_yes":
+        existing.pop("_last_action", None)
+        save_session_slots(session_id, existing)
+        result = _empty_reply(
+            session_id,
+            _ESCALATION_RESPONSE,
+            existing,
+            quick_replies=[
+                {"label": "🔍 Search for services", "value": "Start over"},
+            ],
+        )
+        _log_turn(session_id, redacted_message, result, "escalation", request_id=request_id, tone=tone)
+        return result
+
     if last_action == "crisis" and category == "confirm_yes":
         existing.pop("_last_action", None)
-
-        # Check for geolocation coordinates — if the user tapped
-        # "Yes, search for shelter" and the browser provided lat/lon,
-        # execute the search immediately without asking for a borough.
-        _has_crisis_coords = (
-            existing.get("_latitude") is not None
-            and existing.get("_longitude") is not None
-            and existing.get("service_type")
-        )
-        if _has_crisis_coords and not existing.get("location"):
-            existing["location"] = NEAR_ME_SENTINEL
-
         save_session_slots(session_id, existing)
-
-        if is_enough_to_answer(existing) or _has_crisis_coords:
+        _crisis_geo_ready = (
+            existing.get("location") == NEAR_ME_SENTINEL
+            and existing.get("_latitude") is not None
+            and existing.get("_longitude") is not None
+        )
+        if is_enough_to_answer(existing) or _crisis_geo_ready:
             result = _execute_and_respond(session_id, message, existing, request_id=request_id)
         else:
             follow_up = next_follow_up_question(existing)
@@ -2009,6 +1826,7 @@ def _handle_context_aware_confirm(
     }
     if category == "confirm_deny" and last_action in _deny_contexts:
         existing.pop("_last_action", None)
+        existing.pop("_pending_confirmation", None)
         save_session_slots(session_id, existing)
         qr = [{"label": "🤝 Peer navigator", "value": "Connect with peer navigator"}]
         if last_action == "crisis":
@@ -2318,7 +2136,6 @@ def _execute_and_respond(session_id: str, message: str, slots: dict, request_id:
             execution_ms=results.get("execution_ms", 0),
             freshness=results.get("freshness"),
             request_id=request_id,
-            proximity_timeout=results.get("proximity_timeout", False),
         )
 
         if results.get("error"):
@@ -2331,14 +2148,11 @@ def _execute_and_respond(session_id: str, message: str, slots: dict, request_id:
             all_services = results["services"]
             services_list = all_services[:_DISPLAY_PAGE_SIZE]
             result_count = len(services_list)
-            total_found = len(all_services)
+            _total_count = _count_unique_locations(all_services)
             relaxed = results.get("relaxed", False)
-            proximity_timeout = results.get("proximity_timeout", False)
 
             qualifier = ""
-            if proximity_timeout:
-                qualifier = " (showing your wider area — nearby search was slow)"
-            elif relaxed:
+            if relaxed:
                 qualifier = " (I broadened the search a bit)"
 
             if colocated_success and colocated_types:
@@ -2355,19 +2169,13 @@ def _execute_and_respond(session_id: str, message: str, slots: dict, request_id:
                     ", ".join(all_labels[:-1]) + ", and " + all_labels[-1]
                 )
                 bot_response = (
-                    f"I found {total_found} location(s) that offer both "
-                    f"{combined.lower()}{qualifier} \u2014 here\u2019s what\u2019s available:"
+                    f"I found {_total_count} location(s) that offer both "
+                    f"{combined.lower()}{qualifier}:"
                 )
             else:
-                if total_found > result_count:
-                    bot_response = (
-                        f"I found {total_found} option(s) for you{qualifier} "
-                        f"\u2014 here are the top {result_count}:"
-                    )
-                else:
-                    bot_response = (
-                        f"I found {result_count} option(s) for you{qualifier}:"
-                    )
+                bot_response = (
+                    f"I found {_total_count} option(s) for you{qualifier}:"
+                )
         else:
             bot_response = _no_results_message(slots)
 
@@ -2428,7 +2236,7 @@ def _execute_and_respond(session_id: str, message: str, slots: dict, request_id:
         label = next_detail or _SERVICE_LABELS.get(next_service, next_service)
         loc_suffix = ""
         if next_location and next_location != slots.get("location"):
-            loc_suffix = f" in {_display_location(next_location)}"
+            loc_suffix = f" in {next_location}"
         bot_response += (
             f"\n\nYou also mentioned {label}{loc_suffix} — would you like me to "
             f"search for that too?"
@@ -2448,11 +2256,12 @@ def _execute_and_respond(session_id: str, message: str, slots: dict, request_id:
         save_session_slots(session_id, slots)
 
         # If there are undisplayed results, add "show more" quick reply.
-        # Cap the button label at _DISPLAY_PAGE_SIZE — user sees the next
-        # page, not the total remaining (which could be 20 and feel overwhelming).
+        # Button label shows the next page's *location* count (not raw
+        # service count) so the number matches the carousel card count.
         _undisplayed = len(all_services) - len(services_list)
         if _undisplayed > 0 and not queued:
-            _show_next = min(_undisplayed, _DISPLAY_PAGE_SIZE)
+            _next_page_services = all_services[len(services_list):len(services_list) + _DISPLAY_PAGE_SIZE]
+            _show_next = _count_unique_locations(_next_page_services)
             after_results_qr.insert(0, {
                 "label": f"📋 Show {_show_next} more result{'s' if _show_next != 1 else ''}",
                 "value": "Show more results",
@@ -2475,8 +2284,7 @@ def _execute_and_respond(session_id: str, message: str, slots: dict, request_id:
 # ---------------------------------------------------------------------------
 
 def _log_turn(session_id: str, user_msg: str, result: dict, category: str,
-              request_id: str | None = None, tone=None, confidence: str = "high",
-              **kwargs):
+              request_id: str | None = None, tone=None, confidence: str = "high"):
     """Log a conversation turn to the audit log."""
     try:
         bot_response_redacted, _ = redact_pii(result.get("response", ""))
@@ -2492,7 +2300,6 @@ def _log_turn(session_id: str, user_msg: str, result: dict, category: str,
             request_id=request_id,
             tone=tone,
             confidence=confidence,
-            **kwargs,
         )
     except Exception as e:
         logger.error(f"Failed to log conversation turn: {e}")

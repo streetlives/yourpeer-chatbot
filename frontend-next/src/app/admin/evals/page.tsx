@@ -12,16 +12,28 @@ import { EvalRunner, EvalResults } from "@/components/admin/eval-results";
 import { EvalSkeleton } from "@/components/admin/loading-skeleton";
 
 export default function EvalsPage() {
-  const { evalResults, fetchEvalResults, invalidate } = useAdminStore();
+  const { evalResults, fetchEvalResults } = useAdminStore();
 
   useEffect(() => {
     fetchEvalResults();
   }, [fetchEvalResults]);
 
   const onEvalComplete = useCallback(() => {
-    invalidate("evalResults");
-    fetchEvalResults();
-  }, [invalidate, fetchEvalResults]);
+    // Force-reset the entire slice before refetching. This fixes two issues:
+    //  1. If the initial page-load fetch is still in-flight (loading=true),
+    //     fetchEvalResults would see the loading guard and skip — silently
+    //     discarding the upload. Resetting loading=false ensures it runs.
+    //  2. Clearing data to undefined shows the loading skeleton instead of
+    //     stale results from the previous report.
+    useAdminStore.setState({
+      evalResults: { data: undefined, loading: false, error: false, lastFetchedAt: 0 },
+    });
+    fetchEvalResults().catch(() => {
+      // Suppress uncaught promise — store sets error:true internally.
+      // Without this, a fetch failure surfaces as a Next.js internal
+      // "Cannot read properties of undefined (reading 'payload')" error.
+    });
+  }, [fetchEvalResults]);
 
   const report = evalResults.data;
 

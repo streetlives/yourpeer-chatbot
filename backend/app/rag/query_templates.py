@@ -270,19 +270,8 @@ FILTER_BY_STATE_NY = (
 
 # PostGIS proximity search (requires lat/lon).
 # Returns services within :radius_meters of the given point.
-#
-# The bounding box filter (&&) runs FIRST using the GiST spatial index,
-# quickly eliminating distant locations (~2,400 → ~20 candidates). Then
-# the accurate ST_DWithin(::geography) check runs only on those candidates.
-# Without the bbox pre-filter, the ::geography cast forces a full table
-# scan and exceeds the 5-second statement_timeout on Render's starter tier.
-#
-# ST_Expand buffer (0.025 degrees ≈ 2.1 km at NYC latitude) is deliberately
-# larger than the default radius (1,600 m) to ensure no false negatives.
-_PROXIMITY_BBOX_BUFFER_DEG = 0.025
 FILTER_BY_PROXIMITY = (
-    f"l.position && ST_Expand(ST_SetSRID(ST_MakePoint(:lon, :lat), 4326), {_PROXIMITY_BBOX_BUFFER_DEG}) "
-    f"AND ST_DWithin(l.position::geography, ST_MakePoint(:lon, :lat)::geography, :radius_meters)",
+    "ST_DWithin(l.position::geography, ST_MakePoint(:lon, :lat)::geography, :radius_meters)",
     ["lat", "lon", "radius_meters"],
 )
 
@@ -401,9 +390,8 @@ FILTER_BY_NO_REQUIREMENTS = (
 # ---------------------------------------------------------------------------
 # Sorting priority:
 #   1. Open now — services open right now appear first (when schedule exists)
-#   2. Freshness tier — verified within 90 days > verified older > never verified
-#   3. Recently verified — within same tier, most recent first (NULLS LAST)
-#   4. Service name — stable tiebreaker
+#   2. Recently verified — freshest data first (NULLS LAST)
+#   3. Service name — stable tiebreaker
 #
 # When proximity (lat/lon) is available, distance is the primary sort and
 # open-now becomes secondary.
@@ -416,19 +404,6 @@ _OPEN_NOW_RANK = """CASE
          AND today_sched.opens_at <= CURRENT_TIME
          AND today_sched.closes_at >= CURRENT_TIME
     THEN 0 ELSE 1
-END"""
-
-# Freshness tier rank: verified within 90 days > verified older > never verified.
-# This is a PRIMARY sort factor (not just a tiebreaker) so recently verified
-# services consistently outrank stale ones within each open/closed group.
-# Stale results are NOT filtered out — they may be the only option available.
-_FRESHNESS_DAYS = 90
-_FRESHNESS_TIER_RANK = f"""CASE
-    WHEN l.last_validated_at >= (CURRENT_DATE - INTERVAL '{_FRESHNESS_DAYS} days')
-    THEN 0
-    WHEN l.last_validated_at IS NOT NULL
-    THEN 1
-    ELSE 2
 END"""
 
 # LGBTQ taxonomy boost: returns 0 for services tagged "LGBTQ Young Adult",
@@ -468,10 +443,9 @@ _DISTANCE_RANK = (
     "ST_Distance(l.position::geography, ST_MakePoint(:lon, :lat)::geography)"
 )
 
-# Base sort: open-now first, then freshness tier, then recency, then name.
+# Base sort tiebreakers: open-now first, then freshness, then name.
 _BASE_ORDER_PARTS = [
     _OPEN_NOW_RANK,
-    _FRESHNESS_TIER_RANK,
     "l.last_validated_at DESC NULLS LAST",
     "s.name",
 ]
@@ -506,6 +480,7 @@ TEMPLATES = {
             # silently exclude the majority of services with no schedule rows.
             # Re-enable only if schedule coverage improves substantially.
             FILTER_BY_OPEN_NOW,
+            FILTER_BY_DESCRIPTION_KEYWORDS,
         ],
         "default_params": {
             "taxonomy_names": [
@@ -541,6 +516,7 @@ TEMPLATES = {
             FILTER_BY_AGE_ELIGIBILITY,
             FILTER_BY_GENDER_ELIGIBILITY,
             FILTER_BY_WEEKDAY,
+            FILTER_BY_DESCRIPTION_KEYWORDS,
         ],
         "default_params": {
             "taxonomy_names": [
@@ -570,6 +546,7 @@ TEMPLATES = {
             FILTER_BY_PROXIMITY,
             FILTER_BY_AGE_ELIGIBILITY,
             FILTER_BY_GENDER_ELIGIBILITY,
+            FILTER_BY_DESCRIPTION_KEYWORDS,
         ],
         "default_params": {
             "taxonomy_names": [
@@ -597,6 +574,7 @@ TEMPLATES = {
             FILTER_BY_CITY_LIKE,
             FILTER_BY_PROXIMITY,
             FILTER_BY_AGE_ELIGIBILITY,
+            FILTER_BY_DESCRIPTION_KEYWORDS,
         ],
         "default_params": {
             "taxonomy_names": [
@@ -617,6 +595,7 @@ TEMPLATES = {
             FILTER_BY_CITY_IN_BOROUGH,
             FILTER_BY_CITY_LIKE,
             FILTER_BY_PROXIMITY,
+            FILTER_BY_DESCRIPTION_KEYWORDS,
         ],
         "default_params": {
             "taxonomy_names": [
@@ -637,6 +616,7 @@ TEMPLATES = {
             FILTER_BY_CITY_LIKE,
             FILTER_BY_PROXIMITY,
             FILTER_BY_AGE_ELIGIBILITY,
+            FILTER_BY_DESCRIPTION_KEYWORDS,
         ],
         "default_params": {
             "taxonomy_names": [
@@ -658,6 +638,7 @@ TEMPLATES = {
             FILTER_BY_PROXIMITY,
             FILTER_BY_GENDER_ELIGIBILITY,
             FILTER_BY_WEEKDAY,
+            FILTER_BY_DESCRIPTION_KEYWORDS,
         ],
         "default_params": {
             "taxonomy_names": [
@@ -686,6 +667,7 @@ TEMPLATES = {
             FILTER_BY_CITY_LIKE,
             FILTER_BY_PROXIMITY,
             FILTER_BY_AGE_ELIGIBILITY,
+            FILTER_BY_DESCRIPTION_KEYWORDS,
         ],
         "default_params": {
             "taxonomy_names": [
@@ -839,6 +821,20 @@ def build_query(template_key: str, user_params: dict) -> tuple[str, dict]:
     params = dict(template["default_params"])
     params.update({k: v for k, v in user_params.items() if v is not None})
 
+    # When taxonomy narrowing fires (e.g. "detox" → substance use treatment),
+    # any default description_pattern from the template (e.g. housing_assistance's
+    # broad housing regex) must be neutralized. Otherwise the SQL applies BOTH
+    # the narrowed taxonomy IN-list AND the original description filter — which
+    # are almost certainly incompatible and return 0 results.
+    #
+    # We can't simply remove description_pattern because housing_assistance has
+    # FILTER_BY_DESCRIPTION_KEYWORDS as a required filter — the SQL clause is
+    # always present, so the bind variable must exist. Replace with a match-all
+    # pattern instead, which effectively disables the filter.
+    if params.pop("_skip_description_filter", False):
+        if "description_pattern" in params:
+            params["description_pattern"] = "."
+
     # Collect WHERE clauses
     where_clauses = []
 
@@ -894,7 +890,7 @@ def build_query(template_key: str, user_params: dict) -> tuple[str, dict]:
     if _has_distance:
         order_parts.append(_DISTANCE_RANK)
 
-    # 3. Base sort: open-now, freshness tier, recency, name
+    # 3. Base tiebreakers: open-now, freshness, name
     order_parts.extend(_BASE_ORDER_PARTS)
 
     order_clause = f"\nORDER BY {', '.join(order_parts)}\nLIMIT :max_results\n"
@@ -919,6 +915,15 @@ def build_relaxed_query(template_key: str, user_params: dict) -> tuple[str, dict
        - If city_list exists: keep it, drop exact city match
        - No expansion available: exact city → LIKE pattern
     5. State filter (NY) is NEVER dropped
+
+    DESIGN DECISION: Taxonomy narrowing (taxonomy_names) and description
+    filters (description_pattern) are intentionally KEPT. If someone
+    asked for "detox in Staten Island" and SI has no detox services,
+    the relaxed query looks for detox across NYC — not all mental
+    health services. Showing counseling when the user asked for detox
+    would be unhelpful. If the relaxed query ALSO returns 0, the
+    chatbot's no-result handler shows the user what we searched for
+    and suggests alternatives.
 
     Returns the broadest reasonable query. Caller should note to the user
     that results may be less precisely matched.

@@ -172,8 +172,17 @@ def query_services(
             extra_taxonomies.append("single adult")
 
         # Age-based sub-categories
-        if age is not None and age < 18:
-            extra_taxonomies.append("youth")
+        #
+        # "youth" is ALWAYS included (like "lgbtq young adult") because
+        # NYC DYCD and HUD define homeless youth as ages 16-24, and
+        # youth shelters (Covenant House, Ali Forney, DYCD Youth Drop-in
+        # Centers) serve this full range. The previous threshold (age < 18)
+        # made these shelters invisible to 18-24 year olds — the exact
+        # population they serve. The age eligibility filter handles
+        # exclusion: a 40-year-old's query includes "youth" in the
+        # taxonomy list, but Covenant House's age_max=24 eligibility
+        # rule filters it out before results are returned.
+        extra_taxonomies.append("youth")
         if age is not None and age >= 62:
             extra_taxonomies.append("senior")
 
@@ -187,6 +196,17 @@ def query_services(
         if gender in ("lgbtq", "transgender", "nonbinary"):
             extra_taxonomies.append("drop-in center")
             extra_taxonomies.append("crisis")
+
+        # When user is a DV survivor, include crisis and drop-in center
+        # taxonomies. DV-specific services like Safe Horizon Streetwork
+        # may be tagged as "Crisis" or "Drop-in Center" rather than
+        # generic "Shelter" — without this, they're invisible in the
+        # shelter query for DV survivors who aren't LGBTQ.
+        if populations and "dv_survivor" in populations:
+            if "drop-in center" not in extra_taxonomies:
+                extra_taxonomies.append("drop-in center")
+            if "crisis" not in extra_taxonomies:
+                extra_taxonomies.append("crisis")
 
         if extra_taxonomies:
             enriched = list(TEMPLATES["shelter"]["default_params"]["taxonomy_names"])
@@ -221,6 +241,19 @@ def query_services(
             "haircuts": ["haircut"],
             "toiletries": ["toiletries"],
             "restrooms": ["restrooms"],
+            # Mental health — substance use sub-types
+            # Without these, "detox" returns ALL mental health services
+            # (counseling, support groups, etc.) instead of just treatment.
+            "detox": ["substance use treatment", "residential recovery"],
+            "substance use treatment": ["substance use treatment", "residential recovery"],
+            "substance abuse services": ["substance use treatment", "residential recovery"],
+            "addiction services": ["substance use treatment", "residential recovery"],
+            "rehab services": ["substance use treatment", "residential recovery"],
+            "inpatient treatment": ["substance use treatment", "residential recovery"],
+            "outpatient treatment": ["substance use treatment"],
+            "sober living": ["residential recovery", "supportive housing"],
+            "halfway houses": ["residential recovery", "supportive housing"],
+            "recovery services": ["substance use treatment", "residential recovery", "support groups"],
             # Clothing sub-types — "interview clothing" intentionally omitted
             # because "interview" conflicts with the employment keyword.
             # TODO: revisit when phrase-level disambiguation is added.
@@ -229,35 +262,116 @@ def query_services(
         narrowed_taxonomies = _DETAIL_TO_TAXONOMY_NARROWING.get(service_detail)
         if narrowed_taxonomies:
             user_params["taxonomy_names"] = narrowed_taxonomies
+            # BUG FIX: When taxonomy narrowing fires, prevent any default
+            # description_pattern (e.g. housing_assistance's required filter)
+            # from double-filtering. The narrowed taxonomy is already specific
+            # enough — applying a description regex on top would be overly
+            # restrictive and could return 0 results.
+            #
+            # We can't set description_pattern=None because build_query's
+            # params.update() skips None values (so the default_params entry
+            # would survive). Instead, set a flag that build_query checks.
+            user_params["_skip_description_filter"] = True
 
-        # 4b. Description filter for "other" sub-types
-        # These services are mostly tagged "Other service" so taxonomy
-        # narrowing alone won't help — we filter by description keywords.
-        if template_key == "other":
-            _DETAIL_DESCRIPTION_PATTERNS = {
-                "English classes": r"ESL|ESOL|english class|learn.*english",
-                "GED programs": r"GED|high school equiv|HSE|diploma|equivalency",
-                "adult education": r"adult education|adult literacy|continuing education",
-                "computer classes": r"computer|digital literacy|computer skills|computer training",
-                "digital literacy": r"computer|digital literacy|computer skills",
-                "disability services": r"disability|disabled|SSI|SSDI|accessible|special needs",
-                "financial services": r"financial|money management|budget|credit|debt|financial literacy",
-                "financial literacy": r"financial literacy|financial education|money management|budget",
-                "budgeting help": r"budget|financial|money management|savings",
-                "senior services": r"senior|older adult|aging|elder|60\+|65\+|over 60",
-                "re-entry services": r"reentry|re-entry|parole|probation|incarcerat|released|formerly",
-                "anger management": r"anger management|violence prevention|conflict resolution",
-                "parenting classes": r"parenting|parent class|parent support|fatherhood|motherhood",
-                "baby supplies": r"diaper|baby|infant|stroller|car seat|formula",
-                "transportation help": r"access.a.ride|metrocard|metro card|transit|transportation",
-                "insurance enrollment": r"insurance|medicaid enroll|medicare enroll|health insurance",
-                "health insurance enrollment": r"health insurance|insurance enroll|medicaid|marketplace",
-                "LGBTQ services": r"LGBTQ|queer|transgender|gay|lesbian|bisexual|nonbinary",
-                "LGBTQ support": r"LGBTQ|queer|transgender|gay|lesbian|bisexual|nonbinary",
-                "DACA services": r"DACA|deferred action|dreamer",
-                "accessibility services": r"accessibility|accessible|wheelchair|disability|ADA",
-            }
-            pattern = _DETAIL_DESCRIPTION_PATTERNS.get(service_detail)
+        # 4b. Description filter for sub-types that share a generic taxonomy.
+        # These services can't be distinguished by taxonomy alone — they need
+        # a description keyword filter to narrow from the parent category.
+        #
+        # Originally only applied to "other" template, but health_care and
+        # legal services also have sub-types (dental, immigration) that
+        # share a parent taxonomy ("Health", "Legal") and can only be
+        # narrowed by description.
+        _DETAIL_DESCRIPTION_FILTERS = {
+            # ── "other" sub-types ──
+            "English classes": r"ESL|ESOL|english class|learn.*english",
+            "GED programs": r"GED|high school equiv|HSE|diploma|equivalency",
+            "adult education": r"adult education|adult literacy|continuing education",
+            "computer classes": r"computer|digital literacy|computer skills|computer training",
+            "digital literacy": r"computer|digital literacy|computer skills",
+            "disability services": r"disability|disabled|\mSSI\M|\mSSDI\M|accessible|special needs",
+            "financial services": r"financial|money management|budget|credit|debt|financial literacy",
+            "financial literacy": r"financial literacy|financial education|money management|budget",
+            "budgeting help": r"budget|financial|money management|savings",
+            "senior services": r"senior|older adult|aging|elder|60\+|65\+|over 60",
+            "re-entry services": r"reentry|re-entry|parole|probation|incarcerat|released|formerly",
+            "anger management": r"anger management|violence prevention|conflict resolution",
+            "parenting classes": r"parenting|parent class|parent support|fatherhood|motherhood",
+            "baby supplies": r"diaper|baby|infant|stroller|car seat|formula",
+            "transportation help": r"access.a.ride|metrocard|metro card|transit|transportation",
+            "insurance enrollment": r"insurance|medicaid enroll|medicare enroll|health insurance",
+            "health insurance enrollment": r"health insurance|insurance enroll|medicaid|marketplace",
+            "LGBTQ services": r"LGBTQ|queer|transgender|gay|lesbian|bisexual|nonbinary",
+            "LGBTQ support": r"LGBTQ|queer|transgender|gay|lesbian|bisexual|nonbinary",
+            "DACA services": r"DACA|deferred action|dreamer",
+            "accessibility services": r"accessibility|accessible|wheelchair|disability|ADA",
+            # other — benefits & financial (previously unhandled)
+            "Access-A-Ride help": r"access.a.ride|paratransit|disability.*transport",
+            "EBT / food stamps": r"EBT|food stamp|SNAP|electronic benefit",
+            "Medicaid enrollment": r"medicaid|health insurance|enroll",
+            "Social Security": r"social security|\mSSA\M|\mSSI\M|\mSSDI\M|disability benefit",
+            "benefits enrollment": r"benefit|enroll|eligib|public assist|apply",
+            "cash assistance": r"cash assist|public assist|TANF|welfare|emergency.*cash",
+            "financial advisors": r"financial advis|financial counsel|money manage|budget",
+            "food stamps / SNAP": r"food stamp|SNAP|EBT|electronic benefit",
+            "money management": r"money manage|budget|financial|savings|debt",
+            "public assistance": r"public assist|welfare|benefit|TANF|cash assist",
+            "SYEP programs": r"SYEP|summer youth|summer employment|youth employment",
+            # ── health_care sub-types ──
+            "dental care": r"dental|dentist|oral health|tooth|teeth",
+            "vision care": r"vision|eye|optometr|ophthalmol|glasses|optical",
+            "urgent care": r"urgent care|walk.in clinic|immediate care",
+            "prenatal care": r"prenatal|maternity|pregnan|obstetric|OB.GYN",
+            "diabetes / insulin care": r"diabet|insulin|blood sugar|endocrin|A1C",
+            "HIV services": r"HIV|AIDS|antiretroviral|PrEP|\mPEP\M",
+            "harm reduction services": r"harm reduction|needle|syringe|naloxone|narcan|overdose",
+            # health_care — previously unhandled
+            "HIV testing": r"HIV.*test|HIV.*screen|rapid.*test.*HIV",
+            "STD testing": r"STD|STI|sexual.*health|sexually transmitted",
+            "STI testing": r"STI|STD|sexual.*health|sexually transmitted",
+            "PrEP services": r"PrEP|pre.exposure|HIV prevent|truvada|descovy",
+            "allergy / EpiPen care": r"allerg|epipen|anaphyla",
+            "asthma care": r"asthma|inhaler|respiratory|pulmon|breathing",
+            "diabetes care": r"diabet|insulin|blood sugar|endocrin|A1C",
+            "dialysis services": r"dialysis|kidney|renal",
+            "hepatitis services": r"hepatitis|\mhep\M|liver",
+            "hepatitis C services": r"hepatitis.*C|hep.*C|HCV",
+            "maternity services": r"matern|pregnan|prenatal|postpartum|obstetric",
+            "postpartum care": r"postpartum|after.*birth|newborn|maternal",
+            "needle exchange": r"needle|syringe|harm reduction|safe.*inject",
+            "syringe exchange": r"syringe|needle|harm reduction|safe.*inject",
+            "vaccinations": r"vaccin|immuniz|flu.*shot|COVID.*shot|booster",
+            # ── legal sub-types ──
+            "immigration services": r"immigra|asylum|refugee|undocument|visa|green card|USCIS|naturali|citizen|deporta|removal|\mICE\M",
+            "asylum services": r"asylum|refugee|persecution|fear|credible fear|withholding",
+            "eviction help": r"evict|tenant|landlord|housing court|rental|lease",
+            "domestic violence services": r"domestic violence|\mDV\M|intimate partner|protective order|abuse|safety plan",
+            # legal — previously unhandled
+            "abuse counseling": r"abuse|domestic violence|\mDV\M|survivor|violence.*counsel",
+            "citizenship services": r"citizen|naturali|civics|passport|N-400",
+            "naturalization services": r"naturali|citizen|civics|N-400|oath",
+            "order of protection": r"order of protection|protective order|restraining order|\mOOP\M",
+            # ── mental_health sub-types (previously unhandled) ──
+            "AA meetings": r"\mAA\M|alcoholics anonymous|12.step|twelve.step|sobriety",
+            "NA meetings": r"\mNA\M|narcotics anonymous|12.step|twelve.step|recovery.*meeting",
+            "counseling": r"counsel|therap|talk.*someone|mental health.*support",
+            "therapy": r"therap|counsel|psycho|CBT|DBT|mental health",
+            "treatment centers": r"treatment center|treatment facility|rehab|recovery center",
+            "treatment programs": r"treatment program|recovery program|rehab program",
+            # ── housing_assistance sub-types ──
+            "Housing Connect": r"Housing Connect|housing lottery|affordable.*apply",
+            "NYCHA housing": r"NYCHA|public housing|housing authority",
+            "Section 8 vouchers": r"section 8|housing voucher|rental assist|\mHCV\M",
+            "affordable housing": r"affordable housing|low.income housing|subsidiz|below market",
+            "eviction prevention": r"eviction prevent|anti.eviction|stay.*home|keep.*housed",
+            "homeless prevention programs": r"homeless prevent|prevention|diversion",
+            "housing assistance": r"housing assist|housing help|housing support|find.*housing",
+            "housing lottery": r"housing lottery|Housing Connect|affordable.*apply",
+            "housing programs": r"housing program|housing service|housing support",
+            "housing vouchers": r"housing voucher|section 8|rental voucher|\mHCV\M",
+            "rental assistance": r"rental assist|rent help|rent subsid|emergency rent|\mERAP\M|one shot",
+        }
+        if not narrowed_taxonomies:
+            pattern = _DETAIL_DESCRIPTION_FILTERS.get(service_detail)
             if pattern:
                 user_params["description_pattern"] = pattern
 
@@ -282,9 +396,9 @@ def query_services(
     # Services matching these patterns sort to the top without excluding
     # non-matching services.
     _POPULATION_DESCRIPTION_BOOSTS = {
-        "disabled": r"disabilit|disabled|wheelchair|accessible|ADA|blind|deaf|SSI|SSDI",
+        "disabled": r"disabilit|disabled|wheelchair|accessible|\mADA\M|blind|deaf|\mSSI\M|\mSSDI\M",
         "reentry": r"reentry|re-entry|parole|probation|incarcerat|released|formerly",
-        "dv_survivor": r"domestic violence|DV|intimate partner|safety plan|abuse|protective order",
+        "dv_survivor": r"domestic violence|\mDV\M|intimate partner|safety plan|abuse|protective order",
         "pregnant": r"prenatal|maternity|postpartum|WIC|pregnan|maternal|newborn",
         "senior": r"senior|older adult|aging|elder|60\+|65\+|over 60|NORC",
     }

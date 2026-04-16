@@ -1031,17 +1031,21 @@ def _get_taxonomy_names(service_type, **kwargs):
 
 
 def test_shelter_enrichment_youth():
-    """Shelter query for age < 18 should add 'youth' to taxonomy_names."""
-    names = _get_taxonomy_names("shelter", age=16)
-    assert "youth" in names
-    assert "senior" not in names
+    """Shelter query should always include 'youth' taxonomy (NYC DYCD/HUD
+    define youth as 16-24; age eligibility filter handles exclusion)."""
+    names_16 = _get_taxonomy_names("shelter", age=16)
+    assert "youth" in names_16
+    names_19 = _get_taxonomy_names("shelter", age=19)
+    assert "youth" in names_19, "19yo must see youth shelters (Covenant House serves 16-24)"
+    names_none = _get_taxonomy_names("shelter")
+    assert "youth" in names_none, "Youth should be included even without age"
 
 
 def test_shelter_enrichment_senior():
     """Shelter query for age >= 62 should add 'senior' to taxonomy_names."""
     names = _get_taxonomy_names("shelter", age=65)
     assert "senior" in names
-    assert "youth" not in names
+    assert "youth" in names, "Youth is always included (age eligibility handles exclusion)"
 
 
 def test_shelter_enrichment_families():
