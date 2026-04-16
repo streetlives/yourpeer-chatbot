@@ -1,0 +1,51 @@
+name: Drift Detection
+
+on:
+  schedule:
+    # Run every Monday at 9am UTC (5am EST)
+    - cron: '0 9 * * 1'
+  workflow_dispatch:  # Allow manual trigger
+
+jobs:
+  drift-check:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install sqlalchemy psycopg2-binary
+
+      - name: Run taxonomy drift check
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python scripts/drift_check.py taxonomy_drift --ci
+
+      - name: Run source parity check
+        run: python scripts/drift_check.py source_parity --ci
+
+      - name: Run business rule validation
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python scripts/drift_check.py business_rules --ci
+        
+      # Result parity is expensive — run separately if needed
+      # - name: Run result parity check
+      #   env:
+      #     DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      #   run: python scripts/drift_check.py result_parity --ci
+
+      - name: Post results to Slack
+        if: failure()
+        uses: slackapi/slack-github-action@v1
+        with:
+          payload: |
+            {
+              "text": "⚠️ YourPeer Drift Detection FAILED — check GitHub Actions for details"
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
