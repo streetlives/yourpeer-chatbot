@@ -156,62 +156,99 @@ def query_services(
     if no_requirements:
         user_params["no_requirements"] = True
 
-    # Shelter taxonomy enrichment based on user profile.
-    # The DB has shelter sub-categories as separate taxonomy names with
-    # parent_name="Shelter": "Families", "Single Adult", "Youth", "Senior",
-    # "LGBTQ Young Adult", "Veterans". Services tagged as e.g. "Families"
-    # are NOT also tagged with the generic "Shelter" taxonomy, so they're
-    # invisible to the base shelter query unless explicitly included.
+    # Shelter taxonomy enrichment.
+    #
+    # YourPeer parity (as of April 2026 source review + DB verification):
+    #   - Default shelter search → parent "Shelter" taxonomy, API expands to
+    #     all children. Chatbot equivalent: default_params.taxonomy_names
+    #     already lists every Shelter child (see query_templates.py).
+    #   - "families" sub-filter → YourPeer REPLACES taxonomy with "Families"
+    #     child only. Chatbot narrows to ["families", "shelter"] to preserve
+    #     parent — DB shows "Families" child has only 3 services, so strict
+    #     narrowing would often return 0 results. Parent preservation keeps
+    #     the 18 generic Shelter-tagged services visible too.
+    #   - "single adult" sub-filter → YourPeer REPLACES with "Single Adult"
+    #     child + passes ageMin=18, ageMax=99 to API. Chatbot narrows to
+    #     ["single adult", "shelter"] for the same parent-preservation reason.
+    #
+    # NOVEL safety enrichments (intentional divergence from YourPeer — flagged
+    # in QUERY_PARITY_AUDIT.md). These add population-specific Shelter children
+    # back on top of narrowing, because narrowing-by-family-composition strips
+    # out services the user plausibly qualifies for based on age/identity:
+    #
+    #   (1) Age 16–24 → add "youth"               (Covenant House, Ali Forney)
+    #   (2) LGBTQ/trans/nonbinary → add           (Ali Forney Center)
+    #       "lgbtq young adult" + "drop-in
+    #       center" + "crisis"
+    #   (3) Age ≥ 62 → add "senior"               (senior-specific shelters)
+    #   (4) Veteran → add "veterans" +            (VA shelters, veteran transitional)
+    #       "veterans short-term housing"
+    #   (5) DV survivor → add "drop-in center"    (Safe Horizon services)
+    #       + "crisis"
+    #
+    # PREGNANT OVERRIDE: pregnant + family_status=alone overrides the
+    # "single adult" narrowing to the families narrow — pregnant women
+    # typically qualify for family shelter for prenatal services even
+    # without existing children.
     if template_key == "shelter":
-        extra_taxonomies = []
+        base_taxonomies = list(TEMPLATES["shelter"]["default_params"]["taxonomy_names"])
+        is_pregnant = bool(populations and "pregnant" in populations)
 
-        # Family composition
+        # Step 1: Narrow taxonomy list based on family_status.
+        # When narrowing fires, include the parent "shelter" taxonomy so
+        # generic-tagged services remain visible (DB verification showed
+        # the Families child has only 3 services, Single Adult has 38,
+        # while the Shelter parent alone has 18 generic-tagged services
+        # that a strict narrow would exclude).
         if family_status in ("with_children", "with_family"):
-            extra_taxonomies.append("families")
+            narrowed = ["families", "shelter"]
+        elif family_status == "alone" and is_pregnant:
+            # Novel override: pregnant + alone → families (for prenatal services).
+            narrowed = ["families", "shelter"]
         elif family_status == "alone":
-            extra_taxonomies.append("single adult")
+            narrowed = ["single adult", "shelter"]
+        else:
+            # No family_status → use the full shelter taxonomy list (equivalent
+            # to YourPeer's default: parent Shelter ID + API expansion).
+            narrowed = base_taxonomies
 
-        # Age-based sub-categories
-        #
-        # "youth" is ALWAYS included (like "lgbtq young adult") because
-        # NYC DYCD and HUD define homeless youth as ages 16-24, and
-        # youth shelters (Covenant House, Ali Forney, DYCD Youth Drop-in
-        # Centers) serve this full range. The previous threshold (age < 18)
-        # made these shelters invisible to 18-24 year olds — the exact
-        # population they serve. The age eligibility filter handles
-        # exclusion: a 40-year-old's query includes "youth" in the
-        # taxonomy list, but Covenant House's age_max=24 eligibility
-        # rule filters it out before results are returned.
-        extra_taxonomies.append("youth")
-        if age is not None and age >= 62:
-            extra_taxonomies.append("senior")
+        # Step 2: Population-specific safety enrichments (novel, additive).
+        # These are no-ops when no narrowing fires (taxonomies already in
+        # default list), and restorative when narrowing fires.
+        safety_extras = []
 
-        # Always include LGBTQ Young Adult — we can't detect this from
-        # slots, so include it by default so these services are never
-        # invisible to any shelter search.
-        extra_taxonomies.append("lgbtq young adult")
+        # (1) Youth age range (16–24) → ensure youth-serving shelters are visible
+        if age is not None and 16 <= age <= 24:
+            safety_extras.append("youth")
 
-        # When user explicitly identified as LGBTQ, trans, or nonbinary,
-        # also include sub-categories that may be LGBTQ-affirming
+        # (2) LGBTQ/trans/nonbinary → affirming services visible
+        # "drop-in center" + "crisis" are separate Shelter children that
+        # contain LGBTQ-affirming services (DB verified: Drop-in Center
+        # and Crisis are parented under Shelter, not Health).
+        # "lgbtq young adult" is a Shelter child that narrowing strips out.
         if gender in ("lgbtq", "transgender", "nonbinary"):
-            extra_taxonomies.append("drop-in center")
-            extra_taxonomies.append("crisis")
+            safety_extras.extend(["drop-in center", "crisis", "lgbtq young adult"])
 
-        # When user is a DV survivor, include crisis and drop-in center
-        # taxonomies. DV-specific services like Safe Horizon Streetwork
-        # may be tagged as "Crisis" or "Drop-in Center" rather than
-        # generic "Shelter" — without this, they're invisible in the
-        # shelter query for DV survivors who aren't LGBTQ.
+        # (3) Senior age (≥ 62) → senior-specific shelters visible
+        if age is not None and age >= 62:
+            safety_extras.append("senior")
+
+        # (4) Veteran → veteran-specific shelters visible
+        if populations and "veteran" in populations:
+            safety_extras.extend(["veterans", "veterans short-term housing"])
+
+        # (5) DV survivor → DV-tagged services (often under Crisis/Drop-in Center)
         if populations and "dv_survivor" in populations:
-            if "drop-in center" not in extra_taxonomies:
-                extra_taxonomies.append("drop-in center")
-            if "crisis" not in extra_taxonomies:
-                extra_taxonomies.append("crisis")
+            for tx in ("drop-in center", "crisis"):
+                if tx not in safety_extras:
+                    safety_extras.append(tx)
 
-        if extra_taxonomies:
-            enriched = list(TEMPLATES["shelter"]["default_params"]["taxonomy_names"])
-            enriched.extend(extra_taxonomies)
-            user_params["taxonomy_names"] = enriched
+        # Compose final taxonomy list (dedupe while preserving order).
+        final = list(narrowed)
+        for tx in safety_extras:
+            if tx not in final:
+                final.append(tx)
+        user_params["taxonomy_names"] = final
 
     # -----------------------------------------------------------------
     # Sub-category narrowing (Phase 4)
@@ -251,22 +288,20 @@ def query_services(
             "rehab services": ["substance use treatment", "residential recovery"],
             "inpatient treatment": ["substance use treatment", "residential recovery"],
             "outpatient treatment": ["substance use treatment"],
-            "sober living": ["residential recovery", "supportive housing"],
-            "halfway houses": ["residential recovery", "supportive housing"],
+            # "supportive housing" removed from sober living / halfway houses —
+            # DB verified April 16, 2026: 0 services tagged with Supportive Housing.
+            "sober living": ["residential recovery"],
+            "halfway houses": ["residential recovery"],
             "recovery services": ["substance use treatment", "residential recovery", "support groups"],
-            # Clothing sub-types — "interview clothing" intentionally omitted
-            # because "interview" conflicts with the employment keyword.
-            # TODO: revisit when phrase-level disambiguation is added.
         }
 
         narrowed_taxonomies = _DETAIL_TO_TAXONOMY_NARROWING.get(service_detail)
         if narrowed_taxonomies:
             user_params["taxonomy_names"] = narrowed_taxonomies
             # BUG FIX: When taxonomy narrowing fires, prevent any default
-            # description_pattern (e.g. housing_assistance's required filter)
-            # from double-filtering. The narrowed taxonomy is already specific
-            # enough — applying a description regex on top would be overly
-            # restrictive and could return 0 results.
+            # description_pattern from double-filtering. The narrowed taxonomy
+            # is already specific enough — applying a description regex on top
+            # would be overly restrictive and could return 0 results.
             #
             # We can't set description_pattern=None because build_query's
             # params.update() skips None values (so the default_params entry
@@ -332,7 +367,8 @@ def query_services(
             "allergy / EpiPen care": r"allerg|epipen|anaphyla",
             "asthma care": r"asthma|inhaler|respiratory|pulmon|breathing",
             "diabetes care": r"diabet|insulin|blood sugar|endocrin|A1C",
-            "dialysis services": r"dialysis|kidney|renal",
+            # "dialysis services" removed — DB verified April 16, 2026: 0 matches.
+            # No service description mentions dialysis, kidney, or renal.
             "hepatitis services": r"hepatitis|\mhep\M|liver",
             "hepatitis C services": r"hepatitis.*C|hep.*C|HCV",
             "maternity services": r"matern|pregnan|prenatal|postpartum|obstetric",
@@ -357,7 +393,7 @@ def query_services(
             "therapy": r"therap|counsel|psycho|CBT|DBT|mental health",
             "treatment centers": r"treatment center|treatment facility|rehab|recovery center",
             "treatment programs": r"treatment program|recovery program|rehab program",
-            # ── housing_assistance sub-types ──
+            # ── housing program sub-types (routed via "other" — matches YourPeer) ──
             "Housing Connect": r"Housing Connect|housing lottery|affordable.*apply",
             "NYCHA housing": r"NYCHA|public housing|housing authority",
             "Section 8 vouchers": r"section 8|housing voucher|rental assist|\mHCV\M",
@@ -374,6 +410,32 @@ def query_services(
             pattern = _DETAIL_DESCRIPTION_FILTERS.get(service_detail)
             if pattern:
                 user_params["description_pattern"] = pattern
+
+    # -----------------------------------------------------------------
+    # Clothing occasion filter (Phase 4b)
+    # -----------------------------------------------------------------
+    # When the user asks for casual or professional clothing, filter
+    # by the clothingOccasion attribute in service_taxonomy_specific_attributes.
+    # DB verified April 16, 2026: 62 services tagged "Everyday", 28 tagged
+    # "Job Interview" (overlapping — many services carry both).
+    #
+    # This is better than taxonomy narrowing (Interview-Ready Clothing has
+    # only 1 service) because the attribute system has 28 services tagged
+    # for professional clothing.
+    #
+    # YourPeer uses taxonomySpecificAttributes API param for this.
+    _CLOTHING_OCCASION_MAP = {
+        "professional clothing": '["Job Interview"]',
+        "interview clothing": '["Job Interview"]',
+        "business clothing": '["Job Interview"]',
+        "casual clothing": '["Everyday"]',
+        "everyday clothing": '["Everyday"]',
+        "winter clothing": '["Winter"]',
+    }
+    if template_key == "clothing" and service_detail:
+        occasion_value = _CLOTHING_OCCASION_MAP.get(service_detail)
+        if occasion_value:
+            user_params["clothing_occasion_value"] = occasion_value
 
     # -----------------------------------------------------------------
     # Population-based query boost (Phase 3)

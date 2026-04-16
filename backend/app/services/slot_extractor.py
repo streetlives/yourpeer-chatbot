@@ -66,6 +66,18 @@ SERVICE_KEYWORDS = {
         # "pants" moved to _WORD_BOUNDARY_KEYWORDS — "participants" collision (REGEX_AUDIT)
         "sweater", "sweatshirt", "hoodie", "gloves",
         "winter gear", "sneakers",
+        # Clothing occasion phrases — multi-word entries that MUST beat the
+        # single-word "interview" (employment keyword) in longest-first sort.
+        # "interview clothes" (17 chars) > "interview" (9 chars) → matches
+        # clothing first, blocking the employment keyword via span overlap.
+        # Resolves the "interview" keyword conflict documented at
+        # rag/__init__.py:294-296. DB verified: clothingOccasion attribute
+        # has 62 Everyday and 28 Job Interview services.
+        "interview clothes", "interview clothing", "interview outfit",
+        "professional clothes", "professional clothing",
+        "business clothes", "business clothing",
+        "casual clothes", "casual clothing",
+        "work clothes",
     ],
 
     # --- Personal Care (taxonomy: Personal Care → Shower, Laundry, etc.) ---
@@ -167,25 +179,10 @@ SERVICE_KEYWORDS = {
         "vocational training",
     ],
 
-    # --- Housing Assistance (non-emergency — taxonomy: Other service, Benefits, etc.) ---
-    # Distinct from "shelter" which returns beds/drop-in centers.
-    # These are housing PROGRAMS: rental assistance, eviction prevention,
-    # affordable housing applications, Section 8 vouchers, etc.
-    # "housing" alone stays in shelter (ambiguous → urgent interpretation).
-    "housing_assistance": [
-        # Rental / eviction
-        "rental assistance", "help with rent", "behind on rent",
-        "rent arrears", "eviction prevention",
-        "housing voucher", "housing assistance",
-        "housing program", "housing application",
-        "section 8", "rent program",
-        "homeless prevention",
-        # Affordable housing
-        "affordable housing", "nycha", "housing connect",
-        "subsidized housing", "housing lottery",
-    ],
-
     # --- Other Services (taxonomy: Other service) ---
+    # Includes housing assistance programs (rental assistance, Section 8,
+    # eviction prevention, etc.) — YourPeer surfaces these under "Other service".
+    # "housing" alone stays in shelter (ambiguous → urgent interpretation).
     "other": [
         "other services", "other service",
         "benefits", "ebt", "food stamps", "medicaid",
@@ -201,6 +198,15 @@ SERVICE_KEYWORDS = {
         # NYC-specific (P3 audit)
         "voter registration", "replacement id",
         "tax prep", "tax preparation", "free tax",
+        # Housing programs (non-emergency — rental/eviction/vouchers)
+        "rental assistance", "help with rent", "behind on rent",
+        "rent arrears", "eviction prevention",
+        "housing voucher", "housing assistance",
+        "housing program", "housing application",
+        "section 8", "rent program",
+        "homeless prevention",
+        "affordable housing", "nycha", "housing connect",
+        "subsidized housing", "housing lottery",
         # --- Phase 1 audit: new clusters (886 services discovered) ---
         # Financial (32 services, 0% prior coverage)
         "financial help", "financial advice", "financial advisor",
@@ -352,7 +358,10 @@ _NOTABLE_SUB_TYPES = {
     "blood sugar": "diabetes care",
     "inhaler": "asthma care",
     "asthma": "asthma care",
-    "dialysis": "dialysis services",
+    # "dialysis" removed — DB verified April 16, 2026: 0 service descriptions
+    # match dialysis|kidney|renal. Keeping the sub-type would set
+    # service_detail="dialysis services" in the confirmation, but the
+    # description filter no longer exists, so it wouldn't narrow results.
     "epipen": "allergy / EpiPen care",
     # mental_health sub-types
     "substance abuse": "substance abuse services",
@@ -395,6 +404,18 @@ _NOTABLE_SUB_TYPES = {
     "toiletries": "toiletries",
     "restroom": "restrooms",
     "bathroom": "restrooms",
+    # clothing sub-types — maps to clothingOccasion attribute filter
+    # (DB verified April 16, 2026: 62 Everyday, 28 Job Interview services)
+    "interview clothes": "professional clothing",
+    "interview clothing": "professional clothing",
+    "interview outfit": "professional clothing",
+    "professional clothes": "professional clothing",
+    "professional clothing": "professional clothing",
+    "business clothes": "professional clothing",
+    "business clothing": "professional clothing",
+    "work clothes": "professional clothing",
+    "casual clothes": "casual clothing",
+    "casual clothing": "casual clothing",
     # food sub-types
     "soup kitchen": "soup kitchens",
     "food pantry": "food pantries",

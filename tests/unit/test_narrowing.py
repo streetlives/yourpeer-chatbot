@@ -130,11 +130,13 @@ class TestTaxonomyNarrowingSubstanceUse:
 
     def test_sober_living(self):
         p = _query("mental_health", service_detail="sober living")
-        assert set(p["taxonomy_names"]) == {"residential recovery", "supportive housing"}
+        # "supportive housing" removed April 16, 2026 — DB verified 0 services tagged.
+        assert set(p["taxonomy_names"]) == {"residential recovery"}
 
     def test_halfway_houses(self):
         p = _query("mental_health", service_detail="halfway houses")
-        assert set(p["taxonomy_names"]) == {"residential recovery", "supportive housing"}
+        # "supportive housing" removed April 16, 2026 — DB verified 0 services tagged.
+        assert set(p["taxonomy_names"]) == {"residential recovery"}
 
     def test_recovery_services(self):
         p = _query("mental_health", service_detail="recovery services")
@@ -184,7 +186,7 @@ class TestDescriptionFilterMedical:
         ("hepatitis services", "hepatitis"),
         ("vaccinations", "vaccin"),
         ("asthma care", "asthma"),
-        ("dialysis services", "dialysis"),
+        # "dialysis services" removed — DB verified April 16, 2026: 0 matches.
         ("needle exchange", "needle"),
         ("postpartum care", "postpartum"),
     ])
@@ -253,6 +255,7 @@ class TestDescriptionFilterOther:
 
 
 class TestDescriptionFilterHousing:
+    """Housing program sub-types route via 'other' template (matches YourPeer)."""
 
     @pytest.mark.parametrize("detail,expected_word", [
         ("rental assistance", "rental assist"),
@@ -263,12 +266,9 @@ class TestDescriptionFilterHousing:
         ("housing vouchers", "housing voucher"),
     ])
     def test_housing_sub_type(self, detail, expected_word):
-        p = _query("housing_assistance", service_detail=detail)
+        p = _query("other", service_detail=detail)
         assert "description_pattern" in p
         assert expected_word.lower() in p["description_pattern"].lower()
-        # Should override the default broad pattern
-        default = TEMPLATES["housing_assistance"]["default_params"]["description_pattern"]
-        assert p["description_pattern"] != default
 
 
 # =====================================================================
@@ -314,28 +314,7 @@ class TestMutualExclusion:
 
 
 # =====================================================================
-# 4. HOUSING DOUBLE-FILTER PREVENTION
-# =====================================================================
-
-class TestHousingDoubleFilter:
-
-    def test_housing_has_default_pattern(self):
-        assert "description_pattern" in TEMPLATES["housing_assistance"]["default_params"]
-
-    def test_sub_type_overrides_default(self):
-        default = TEMPLATES["housing_assistance"]["default_params"]["description_pattern"]
-        p = _query("housing_assistance", service_detail="rental assistance")
-        assert p["description_pattern"] != default
-        assert "rental assist" in p["description_pattern"]
-
-    def test_no_detail_uses_default(self):
-        default = TEMPLATES["housing_assistance"]["default_params"]["description_pattern"]
-        p = _query("housing_assistance")
-        assert p["description_pattern"] == default
-
-
-# =====================================================================
-# 5. POSTGRESQL WORD BOUNDARIES — \m...\M not \b
+# 4. POSTGRESQL WORD BOUNDARIES — \m...\M not \b
 # =====================================================================
 
 class TestWordBoundaryCorrectness:
@@ -467,16 +446,31 @@ class TestDvShelterEnrichment:
         assert "families" in p["taxonomy_names"]
         assert "crisis" in p["taxonomy_names"]
 
-    def test_plain_shelter_no_crisis(self):
-        """Without DV or LGBTQ context, no crisis/drop-in added."""
+    def test_plain_shelter_default_includes_crisis_and_drop_in(self):
+        """Default shelter query includes crisis and drop-in center.
+
+        As of April 16, 2026 DB verification, crisis (13 services) and
+        drop-in center (6 services) are Shelter children with non-zero
+        service counts — they're in the default list for full YourPeer
+        parent-to-child expansion parity. The DV/LGBTQ safety enrichments
+        still add them back when narrowing strips them.
+        """
         p = _query("shelter")
-        default = TEMPLATES["shelter"]["default_params"]["taxonomy_names"]
-        # youth and lgbtq young adult are always added
-        added = set(p["taxonomy_names"]) - set(default)
-        assert "crisis" not in added
-        assert "drop-in center" not in added
-        assert "youth" in added
-        assert "lgbtq young adult" in added
+        # All Shelter children with non-zero counts are in default
+        assert "crisis" in p["taxonomy_names"]
+        assert "drop-in center" in p["taxonomy_names"]
+        assert "referral" in p["taxonomy_names"]
+        assert "youth" in p["taxonomy_names"]
+        assert "lgbtq young adult" in p["taxonomy_names"]
+
+    def test_narrowing_strips_crisis_and_drop_in(self):
+        """When narrowing fires, crisis/drop-in are stripped (not in narrow set).
+        DV/LGBTQ safety enrichments add them back — tested in TestDvShelterEnrichment."""
+        p = _query("shelter", family_status="alone", age=30)
+        # Narrowed to single adult + parent only (no safety signals to add them back)
+        assert "crisis" not in p["taxonomy_names"]
+        assert "drop-in center" not in p["taxonomy_names"]
+        assert "referral" not in p["taxonomy_names"]
 
 
 # =====================================================================
@@ -494,7 +488,13 @@ class TestNarrowingCoverage:
         desc = set(re.findall(r'"([^"]+)"\s*:\s*r"',
             src[src.find("_DETAIL_DESCRIPTION_FILTERS"):
                 src.find("        }", src.find("_DETAIL_DESCRIPTION_FILTERS")) + 1]))
-        return narrowing | desc
+        # Clothing occasion attribute filter — third narrowing mechanism
+        # (April 16, 2026: uses taxonomy_specific_attributes instead of
+        # description regex or taxonomy narrowing).
+        occasion = set(re.findall(r'"([^"]+)"\s*:\s*\'\[',
+            src[src.find("_CLOTHING_OCCASION_MAP"):
+                src.find("}", src.find("_CLOTHING_OCCASION_MAP")) + 1]))
+        return narrowing | desc | occasion
 
     def test_zero_gaps(self):
         handled = self._get_handled_details()
@@ -515,7 +515,7 @@ class TestTemplateWiring:
 
     SERVICE_TEMPLATES = [
         "food", "shelter", "clothing", "personal_care", "medical",
-        "mental_health", "legal", "employment", "housing_assistance", "other",
+        "mental_health", "legal", "employment", "other",
     ]
 
     def test_all_templates_have_description_filter(self):
@@ -526,15 +526,15 @@ class TestTemplateWiring:
             assert FILTER_BY_DESCRIPTION_KEYWORDS in all_filters, \
                 f"Template '{key}' missing FILTER_BY_DESCRIPTION_KEYWORDS"
 
-    def test_only_housing_has_required_description(self):
-        """Only housing_assistance should have it as required (others as optional)."""
+    def test_no_template_has_required_description(self):
+        """No template should have description filter as required without a default pattern.
+
+        Previously housing_assistance had it as required; that template was removed
+        to match YourPeer (which surfaces these services via 'Other service')."""
         from app.rag.query_templates import FILTER_BY_DESCRIPTION_KEYWORDS
         for key in self.SERVICE_TEMPLATES:
-            if key == "housing_assistance":
-                assert FILTER_BY_DESCRIPTION_KEYWORDS in TEMPLATES[key]["required_filters"]
-            else:
-                assert FILTER_BY_DESCRIPTION_KEYWORDS not in TEMPLATES[key]["required_filters"], \
-                    f"'{key}' has description filter as required without a default pattern"
+            assert FILTER_BY_DESCRIPTION_KEYWORDS not in TEMPLATES[key]["required_filters"], \
+                f"'{key}' has description filter as required without a default pattern"
 
     def test_description_filter_in_sql_when_pattern_set(self):
         """When description_pattern is set, SQL should contain the ~* clause."""

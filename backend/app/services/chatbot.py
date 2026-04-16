@@ -529,7 +529,11 @@ def generate_reply(
                         if result:
                             return result
 
-                    pr = answer_from_results(post_intent, _last_results)
+                    pr = answer_from_results(
+                        post_intent,
+                        _last_results,
+                        existing.get("_displayed_count", len(_last_results)),
+                    )
                     if pr is not None:
                         result = {
                             "session_id": session_id,

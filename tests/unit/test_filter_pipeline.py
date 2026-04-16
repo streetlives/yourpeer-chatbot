@@ -231,6 +231,7 @@ class TestResponseTemplates:
         result = _handle_filter_subcategory(
             {"raw_phrase": "families", "_original_message": "ones for families"},
             cards,
+            len(cards),  # displayed_count
         )
         assert "3" in result["response"]
         assert "10" in result["response"]
@@ -243,6 +244,7 @@ class TestResponseTemplates:
         result = _handle_filter_subcategory(
             {"raw_phrase": "veterans", "_original_message": "ones for veterans"},
             cards,
+            len(cards),  # displayed_count
         )
         assert "one of the" in result["response"].lower()
 
@@ -252,6 +254,7 @@ class TestResponseTemplates:
         result = _handle_filter_subcategory(
             {"raw_phrase": "dental care", "_original_message": "dental care"},
             cards,
+            len(cards),  # displayed_count
         )
         assert "none of the" in result["response"].lower()
         assert result["_filter_matched"] is False
@@ -262,6 +265,7 @@ class TestResponseTemplates:
         result = _handle_filter_subcategory(
             {"raw_phrase": "anything", "_original_message": "anything"},
             cards,
+            len(cards),  # displayed_count — triggers the <=2 short-circuit
         )
         assert "not much to filter" in result["response"].lower()
 
@@ -279,6 +283,7 @@ class TestNegationResponseWording:
             {"raw_phrase": "DHS", "_original_message": "exclude DHS",
              "_is_negation": True},
             cards,
+            len(cards),  # displayed_count
         )
         assert "excluding" in result["response"].lower(), \
             f"Negation response should say 'excluding', got: {result['response']}"

@@ -112,7 +112,10 @@ class TestChronicConditionSubTypes:
         ("my blood sugar is really high", "medical", "diabetes care"),
         ("I ran out of my inhaler", "medical", "asthma care"),
         ("I have asthma and need help", "medical", "asthma care"),
-        ("I need dialysis", "medical", "dialysis services"),
+        # "dialysis" removed from sub-types — DB verified April 16, 2026:
+        # 0 service descriptions match dialysis|kidney|renal. The sub-type
+        # label would be misleading (shows "dialysis services" in confirmation
+        # but can't narrow results).
         ("I need my epipen", "medical", "allergy / EpiPen care"),
     ])
     def test_chronic_condition_detail(self, phrase, expected_type, expected_detail):
