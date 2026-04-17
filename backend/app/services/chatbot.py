@@ -195,458 +195,195 @@ def _empty_reply(
 # MAIN ENTRY POINT
 # ---------------------------------------------------------------------------
 
-def generate_reply(
-    message: str,
-    session_id: str | None = None,
-    latitude: float | None = None,
-    longitude: float | None = None,
-    request_id: str | None = None,
-) -> dict:
-    if not session_id:
-        session_id = str(uuid.uuid4())
-    if not request_id:
-        request_id = str(uuid.uuid4())
+# PII types that warrant a user-facing warning when shared. Other types
+# (names, emails) are quietly redacted but don't trigger a warning.
+_PII_WARN_TYPES = {"ssn", "phone"}
 
-    logger.info(f"[req:{request_id}] Session {session_id}: processing message")
 
-    # --- Empty message guard ---
-    if not message or not message.strip():
-        return _empty_reply(
-            session_id,
-            "What are you looking for today? I can help with food, "
-            "shelter, clothing, health care, and more.",
-            get_session_slots(session_id),
-            quick_replies=list(_WELCOME_QUICK_REPLIES),
-        )
+def _redact_with_safety_warning(message: str) -> tuple[str, str, list]:
+    """Redact PII and compute a user-facing safety warning if applicable.
 
-    # --- PII Redaction ---
+    Returns (redacted_message, warning_prefix, pii_detections). The warning
+    prefix is "" when no sensitive PII was shared; otherwise it's a
+    category-appropriate reminder that the bot has scrubbed the PII.
+    The caller prepends it to whatever response the handler returns.
+    """
     redacted_message, pii_detections = redact_pii(message)
+    warning_prefix = ""
     if pii_detections:
-        logger.info(
-            f"Session {session_id}: redacted {len(pii_detections)} PII item(s) "
-            f"from message: {[d.pii_type for d in pii_detections]}"
-        )
-
-    # --- PII Safety Warning ---
-    # When a user shares highly sensitive PII (SSN, phone number), warn
-    # them immediately. The message is still processed (with PII redacted),
-    # but the warning is prepended to whatever response follows.
-    _PII_WARN_TYPES = {"ssn", "phone"}
-    _pii_warning = ""
-    if pii_detections:
-        _detected = {d.pii_type for d in pii_detections}
-        _sensitive = _detected & _PII_WARN_TYPES
-        if _sensitive:
-            if "ssn" in _sensitive:
-                _pii_warning = (
+        detected = {d.pii_type for d in pii_detections}
+        sensitive = detected & _PII_WARN_TYPES
+        if sensitive:
+            if "ssn" in sensitive:
+                warning_prefix = (
                     "For your safety, please don't share your Social Security "
                     "number or other sensitive personal information in this "
                     "chat. I've removed it from the conversation.\n\n"
                 )
             else:
-                _pii_warning = (
+                warning_prefix = (
                     "Just a heads up — I've removed your phone number from "
                     "the conversation to protect your privacy. You don't need "
                     "to share personal info to search for services.\n\n"
                 )
+    return redacted_message, warning_prefix, pii_detections
 
-    existing = get_session_slots(session_id)
 
-    # Store browser geolocation coords in session if provided
-    has_coords = latitude is not None and longitude is not None
-    if has_coords:
-        existing["_latitude"] = latitude
-        existing["_longitude"] = longitude
-        # When coordinates arrive, treat location as answered.  Without
-        # this, coords are stored but existing["location"] stays None —
-        # is_enough_to_answer() returns False and the bot still asks
-        # "What neighborhood?" even though it already has GPS coords.
-        if not existing.get("location"):
-            existing["location"] = NEAR_ME_SENTINEL
-        save_session_slots(session_id, existing)
+def _run_early_extraction(message: str, session_id: str) -> tuple[dict, str | None]:
+    """Regex slot extraction + semantic-router fallback.
 
-    # --- EXTRACT SLOTS FIRST (before classification) ---
+    Runs BEFORE the LLM gate so it fires even in regex-only mode
+    (no ANTHROPIC_API_KEY), saves an LLM call when Tier 1 or Tier 2
+    resolves, and prevents "general" fallthrough on messages that
+    semantic routing can classify.
+
+    Returns (extracted_slots, extraction_source) where source is one of
+    "regex" / "semantic" / None.
+    """
     early_extracted = extract_slots(message)
-    _extraction_source = "regex" if early_extracted.get("service_type") else None
+    extraction_source = "regex" if early_extracted.get("service_type") else None
 
-    # --- TIER 2: SEMANTIC ROUTING (before LLM gate) ---
-    # The semantic router is a LOCAL model — no API key needed.
-    # It runs here (not just inside extract_slots_smart) so that:
-    #   1. It fires in regex-only mode (no ANTHROPIC_API_KEY)
-    #   2. It fires before the unified LLM gate (saving an LLM call)
-    #   3. It fires before routing, preventing "general" fallthrough
     if early_extracted.get("service_type") is None:
+        # Lazy import — avoids loading the sentence-transformer model
+        # in processes that don't need routing (e.g. test collection).
         from app.services.semantic_router import classify_service as _semantic_classify
         from app.services.semantic_router import is_available as _semantic_available
 
         if _semantic_available():
-            _semantic_match = _semantic_classify(message)
-            if _semantic_match is not None:
+            semantic_match = _semantic_classify(message)
+            if semantic_match is not None:
                 logger.info(
                     f"Session {session_id}: semantic router matched "
-                    f"'{_semantic_match.service_type}' "
-                    f"(confidence={_semantic_match.confidence:.3f})"
+                    f"'{semantic_match.service_type}' "
+                    f"(confidence={semantic_match.confidence:.3f})"
                 )
-                early_extracted["service_type"] = _semantic_match.service_type
-                _extraction_source = "semantic"
+                early_extracted["service_type"] = semantic_match.service_type
+                extraction_source = "semantic"
 
                 # Merge population from semantic router
-                if _semantic_match.population:
+                if semantic_match.population:
                     existing_pops = set(early_extracted.get("_populations") or [])
-                    existing_pops.add(_semantic_match.population)
+                    existing_pops.add(semantic_match.population)
                     early_extracted["_populations"] = sorted(existing_pops)
 
-    has_service_intent = (
-        early_extracted.get("service_type") is not None
-        or early_extracted.get("org_name") is not None
-    )
+    return early_extracted, extraction_source
 
-    # --- CLASSIFY ACTION (regex, instant) ---
-    _action_pre = _classify_action(message)
 
-    # --- UNIFIED LLM CLASSIFICATION GATE ---
-    _llm_tone = None
-    _llm_action = None
-    _SKIP_UNIFIED_ACTIONS = {
-        "reset", "greeting", "thanks", "bot_identity", "bot_question",
-        "confirm_yes", "confirm_deny", "confirm_change_service",
-        "confirm_change_location", "correction", "negative_preference",
-        "escalation",
-    }
-    _regex_tone_pre = _classify_tone(message, crisis_result=_CRISIS_NOT_CHECKED)
-    _needs_unified = (
+# Actions that should NOT trigger the unified LLM classification gate —
+# these have high-confidence regex classifiers, so an additional LLM call
+# would only waste tokens without improving routing.
+_SKIP_UNIFIED_ACTIONS = frozenset({
+    "reset", "greeting", "thanks", "bot_identity", "bot_question",
+    "confirm_yes", "confirm_deny", "confirm_change_service",
+    "confirm_change_location", "correction", "negative_preference",
+    "escalation",
+})
+
+
+def _run_llm_gate(
+    message: str,
+    early_extracted: dict,
+    has_service_intent: bool,
+    action_pre: str | None,
+    regex_tone_pre: str | None,
+    extraction_source: str | None,
+) -> tuple[bool, str | None, str | None, str | None, str | None]:
+    """Unified LLM classification gate.
+
+    Runs only when regex + semantic routing didn't resolve AND the message
+    looks substantive enough (≥4 words, not a known simple action) to
+    justify the API call. Mutates `early_extracted` in place when the LLM
+    finds a service_type / demographic slot that regex/semantic missed.
+
+    Returns a tuple of updated state:
+        (has_service_intent, action_pre, extraction_source, llm_tone, llm_action)
+    """
+    needs_unified = (
         _USE_LLM
         and not has_service_intent
-        and _action_pre not in _SKIP_UNIFIED_ACTIONS
-        and _regex_tone_pre is None
+        and action_pre not in _SKIP_UNIFIED_ACTIONS
+        and regex_tone_pre is None
         and len(message.split()) >= 4
     )
-    if _needs_unified:
-        try:
-            _unified = classify_unified(message)
-            if _unified:
-                if _unified.get("service_type"):
-                    logger.info(
-                        f"Unified gate found service_type="
-                        f"'{_unified['service_type']}' that regex missed"
-                    )
-                    early_extracted["service_type"] = _unified["service_type"]
-                    _extraction_source = "llm_gate"
-                    if _unified.get("service_detail"):
-                        early_extracted["service_detail"] = _unified["service_detail"]
-                    if _unified.get("location"):
-                        early_extracted["location"] = _unified["location"]
-                    if _unified.get("additional_services"):
-                        early_extracted["additional_services"] = _unified["additional_services"]
-                    if _unified.get("urgency"):
-                        early_extracted["urgency"] = _unified["urgency"]
-                    if _unified.get("age"):
-                        early_extracted["age"] = _unified["age"]
-                    if _unified.get("family_status"):
-                        early_extracted["family_status"] = _unified["family_status"]
-                    if _unified.get("gender"):
-                        early_extracted["_gender"] = _unified["gender"]
-                    has_service_intent = True
+    if not needs_unified:
+        return has_service_intent, action_pre, extraction_source, None, None
 
-                if _unified.get("tone"):
-                    _llm_tone = _unified["tone"]
-                    logger.info(f"Unified gate detected tone='{_llm_tone}'")
-                if _unified.get("action"):
-                    _llm_action = _unified["action"]
-                    logger.info(f"Unified gate detected action='{_llm_action}'")
-                    if _action_pre is None:
-                        _action_pre = _llm_action
-        except Exception as e:
-            logger.error(f"Unified LLM classification failed: {e}")
-
-    # --- CRISIS DETECTION ---
-    _is_safe_short = (
-        _action_pre in (
-            "confirm_yes", "confirm_deny", "confirm_change_service",
-            "confirm_change_location", "reset", "greeting", "thanks",
-            "bot_identity",
-        )
-        and len(message.split()) <= 4
-    )
-    _crisis_result = detect_crisis(message, skip_llm=_is_safe_short)
-
-    if _crisis_result is not None:
-        tone = "crisis"
-    else:
-        tone = _classify_tone(message, crisis_result=_crisis_result)
-        if tone is None and _llm_tone:
-            tone = _llm_tone
-
-    if tone == "crisis":
-        pass  # handled below in routing
-    else:
-        # --- POST-RESULTS QUESTION CHECK ---
-        _last_results = existing.get("_last_results")
-        _is_confirmation_action = _action_pre in (
-            "confirm_change_service", "confirm_change_location",
-            "confirm_yes", "confirm_deny", "reset", "greeting",
-        )
-        # Handle confirm_yes / confirm_deny after results when no pending
-        # confirmation exists. Without this, these messages fall through to
-        # extraction and re-trigger the same search.
-        # Guard: when the message ALSO contains a new service intent
-        # (e.g., "Search for employment in Manhattan"), the new intent
-        # should override the confirm action. Without this guard,
-        # "search for" matches confirm_yes and the user's new request
-        # is swallowed.
-        if (_last_results
-                and _action_pre in ("confirm_yes", "confirm_deny")
-                and not existing.get("_pending_confirmation")
-                and not existing.get("_queue_offer_pending")
-                and not existing.get("_queued_services")
-                and not existing.get("_last_action")
-                and not has_service_intent):
-
-            if _action_pre == "confirm_yes":
-                # "Yes, search" after results already shown
-                existing.pop("_last_results", None)
-                save_session_slots(session_id, existing)
-                result = _empty_reply(
-                    session_id,
-                    "I've already shown the results above — you can tap on any "
-                    "service card for more details. Would you like to search for "
-                    "something else?",
-                    existing,
-                    quick_replies=[
-                        {"label": "🔍 New search", "value": "Start over"},
-                        {"label": "🤝 Peer navigator", "value": "Connect with peer navigator"},
-                    ],
+    llm_tone = None
+    llm_action = None
+    try:
+        unified = classify_unified(message)
+        if unified:
+            if unified.get("service_type"):
+                logger.info(
+                    f"Unified gate found service_type="
+                    f"'{unified['service_type']}' that regex missed"
                 )
-                _log_turn(session_id, redacted_message, result, "post_results_confirm",
-                          request_id=request_id, tone=tone)
-                return result
+                early_extracted["service_type"] = unified["service_type"]
+                extraction_source = "llm_gate"
+                if unified.get("service_detail"):
+                    early_extracted["service_detail"] = unified["service_detail"]
+                if unified.get("location"):
+                    early_extracted["location"] = unified["location"]
+                if unified.get("additional_services"):
+                    early_extracted["additional_services"] = unified["additional_services"]
+                if unified.get("urgency"):
+                    early_extracted["urgency"] = unified["urgency"]
+                if unified.get("age"):
+                    early_extracted["age"] = unified["age"]
+                if unified.get("family_status"):
+                    early_extracted["family_status"] = unified["family_status"]
+                if unified.get("gender"):
+                    early_extracted["_gender"] = unified["gender"]
+                has_service_intent = True
 
-            else:  # confirm_deny
-                # "nah I'm good" / "no thanks" after results
-                existing.pop("_last_results", None)
-                save_session_slots(session_id, existing)
-                result = _empty_reply(
-                    session_id,
-                    "No problem! Let me know if you need anything else.",
-                    existing,
-                    quick_replies=list(_WELCOME_QUICK_REPLIES),
-                )
-                _log_turn(session_id, redacted_message, result, "post_results_decline",
-                          request_id=request_id, tone=tone)
-                return result
+            if unified.get("tone"):
+                llm_tone = unified["tone"]
+                logger.info(f"Unified gate detected tone='{llm_tone}'")
+            if unified.get("action"):
+                llm_action = unified["action"]
+                logger.info(f"Unified gate detected action='{llm_action}'")
+                if action_pre is None:
+                    action_pre = llm_action
+    except Exception as e:
+        logger.error(f"Unified LLM classification failed: {e}")
 
-        if _last_results and not has_service_intent and not _is_confirmation_action:
-            # Clear stale _last_action: if the user is interacting with
-            # results (asking questions, sorting, paginating), any prior
-            # emotional/escalation/crisis context is no longer relevant.
-            # Without this, _last_action persists because post-results
-            # handlers return before the stale-action cleaner at line 636.
-            if existing.get("_last_action"):
-                existing.pop("_last_action", None)
-                save_session_slots(session_id, existing)
+    return has_service_intent, action_pre, extraction_source, llm_tone, llm_action
 
-            _is_frustration_or_rejection = (
-                tone == "frustrated"
-                or _action_pre == "negative_preference"
-                or _action_pre == "correction"
-            )
-            if _is_frustration_or_rejection:
-                existing.pop("_last_results", None)
-                save_session_slots(session_id, existing)
-            elif early_extracted.get("location"):
-                existing.pop("_last_results", None)
-                save_session_slots(session_id, existing)
-            else:
-                # "Show all results" / "Show more results"
-                _show_patterns = (
-                    "show all results", "show results", "show all",
-                    "show more results", "show more", "more results",
-                    "any others", "what else", "next results",
-                    "any more", "see more",
-                )
-                if message.lower().strip() in _show_patterns:
-                    displayed = existing.get("_displayed_count", 0)
-                    if displayed and displayed < len(_last_results):
-                        # Show the next page of results (not all remaining)
-                        next_page = _last_results[displayed:displayed + _DISPLAY_PAGE_SIZE]
-                        new_displayed = displayed + len(next_page)
-                        existing["_displayed_count"] = new_displayed
-                        save_session_slots(session_id, existing)
 
-                        still_remaining = len(_last_results) - new_displayed
-                        qr = [
-                            {"label": "🔍 New search", "value": "Start over"},
-                            {"label": "🤝 Peer navigator", "value": "Connect with peer navigator"},
-                        ]
-                        if still_remaining > 0:
-                            remaining_locs = _count_unique_locations(
-                                _last_results[new_displayed:new_displayed + _DISPLAY_PAGE_SIZE]
-                            )
-                            qr.insert(0, {
-                                "label": f"📋 Show {remaining_locs} more result{'s' if remaining_locs != 1 else ''}",
-                                "value": "Show more results",
-                            })
+def _compute_routing_category(
+    *,
+    tone: str | None,
+    action: str | None,
+    has_service_intent: bool,
+    early_extracted: dict,
+    extraction_source: str | None,
+    message: str,
+) -> tuple[str, str]:
+    """Combine tone + action + intent signals into a routing category + confidence.
 
-                        _page_loc_count = _count_unique_locations(next_page)
-                        result = {
-                            "session_id": session_id,
-                            "response": f"Here are {_page_loc_count} more result{'s' if _page_loc_count != 1 else ''}:",
-                            "follow_up_needed": False,
-                            "slots": existing,
-                            "services": next_page,
-                            "result_count": _page_loc_count,
-                            "relaxed_search": False,
-                            "quick_replies": qr,
-                        }
-                    else:
-                        # No more to show — re-display all
-                        result = {
-                            "session_id": session_id,
-                            "response": "Here are all the results again:",
-                            "follow_up_needed": False,
-                            "slots": existing,
-                            "services": _last_results,
-                            "result_count": len(_last_results),
-                            "relaxed_search": False,
-                            "quick_replies": [
-                                {"label": "🔍 New search", "value": "Start over"},
-                                {"label": "🤝 Peer navigator", "value": "Connect with peer navigator"},
-                            ],
-                        }
-                    _log_turn(session_id, redacted_message, result, "post_results", request_id=request_id)
-                    return result
+    **The branch ORDER encodes precedence rules** and is guarded by
+    ``tests/unit/test_routing_category_order.py``. Do not reorder without
+    updating that test. Crisis wins over reset, reset wins over correction,
+    etc.; the sequence is load-bearing for safety (crisis) and for
+    disambiguation (confirm_* before has_service_intent so pending
+    confirmations aren't bypassed by a trailing service keyword).
 
-                # Gap 8: Sort options
-                _sort_patterns = {
-                    "sort by recently verified": "verified",
-                    "sort by recently updated": "verified",
-                    "sort by newest": "verified",
-                    "sort by most services": "services",
-                    "most services": "services",
-                }
-                _sort_key = _sort_patterns.get(message.lower().strip())
-                if _sort_key and _last_results:
-                    if _sort_key == "verified":
-                        sorted_results = sorted(
-                            _last_results,
-                            key=lambda s: s.get("last_validated_at") or "",
-                            reverse=True,
-                        )
-                    else:  # "services"
-                        sorted_results = sorted(
-                            _last_results,
-                            key=lambda s: len(s.get("also_available") or []),
-                            reverse=True,
-                        )
-                    existing["_last_results"] = sorted_results
-                    _sort_page = sorted_results[:_DISPLAY_PAGE_SIZE]
-                    existing["_displayed_count"] = len(_sort_page)
-                    save_session_slots(session_id, existing)
-
-                    _sort_remaining = len(sorted_results) - len(_sort_page)
-                    _sort_qr = [
-                        {"label": "🔍 New search", "value": "Start over"},
-                        {"label": "🤝 Peer navigator", "value": "Connect with peer navigator"},
-                    ]
-                    if _sort_remaining > 0:
-                        _next_sort_page = sorted_results[len(_sort_page):len(_sort_page) + _DISPLAY_PAGE_SIZE]
-                        _show_next = _count_unique_locations(_next_sort_page)
-                        _sort_qr.insert(0, {
-                            "label": f"📋 Show {_show_next} more result{'s' if _show_next != 1 else ''}",
-                            "value": "Show more results",
-                        })
-
-                    result = {
-                        "session_id": session_id,
-                        "response": f"Here are the results sorted by {'most recently verified' if _sort_key == 'verified' else 'most services at location'}:",
-                        "follow_up_needed": False,
-                        "slots": existing,
-                        "services": _sort_page,
-                        "result_count": len(_sort_page),
-                        "relaxed_search": False,
-                        "quick_replies": _sort_qr,
-                    }
-                    _log_turn(session_id, redacted_message, result, "post_results", request_id=request_id)
-                    return result
-
-                post_intent = classify_post_results_question(message)
-                if post_intent is not None:
-                    # Gap 15: day-specific hours — requires DB lookup
-                    if post_intent.get("type") == "ask_hours_day":
-                        result = _handle_hours_for_day(
-                            session_id, existing, _last_results, post_intent, redacted_message, request_id
-                        )
-                        if result:
-                            return result
-
-                    pr = answer_from_results(
-                        post_intent,
-                        _last_results,
-                        existing.get("_displayed_count", len(_last_results)),
-                    )
-                    if pr is not None:
-                        result = {
-                            "session_id": session_id,
-                            "response": pr["response"],
-                            "follow_up_needed": False,
-                            "slots": existing,
-                            "services": pr.get("services", []),
-                            "result_count": len(pr.get("services", [])),
-                            "relaxed_search": False,
-                            "quick_replies": pr.get("quick_replies", []),
-                        }
-                        _log_turn(session_id, redacted_message, result, "post_results", request_id=request_id)
-                        return result
-                    if post_intent.get("type") == "specific_name":
-                        query = post_intent.get("query", "that")
-                        result = _empty_reply(
-                            session_id,
-                            f"I'm not sure if you're asking about the results "
-                            f"I showed, or if you'd like to search for "
-                            f"something new. Which would you prefer?",
-                            existing,
-                            quick_replies=[
-                                {"label": f"🔍 Search for {query}", "value": f"I need {query}"},
-                                {"label": "📋 More about results", "value": "Tell me about the first one"},
-                                {"label": "🔍 New search", "value": "Start over"},
-                            ],
-                        )
-                        _log_turn(session_id, redacted_message, result, "disambiguation",
-                                  request_id=request_id, confidence="disambiguated")
-                        return result
-
-        if _last_results and (has_service_intent or _is_confirmation_action):
-            existing.pop("_last_results", None)
-            # When results were already shown and the user asks for something
-            # new, treat it as a fresh search — clear the old service slots
-            # so they don't compound with the new request. Multi-service
-            # should only happen within a single message or before results.
-            if has_service_intent:
-                existing.pop("service_type", None)
-                existing.pop("service_detail", None)
-                existing.pop("_queued_services", None)
-                existing.pop("_queued_services_original", None)
-                existing.pop("_queue_offer_pending", None)
-                existing.pop("_pending_confirmation", None)
-                existing.pop("_displayed_count", None)
-            save_session_slots(session_id, existing)
-
-    # --- COMBINE INTO ROUTING CATEGORY ---
-    action = _action_pre
-    _response_tone = tone
+    Returns (category, confidence) where confidence is one of
+    "high" / "semantic" / "medium" / "low".
+    """
     # Confidence reflects how the service_type was determined:
     #   "high"     — regex keyword match (deterministic)
     #   "semantic" — semantic embedding match (Tier 2, high but not deterministic)
     #   "medium"   — LLM classification (unified gate or fallback)
     #   "low"      — no classification succeeded, using fallback
-    if _extraction_source == "regex":
-        _confidence = "high"
-    elif _extraction_source == "semantic":
-        _confidence = "semantic"
-    elif _extraction_source == "llm_gate":
-        _confidence = "medium"
+    if extraction_source == "regex":
+        confidence = "high"
+    elif extraction_source == "semantic":
+        confidence = "semantic"
+    elif extraction_source == "llm_gate":
+        confidence = "medium"
     else:
-        _confidence = "high"  # default for non-service routes (greeting, reset, etc.)
+        confidence = "high"  # default for non-service routes (greeting, reset, etc.)
 
     if tone == "crisis":
         category = "crisis"
@@ -685,13 +422,143 @@ def generate_reply(
                 f"LLM classifier override: regex='general' → llm='{llm_category}'"
             )
             category = llm_category
-            _confidence = "medium"
+            confidence = "medium"
         else:
             category = "general"
-            _confidence = "low"
+            confidence = "low"
     else:
         category = "general"
-        _confidence = "low"
+        confidence = "low"
+
+    return category, confidence
+
+
+def _apply_session_geo(
+    session_id: str,
+    existing: dict,
+    latitude: float | None,
+    longitude: float | None,
+) -> None:
+    """Store browser geolocation coords in session slots if provided.
+
+    Also marks location as "answered" with the NEAR_ME_SENTINEL when
+    coords arrive without a prior location — without this, the bot
+    would still ask "What neighborhood?" even though it has GPS.
+
+    Mutates `existing` in place and persists via save_session_slots.
+    """
+    if latitude is None or longitude is None:
+        return
+    existing["_latitude"] = latitude
+    existing["_longitude"] = longitude
+    if not existing.get("location"):
+        existing["location"] = NEAR_ME_SENTINEL
+    save_session_slots(session_id, existing)
+
+
+def generate_reply(
+    message: str,
+    session_id: str | None = None,
+    latitude: float | None = None,
+    longitude: float | None = None,
+    request_id: str | None = None,
+) -> dict:
+    if not session_id:
+        session_id = str(uuid.uuid4())
+    if not request_id:
+        request_id = str(uuid.uuid4())
+
+    logger.info(f"[req:{request_id}] Session {session_id}: processing message")
+
+    # --- Empty message guard ---
+    if not message or not message.strip():
+        return _empty_reply(
+            session_id,
+            "What are you looking for today? I can help with food, "
+            "shelter, clothing, health care, and more.",
+            get_session_slots(session_id),
+            quick_replies=list(_WELCOME_QUICK_REPLIES),
+        )
+
+    # --- PII Redaction + Safety Warning ---
+    # When a user shares highly sensitive PII (SSN, phone), the warning
+    # is prepended to the eventual response. The message is still processed
+    # with PII redacted.
+    redacted_message, _pii_warning, pii_detections = _redact_with_safety_warning(message)
+    if pii_detections:
+        logger.info(
+            f"Session {session_id}: redacted {len(pii_detections)} PII item(s) "
+            f"from message: {[d.pii_type for d in pii_detections]}"
+        )
+
+    existing = get_session_slots(session_id)
+
+    # Store browser geolocation coords in session if provided.
+    has_coords = latitude is not None and longitude is not None
+    _apply_session_geo(session_id, existing, latitude, longitude)
+
+    # --- EARLY SLOT EXTRACTION (regex + semantic, before LLM gate) ---
+    early_extracted, _extraction_source = _run_early_extraction(message, session_id)
+
+    has_service_intent = (
+        early_extracted.get("service_type") is not None
+        or early_extracted.get("org_name") is not None
+    )
+
+    # --- CLASSIFY ACTION (regex, instant) ---
+    _action_pre = _classify_action(message)
+
+    # --- UNIFIED LLM CLASSIFICATION GATE ---
+    _regex_tone_pre = _classify_tone(message, crisis_result=_CRISIS_NOT_CHECKED)
+    has_service_intent, _action_pre, _extraction_source, _llm_tone, _llm_action = _run_llm_gate(
+        message=message,
+        early_extracted=early_extracted,
+        has_service_intent=has_service_intent,
+        action_pre=_action_pre,
+        regex_tone_pre=_regex_tone_pre,
+        extraction_source=_extraction_source,
+    )
+
+    # --- CRISIS DETECTION ---
+    _is_safe_short = (
+        _action_pre in (
+            "confirm_yes", "confirm_deny", "confirm_change_service",
+            "confirm_change_location", "reset", "greeting", "thanks",
+            "bot_identity",
+        )
+        and len(message.split()) <= 4
+    )
+    _crisis_result = detect_crisis(message, skip_llm=_is_safe_short)
+
+    if _crisis_result is not None:
+        tone = "crisis"
+    else:
+        tone = _classify_tone(message, crisis_result=_crisis_result)
+        if tone is None and _llm_tone:
+            tone = _llm_tone
+
+    if tone == "crisis":
+        pass  # handled below in routing
+    else:
+        # --- POST-RESULTS QUESTION CHECK ---
+        _post_result = _handle_post_results_interaction(
+            session_id, message, redacted_message, existing,
+            early_extracted, has_service_intent, _action_pre, tone, request_id,
+        )
+        if _post_result:
+            return _post_result
+
+    # --- COMBINE INTO ROUTING CATEGORY ---
+    action = _action_pre
+    _response_tone = tone
+    category, _confidence = _compute_routing_category(
+        tone=tone,
+        action=action,
+        has_service_intent=has_service_intent,
+        early_extracted=early_extracted,
+        extraction_source=_extraction_source,
+        message=message,
+    )
 
     # === ROUTE TO HANDLERS ===
 
@@ -720,373 +587,79 @@ def generate_reply(
         category = "general"
 
     # --- Spanish / non-English detection ---
-    # SAMHSA Cultural Humility: acknowledge the language gap rather than
-    # returning silence or an English-only response. Even before full
-    # Spanish support ships, detecting common Spanish phrases and
-    # responding with an acknowledgment shows awareness.
-    _SPANISH_RE = re.compile(
-        r"\b(necesito|ayuda|comida|refugio|albergue|por favor|"
-        r"no hablo ingles|no hablo inglés|hola|buenos dias|"
-        r"buenas tardes|buenas noches|tengo hambre|"
-        r"necesito ayuda|donde puedo|dónde puedo)\b", re.I,
+    _spanish_result, _spanish_acknowledgment = _handle_spanish_detection(
+        session_id, message, redacted_message, existing,
+        has_service_intent, tone, request_id,
     )
-    _spanish_detected = _SPANISH_RE.search(message)
-    _spanish_acknowledgment = ""
-
-    if _spanish_detected and not has_service_intent:
-        # Spanish only, no service request — return bilingual message
-        result = _empty_reply(
-            session_id,
-            "I'm sorry — right now I can only help in English. "
-            "A peer navigator may be able to help in Spanish.\n\n"
-            "Lo siento — por ahora solo puedo ayudar en inglés. "
-            "Un navegador comunitario puede ayudarte en español.",
-            existing,
-            quick_replies=[
-                {"label": "🤝 Peer navigator", "value": "Connect with peer navigator"},
-            ],
-        )
-        _log_turn(session_id, redacted_message, result, "spanish_detected",
-                  request_id=request_id, tone=tone)
-        return result
-    elif _spanish_detected and has_service_intent:
-        # Spanish mixed with a service request — acknowledge the language
-        # but still process the search. The acknowledgment is prepended
-        # to whatever response follows (confirmation or follow-up).
-        _spanish_acknowledgment = (
-            "I can see you may prefer Spanish — lo siento, por ahora "
-            "solo puedo ayudar en inglés. I'll do my best to help.\n\n"
-        )
+    if _spanish_result:
+        return _spanish_result
 
     # --- Reset ---
     if category == "reset":
-        clear_session(session_id)
-        log_session_reset(session_id)
-        result = _empty_reply(
-            session_id, _RESET_RESPONSE, {},
-            quick_replies=list(_WELCOME_QUICK_REPLIES),
-        )
-        _log_turn(session_id, redacted_message, result, category, request_id=request_id, tone=tone)
-        return result
+        return _handle_reset(session_id, redacted_message, category, tone, request_id)
 
     # --- Correction ---
     if category == "correction":
-        existing.pop("_pending_confirmation", None)
-        existing.pop("_last_action", None)
-        existing.pop("_last_results", None)
-        save_session_slots(session_id, existing)
-        service_type = existing.get("service_type")
-        location = existing.get("location")
-        if location == NEAR_ME_SENTINEL:
-            location = None
-        context = ""
-        if service_type and location:
-            context = f" I was searching for {service_type} in {location}."
-        elif service_type:
-            context = f" I was searching for {service_type}."
-        result = _empty_reply(
-            session_id,
-            f"Sorry about that!{context} Let me know what you need — you can "
-            f"pick a service below, tell me in your own words, or connect "
-            f"with a peer navigator.",
-            existing,
-            quick_replies=list(_WELCOME_QUICK_REPLIES) + [
-                {"label": "🤝 Peer navigator", "value": "Connect with peer navigator"},
-            ],
-        )
-        _log_turn(session_id, redacted_message, result, "correction",
-                  request_id=request_id, tone=tone, confidence="low")
-        return result
+        return _handle_correction(session_id, redacted_message, existing, tone, request_id)
 
     # --- Negative preference ---
     if category == "negative_preference":
-        # Also count as frustration for escalation tiers (Run 24 eval fix)
-        frust_count = existing.get("_frustration_count", 0) + 1
-        existing["_frustration_count"] = frust_count
-
-        # When frustration has accumulated, use tiered escalation
-        if frust_count >= 3:
-            existing["_last_action"] = "frustration"
-            save_session_slots(session_id, existing)
-            result = _empty_reply(
-                session_id,
-                "I'm sorry I haven't been able to help. Let me connect you "
-                "with a peer navigator — they can work with you directly.",
-                existing,
-                quick_replies=[
-                    {"label": "🤝 Peer navigator", "value": "Connect with peer navigator"},
-                ],
-            )
-            _log_turn(session_id, redacted_message, result, "frustration_tier3",
-                      request_id=request_id, tone=tone)
-            return result
-        elif frust_count >= 2:
-            existing["_last_action"] = "frustration"
-            save_session_slots(session_id, existing)
-            result = _empty_reply(
-                session_id,
-                "I hear you — I'm clearly not finding what you need right now. "
-                "A peer navigator would be more helpful — they're real people "
-                "who know the system. You can also call 311 for live help.",
-                existing,
-                quick_replies=[
-                    {"label": "🤝 Peer navigator", "value": "Connect with peer navigator"},
-                    {"label": "🔄 Start over", "value": "Start over"},
-                ],
-            )
-            _log_turn(session_id, redacted_message, result, "frustration_tier2",
-                      request_id=request_id, tone=tone)
-            return result
-
-        existing["_last_action"] = "negative_preference"
-        save_session_slots(session_id, existing)
-        result = _empty_reply(
-            session_id,
-            "I understand — those options aren't what you need. "
-            "I can search for a different type of service, or connect "
-            "you with a peer navigator who might know of other resources. "
-            "What would be most helpful?",
-            existing,
-            quick_replies=list(_WELCOME_QUICK_REPLIES) + [
-                {"label": "🤝 Peer navigator", "value": "Connect with peer navigator"},
-            ],
-        )
-        _log_turn(session_id, redacted_message, result, "negative_preference",
-                  request_id=request_id, tone=tone)
-        return result
+        return _handle_negative_preference(session_id, redacted_message, existing, tone, request_id)
 
     # --- Greeting ---
     if category == "greeting":
-        if existing and any(v is not None for v in existing.values()):
-            response = (
-                "Hey again! I still have your earlier search info. "
-                "Want to keep going, or would you like to start over?"
-            )
-            result = _empty_reply(session_id, response, existing)
-        else:
-            result = _empty_reply(
-                session_id, _GREETING_RESPONSE, existing,
-                quick_replies=list(_WELCOME_QUICK_REPLIES),
-            )
-        _log_turn(session_id, redacted_message, result, category, request_id=request_id, tone=tone)
-        return result
+        return _handle_greeting(session_id, redacted_message, existing, category, tone, request_id)
 
     # --- Thanks ---
     if category == "thanks":
-        result = _empty_reply(
-            session_id, _THANKS_RESPONSE, existing,
-            quick_replies=list(_WELCOME_QUICK_REPLIES),
-        )
-        _log_turn(session_id, redacted_message, result, category, request_id=request_id, tone=tone)
-        return result
+        return _handle_thanks(session_id, redacted_message, existing, category, tone, request_id)
 
     # --- Help ---
     if category == "help":
-        # Shame + help: "I'm embarrassed to ask for help" is expressing
-        # vulnerability, not asking what the bot can do. Route to the
-        # emotional handler with the shame-specific response.
-        if _response_tone == "emotional":
-            _help_lower = message.lower()
-            _is_shame_help = any(
-                s in _help_lower for s in [
-                    "embarrassed", "ashamed", "pathetic", "humiliating",
-                    "hard to ask", "hard for me", "hate asking", "hate to ask",
-                    "difficult to ask", "burden", "swallow my pride",
-                ]
-            )
-            if _is_shame_help:
-                response = _pick_emotional_response(message)
-                existing["_last_action"] = "emotional"
-                existing["_emotional_context"] = "shame"
-                save_session_slots(session_id, existing)
-                result = _empty_reply(
-                    session_id, response, existing,
-                    quick_replies=[
-                        {"label": "🤝 Peer navigator", "value": "Connect with peer navigator"},
-                    ],
-                )
-                _log_turn(session_id, redacted_message, result, "emotional",
-                          request_id=request_id, tone=tone)
-                return result
-
-        # When the user is confused or emotional AND asking for help,
-        # lead with empathy before showing the service menu.
-        if _response_tone in ("confused", "emotional"):
-            help_msg = (
-                "I hear you — it can feel overwhelming when you don't know "
-                "where to start. Let's take it one step at a time. "
-                "Here's what I can help you find:"
-            )
-        else:
-            help_msg = _HELP_RESPONSE
-        result = _empty_reply(
-            session_id, help_msg, existing,
-            quick_replies=list(_WELCOME_QUICK_REPLIES),
-        )
-        _log_turn(session_id, redacted_message, result, category, request_id=request_id, tone=tone)
-        return result
+        return _handle_help(session_id, message, redacted_message, existing,
+                            _response_tone, category, tone, request_id)
 
     # --- Bot Identity ---
     if category == "bot_identity":
-        result = _empty_reply(
-            session_id, _BOT_IDENTITY_RESPONSE, existing,
-            quick_replies=[
-                {"label": "🔍 New search", "value": "Start over"},
-                {"label": "🤝 Peer navigator", "value": "Connect with peer navigator"},
-            ],
-        )
-        _log_turn(session_id, redacted_message, result, category, request_id=request_id, tone=tone)
-        return result
+        return _handle_bot_identity(session_id, redacted_message, existing,
+                                    category, tone, request_id)
 
     # --- Bot capability questions ---
     if category == "bot_question":
-        from app.services.bot_knowledge import answer_question
-        static_answer = answer_question(message)
-        if static_answer:
-            response = static_answer
-        elif _USE_LLM:
-            try:
-                prompt = _build_bot_question_prompt(message, slots=existing)
-                response = claude_reply(prompt)
-            except Exception as e:
-                logger.error(f"Bot question LLM response failed: {e}")
-                response = _static_bot_answer(message)
-        else:
-            response = _static_bot_answer(message)
-        result = _empty_reply(session_id, response, existing)
-        _log_turn(session_id, redacted_message, result, category, request_id=request_id, tone=tone)
-        return result
+        return _handle_bot_capability_question(session_id, message, redacted_message,
+                                               existing, category, tone, request_id)
 
     # --- Demographic skip ("I'd rather not say" / "skip") ---
     # SAMHSA Empowerment principle: users control what they share.
-    # When a demographic question is pending and the user declines,
-    # proceed to confirmation with what we have.
-    _SKIP_PHRASES = [
-        "i'd rather not say", "id rather not say", "i would rather not say",
-        "rather not say", "prefer not to say", "prefer not to",
-        "skip", "skip this", "don't want to say", "dont want to say",
-        "none of your business", "that's personal", "thats personal",
-        "pass",
-    ]
-    _skip_lower = message.lower().strip()
-    _is_skip = any(p in _skip_lower for p in _SKIP_PHRASES) or _skip_lower in ("skip", "pass")
-    _is_demographic_pending = (
-        existing.get("service_type")
-        and existing.get("location")
-        and not existing.get("_pending_confirmation")
-        and (not existing.get("age") or not existing.get("family_status"))
-    )
-    if _is_skip and _is_demographic_pending:
-        # Mark skipped demographics so we don't re-ask
-        if not existing.get("age"):
-            existing["age"] = "skipped"
-        if not existing.get("family_status"):
-            existing["family_status"] = "skipped"
-        save_session_slots(session_id, existing)
-
-        # Proceed to confirmation with what we have
-        existing["_pending_confirmation"] = True
-        save_session_slots(session_id, existing)
-        confirm_msg = "No problem at all. " + _build_confirmation_message(existing)
-        result = {
-            "session_id": session_id,
-            "response": confirm_msg,
-            "follow_up_needed": True,
-            "slots": existing,
-            "services": [],
-            "result_count": 0,
-            "relaxed_search": False,
-            "quick_replies": _confirmation_quick_replies(existing),
-        }
-        _log_turn(session_id, redacted_message, result, "demographic_skip",
-                  request_id=request_id, tone=tone)
-        return result
+    _demo_skip_result = _handle_demographic_skip(session_id, message, redacted_message,
+                                                  existing, tone, request_id)
+    if _demo_skip_result:
+        return _demo_skip_result
 
     # --- Location unknown ---
-    _LOCATION_UNKNOWN_PHRASES = [
-        "i don't know", "i dont know", "idk", "not sure", "i'm not sure",
-        "im not sure", "no idea", "don't know", "dont know",
-        "i don't know where i am", "i dont know where i am",
-        "not sure where i am", "don't know where i am",
-        "dont know where i am", "no clue",
-        "anywhere", "wherever", "doesn't matter", "doesnt matter",
-        "it doesn't matter", "it doesnt matter",
-        "where i am",
-    ]
-    _LOCATION_UNKNOWN_EXACT = ["here", "right here"]
-    _msg_lower = message.lower().strip()
-    _is_location_unknown = (
-        any(p in _msg_lower for p in _LOCATION_UNKNOWN_PHRASES)
-        or _msg_lower in _LOCATION_UNKNOWN_EXACT
-    )
-    if (existing.get("service_type")
-            and not existing.get("location")
-            and not existing.get("_pending_confirmation")
-            and _is_location_unknown):
-        result = _empty_reply(
-            session_id,
-            "No problem! You can share your location and I'll find what's "
-            "nearby, or pick a borough:",
-            existing,
-            quick_replies=[
-                {"label": "📍 Use my location", "value": "__use_geolocation__"},
-                {"label": "Manhattan", "value": "Manhattan"},
-                {"label": "Brooklyn", "value": "Brooklyn"},
-                {"label": "Queens", "value": "Queens"},
-                {"label": "Bronx", "value": "Bronx"},
-                {"label": "Staten Island", "value": "Staten Island"},
-            ],
-        )
-        _log_turn(session_id, redacted_message, result, "location_unknown", request_id=request_id, tone=tone)
-        return result
+    _loc_unknown_result = _handle_location_unknown(session_id, message, redacted_message,
+                                                    existing, tone, request_id)
+    if _loc_unknown_result:
+        return _loc_unknown_result
 
     # --- Confused / Overwhelmed ---
     if category == "confused":
-        existing["_last_action"] = "confused"
-        save_session_slots(session_id, existing)
-        result = _empty_reply(
-            session_id, _CONFUSED_RESPONSE, existing,
-            quick_replies=list(_WELCOME_QUICK_REPLIES) + [
-                {"label": "🤝 Peer navigator", "value": "Connect with peer navigator"},
-            ],
-        )
-        _log_turn(session_id, redacted_message, result, category, request_id=request_id, tone=tone)
-        return result
+        return _handle_confused(session_id, redacted_message, existing,
+                                category, tone, request_id)
 
     # --- Emotional expression ---
     if category == "emotional":
-        response = _pick_emotional_response(message)
-        existing["_last_action"] = "emotional"
-        save_session_slots(session_id, existing)
-        result = _empty_reply(
-            session_id, response, existing,
-            quick_replies=[
-                {"label": "🤝 Peer navigator", "value": "Connect with peer navigator"},
-            ],
-        )
-        _log_turn(session_id, redacted_message, result, category, request_id=request_id, tone=tone)
-        return result
+        return _handle_emotional(session_id, message, redacted_message, existing,
+                                 category, tone, request_id)
 
     # --- Frustration ---
     if category == "frustration":
-        result = _handle_frustration(session_id, redacted_message, existing, tone, request_id)
-        return result
+        return _handle_frustration(session_id, redacted_message, existing, tone, request_id)
 
     # --- Escalation ---
     if category == "escalation":
-        if existing.get("_pending_confirmation"):
-            existing.pop("_pending_confirmation", None)
-        existing["_last_action"] = "escalation"
-        save_session_slots(session_id, existing)
-        result = _empty_reply(
-            session_id, _ESCALATION_RESPONSE, existing,
-            quick_replies=[
-                {"label": "🔍 New search", "value": "Start over"},
-                {"label": "👤 Talk to a person", "value": "Connect with person"},
-            ],
-        )
-        _log_turn(session_id, redacted_message, result, category, request_id=request_id, tone=tone)
-        return result
+        return _handle_escalation(session_id, redacted_message, existing,
+                                  category, tone, request_id)
 
     # --- Context-aware "yes" / "no" handling ---
     last_action = existing.get("_last_action")
@@ -1105,76 +678,14 @@ def generate_reply(
     # --- Handle "change location" / "change service" outside pending ---
     if not existing.get("_pending_confirmation"):
         if category == "confirm_change_location":
-            # If the user's message CONTAINS a new location (e.g.,
-            # "I already said Manhattan"), use it directly instead of
-            # wiping and re-asking. This prevents frustration loops.
-            new_loc = early_extracted.get("location")
-            if new_loc:
-                existing["location"] = new_loc
-                save_session_slots(session_id, existing)
-                if is_enough_to_answer(existing):
-                    existing["_pending_confirmation"] = True
-                    save_session_slots(session_id, existing)
-                    confirm_msg = _build_confirmation_message(existing)
-                    result = {
-                        "session_id": session_id,
-                        "response": confirm_msg,
-                        "follow_up_needed": True,
-                        "slots": existing,
-                        "services": [],
-                        "result_count": 0,
-                        "relaxed_search": False,
-                        "quick_replies": _confirmation_quick_replies(existing),
-                    }
-                    _log_turn(session_id, redacted_message, result, "confirmation",
-                              request_id=request_id, tone=tone)
-                    return result
-                else:
-                    follow_up = next_follow_up_question(existing)
-                    result = {
-                        "session_id": session_id,
-                        "response": follow_up,
-                        "follow_up_needed": True,
-                        "slots": existing,
-                        "services": [],
-                        "result_count": 0,
-                        "relaxed_search": False,
-                        "quick_replies": _follow_up_quick_replies(existing),
-                    }
-                    _log_turn(session_id, redacted_message, result, "service",
-                              request_id=request_id, tone=tone)
-                    return result
-            # No location in message — ask for one
-            existing["location"] = None
-            save_session_slots(session_id, existing)
-            result = _empty_reply(
-                session_id,
-                "Sure! What neighborhood or borough should I search in?",
-                existing,
-                quick_replies=[
-                    {"label": "📍 Use my location", "value": "__use_geolocation__"},
-                    {"label": "Manhattan", "value": "Manhattan"},
-                    {"label": "Brooklyn", "value": "Brooklyn"},
-                    {"label": "Queens", "value": "Queens"},
-                    {"label": "Bronx", "value": "Bronx"},
-                    {"label": "Staten Island", "value": "Staten Island"},
-                ],
+            return _handle_change_location_request(
+                session_id, redacted_message, existing, early_extracted,
+                category, tone, request_id,
             )
-            _log_turn(session_id, redacted_message, result, category, request_id=request_id, tone=tone)
-            return result
-
         if category == "confirm_change_service":
-            existing["service_type"] = None
-            existing.pop("service_detail", None)
-            save_session_slots(session_id, existing)
-            result = _empty_reply(
-                session_id,
-                "No problem! What kind of help do you need?",
-                existing,
-                quick_replies=list(_WELCOME_QUICK_REPLIES),
+            return _handle_change_service_request(
+                session_id, redacted_message, existing, category, tone, request_id,
             )
-            _log_turn(session_id, redacted_message, result, category, request_id=request_id, tone=tone)
-            return result
 
     # --- Handle confirmation responses ---
     pending = existing.get("_pending_confirmation")
@@ -1187,113 +698,10 @@ def generate_reply(
 
     # If pending confirmation but user typed something new
     if pending:
-        existing.pop("_pending_confirmation", None)
-        if _USE_LLM:
-            pending_extracted = extract_slots_smart(
-                message,
-                conversation_history=existing.get("transcript", []),
-            )
-        else:
-            pending_extracted = extract_slots(message)
-        pending_has_new = any(v is not None and v != [] for k, v in pending_extracted.items()
-                              if k not in ("additional_services", "_populations", "_contradiction"))
-
-        # Fix 3: Contradiction detection — if a slot CHANGED (not just
-        # filled), the user is correcting their search. Auto-execute
-        # instead of re-confirming to reduce friction.
-        if pending_has_new:
-            _SLOT_KEYS = ("service_type", "location", "age", "_gender", "family_status")
-            _changed = {
-                k: pending_extracted[k]
-                for k in _SLOT_KEYS
-                if pending_extracted.get(k) is not None
-                and existing.get(k) is not None
-                and pending_extracted[k] != existing[k]
-            }
-            if _changed:
-                merged_pending = merge_slots(existing, pending_extracted)
-                if is_enough_to_answer(merged_pending):
-                    logger.info(
-                        f"[{session_id}] Contradiction during confirmation: "
-                        f"{_changed} — auto-executing"
-                    )
-                    save_session_slots(session_id, merged_pending)
-                    result = _execute_and_respond(
-                        session_id, message, merged_pending, request_id=request_id
-                    )
-                    # Prepend acknowledgment of the change
-                    changes = []
-                    if "service_type" in _changed:
-                        changes.append(
-                            _SERVICE_LABELS.get(_changed["service_type"], _changed["service_type"])
-                        )
-                    if "location" in _changed:
-                        changes.append(_changed["location"])
-                    prefix = f"Got it — switching to {', '.join(changes)}. " if changes else ""
-                    result["response"] = prefix + result["response"]
-                    _log_turn(
-                        session_id, redacted_message, result,
-                        "contradiction_auto_execute", request_id=request_id, tone=tone,
-                    )
-                    return result
-
-            # Auto-execute when filling a missing slot after the user already
-            # confirmed (e.g., crisis step-down "Yes, search" → location
-            # follow-up → user provides location).  The contradiction check
-            # above only fires on VALUE CHANGES (old → new).  This block
-            # handles FILLS (None → new) — the user already said yes, they're
-            # just providing the missing piece, not requesting a new search.
-            if not _changed:
-                merged_pending = merge_slots(existing, pending_extracted)
-                _geolocation_fill = (
-                    merged_pending.get("location") == NEAR_ME_SENTINEL
-                    and merged_pending.get("_latitude") is not None
-                    and merged_pending.get("_longitude") is not None
-                )
-                if is_enough_to_answer(merged_pending) or _geolocation_fill:
-                    logger.info(
-                        f"[{session_id}] Slot fill after confirmation — auto-executing"
-                    )
-                    save_session_slots(session_id, merged_pending)
-                    result = _execute_and_respond(
-                        session_id, message, merged_pending, request_id=request_id
-                    )
-                    _log_turn(
-                        session_id, redacted_message, result,
-                        "fill_auto_execute", request_id=request_id, tone=tone,
-                    )
-                    return result
-
-        if not pending_has_new:
-            existing["_pending_confirmation"] = True
-            save_session_slots(session_id, existing)
-
-            nudge_prefix = "Just to make sure — "
-            if _response_tone == "emotional":
-                nudge_prefix = "I hear you. Just to make sure — "
-            elif _response_tone == "frustrated":
-                nudge_prefix = "I understand. Let me just confirm — "
-            elif _response_tone == "confused":
-                nudge_prefix = "No worries — let me just confirm: "
-            elif _response_tone == "urgent":
-                nudge_prefix = "Got it — just to confirm: "
-
-            confirm_msg = (
-                nudge_prefix + _build_confirmation_message(existing)
-                + ' Tap "Yes, search" to go, or you can change the details.'
-            )
-            result = {
-                "session_id": session_id,
-                "response": confirm_msg,
-                "follow_up_needed": True,
-                "slots": existing,
-                "services": [],
-                "result_count": 0,
-                "relaxed_search": False,
-                "quick_replies": _confirmation_quick_replies(existing),
-            }
-            _log_turn(session_id, redacted_message, result, "confirmation_nudge", request_id=request_id, tone=tone)
-            return result
+        return _handle_post_pending_confirmation(
+            session_id, message, redacted_message, existing,
+            _response_tone, tone, request_id,
+        )
 
     # --- Service request or general conversation ---
     if _USE_LLM and category == "service":
@@ -1340,106 +748,20 @@ def generate_reply(
         and _has_session_coords
     )
 
-    # Shame detection — sub-category of emotional tone that needs a
-    # specific normalizing prefix rather than generic empathy.
-    _SHAME_SIGNALS = [
-        "embarrassed", "ashamed", "pathetic", "failure",
-        "never thought i'd need", "never thought id need",
-        "hard for me to say", "hard to say", "hard for me to ask",
-        "hard to ask", "hard to admit",
-        "difficult to ask", "difficult to say",
-        "hate asking", "hate to ask", "hate having to ask",
-        "humiliating", "degrading",
-        "burden", "swallow my pride", "swallowed my pride",
-        "first time asking", "never done this before",
-        "never had to ask", "never asked for help",
-        "can't believe i'm", "cant believe im",
-        "can't afford to eat", "cant afford to eat",
-        "can't even feed", "cant even feed",
-        "don't want anyone to know", "dont want anyone to know",
-    ]
-    _msg_lower_tone = message.lower()
-    _is_shame = any(s in _msg_lower_tone for s in _SHAME_SIGNALS)
-
-    # Tone-based prefix
+    # --- Tone prefix for service-flow responses ---
     _is_service_flow = category == "service"
-    _tone_prefix = ""
-
-    # Medical urgency — running out of essential medication is medically
-    # dangerous. This fires when the message contains BOTH a medication
-    # depletion signal AND a medical keyword, preventing false positives
-    # on generic "ran out of" phrases.
-    _MEDICATION_DEPLETION = [
-        "ran out of", "run out of", "running out of", "out of my",
-        "don't have my", "dont have my", "lost my medication",
-        "lost my medicine",
-        "no more", "can't get my", "cant get my", "ran out of my",
-    ]
-    _MEDICATION_WORDS = [
-        "insulin", "medication", "medicine", "prescription",
-        "inhaler", "epipen", "pills", "meds",
-    ]
-    _is_medical_urgent = (
-        _is_service_flow
-        and any(s in _msg_lower_tone for s in _MEDICATION_DEPLETION)
-        and any(s in _msg_lower_tone for s in _MEDICATION_WORDS)
+    _tone_prefix, _emotional_context_update = _compute_tone_prefix(
+        message=message,
+        response_tone=_response_tone,
+        is_service_flow=_is_service_flow,
+        prior_emotional_context=existing.get("_emotional_context"),
     )
-
-    if _is_shame and _is_service_flow:
-        # Shame-specific normalizing prefix — NOT generic "I hear you"
-        _tone_prefix = "It takes real strength to reach out — a lot of people use these services, and there's no shame in it. "
-    elif _is_medical_urgent:
-        # Medical urgency — medication depletion needs a specific
-        # acknowledgment that the bot understands the medical seriousness,
-        # not just generic urgency ("I can see this is urgent").
-        _tone_prefix = "That sounds urgent — let me help you find care right away. "
-    elif _response_tone == "emotional" and _is_service_flow:
-        _tone_prefix = "I hear you, and I want to help. "
-    elif _response_tone == "frustrated" and _is_service_flow:
-        _tone_prefix = "I understand this has been frustrating. Let me try something different. "
-    elif _response_tone == "confused" and _is_service_flow:
-        _tone_prefix = "No worries — let me help you with that. "
-    elif _response_tone == "urgent" and _is_service_flow:
-        _tone_prefix = "I can see this is urgent — let me find something right away. "
-
-    # Check for emotional context from a previous turn in this session.
-    # When the user expressed emotion in an earlier message (e.g., "I'm really
-    # struggling and need food and shelter"), subsequent confirmations should
-    # stay warm instead of resetting to a cold default.
-    if not _tone_prefix and _is_service_flow:
-        _prior_emotion = existing.get("_emotional_context")
-        if _prior_emotion == "shame":
-            _tone_prefix = "Still here with you. "
-        elif _prior_emotion == "medical_urgent":
-            _tone_prefix = "Let's get you to the right place. "
-        elif _prior_emotion:
-            _tone_prefix = "I'm still here with you. "
-
-    # Baseline warmth: when no emotional/shame/urgent context was detected
-    # and it's a routine service flow, add a small warmth prefix to prevent
-    # the bot from feeling "functional but flat" (the tone=3 gap).
-    if not _tone_prefix and _is_service_flow:
-        _tone_prefix = random_warmth_prefix()
 
     # Persist emotional context for subsequent turns
-    if _is_shame:
-        merged["_emotional_context"] = "shame"
-    elif _is_medical_urgent:
-        merged["_emotional_context"] = "medical_urgent"
-    elif _response_tone == "emotional" and _is_service_flow:
-        merged["_emotional_context"] = "emotional"
+    if _emotional_context_update is not None:
+        merged["_emotional_context"] = _emotional_context_update
 
-    # Override casual tone for sensitive life situations (Run 24 eval fix)
-    # Also SET a prefix when tone=None but the message contains sensitive context.
-    _SENSITIVE_CONTEXT_RE = re.compile(
-        r"\b(foster care|aging out|aged out|fleeing|escaped|"
-        r"just got out of jail|just got out of prison|domestic violence)\b", re.I,
-    )
-    if _SENSITIVE_CONTEXT_RE.search(message):
-        _tone_prefix = "I understand this is a difficult situation. Let me help. "
-        merged["_emotional_context"] = "sensitive"
-
-    # Re-save if emotional context was set after the initial save (line 1113).
+    # Re-save if emotional context was set after the initial save.
     # Without this, emotional context is lost on the follow-up path where
     # save_session_slots isn't called again before returning.
     if merged.get("_emotional_context") and not existing.get("_emotional_context"):
@@ -1504,46 +826,829 @@ def generate_reply(
         _log_turn(session_id, redacted_message, result, "service", request_id=request_id, tone=tone)
         return result
 
-    # --- General conversation ---
-    _CASUAL_CHAT_RE = re.compile(
-        r"\b(how are you|how's it going|hows it going|what's up|whats up|"
-        r"hey there|just (wanted to|wanna) (chat|talk)|having a good day|"
-        r"good morning|good afternoon|good evening|how you doing|"
-        r"what are you up to|how do you do)\b", re.I
+    # --- General conversation / unrecognized service ---
+    return _handle_general_conversation(
+        session_id, message, redacted_message, merged,
+        _confidence, tone, request_id,
     )
-    _is_casual_chat = bool(_CASUAL_CHAT_RE.search(message))
 
-    _need_re = re.compile(
-        r"\b(?:i need|i want|can you find|looking for|help me find|"
-        r"get me|find me|i'm looking for|im looking for)\b",
-        re.I,
+
+# ---------------------------------------------------------------------------
+# HANDLER HELPERS (extracted from generate_reply for readability)
+# ---------------------------------------------------------------------------
+
+# Phrases that count as a user declining to share demographic info.
+_DEMOGRAPHIC_SKIP_PHRASES = (
+    "i'd rather not say", "id rather not say", "i would rather not say",
+    "rather not say", "prefer not to say", "prefer not to",
+    "skip", "skip this", "don't want to say", "dont want to say",
+    "none of your business", "that's personal", "thats personal",
+    "pass",
+)
+
+# Phrases indicating the user doesn't know their location (triggers
+# the location-picker fallback).
+_LOCATION_UNKNOWN_PHRASES = (
+    "i don't know", "i dont know", "idk", "not sure", "i'm not sure",
+    "im not sure", "no idea", "don't know", "dont know",
+    "i don't know where i am", "i dont know where i am",
+    "not sure where i am", "don't know where i am",
+    "dont know where i am", "no clue",
+    "anywhere", "wherever", "doesn't matter", "doesnt matter",
+    "it doesn't matter", "it doesnt matter",
+    "where i am",
+)
+_LOCATION_UNKNOWN_EXACT = ("here", "right here")
+
+# Words that signal the help-intent message is actually a shame/vulnerability
+# disclosure rather than a "what can you do?" question.
+_SHAME_HELP_SIGNALS = (
+    "embarrassed", "ashamed", "pathetic", "humiliating",
+    "hard to ask", "hard for me", "hate asking", "hate to ask",
+    "difficult to ask", "burden", "swallow my pride",
+)
+
+
+def _handle_help(session_id, message, redacted_message, existing,
+                 response_tone, category, tone, request_id):
+    """Show the service-menu help response.
+
+    Two variants: if the user is expressing shame around asking ("I'm
+    embarrassed to ask for help"), this routes to the emotional handler
+    instead. Confused or emotional callers get a lead-in that acknowledges
+    the overwhelm before the menu.
+    """
+    # Shame + help: vulnerability disclosure masquerading as a help request.
+    # Route to emotional handler with the shame-specific response.
+    if response_tone == "emotional":
+        help_lower = message.lower()
+        if any(s in help_lower for s in _SHAME_HELP_SIGNALS):
+            response = _pick_emotional_response(message)
+            existing["_last_action"] = "emotional"
+            existing["_emotional_context"] = "shame"
+            save_session_slots(session_id, existing)
+            result = _empty_reply(
+                session_id, response, existing,
+                quick_replies=[
+                    {"label": "🤝 Peer navigator", "value": "Connect with peer navigator"},
+                ],
+            )
+            _log_turn(session_id, redacted_message, result, "emotional",
+                      request_id=request_id, tone=tone)
+            return result
+
+    # When the user is confused or emotional AND asking for help,
+    # lead with empathy before showing the service menu.
+    if response_tone in ("confused", "emotional"):
+        help_msg = (
+            "I hear you — it can feel overwhelming when you don't know "
+            "where to start. Let's take it one step at a time. "
+            "Here's what I can help you find:"
+        )
+    else:
+        help_msg = _HELP_RESPONSE
+    result = _empty_reply(
+        session_id, help_msg, existing,
+        quick_replies=list(_WELCOME_QUICK_REPLIES),
     )
-    _is_service_request_pattern = bool(_need_re.search(message))
-    _has_unrecognized_need = (
-        _is_service_request_pattern
+    _log_turn(session_id, redacted_message, result, category, request_id=request_id, tone=tone)
+    return result
+
+
+def _handle_bot_identity(session_id, redacted_message, existing, category, tone, request_id):
+    """Answer "are you a bot?" / "who are you?" with the standard identity line."""
+    result = _empty_reply(
+        session_id, _BOT_IDENTITY_RESPONSE, existing,
+        quick_replies=[
+            {"label": "🔍 New search", "value": "Start over"},
+            {"label": "🤝 Peer navigator", "value": "Connect with peer navigator"},
+        ],
+    )
+    _log_turn(session_id, redacted_message, result, category, request_id=request_id, tone=tone)
+    return result
+
+
+def _handle_bot_capability_question(session_id, message, redacted_message, existing,
+                                    category, tone, request_id):
+    """Answer "what can you do?" / "can you find X?" — tries bot_knowledge first,
+    then LLM, then a static fallback."""
+    from app.services.bot_knowledge import answer_question
+    static_answer = answer_question(message)
+    if static_answer:
+        response = static_answer
+    elif _USE_LLM:
+        try:
+            prompt = _build_bot_question_prompt(message, slots=existing)
+            response = claude_reply(prompt)
+        except Exception as e:
+            logger.error(f"Bot question LLM response failed: {e}")
+            response = _static_bot_answer(message)
+    else:
+        response = _static_bot_answer(message)
+    result = _empty_reply(session_id, response, existing)
+    _log_turn(session_id, redacted_message, result, category, request_id=request_id, tone=tone)
+    return result
+
+
+def _handle_demographic_skip(session_id, message, redacted_message, existing,
+                             tone, request_id):
+    """If a demographic question is pending and the user declined, mark the
+    slots "skipped" and proceed to confirmation.
+
+    Returns a result dict if the skip pattern fired, None otherwise.
+    """
+    skip_lower = message.lower().strip()
+    is_skip = (
+        any(p in skip_lower for p in _DEMOGRAPHIC_SKIP_PHRASES)
+        or skip_lower in ("skip", "pass")
+    )
+    is_demographic_pending = (
+        existing.get("service_type")
+        and existing.get("location")
+        and not existing.get("_pending_confirmation")
+        and (not existing.get("age") or not existing.get("family_status"))
+    )
+    if not (is_skip and is_demographic_pending):
+        return None
+
+    # Mark skipped demographics so we don't re-ask
+    if not existing.get("age"):
+        existing["age"] = "skipped"
+    if not existing.get("family_status"):
+        existing["family_status"] = "skipped"
+    save_session_slots(session_id, existing)
+
+    # Proceed to confirmation with what we have
+    existing["_pending_confirmation"] = True
+    save_session_slots(session_id, existing)
+    confirm_msg = "No problem at all. " + _build_confirmation_message(existing)
+    result = {
+        "session_id": session_id,
+        "response": confirm_msg,
+        "follow_up_needed": True,
+        "slots": existing,
+        "services": [],
+        "result_count": 0,
+        "relaxed_search": False,
+        "quick_replies": _confirmation_quick_replies(existing),
+    }
+    _log_turn(session_id, redacted_message, result, "demographic_skip",
+              request_id=request_id, tone=tone)
+    return result
+
+
+def _handle_location_unknown(session_id, message, redacted_message, existing,
+                             tone, request_id):
+    """If the user has a service_type but no location, and replied with an
+    "I don't know" phrase, offer the geolocation+borough picker.
+
+    Returns a result dict if the pattern fired, None otherwise.
+    """
+    msg_lower = message.lower().strip()
+    is_location_unknown = (
+        any(p in msg_lower for p in _LOCATION_UNKNOWN_PHRASES)
+        or msg_lower in _LOCATION_UNKNOWN_EXACT
+    )
+    needs_location_picker = (
+        existing.get("service_type")
+        and not existing.get("location")
+        and not existing.get("_pending_confirmation")
+        and is_location_unknown
+    )
+    if not needs_location_picker:
+        return None
+
+    result = _empty_reply(
+        session_id,
+        "No problem! You can share your location and I'll find what's "
+        "nearby, or pick a borough:",
+        existing,
+        quick_replies=[
+            {"label": "📍 Use my location", "value": "__use_geolocation__"},
+            {"label": "Manhattan", "value": "Manhattan"},
+            {"label": "Brooklyn", "value": "Brooklyn"},
+            {"label": "Queens", "value": "Queens"},
+            {"label": "Bronx", "value": "Bronx"},
+            {"label": "Staten Island", "value": "Staten Island"},
+        ],
+    )
+    _log_turn(session_id, redacted_message, result, "location_unknown",
+              request_id=request_id, tone=tone)
+    return result
+
+
+# Common Spanish phrases that should trigger a bilingual acknowledgment.
+# SAMHSA Cultural Humility: acknowledge the language gap rather than
+# returning silence or an English-only response.
+_SPANISH_RE = re.compile(
+    r"\b(necesito|ayuda|comida|refugio|albergue|por favor|"
+    r"no hablo ingles|no hablo inglés|hola|buenos dias|"
+    r"buenas tardes|buenas noches|tengo hambre|"
+    r"necesito ayuda|donde puedo|dónde puedo)\b", re.I,
+)
+
+
+def _handle_spanish_detection(session_id, message, redacted_message, existing,
+                              has_service_intent, tone, request_id):
+    """Detect Spanish phrases and either return a bilingual response outright
+    (Spanish-only message) or return an acknowledgment prefix to prepend to
+    the downstream response (Spanish + service request).
+
+    Returns (result, acknowledgment_prefix) where exactly one is non-empty:
+      - result is non-None when we've fully answered (no fallthrough needed)
+      - acknowledgment_prefix is non-empty when the caller should continue
+        processing and prepend the prefix to its eventual response
+    """
+    if not _SPANISH_RE.search(message):
+        return None, ""
+
+    if not has_service_intent:
+        # Spanish only, no service request — return bilingual message
+        result = _empty_reply(
+            session_id,
+            "I'm sorry — right now I can only help in English. "
+            "A peer navigator may be able to help in Spanish.\n\n"
+            "Lo siento — por ahora solo puedo ayudar en inglés. "
+            "Un navegador comunitario puede ayudarte en español.",
+            existing,
+            quick_replies=[
+                {"label": "🤝 Peer navigator", "value": "Connect with peer navigator"},
+            ],
+        )
+        _log_turn(session_id, redacted_message, result, "spanish_detected",
+                  request_id=request_id, tone=tone)
+        return result, ""
+
+    # Spanish + service intent — process normally with a bilingual prefix
+    acknowledgment = (
+        "I can see you may prefer Spanish — lo siento, por ahora "
+        "solo puedo ayudar en inglés. I'll do my best to help.\n\n"
+    )
+    return None, acknowledgment
+
+
+def _handle_confused(session_id, redacted_message, existing, category, tone, request_id):
+    """Acknowledge overwhelm with the standard confused response and mark
+    _last_action so a follow-up 'yes' / 'no' is interpreted in this context."""
+    existing["_last_action"] = "confused"
+    save_session_slots(session_id, existing)
+    result = _empty_reply(
+        session_id, _CONFUSED_RESPONSE, existing,
+        quick_replies=list(_WELCOME_QUICK_REPLIES) + [
+            {"label": "🤝 Peer navigator", "value": "Connect with peer navigator"},
+        ],
+    )
+    _log_turn(session_id, redacted_message, result, category, request_id=request_id, tone=tone)
+    return result
+
+
+def _handle_emotional(session_id, message, redacted_message, existing,
+                      category, tone, request_id):
+    """Empathic response picked to match the detected emotional signal.
+    Marks _last_action so a follow-up 'yes' is interpreted as asking for
+    the peer-navigator handoff."""
+    response = _pick_emotional_response(message)
+    existing["_last_action"] = "emotional"
+    save_session_slots(session_id, existing)
+    result = _empty_reply(
+        session_id, response, existing,
+        quick_replies=[
+            {"label": "🤝 Peer navigator", "value": "Connect with peer navigator"},
+        ],
+    )
+    _log_turn(session_id, redacted_message, result, category, request_id=request_id, tone=tone)
+    return result
+
+
+def _handle_escalation(session_id, redacted_message, existing, category, tone, request_id):
+    """User explicitly asked for human help. Clear any pending confirmation
+    (so a trailing 'yes' doesn't fire a search the user abandoned) and offer
+    peer navigator + start-over."""
+    if existing.get("_pending_confirmation"):
+        existing.pop("_pending_confirmation", None)
+    existing["_last_action"] = "escalation"
+    save_session_slots(session_id, existing)
+    result = _empty_reply(
+        session_id, _ESCALATION_RESPONSE, existing,
+        quick_replies=[
+            {"label": "🔍 New search", "value": "Start over"},
+            {"label": "👤 Talk to a person", "value": "Connect with person"},
+        ],
+    )
+    _log_turn(session_id, redacted_message, result, category, request_id=request_id, tone=tone)
+    return result
+
+
+# Phrases indicating shame/vulnerability disclosure. When these co-occur with
+# a service request, a normalizing prefix ("It takes real strength…") is
+# prepended instead of a generic empathy line.
+_SHAME_SIGNALS = (
+    "embarrassed", "ashamed", "pathetic", "failure",
+    "never thought i'd need", "never thought id need",
+    "hard for me to say", "hard to say", "hard for me to ask",
+    "hard to ask", "hard to admit",
+    "difficult to ask", "difficult to say",
+    "hate asking", "hate to ask", "hate having to ask",
+    "humiliating", "degrading",
+    "burden", "swallow my pride", "swallowed my pride",
+    "first time asking", "never done this before",
+    "never had to ask", "never asked for help",
+    "can't believe i'm", "cant believe im",
+    "can't afford to eat", "cant afford to eat",
+    "can't even feed", "cant even feed",
+    "don't want anyone to know", "dont want anyone to know",
+)
+
+# Medical urgency requires BOTH a depletion signal AND a medical keyword
+# to fire, avoiding false positives on generic "ran out of" phrases.
+_MEDICATION_DEPLETION = (
+    "ran out of", "run out of", "running out of", "out of my",
+    "don't have my", "dont have my", "lost my medication",
+    "lost my medicine",
+    "no more", "can't get my", "cant get my", "ran out of my",
+)
+_MEDICATION_WORDS = (
+    "insulin", "medication", "medicine", "prescription",
+    "inhaler", "epipen", "pills", "meds",
+)
+
+# Sensitive life-situation phrases that override casual tone (e.g. a user
+# writing "just got out of jail, need a shower" should not get a cheerful
+# baseline-warmth opener).
+_SENSITIVE_CONTEXT_RE = re.compile(
+    r"\b(foster care|aging out|aged out|fleeing|escaped|"
+    r"just got out of jail|just got out of prison|domestic violence)\b", re.I,
+)
+
+
+def _compute_tone_prefix(
+    message: str,
+    response_tone: str | None,
+    is_service_flow: bool,
+    prior_emotional_context: str | None,
+) -> tuple[str, str | None]:
+    """Compute the opening phrase for a service-flow response based on tone.
+
+    **Precedence (load-bearing):**
+
+    1. Sensitive context (foster care, fleeing, just got out of jail) —
+       overrides everything else with a specific acknowledgment. Must come
+       last in the function so it can override an already-set prefix.
+    2. Shame disclosure + service flow → normalizing prefix.
+    3. Medical urgency (depletion + meds keyword) + service flow →
+       "That sounds urgent — let me help you find care right away."
+    4. Emotional / frustrated / confused / urgent tone + service flow →
+       matching empathic prefix.
+    5. Prior emotional context (set on a previous turn this session) →
+       continuity prefix ("Still here with you.").
+    6. Baseline warmth (routine service flow with no emotional signal) →
+       randomly selected warm opener.
+
+    Returns (prefix, emotional_context) where ``prefix`` is the string to
+    prepend (empty string if none) and ``emotional_context`` is what the
+    caller should save to ``merged["_emotional_context"]`` for use on the
+    next turn (None = don't change).
+    """
+    msg_lower = message.lower()
+    is_shame = any(s in msg_lower for s in _SHAME_SIGNALS)
+    is_medical_urgent = (
+        is_service_flow
+        and any(s in msg_lower for s in _MEDICATION_DEPLETION)
+        and any(s in msg_lower for s in _MEDICATION_WORDS)
+    )
+
+    prefix = ""
+    emotional_context: str | None = None
+
+    if is_shame and is_service_flow:
+        prefix = (
+            "It takes real strength to reach out — a lot of people use "
+            "these services, and there's no shame in it. "
+        )
+        emotional_context = "shame"
+    elif is_medical_urgent:
+        prefix = "That sounds urgent — let me help you find care right away. "
+        emotional_context = "medical_urgent"
+    elif response_tone == "emotional" and is_service_flow:
+        prefix = "I hear you, and I want to help. "
+        emotional_context = "emotional"
+    elif response_tone == "frustrated" and is_service_flow:
+        prefix = "I understand this has been frustrating. Let me try something different. "
+    elif response_tone == "confused" and is_service_flow:
+        prefix = "No worries — let me help you with that. "
+    elif response_tone == "urgent" and is_service_flow:
+        prefix = "I can see this is urgent — let me find something right away. "
+
+    # Continuity: prior emotional context from earlier in the session
+    if not prefix and is_service_flow and prior_emotional_context:
+        if prior_emotional_context == "shame":
+            prefix = "Still here with you. "
+        elif prior_emotional_context == "medical_urgent":
+            prefix = "Let's get you to the right place. "
+        else:
+            prefix = "I'm still here with you. "
+
+    # Baseline warmth: prevent "functional but flat" tone on routine turns
+    if not prefix and is_service_flow:
+        prefix = random_warmth_prefix()
+
+    # Sensitive context OVERRIDES everything — applied last
+    if _SENSITIVE_CONTEXT_RE.search(message):
+        prefix = "I understand this is a difficult situation. Let me help. "
+        emotional_context = "sensitive"
+
+    return prefix, emotional_context
+
+
+# Patterns that mark a message as casual small talk rather than a service query.
+_CASUAL_CHAT_RE = re.compile(
+    r"\b(how are you|how's it going|hows it going|what's up|whats up|"
+    r"hey there|just (wanted to|wanna) (chat|talk)|having a good day|"
+    r"good morning|good afternoon|good evening|how you doing|"
+    r"what are you up to|how do you do)\b", re.I,
+)
+
+# Service-need markers used to distinguish "I need help" (user asking for
+# something specific we might not offer) from general conversation.
+_SERVICE_NEED_RE = re.compile(
+    r"\b(?:i need|i want|can you find|looking for|help me find|"
+    r"get me|find me|i'm looking for|im looking for)\b",
+    re.I,
+)
+
+_CASUAL_RESPONSES = (
+    "I'm doing well, thanks for asking! I'm here whenever you need me.",
+    "Hey! Just here and ready to help whenever you are.",
+    "Doing good! Let me know if there's anything I can help you find.",
+)
+
+
+def _handle_post_results_interaction(
+    session_id: str,
+    message: str,
+    redacted_message: str,
+    existing: dict,
+    early_extracted: dict,
+    has_service_intent: bool,
+    action_pre: str | None,
+    tone: str | None,
+    request_id: str | None,
+) -> dict | None:
+    """Handle follow-up messages after results have been shown.
+
+    This runs BEFORE the routing cascade — it catches "show more," sort
+    requests, questions about specific results, and confirm_yes/confirm_deny
+    that would otherwise fall through to extraction and re-trigger the same
+    search. When the user has instead started a new search (new service
+    intent, or a confirmation action), it clears the stale result state so
+    the routing cascade can handle the new intent cleanly.
+
+    Returns a result dict if a post-results interaction fired, ``None`` if
+    the caller should continue to the normal routing cascade. May mutate
+    ``existing`` (pops ``_last_results`` / ``_last_action`` and saves).
+    """
+    last_results = existing.get("_last_results")
+    is_confirmation_action = action_pre in (
+        "confirm_change_service", "confirm_change_location",
+        "confirm_yes", "confirm_deny", "reset", "greeting",
+    )
+
+    # confirm_yes / confirm_deny after results when no pending confirmation.
+    # Without this, those messages fall through to extraction and re-trigger
+    # the same search.
+    # Guard: when the message ALSO contains a new service intent (e.g.
+    # "Search for employment in Manhattan"), the new intent should override
+    # the confirm action. Without this guard, "search for" matches
+    # confirm_yes and the user's new request gets swallowed.
+    if (last_results
+            and action_pre in ("confirm_yes", "confirm_deny")
+            and not existing.get("_pending_confirmation")
+            and not existing.get("_queue_offer_pending")
+            and not existing.get("_queued_services")
+            and not existing.get("_last_action")
+            and not has_service_intent):
+
+        if action_pre == "confirm_yes":
+            existing.pop("_last_results", None)
+            save_session_slots(session_id, existing)
+            result = _empty_reply(
+                session_id,
+                "I've already shown the results above — you can tap on any "
+                "service card for more details. Would you like to search for "
+                "something else?",
+                existing,
+                quick_replies=[
+                    {"label": "🔍 New search", "value": "Start over"},
+                    {"label": "🤝 Peer navigator", "value": "Connect with peer navigator"},
+                ],
+            )
+            _log_turn(session_id, redacted_message, result, "post_results_confirm",
+                      request_id=request_id, tone=tone)
+            return result
+
+        # confirm_deny
+        existing.pop("_last_results", None)
+        save_session_slots(session_id, existing)
+        result = _empty_reply(
+            session_id,
+            "No problem! Let me know if you need anything else.",
+            existing,
+            quick_replies=list(_WELCOME_QUICK_REPLIES),
+        )
+        _log_turn(session_id, redacted_message, result, "post_results_decline",
+                  request_id=request_id, tone=tone)
+        return result
+
+    if last_results and not has_service_intent and not is_confirmation_action:
+        # Clear stale _last_action: if the user is interacting with
+        # results (asking questions, sorting, paginating), any prior
+        # emotional/escalation/crisis context is no longer relevant.
+        if existing.get("_last_action"):
+            existing.pop("_last_action", None)
+            save_session_slots(session_id, existing)
+
+        is_frustration_or_rejection = (
+            tone == "frustrated"
+            or action_pre == "negative_preference"
+            or action_pre == "correction"
+        )
+        if is_frustration_or_rejection:
+            existing.pop("_last_results", None)
+            save_session_slots(session_id, existing)
+        elif early_extracted.get("location"):
+            existing.pop("_last_results", None)
+            save_session_slots(session_id, existing)
+        else:
+            # "Show all results" / "Show more results"
+            show_result = _handle_show_more(
+                session_id, message, redacted_message, existing,
+                last_results, request_id,
+            )
+            if show_result:
+                return show_result
+
+            # Sort options
+            sort_result = _handle_sort_results(
+                session_id, message, redacted_message, existing,
+                last_results, request_id,
+            )
+            if sort_result:
+                return sort_result
+
+            # Questions about specific results
+            post_intent_result = _handle_post_results_question(
+                session_id, message, redacted_message, existing,
+                last_results, request_id,
+            )
+            if post_intent_result:
+                return post_intent_result
+
+    if last_results and (has_service_intent or is_confirmation_action):
+        existing.pop("_last_results", None)
+        # When results were already shown and the user asks for something
+        # new, treat it as a fresh search — clear the old service slots so
+        # they don't compound with the new request. Multi-service should
+        # only happen within a single message or before results.
+        if has_service_intent:
+            existing.pop("service_type", None)
+            existing.pop("service_detail", None)
+            existing.pop("_queued_services", None)
+            existing.pop("_queued_services_original", None)
+            existing.pop("_queue_offer_pending", None)
+            existing.pop("_pending_confirmation", None)
+            existing.pop("_displayed_count", None)
+        save_session_slots(session_id, existing)
+
+    return None
+
+
+# Phrases that request pagination of prior results.
+_SHOW_MORE_PATTERNS = (
+    "show all results", "show results", "show all",
+    "show more results", "show more", "more results",
+    "any others", "what else", "next results",
+    "any more", "see more",
+)
+
+
+def _handle_show_more(session_id, message, redacted_message, existing,
+                      last_results, request_id):
+    """Handle 'show more results' / 'show all' after results were displayed."""
+    if message.lower().strip() not in _SHOW_MORE_PATTERNS:
+        return None
+
+    displayed = existing.get("_displayed_count", 0)
+    if displayed and displayed < len(last_results):
+        # Show the next page of results (not all remaining)
+        next_page = last_results[displayed:displayed + _DISPLAY_PAGE_SIZE]
+        new_displayed = displayed + len(next_page)
+        existing["_displayed_count"] = new_displayed
+        save_session_slots(session_id, existing)
+
+        still_remaining = len(last_results) - new_displayed
+        qr = [
+            {"label": "🔍 New search", "value": "Start over"},
+            {"label": "🤝 Peer navigator", "value": "Connect with peer navigator"},
+        ]
+        if still_remaining > 0:
+            remaining_locs = _count_unique_locations(
+                last_results[new_displayed:new_displayed + _DISPLAY_PAGE_SIZE]
+            )
+            qr.insert(0, {
+                "label": f"📋 Show {remaining_locs} more result{'s' if remaining_locs != 1 else ''}",
+                "value": "Show more results",
+            })
+
+        page_loc_count = _count_unique_locations(next_page)
+        result = {
+            "session_id": session_id,
+            "response": f"Here are {page_loc_count} more result{'s' if page_loc_count != 1 else ''}:",
+            "follow_up_needed": False,
+            "slots": existing,
+            "services": next_page,
+            "result_count": page_loc_count,
+            "relaxed_search": False,
+            "quick_replies": qr,
+        }
+    else:
+        # No more to show — re-display all
+        result = {
+            "session_id": session_id,
+            "response": "Here are all the results again:",
+            "follow_up_needed": False,
+            "slots": existing,
+            "services": last_results,
+            "result_count": len(last_results),
+            "relaxed_search": False,
+            "quick_replies": [
+                {"label": "🔍 New search", "value": "Start over"},
+                {"label": "🤝 Peer navigator", "value": "Connect with peer navigator"},
+            ],
+        }
+    _log_turn(session_id, redacted_message, result, "post_results", request_id=request_id)
+    return result
+
+
+# Sort-mode phrases → internal sort key.
+_SORT_PATTERNS = {
+    "sort by recently verified": "verified",
+    "sort by recently updated": "verified",
+    "sort by newest": "verified",
+    "sort by most services": "services",
+    "most services": "services",
+}
+
+
+def _handle_sort_results(session_id, message, redacted_message, existing,
+                         last_results, request_id):
+    """Handle 'sort by recently verified' / 'most services' requests."""
+    sort_key = _SORT_PATTERNS.get(message.lower().strip())
+    if not (sort_key and last_results):
+        return None
+
+    if sort_key == "verified":
+        sorted_results = sorted(
+            last_results,
+            key=lambda s: s.get("last_validated_at") or "",
+            reverse=True,
+        )
+    else:  # "services"
+        sorted_results = sorted(
+            last_results,
+            key=lambda s: len(s.get("also_available") or []),
+            reverse=True,
+        )
+    existing["_last_results"] = sorted_results
+    sort_page = sorted_results[:_DISPLAY_PAGE_SIZE]
+    existing["_displayed_count"] = len(sort_page)
+    save_session_slots(session_id, existing)
+
+    sort_remaining = len(sorted_results) - len(sort_page)
+    sort_qr = [
+        {"label": "🔍 New search", "value": "Start over"},
+        {"label": "🤝 Peer navigator", "value": "Connect with peer navigator"},
+    ]
+    if sort_remaining > 0:
+        next_sort_page = sorted_results[len(sort_page):len(sort_page) + _DISPLAY_PAGE_SIZE]
+        show_next = _count_unique_locations(next_sort_page)
+        sort_qr.insert(0, {
+            "label": f"📋 Show {show_next} more result{'s' if show_next != 1 else ''}",
+            "value": "Show more results",
+        })
+
+    sort_label = "most recently verified" if sort_key == "verified" else "most services at location"
+    result = {
+        "session_id": session_id,
+        "response": f"Here are the results sorted by {sort_label}:",
+        "follow_up_needed": False,
+        "slots": existing,
+        "services": sort_page,
+        "result_count": len(sort_page),
+        "relaxed_search": False,
+        "quick_replies": sort_qr,
+    }
+    _log_turn(session_id, redacted_message, result, "post_results", request_id=request_id)
+    return result
+
+
+def _handle_post_results_question(session_id, message, redacted_message, existing,
+                                  last_results, request_id):
+    """Handle questions about specific results ('what are the hours', 'tell me
+    about the second one', etc.) after results were displayed."""
+    post_intent = classify_post_results_question(message)
+    if post_intent is None:
+        return None
+
+    # Day-specific hours — requires DB lookup
+    if post_intent.get("type") == "ask_hours_day":
+        result = _handle_hours_for_day(
+            session_id, existing, last_results, post_intent, redacted_message, request_id
+        )
+        if result:
+            return result
+
+    pr = answer_from_results(
+        post_intent,
+        last_results,
+        existing.get("_displayed_count", len(last_results)),
+    )
+    if pr is not None:
+        result = {
+            "session_id": session_id,
+            "response": pr["response"],
+            "follow_up_needed": False,
+            "slots": existing,
+            "services": pr.get("services", []),
+            "result_count": len(pr.get("services", [])),
+            "relaxed_search": False,
+            "quick_replies": pr.get("quick_replies", []),
+        }
+        _log_turn(session_id, redacted_message, result, "post_results", request_id=request_id)
+        return result
+
+    if post_intent.get("type") == "specific_name":
+        query = post_intent.get("query", "that")
+        result = _empty_reply(
+            session_id,
+            "I'm not sure if you're asking about the results "
+            "I showed, or if you'd like to search for "
+            "something new. Which would you prefer?",
+            existing,
+            quick_replies=[
+                {"label": f"🔍 Search for {query}", "value": f"I need {query}"},
+                {"label": "📋 More about results", "value": "Tell me about the first one"},
+                {"label": "🔍 New search", "value": "Start over"},
+            ],
+        )
+        _log_turn(session_id, redacted_message, result, "disambiguation",
+                  request_id=request_id, confidence="disambiguated")
+        return result
+
+    return None
+
+
+def _handle_general_conversation(session_id, message, redacted_message, merged,
+                                 confidence, tone, request_id):
+    """Handle general chat / unrecognized service requests with tiered
+    escalation.
+
+    Three cases:
+
+    1. User asks for something specific we can't help with ("I need a job")
+       → tiered redirect: tier 1 says what we DO cover, tier 2 adds peer
+       navigator, tier 3 goes straight to navigator.
+    2. User sends casual chat ("how are you?") → rotating friendly reply.
+    3. Anything else → fallback response, optionally with a low-confidence
+       peer-navigator offer.
+    """
+    is_casual_chat = bool(_CASUAL_CHAT_RE.search(message))
+    is_service_request_pattern = bool(_SERVICE_NEED_RE.search(message))
+    has_unrecognized_need = (
+        is_service_request_pattern
         and not merged.get("service_type")
-        and not _is_casual_chat
+        and not is_casual_chat
     )
-    if (_has_unrecognized_need
+
+    if (has_unrecognized_need
             or (merged.get("location")
                 and not merged.get("service_type")
                 and len(merged.get("transcript", [])) >= 2)):
         # Track repeated unrecognized requests for response variation
-        _unrec_count = merged.get("_unrecognized_count", 0) + 1
-        merged["_unrecognized_count"] = _unrec_count
+        unrec_count = merged.get("_unrecognized_count", 0) + 1
+        merged["_unrecognized_count"] = unrec_count
         save_session_slots(session_id, merged)
 
         location_label = merged.get("location") or "your area"
         if location_label == NEAR_ME_SENTINEL:
             location_label = "your area"
-        if _unrec_count >= 3:
+        if unrec_count >= 3:
             # Tier 3: direct to navigator
             response = (
                 "I'm limited to social services and can't help with that. "
                 "A peer navigator might be able to point you in the right direction."
             )
             qr = [{"label": "🤝 Peer navigator", "value": "Connect with peer navigator"}]
-        elif _unrec_count >= 2:
+        elif unrec_count >= 2:
             # Tier 2: shorter, stronger navigator recommendation
             response = (
                 "I understand that's what you're looking for, but I'm limited "
@@ -1570,20 +1675,15 @@ def generate_reply(
                   request_id=request_id, tone=tone, confidence="low")
         return result
 
-    if _is_casual_chat:
-        _CASUAL_RESPONSES = [
-            "I'm doing well, thanks for asking! I'm here whenever you need me.",
-            "Hey! Just here and ready to help whenever you are.",
-            "Doing good! Let me know if there's anything I can help you find.",
-        ]
-        _idx = len(merged.get("transcript", [])) % len(_CASUAL_RESPONSES)
-        response = _CASUAL_RESPONSES[_idx]
+    if is_casual_chat:
+        idx = len(merged.get("transcript", [])) % len(_CASUAL_RESPONSES)
+        response = _CASUAL_RESPONSES[idx]
     else:
         response = _fallback_response(message, merged)
         # Cultural humility: when the bot can't understand what the user
         # needs (low confidence), acknowledge the limitation rather than
         # pretending the generic response is adequate.
-        if _confidence == "low" and not merged.get("service_type"):
+        if confidence == "low" and not merged.get("service_type"):
             response += (
                 "\n\nIf I'm missing something important about what you need, "
                 "a peer navigator can help — they're real people who know "
@@ -1591,23 +1691,360 @@ def generate_reply(
             )
 
     has_service_intent = bool(merged.get("service_type") or merged.get("location"))
-    _general_qr = []
-    if not has_service_intent and len(merged.get("transcript", [])) <= 1 and not _is_casual_chat:
-        _general_qr = list(_WELCOME_QUICK_REPLIES)
-    if _confidence in ("medium", "low"):
-        _general_qr.append({"label": "❌ Not what I meant", "value": "not what I meant"})
+    general_qr = []
+    if not has_service_intent and len(merged.get("transcript", [])) <= 1 and not is_casual_chat:
+        general_qr = list(_WELCOME_QUICK_REPLIES)
+    if confidence in ("medium", "low"):
+        general_qr.append({"label": "❌ Not what I meant", "value": "not what I meant"})
     result = _empty_reply(
         session_id, response, merged,
-        quick_replies=_general_qr,
+        quick_replies=general_qr,
     )
     _log_turn(session_id, redacted_message, result, "general",
-              request_id=request_id, tone=tone, confidence=_confidence)
+              request_id=request_id, tone=tone, confidence=confidence)
     return result
 
 
-# ---------------------------------------------------------------------------
-# HANDLER HELPERS (extracted from generate_reply for readability)
-# ---------------------------------------------------------------------------
+def _handle_post_pending_confirmation(session_id, message, redacted_message, existing,
+                                      response_tone, tone, request_id):
+    """Handle messages that arrive while a confirmation was pending, after
+    ``_handle_pending_confirmation`` has already had a chance to match a
+    direct yes/no/change.
+
+    Three paths:
+
+    1. **Contradiction** — a slot CHANGED (old → new value). The user is
+       correcting their search; auto-execute with an acknowledgment prefix.
+    2. **Slot fill** — a slot FILLED (None → new value). The user already
+       confirmed and is just providing the missing piece; auto-execute
+       without re-confirmation.
+    3. **No new info** — re-nudge with a tone-matched confirmation prompt.
+
+    Returns a result dict in all three cases.
+    """
+    existing.pop("_pending_confirmation", None)
+    if _USE_LLM:
+        pending_extracted = extract_slots_smart(
+            message,
+            conversation_history=existing.get("transcript", []),
+        )
+    else:
+        pending_extracted = extract_slots(message)
+    pending_has_new = any(v is not None and v != [] for k, v in pending_extracted.items()
+                          if k not in ("additional_services", "_populations", "_contradiction"))
+
+    # Path 1+2: something changed or filled
+    if pending_has_new:
+        _SLOT_KEYS = ("service_type", "location", "age", "_gender", "family_status")
+        changed = {
+            k: pending_extracted[k]
+            for k in _SLOT_KEYS
+            if pending_extracted.get(k) is not None
+            and existing.get(k) is not None
+            and pending_extracted[k] != existing[k]
+        }
+        if changed:
+            # Path 1: contradiction detected
+            merged_pending = merge_slots(existing, pending_extracted)
+            if is_enough_to_answer(merged_pending):
+                logger.info(
+                    f"[{session_id}] Contradiction during confirmation: "
+                    f"{changed} — auto-executing"
+                )
+                save_session_slots(session_id, merged_pending)
+                result = _execute_and_respond(
+                    session_id, message, merged_pending, request_id=request_id
+                )
+                # Prepend acknowledgment of the change
+                changes = []
+                if "service_type" in changed:
+                    changes.append(
+                        _SERVICE_LABELS.get(changed["service_type"], changed["service_type"])
+                    )
+                if "location" in changed:
+                    changes.append(changed["location"])
+                prefix = f"Got it — switching to {', '.join(changes)}. " if changes else ""
+                result["response"] = prefix + result["response"]
+                _log_turn(
+                    session_id, redacted_message, result,
+                    "contradiction_auto_execute", request_id=request_id, tone=tone,
+                )
+                return result
+
+        # Path 2: slot fill after user already confirmed. The contradiction
+        # check above fires only on VALUE CHANGES (old → new). This handles
+        # FILLS (None → new) — e.g. crisis step-down "Yes, search" → location
+        # follow-up → user provides location. They already said yes; they're
+        # just providing the missing piece, not requesting a new search.
+        if not changed:
+            merged_pending = merge_slots(existing, pending_extracted)
+            geolocation_fill = (
+                merged_pending.get("location") == NEAR_ME_SENTINEL
+                and merged_pending.get("_latitude") is not None
+                and merged_pending.get("_longitude") is not None
+            )
+            if is_enough_to_answer(merged_pending) or geolocation_fill:
+                logger.info(
+                    f"[{session_id}] Slot fill after confirmation — auto-executing"
+                )
+                save_session_slots(session_id, merged_pending)
+                result = _execute_and_respond(
+                    session_id, message, merged_pending, request_id=request_id
+                )
+                _log_turn(
+                    session_id, redacted_message, result,
+                    "fill_auto_execute", request_id=request_id, tone=tone,
+                )
+                return result
+
+    # Path 3: nothing new — re-nudge. Restore the pending flag so the
+    # next message is interpreted as a confirmation response.
+    existing["_pending_confirmation"] = True
+    save_session_slots(session_id, existing)
+
+    nudge_prefix = "Just to make sure — "
+    if response_tone == "emotional":
+        nudge_prefix = "I hear you. Just to make sure — "
+    elif response_tone == "frustrated":
+        nudge_prefix = "I understand. Let me just confirm — "
+    elif response_tone == "confused":
+        nudge_prefix = "No worries — let me just confirm: "
+    elif response_tone == "urgent":
+        nudge_prefix = "Got it — just to confirm: "
+
+    confirm_msg = (
+        nudge_prefix + _build_confirmation_message(existing)
+        + ' Tap "Yes, search" to go, or you can change the details.'
+    )
+    result = {
+        "session_id": session_id,
+        "response": confirm_msg,
+        "follow_up_needed": True,
+        "slots": existing,
+        "services": [],
+        "result_count": 0,
+        "relaxed_search": False,
+        "quick_replies": _confirmation_quick_replies(existing),
+    }
+    _log_turn(session_id, redacted_message, result, "confirmation_nudge",
+              request_id=request_id, tone=tone)
+    return result
+
+
+def _handle_change_location_request(session_id, redacted_message, existing,
+                                    early_extracted, category, tone, request_id):
+    """User asked to change search location ("search somewhere else").
+
+    If the message already contains a new location (e.g. "actually Manhattan"),
+    apply it directly — prevents a frustration loop where the bot wipes the
+    location and re-asks what the user just said. Otherwise, wipe and ask.
+    """
+    new_loc = early_extracted.get("location")
+    if new_loc:
+        existing["location"] = new_loc
+        save_session_slots(session_id, existing)
+        if is_enough_to_answer(existing):
+            existing["_pending_confirmation"] = True
+            save_session_slots(session_id, existing)
+            confirm_msg = _build_confirmation_message(existing)
+            result = {
+                "session_id": session_id,
+                "response": confirm_msg,
+                "follow_up_needed": True,
+                "slots": existing,
+                "services": [],
+                "result_count": 0,
+                "relaxed_search": False,
+                "quick_replies": _confirmation_quick_replies(existing),
+            }
+            _log_turn(session_id, redacted_message, result, "confirmation",
+                      request_id=request_id, tone=tone)
+            return result
+        else:
+            follow_up = next_follow_up_question(existing)
+            result = {
+                "session_id": session_id,
+                "response": follow_up,
+                "follow_up_needed": True,
+                "slots": existing,
+                "services": [],
+                "result_count": 0,
+                "relaxed_search": False,
+                "quick_replies": _follow_up_quick_replies(existing),
+            }
+            _log_turn(session_id, redacted_message, result, "service",
+                      request_id=request_id, tone=tone)
+            return result
+
+    # No location in message — clear and ask for one
+    existing["location"] = None
+    save_session_slots(session_id, existing)
+    result = _empty_reply(
+        session_id,
+        "Sure! What neighborhood or borough should I search in?",
+        existing,
+        quick_replies=[
+            {"label": "📍 Use my location", "value": "__use_geolocation__"},
+            {"label": "Manhattan", "value": "Manhattan"},
+            {"label": "Brooklyn", "value": "Brooklyn"},
+            {"label": "Queens", "value": "Queens"},
+            {"label": "Bronx", "value": "Bronx"},
+            {"label": "Staten Island", "value": "Staten Island"},
+        ],
+    )
+    _log_turn(session_id, redacted_message, result, category, request_id=request_id, tone=tone)
+    return result
+
+
+def _handle_change_service_request(session_id, redacted_message, existing,
+                                   category, tone, request_id):
+    """User asked to change the service type — wipe service_type + service_detail
+    and show the service menu."""
+    existing["service_type"] = None
+    existing.pop("service_detail", None)
+    save_session_slots(session_id, existing)
+    result = _empty_reply(
+        session_id,
+        "No problem! What kind of help do you need?",
+        existing,
+        quick_replies=list(_WELCOME_QUICK_REPLIES),
+    )
+    _log_turn(session_id, redacted_message, result, category, request_id=request_id, tone=tone)
+    return result
+
+
+def _handle_reset(session_id, redacted_message, category, tone, request_id):
+    """Clear all session state and return the reset response."""
+    clear_session(session_id)
+    log_session_reset(session_id)
+    result = _empty_reply(
+        session_id, _RESET_RESPONSE, {},
+        quick_replies=list(_WELCOME_QUICK_REPLIES),
+    )
+    _log_turn(session_id, redacted_message, result, category, request_id=request_id, tone=tone)
+    return result
+
+
+def _handle_correction(session_id, redacted_message, existing, tone, request_id):
+    """Acknowledge a user correction ("that's not what I meant") by clearing
+    pending state and echoing what we WERE searching for so they can redirect."""
+    existing.pop("_pending_confirmation", None)
+    existing.pop("_last_action", None)
+    existing.pop("_last_results", None)
+    save_session_slots(session_id, existing)
+    service_type = existing.get("service_type")
+    location = existing.get("location")
+    if location == NEAR_ME_SENTINEL:
+        location = None
+    context = ""
+    if service_type and location:
+        context = f" I was searching for {service_type} in {location}."
+    elif service_type:
+        context = f" I was searching for {service_type}."
+    result = _empty_reply(
+        session_id,
+        f"Sorry about that!{context} Let me know what you need — you can "
+        f"pick a service below, tell me in your own words, or connect "
+        f"with a peer navigator.",
+        existing,
+        quick_replies=list(_WELCOME_QUICK_REPLIES) + [
+            {"label": "🤝 Peer navigator", "value": "Connect with peer navigator"},
+        ],
+    )
+    _log_turn(session_id, redacted_message, result, "correction",
+              request_id=request_id, tone=tone, confidence="low")
+    return result
+
+
+def _handle_negative_preference(session_id, redacted_message, existing, tone, request_id):
+    """Handle "I don't like those" / "none of these" with tiered escalation.
+
+    After 3+ consecutive frustration-counted turns, routes to peer navigator.
+    After 2, adds 311 as a live-help option. Otherwise offers to search
+    something else.
+    """
+    # Also count as frustration for escalation tiers (Run 24 eval fix)
+    frust_count = existing.get("_frustration_count", 0) + 1
+    existing["_frustration_count"] = frust_count
+
+    # When frustration has accumulated, use tiered escalation
+    if frust_count >= 3:
+        existing["_last_action"] = "frustration"
+        save_session_slots(session_id, existing)
+        result = _empty_reply(
+            session_id,
+            "I'm sorry I haven't been able to help. Let me connect you "
+            "with a peer navigator — they can work with you directly.",
+            existing,
+            quick_replies=[
+                {"label": "🤝 Peer navigator", "value": "Connect with peer navigator"},
+            ],
+        )
+        _log_turn(session_id, redacted_message, result, "frustration_tier3",
+                  request_id=request_id, tone=tone)
+        return result
+    elif frust_count >= 2:
+        existing["_last_action"] = "frustration"
+        save_session_slots(session_id, existing)
+        result = _empty_reply(
+            session_id,
+            "I hear you — I'm clearly not finding what you need right now. "
+            "A peer navigator would be more helpful — they're real people "
+            "who know the system. You can also call 311 for live help.",
+            existing,
+            quick_replies=[
+                {"label": "🤝 Peer navigator", "value": "Connect with peer navigator"},
+                {"label": "🔄 Start over", "value": "Start over"},
+            ],
+        )
+        _log_turn(session_id, redacted_message, result, "frustration_tier2",
+                  request_id=request_id, tone=tone)
+        return result
+
+    existing["_last_action"] = "negative_preference"
+    save_session_slots(session_id, existing)
+    result = _empty_reply(
+        session_id,
+        "I understand — those options aren't what you need. "
+        "I can search for a different type of service, or connect "
+        "you with a peer navigator who might know of other resources. "
+        "What would be most helpful?",
+        existing,
+        quick_replies=list(_WELCOME_QUICK_REPLIES) + [
+            {"label": "🤝 Peer navigator", "value": "Connect with peer navigator"},
+        ],
+    )
+    _log_turn(session_id, redacted_message, result, "negative_preference",
+              request_id=request_id, tone=tone)
+    return result
+
+
+def _handle_greeting(session_id, redacted_message, existing, category, tone, request_id):
+    """Welcome message. If we have prior session state, offer to resume or reset."""
+    if existing and any(v is not None for v in existing.values()):
+        response = (
+            "Hey again! I still have your earlier search info. "
+            "Want to keep going, or would you like to start over?"
+        )
+        result = _empty_reply(session_id, response, existing)
+    else:
+        result = _empty_reply(
+            session_id, _GREETING_RESPONSE, existing,
+            quick_replies=list(_WELCOME_QUICK_REPLIES),
+        )
+    _log_turn(session_id, redacted_message, result, category, request_id=request_id, tone=tone)
+    return result
+
+
+def _handle_thanks(session_id, redacted_message, existing, category, tone, request_id):
+    """Acknowledge thanks and offer the welcome actions for whatever comes next."""
+    result = _empty_reply(
+        session_id, _THANKS_RESPONSE, existing,
+        quick_replies=list(_WELCOME_QUICK_REPLIES),
+    )
+    _log_turn(session_id, redacted_message, result, category, request_id=request_id, tone=tone)
+    return result
+
 
 def _handle_crisis(
     session_id, message, redacted_message, existing,
@@ -2493,6 +2930,190 @@ def _run_population_fallback(
     return deduped, note
 
 
+def _apply_queue_offer(
+    session_id: str,
+    slots: dict,
+    services_list: list,
+    bot_response: str,
+) -> tuple[str, list]:
+    """Append a "You also mentioned X — search for that too?" offer when
+    the user queued multiple services in one message.
+
+    Fires only when there's at least one queued service AND the current
+    search returned something (``services_list`` non-empty). Pops one
+    item from the queue, persists ``_queue_offer_pending`` on the
+    session, and replaces the default after-results quick replies with
+    yes/no buttons specific to the next queued service.
+
+    Returns (augmented_bot_response, after_results_qr).
+    """
+    default_qr = [
+        {"label": "🔍 New search", "value": "Start over"},
+        {"label": "🤝 Peer navigator", "value": "Connect with peer navigator"},
+    ]
+
+    queued = slots.get("_queued_services", [])
+    if not (queued and services_list):
+        return bot_response, default_qr
+
+    q_item = queued[0]
+    next_service = q_item[0]
+    next_detail = q_item[1] if len(q_item) > 1 else None
+    next_location = q_item[2] if len(q_item) > 2 else None
+    remaining = queued[1:]
+
+    if remaining:
+        slots["_queued_services"] = remaining
+    else:
+        slots.pop("_queued_services", None)
+    slots["_queue_offer_pending"] = True
+
+    if next_location and next_location != slots.get("location"):
+        slots["_queued_location"] = next_location
+    save_session_slots(session_id, slots)
+
+    label = next_detail or _SERVICE_LABELS.get(next_service, next_service)
+    loc_suffix = ""
+    if next_location and next_location != slots.get("location"):
+        loc_suffix = f" in {next_location}"
+    augmented = bot_response + (
+        f"\n\nYou also mentioned {label}{loc_suffix} — would you like me to "
+        f"search for that too?"
+    )
+    qr_value = f"I need {next_service}"
+    if next_location:
+        qr_value += f" in {next_location}"
+    after_results_qr = [
+        {"label": f"✅ Yes, search for {label}", "value": qr_value},
+        {"label": "❌ No thanks", "value": "No thanks"},
+    ]
+    return augmented, after_results_qr
+
+
+def _build_success_response(
+    slots: dict,
+    results: dict,
+    colocated_success: bool,
+    colocated_types: list | None,
+) -> tuple[str, list, list, int, int, bool]:
+    """Translate a successful query result into the user-facing response
+    message + card list + pagination metadata.
+
+    Handles:
+    - Standard success ("I found N option(s)")
+    - Co-located multi-service ("I found N location(s) that offer both food and clothing")
+    - "Relaxed" search qualifier when the strict query returned 0 and we
+      broadened via the relaxed path
+    - Population-critical fallback for shelter queries where no local
+      result matches a rare-population taxonomy (LGBTQ YA, youth, senior,
+      veteran) — appends citywide fallback cards with their own note.
+
+    Returns (bot_response, services_list, all_services, main_displayed_count,
+    result_count, relaxed). The distinction between ``services_list``
+    (displayed cards, including fallback) and ``all_services`` (main-query
+    cards only, the pagination source) is load-bearing — pagination must
+    NOT re-show fallback cards on "Show more."
+    """
+    all_services = results["services"]
+    services_list = all_services[:_DISPLAY_PAGE_SIZE]
+    main_displayed_count = len(services_list)
+    result_count = len(services_list)
+    total_count = _count_unique_locations(all_services)
+    relaxed = results.get("relaxed", False)
+
+    qualifier = " (I broadened the search a bit)" if relaxed else ""
+
+    if colocated_success and colocated_types:
+        primary = _SERVICE_LABELS.get(
+            slots.get("service_type", ""), slots.get("service_type", "")
+        )
+        queued_original = slots.get("_queued_services_original", [])
+        co_labels = []
+        for i, t in enumerate(colocated_types):
+            detail = queued_original[i][1] if i < len(queued_original) else None
+            co_labels.append(detail or _SERVICE_LABELS.get(t, t))
+        all_labels = [primary] + co_labels
+        combined = " and ".join(all_labels) if len(all_labels) <= 2 else (
+            ", ".join(all_labels[:-1]) + ", and " + all_labels[-1]
+        )
+        bot_response = (
+            f"I found {total_count} location(s) that offer both "
+            f"{combined.lower()}{qualifier}:"
+        )
+    else:
+        bot_response = f"I found {total_count} option(s) for you{qualifier}:"
+
+    # Population-critical fallback (shelter only). When the user belongs
+    # to a rare population (LGBTQ, youth, senior, veteran) and the
+    # proximity-local results contain no services tagged with that
+    # population's rare taxonomy, run a CITYWIDE targeted query for
+    # those taxonomies so Ali Forney / Covenant House / VA etc. can
+    # still surface regardless of which borough the user is searching
+    # from. See _run_population_fallback and
+    # docs/design/POPULATION_FALLBACK_SPEC.md §Scope.
+    #
+    # Fallback cards are appended to services_list for display but
+    # INTENTIONALLY NOT to all_services. all_services drives pagination
+    # via slots["_last_results"]; fallback cards are supplementary
+    # (shown once with a contextual note) and must not reappear on
+    # subsequent "Show more" pages.
+    if (
+        slots.get("service_type") == "shelter"
+        and not results.get("relaxed")
+        and not colocated_success
+    ):
+        rare_tx, rare_labels = _compute_rare_population_taxonomies(slots)
+        if rare_tx:
+            rare_set_lower = {t.lower() for t in rare_tx}
+            has_match = any(
+                _taxonomies_overlap(card.get("service_taxonomies"), rare_set_lower)
+                for card in all_services
+            )
+            if not has_match:
+                existing_ids = {c.get("service_id") for c in all_services if c.get("service_id")}
+                fb_cards, fb_note = _run_population_fallback(
+                    slots, rare_tx, rare_labels, existing_ids
+                )
+                if fb_cards:
+                    services_list = services_list + fb_cards
+                    result_count = len(services_list)
+                    bot_response = bot_response + fb_note
+                    # Expose fallback cards separately for potential
+                    # post-results queries / admin logging. Not part of
+                    # pagination.
+                    slots["_fallback_results"] = fb_cards
+
+    return bot_response, services_list, all_services, main_displayed_count, result_count, relaxed
+
+
+def _build_db_failure_message(session_id: str, slots: dict) -> str:
+    """Generate the user-facing message when the DB query throws.
+
+    **Critical invariant:** never call the LLM on this path. When the DB is
+    down, the LLM produces helpful-sounding follow-up questions ("To help
+    narrow things down…") that look like the intake flow and trap the user
+    in an infinite confirmation loop where they keep confirming but never
+    get results. The static messages below are intentional.
+
+    Escalates to a "try yourpeer.nyc directly" message after 2+ failures
+    in the same session. Mutates ``slots["_search_fail_count"]``.
+    """
+    fail_count = slots.get("_search_fail_count", 0) + 1
+    slots["_search_fail_count"] = fail_count
+    save_session_slots(session_id, slots)
+    if fail_count >= 2:
+        return (
+            "I'm still having trouble searching. "
+            "Please visit yourpeer.nyc to search directly, "
+            "or try again later."
+        )
+    return (
+        "I'm having trouble connecting to the service database "
+        "right now. You can try again in a moment, or visit "
+        "yourpeer.nyc to search for services directly."
+    )
+
+
 def _execute_and_respond(session_id: str, message: str, slots: dict, request_id: str | None = None) -> dict:
     """Execute the DB query and return results. Called after user confirms."""
     bot_response = None
@@ -2576,108 +3197,18 @@ def _execute_and_respond(session_id: str, message: str, slots: dict, request_id:
                 "You can try again, or visit yourpeer.nyc directly."
             )
         elif results["result_count"] > 0:
-            all_services = results["services"]
-            services_list = all_services[:_DISPLAY_PAGE_SIZE]
-            _main_displayed_count = len(services_list)
-            result_count = len(services_list)
-            _total_count = _count_unique_locations(all_services)
-            relaxed = results.get("relaxed", False)
-
-            qualifier = ""
-            if relaxed:
-                qualifier = " (I broadened the search a bit)"
-
-            if colocated_success and colocated_types:
-                primary = _SERVICE_LABELS.get(
-                    slots.get("service_type", ""), slots.get("service_type", "")
-                )
-                queued_original = slots.get("_queued_services_original", [])
-                co_labels = []
-                for i, t in enumerate(colocated_types):
-                    detail = queued_original[i][1] if i < len(queued_original) else None
-                    co_labels.append(detail or _SERVICE_LABELS.get(t, t))
-                all_labels = [primary] + co_labels
-                combined = " and ".join(all_labels) if len(all_labels) <= 2 else (
-                    ", ".join(all_labels[:-1]) + ", and " + all_labels[-1]
-                )
-                bot_response = (
-                    f"I found {_total_count} location(s) that offer both "
-                    f"{combined.lower()}{qualifier}:"
-                )
-            else:
-                bot_response = (
-                    f"I found {_total_count} option(s) for you{qualifier}:"
-                )
-
-            # -----------------------------------------------------------
-            # Population-critical fallback (shelter only).
-            # When the user belongs to a rare population (LGBTQ, youth,
-            # senior, veteran) and the proximity-local results contain
-            # no services tagged with that population's rare taxonomy,
-            # run a CITYWIDE targeted query for those taxonomies so
-            # Ali Forney / Covenant House / VA etc. can still surface
-            # regardless of which borough the user is searching from.
-            # (E.g., Far Rockaway GPS user + LGBTQ young adult → Ali
-            # Forney in Manhattan, which a borough-scoped query would
-            # have missed.) See _run_population_fallback for the full
-            # logic and docs/design/POPULATION_FALLBACK_SPEC.md §Scope.
-            #
-            # Fallback cards are appended to services_list for display
-            # but INTENTIONALLY NOT to all_services. all_services drives
-            # pagination via slots["_last_results"]; fallback cards are
-            # supplementary (shown once with a contextual note) and must
-            # not reappear on subsequent "Show more" pages.
-            # -----------------------------------------------------------
-            if (
-                slots.get("service_type") == "shelter"
-                and not results.get("relaxed")
-                and not colocated_success
-            ):
-                rare_tx, rare_labels = _compute_rare_population_taxonomies(slots)
-                if rare_tx:
-                    rare_set_lower = {t.lower() for t in rare_tx}
-                    has_match = any(
-                        _taxonomies_overlap(card.get("service_taxonomies"), rare_set_lower)
-                        for card in all_services
-                    )
-                    if not has_match:
-                        existing_ids = {c.get("service_id") for c in all_services if c.get("service_id")}
-                        fb_cards, fb_note = _run_population_fallback(
-                            slots, rare_tx, rare_labels, existing_ids
-                        )
-                        if fb_cards:
-                            services_list = services_list + fb_cards
-                            result_count = len(services_list)
-                            bot_response = bot_response + fb_note
-                            # Expose fallback cards separately for
-                            # potential post-results queries / admin
-                            # logging. Not part of pagination.
-                            slots["_fallback_results"] = fb_cards
+            (bot_response, services_list, all_services,
+             _main_displayed_count, result_count, relaxed) = _build_success_response(
+                slots, results, colocated_success, colocated_types,
+            )
         else:
             bot_response = _no_results_message(slots)
 
     except Exception as e:
         logger.error(f"Database query failed: {e}")
         # CRITICAL: Do NOT call _fallback_response (LLM) for DB failures.
-        # When the DB is down, Claude generates helpful-sounding follow-up
-        # questions ("To help narrow things down...") that look like the
-        # intake flow, trapping the user in an infinite confirmation loop
-        # where they keep confirming but never get results.
-        _fail_count = slots.get("_search_fail_count", 0) + 1
-        slots["_search_fail_count"] = _fail_count
-        save_session_slots(session_id, slots)
-        if _fail_count >= 2:
-            bot_response = (
-                "I'm still having trouble searching. "
-                "Please visit yourpeer.nyc to search directly, "
-                "or try again later."
-            )
-        else:
-            bot_response = (
-                "I'm having trouble connecting to the service database "
-                "right now. You can try again in a moment, or visit "
-                "yourpeer.nyc to search for services directly."
-            )
+        # See _build_db_failure_message for the full rationale.
+        bot_response = _build_db_failure_message(session_id, slots)
 
     if bot_response is None:
         # Same principle: don't call LLM for search-path failures.
@@ -2686,45 +3217,14 @@ def _execute_and_respond(session_id: str, message: str, slots: dict, request_id:
             "You can try again, or visit yourpeer.nyc directly."
         )
 
-    after_results_qr = [
-        {"label": "🔍 New search", "value": "Start over"},
-        {"label": "🤝 Peer navigator", "value": "Connect with peer navigator"},
-    ]
-
-    # Queue offer for multi-intent
-    queued = slots.get("_queued_services", [])
-    if queued and services_list:
-        q_item = queued[0]
-        next_service = q_item[0]
-        next_detail = q_item[1] if len(q_item) > 1 else None
-        next_location = q_item[2] if len(q_item) > 2 else None
-        remaining = queued[1:]
-
-        if remaining:
-            slots["_queued_services"] = remaining
-        else:
-            slots.pop("_queued_services", None)
-        slots["_queue_offer_pending"] = True
-
-        if next_location and next_location != slots.get("location"):
-            slots["_queued_location"] = next_location
-        save_session_slots(session_id, slots)
-
-        label = next_detail or _SERVICE_LABELS.get(next_service, next_service)
-        loc_suffix = ""
-        if next_location and next_location != slots.get("location"):
-            loc_suffix = f" in {next_location}"
-        bot_response += (
-            f"\n\nYou also mentioned {label}{loc_suffix} — would you like me to "
-            f"search for that too?"
-        )
-        qr_value = f"I need {next_service}"
-        if next_location:
-            qr_value += f" in {next_location}"
-        after_results_qr = [
-            {"label": f"✅ Yes, search for {label}", "value": qr_value},
-            {"label": "❌ No thanks", "value": "No thanks"},
-        ]
+    # Queue offer for multi-intent: if the user asked for multiple services,
+    # offer to search the next one. Snapshot the queue BEFORE the helper
+    # mutates it — the "Show more" suppression below checks whether a
+    # queue offer was MADE, not whether more items remain after.
+    queued_before_offer = slots.get("_queued_services", [])
+    bot_response, after_results_qr = _apply_queue_offer(
+        session_id, slots, services_list, bot_response,
+    )
 
     if services_list:
         slots.pop("_search_fail_count", None)  # Clear on success
@@ -2740,8 +3240,11 @@ def _execute_and_respond(session_id: str, message: str, slots: dict, request_id:
         # If there are undisplayed main results, add "show more" quick reply.
         # Button label shows the next page's *location* count (not raw
         # service count) so the number matches the carousel card count.
+        # Suppressed when a queue offer was made — the queue offer buttons
+        # are the user's next action, adding "Show more" alongside would
+        # clutter the UI.
         _undisplayed = len(all_services) - _displayed
-        if _undisplayed > 0 and not queued:
+        if _undisplayed > 0 and not queued_before_offer:
             _next_page_services = all_services[_displayed:_displayed + _DISPLAY_PAGE_SIZE]
             _show_next = _count_unique_locations(_next_page_services)
             after_results_qr.insert(0, {
