@@ -109,10 +109,12 @@ def query_services(
         user_location_is_borough = is_borough(location)
 
         if user_location_is_borough:
-            # Borough-level search: pass the borough name directly to use the
-            # clean pa.borough column (avoids city field casing chaos).
-            # Also keep city_list as a fallback for records where borough is NULL.
-            user_params["borough"] = normalized_city
+            # Borough-level search: filter via city_list (pa.city = ANY(...)).
+            # Previously we also set user_params["borough"] here to drive a
+            # FILTER_BY_BOROUGH clause against pa.borough — but that column
+            # does not exist in the Streetlives DB, so the filter errored
+            # on every borough query and fell through to the relaxed path.
+            # Removed Apr 17, 2026; see docs/BOUNDARY_AUDIT.md.
             city_list = get_borough_city_names(normalized_city)
             if len(city_list) > 1:
                 user_params["city_list"] = city_list

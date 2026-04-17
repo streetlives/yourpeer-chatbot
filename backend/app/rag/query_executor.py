@@ -390,16 +390,19 @@ def resolve_template_key(service_type: str) -> Optional[str]:
 # CITY / BOROUGH NORMALIZATION
 # ---------------------------------------------------------------------------
 
-# physical_addresses has a clean `borough` column (Manhattan, Brooklyn,
-# Queens, Bronx, Staten Island) — borough-level searches now use
-# FILTER_BY_BOROUGH against pa.borough directly, which is far more reliable
-# than city field matching (the city field has inconsistent casing, typos,
-# and wrong borough assignments in the source data).
-# City normalization and expansion are kept for neighborhood-level searches
-# and as a fallback for records where pa.borough is NULL.
+# physical_addresses in prod has NO `borough` column. Borough-level searches
+# run via FILTER_BY_CITY_IN_BOROUGH (pa.city = ANY(:city_list)), with the
+# city_list derived below. This is not ideal — pa.city has inconsistent
+# casing, typos, and some wrong-borough assignments — but it's the only
+# column available. See docs/BOUNDARY_AUDIT.md for follow-up plan to
+# derive geographic borough from l.position against NYC DCP polygons.
+#
+# Note that the "Manhattan" → "Manhattan" mappings below look redundant but
+# are used by get_borough_city_names (which does an ALIAS → primary city
+# lookup via _BOROUGH_TO_PRIMARY_CITY to build the city_list).
 
 NYC_LOCATION_ALIASES = {
-    # Boroughs → canonical borough names matching pa.borough
+    # Boroughs → canonical city value used in pa.city for that borough
     "manhattan":      "Manhattan",
     "brooklyn":       "Brooklyn",
     "queens":         "Queens",
@@ -480,8 +483,9 @@ _BOROUGH_KEYS = {
     "manhattan", "brooklyn", "queens", "bronx", "the bronx", "staten island",
 }
 
-# Maps canonical borough names (as stored in pa.borough) to the primary city
-# value used in pa.city for that borough. Used for city-field fallback searches.
+# Maps canonical borough names to the primary city value used in pa.city for
+# that borough. Since physical_addresses has no borough column, this is the
+# central mapping that drives borough-level filtering via pa.city.
 _BOROUGH_TO_PRIMARY_CITY = {
     "Manhattan":   "New York",
     "Brooklyn":    "Brooklyn",
@@ -500,13 +504,14 @@ def is_borough(raw_location: str) -> bool:
 
 def normalize_location(raw_location: str) -> str:
     """
-    Normalize a user-provided location string to a canonical borough name
-    (e.g. "manhattan" → "Manhattan", "the bronx" → "Bronx") or to the
-    DB city value for neighborhoods (e.g. "harlem" → "New York").
+    Normalize a user-provided location string to the DB city value used in
+    pa.city. Boroughs return their primary city ("manhattan" → "Manhattan",
+    "the bronx" → "Bronx"); neighborhoods return the containing borough's
+    primary city ("harlem" → "New York").
 
-    For borough-level searches, the returned value is passed as the `borough`
-    param and matched against pa.borough directly.
-    For neighborhood searches, it's used for city-field filtering.
+    Used by callers to populate the `city` / `city_list` query params, which
+    drive FILTER_BY_CITY / FILTER_BY_CITY_IN_BOROUGH (the only location
+    filters that actually work — pa.borough does not exist in the DB).
     """
     if not raw_location:
         return raw_location
@@ -516,8 +521,11 @@ def normalize_location(raw_location: str) -> str:
 # ---------------------------------------------------------------------------
 # BOROUGH → CITY EXPANSION
 # ---------------------------------------------------------------------------
-# Fallback for records where pa.borough is NULL — search by city field instead.
-# Builds a reverse map: borough primary city → all city values in that borough.
+# pa.city is the only borough-identifying column in the DB. Values are
+# inconsistent: "New York" covers all Manhattan addresses, but outer
+# boroughs use both the borough name ("Brooklyn") AND neighborhood names
+# ("Williamsburg", "Astoria", "Far Rockaway", etc.). This builds a reverse
+# map so a "Queens" search catches all Queens cities.
 
 def _build_borough_to_cities() -> dict:
     """Build a reverse map: primary city value → all city values in that borough."""
@@ -538,7 +546,10 @@ def get_borough_city_names(borough: str) -> list[str]:
     Given a canonical borough name (e.g. "Queens", "Manhattan"), return all
     city values that might appear in pa.city for that borough.
 
-    Used as a fallback for records where pa.borough is NULL.
+    This is the core of borough-level search: the returned list drives
+    FILTER_BY_CITY_IN_BOROUGH (pa.city = ANY(:city_list)). The DB has no
+    borough column, so pa.city is all we have.
+
     Returns a lowercased list for case-insensitive SQL ANY() matching.
 
     Example:

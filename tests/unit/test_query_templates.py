@@ -694,78 +694,66 @@ def test_unknown_template_raises():
 
 
 # -----------------------------------------------------------------------
-# BOROUGH FILTER — pa.borough column
+# BOROUGH FILTERING — via pa.city (pa.borough does NOT exist in prod)
 # -----------------------------------------------------------------------
+# HISTORY: Previously this file had tests asserting that every template
+# MUST include FILTER_BY_BOROUGH (matching pa.borough). Those tests
+# passed because they only inspected the Python SQL string, never
+# executing it. In prod the query raised
+#   psycopg2.errors.UndefinedColumn: column pa.borough does not exist
+# on every borough-level search, the exception was swallowed by
+# _execute_sql's generic handler, and the user got the relaxed-query
+# fallback (adding an unnecessary "I broadened the search a bit"
+# message to every direct borough lookup).
+#
+# Removed Apr 17, 2026. All borough filtering now uses
+# FILTER_BY_CITY_IN_BOROUGH (pa.city = ANY(:city_list)) — the only
+# filter that has ever actually worked. See docs/BOUNDARY_AUDIT.md.
+#
+# The tests below are guards against regression: they assert the
+# broken filter stays GONE, and that borough searches use city_list.
 
-def test_all_templates_have_borough_filter():
-    """Every template must include FILTER_BY_BOROUGH in optional_filters.
+def test_filter_by_borough_not_exported():
+    """FILTER_BY_BOROUGH must not exist — pa.borough is not a real column.
 
-    pa.borough is a clean, consistently populated column — much more
-    reliable than the city field for borough-level searches.
+    Re-introducing it would resurface the UndefinedColumn error storm.
     """
-    from app.rag.query_templates import FILTER_BY_BOROUGH
-    for key, template in TEMPLATES.items():
-        optional = template["optional_filters"]
-        assert FILTER_BY_BOROUGH in optional, \
-            f"Template '{key}' is missing FILTER_BY_BOROUGH in optional_filters. " \
-            f"Add it so borough-level searches use pa.borough directly."
+    import app.rag.query_templates as qt
+    assert not hasattr(qt, "FILTER_BY_BOROUGH"), (
+        "FILTER_BY_BOROUGH was re-added. pa.borough does not exist in the "
+        "Streetlives DB; see docs/BOUNDARY_AUDIT.md. Use "
+        "FILTER_BY_CITY_IN_BOROUGH (pa.city = ANY(:city_list)) instead."
+    )
 
 
-def test_borough_filter_uses_pa_borough_column():
-    """FILTER_BY_BOROUGH must reference pa.borough, not pa.city."""
-    from app.rag.query_templates import FILTER_BY_BOROUGH
-    sql_fragment = FILTER_BY_BOROUGH[0]
-    assert "pa.borough" in sql_fragment, \
-        f"FILTER_BY_BOROUGH must use pa.borough column, got: {sql_fragment}"
-    assert "pa.city" not in sql_fragment, \
-        "FILTER_BY_BOROUGH must not use pa.city — that column has casing issues"
-    assert ":borough" in sql_fragment, \
-        "FILTER_BY_BOROUGH must use :borough param placeholder"
+def test_no_template_references_pa_borough():
+    """No template's generated SQL may reference pa.borough."""
+    for key in TEMPLATES:
+        sql, _ = build_query(key, {})
+        assert "pa.borough" not in sql, (
+            f"Template '{key}' references pa.borough in generated SQL — "
+            f"that column does not exist in prod. See BOUNDARY_AUDIT.md."
+        )
 
 
-def test_borough_param_included_in_sql_when_provided():
-    """When borough param is passed, SQL must include the borough filter clause."""
-    sql, params = build_query("food", {"borough": "Queens", "max_results": 5})
-    assert "pa.borough" in sql, \
-        "Borough filter not in SQL when borough param provided"
-    assert params["borough"] == "Queens"
+def test_borough_search_uses_city_list():
+    """A borough-level search must emit pa.city = ANY(...) — no pa.borough."""
+    sql, params = build_query("food", {
+        "city_list": ["queens", "jamaica", "flushing", "astoria"],
+        "max_results": 5,
+    })
+    assert "LOWER(pa.city) = ANY(:city_list)" in sql
+    assert "pa.borough" not in sql
+    assert params["city_list"] == ["queens", "jamaica", "flushing", "astoria"]
 
 
-def test_borough_filter_absent_when_no_borough_param():
-    """Without a borough param, the borough filter must not appear in SQL."""
-    sql, params = build_query("food", {"city": "Brooklyn", "max_results": 5})
-    assert "pa.borough" not in sql, \
-        "Borough filter appeared in SQL without a borough param — optional filters broken"
-
-
-def test_relaxed_query_drops_borough():
-    """Relaxed query must drop the borough param to broaden the search."""
-    sql, params = build_relaxed_query("food", {
-        "borough": "Queens",
+def test_relaxed_query_does_not_reintroduce_borough():
+    """Relaxed queries must not emit pa.borough either."""
+    sql, _ = build_relaxed_query("food", {
         "city_list": ["queens", "jamaica", "flushing"],
         "max_results": 5,
     })
-    assert "borough" not in params, \
-        "Relaxed query must drop borough param — it should broaden, not stay borough-restricted"
-    assert "pa.borough" not in sql, \
-        "Borough filter must not appear in relaxed query SQL"
-
-
-def test_borough_filter_before_city_filters_in_optional():
-    """FILTER_BY_BOROUGH should appear before FILTER_BY_CITY in optional_filters.
-
-    Since only one location filter fires per query (whichever params are present),
-    ordering doesn't affect correctness — but keeping borough first documents intent.
-    """
-    from app.rag.query_templates import FILTER_BY_BOROUGH, FILTER_BY_CITY
-    for key, template in TEMPLATES.items():
-        optional = template["optional_filters"]
-        if FILTER_BY_BOROUGH in optional and FILTER_BY_CITY in optional:
-            borough_idx = optional.index(FILTER_BY_BOROUGH)
-            city_idx = optional.index(FILTER_BY_CITY)
-            assert borough_idx < city_idx, \
-                f"Template '{key}': FILTER_BY_BOROUGH (idx {borough_idx}) should come " \
-                f"before FILTER_BY_CITY (idx {city_idx})"
+    assert "pa.borough" not in sql
 
 
 # -----------------------------------------------------------------------
@@ -773,28 +761,39 @@ def test_borough_filter_before_city_filters_in_optional():
 # -----------------------------------------------------------------------
 
 def test_normalize_borough_names():
-    """Borough names must normalize to canonical pa.borough values."""
+    """Borough name input passes through normalize_location title-cased.
+
+    These values are then consumed by get_borough_city_names which maps
+    them to primary city values via _BOROUGH_TO_PRIMARY_CITY.
+    """
     from app.rag.query_executor import normalize_location
     assert normalize_location("manhattan") == "Manhattan"
-    assert normalize_location("Brooklyn") == "Brooklyn"  # already canonical
+    assert normalize_location("Brooklyn") == "Brooklyn"
     assert normalize_location("queens") == "Queens"
     assert normalize_location("bronx") == "Bronx"
     assert normalize_location("the bronx") == "Bronx"
     assert normalize_location("staten island") == "Staten Island"
 
 
-def test_normalize_manhattan_not_new_york():
-    """'manhattan' must normalize to 'Manhattan', not 'New York'.
+def test_normalize_then_expand_manhattan_pipeline():
+    """Borough search pipeline: "manhattan" → "Manhattan" → city_list
+    containing "new york".
 
-    Previously this returned 'New York' (the DB city value), which broke
-    borough filtering now that we use pa.borough directly.
+    The full flow: user types a borough name, normalize_location returns
+    the title-cased borough, get_borough_city_names walks it through
+    _BOROUGH_TO_PRIMARY_CITY ("Manhattan" → "New York") and returns the
+    full list of Manhattan city values seen in pa.city. This is how
+    borough-level filtering actually works in prod — via pa.city, not
+    pa.borough (which doesn't exist).
     """
-    from app.rag.query_executor import normalize_location
-    result = normalize_location("manhattan")
-    assert result == "Manhattan", \
-        f"'manhattan' normalized to '{result}' but must be 'Manhattan' for pa.borough matching"
-    assert result != "New York", \
-        "'manhattan' must not normalize to 'New York' — that was the old city-field approach"
+    from app.rag.query_executor import normalize_location, get_borough_city_names
+    normalized = normalize_location("manhattan")
+    assert normalized == "Manhattan"
+    cities = get_borough_city_names(normalized)
+    assert "new york" in cities, (
+        "Manhattan must expand to include 'new york' — the primary DB "
+        "city value for Manhattan addresses"
+    )
 
 
 def test_get_borough_city_names_manhattan():

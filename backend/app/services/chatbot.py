@@ -2184,7 +2184,8 @@ _CITY_TO_BOROUGH = {
 # The underlying data is NEIGHBORHOOD_CENTERS (59 NYC neighborhoods
 # with coordinates) and NYC_LOCATION_ALIASES (neighborhood → city
 # value). The built table maps each neighborhood's (lat, lon) to a
-# canonical borough name used in pa.borough. Built lazily and cached.
+# canonical borough name that feeds into the population fallback's
+# city_list-based borough query. Built lazily and cached.
 _NEIGHBORHOOD_TO_BOROUGH_TABLE: list[tuple[float, float, str]] = []
 
 
@@ -2337,10 +2338,9 @@ def _resolve_borough_from_location(location: Optional[str], slots: Optional[dict
         return None
 
     if is_borough(location):
-        # Already a borough — normalize the casing to match pa.borough.
-        # normalize_location returns the CITY value; for boroughs we want
-        # the canonical borough name itself, which is the Title-cased
-        # input with "The Bronx" normalized to "Bronx".
+        # Already a borough — return the canonical Title-cased name so it
+        # keys correctly into _CITY_TO_BOROUGH and drives the fallback's
+        # city_list-based borough query. "The Bronx" → "Bronx".
         cleaned = location.strip().title()
         if cleaned.lower() == "the bronx":
             return "Bronx"

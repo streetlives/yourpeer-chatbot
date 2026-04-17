@@ -577,12 +577,11 @@ class TestRelaxedFallback:
         })
         assert "dental" in relaxed_params.get("description_pattern", "")
 
-    def test_relaxed_drops_borough(self):
-        _, relaxed_params = build_relaxed_query("mental_health", {
-            "taxonomy_names": ["substance use treatment"],
-            "borough": "Staten Island",
-        })
-        assert "borough" not in relaxed_params
+    # Removed test_relaxed_drops_borough (Apr 17, 2026): no caller sets the
+    # "borough" param anymore — FILTER_BY_BOROUGH has been deleted because
+    # pa.borough does not exist in the Streetlives DB. See BOUNDARY_AUDIT.md.
+    # Regression guards in test_query_templates.py enforce the filter stays
+    # gone; a separate drop-test here is redundant.
 
     def test_relaxed_drops_age(self):
         _, relaxed_params = build_relaxed_query("shelter", {

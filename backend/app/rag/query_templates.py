@@ -229,15 +229,16 @@ FILTER_BY_COLOCATED_TAXONOMY = (
     ["colocated_taxonomy_names"],
 )
 
-# Borough filter — uses the physical_addresses.borough column directly.
-# This is the most reliable borough filter: the borough column is clean,
-# consistently populated, and avoids the city-field casing chaos
-# (e.g. "BRONX" vs "Bronx" vs "The Bronx" all in the same borough).
-# Case-insensitive match handles any remaining inconsistencies.
-FILTER_BY_BOROUGH = (
-    "LOWER(pa.borough) = LOWER(:borough)",
-    ["borough"],
-)
+# REMOVED (Apr 17, 2026): FILTER_BY_BOROUGH referenced pa.borough, which does
+# NOT exist in the Streetlives DB. Every borough-level search had been silently
+# erroring with `psycopg2.errors.UndefinedColumn: column pa.borough does not
+# exist`, getting caught by _execute_sql's generic exception handler, and
+# falling through to the relaxed query. Users saw "I broadened the search a
+# bit" on every direct borough search. Borough filtering is now done via
+# FILTER_BY_CITY_IN_BOROUGH (pa.city = ANY(:city_list)) — the only filter
+# that was actually working. See docs/BOUNDARY_AUDIT.md for the full story
+# and follow-up plans (polygon-based geographic borough derivation from
+# l.position using NYC DCP boundaries).
 
 FILTER_BY_CITY = (
     "LOWER(pa.city) = LOWER(:city)",
@@ -248,6 +249,12 @@ FILTER_BY_CITY = (
 # When a user says "Queens", this matches "Queens", "Astoria", "Flushing",
 # "Jamaica", "Long Island City", etc.
 # The SQL uses ANY() with an array parameter, which SQLAlchemy handles natively.
+#
+# This is the de-facto borough filter. The city_list is built by
+# get_borough_city_names() in query_executor.py by walking NYC_LOCATION_ALIASES.
+# Known limitation: pa.city has casing/typo inconsistencies and sometimes
+# wrong-borough assignments. A polygon-based filter using l.position against
+# NYC DCP borough boundaries would be authoritative; see BOUNDARY_AUDIT.md.
 FILTER_BY_CITY_IN_BOROUGH = (
     "LOWER(pa.city) = ANY(:city_list)",
     ["city_list"],
@@ -544,7 +551,6 @@ TEMPLATES = {
         "description": "Find food services (pantries, soup kitchens, meals) by location",
         "required_filters": [FILTER_BY_TAXONOMY_NAME_IN, FILTER_NOT_HIDDEN, FILTER_BY_STATE_NY],
         "optional_filters": [
-            FILTER_BY_BOROUGH,
             FILTER_BY_CITY,
             FILTER_BY_CITY_IN_BOROUGH,
             FILTER_BY_CITY_LIKE,
@@ -588,7 +594,6 @@ TEMPLATES = {
         "description": "Find shelters and housing with eligibility checks",
         "required_filters": [FILTER_BY_TAXONOMY_NAME_IN, FILTER_NOT_HIDDEN, FILTER_BY_STATE_NY],
         "optional_filters": [
-            FILTER_BY_BOROUGH,
             FILTER_BY_CITY,
             FILTER_BY_CITY_IN_BOROUGH,
             FILTER_BY_CITY_LIKE,
@@ -651,7 +656,6 @@ TEMPLATES = {
         "description": "Find clothing distribution services",
         "required_filters": [FILTER_BY_TAXONOMY_NAME_IN, FILTER_NOT_HIDDEN, FILTER_BY_STATE_NY],
         "optional_filters": [
-            FILTER_BY_BOROUGH,
             FILTER_BY_CITY,
             FILTER_BY_CITY_IN_BOROUGH,
             FILTER_BY_CITY_LIKE,
@@ -681,7 +685,6 @@ TEMPLATES = {
         "description": "Find medical and healthcare services",
         "required_filters": [FILTER_BY_TAXONOMY_NAME_IN, FILTER_NOT_HIDDEN, FILTER_BY_STATE_NY],
         "optional_filters": [
-            FILTER_BY_BOROUGH,
             FILTER_BY_CITY,
             FILTER_BY_CITY_IN_BOROUGH,
             FILTER_BY_CITY_LIKE,
@@ -719,7 +722,6 @@ TEMPLATES = {
         "description": "Find legal aid and immigration services",
         "required_filters": [FILTER_BY_TAXONOMY_NAME_IN, FILTER_NOT_HIDDEN, FILTER_BY_STATE_NY],
         "optional_filters": [
-            FILTER_BY_BOROUGH,
             FILTER_BY_CITY,
             FILTER_BY_CITY_IN_BOROUGH,
             FILTER_BY_CITY_LIKE,
@@ -739,7 +741,6 @@ TEMPLATES = {
         "description": "Find job training and employment services",
         "required_filters": [FILTER_BY_TAXONOMY_NAME_IN, FILTER_NOT_HIDDEN, FILTER_BY_STATE_NY],
         "optional_filters": [
-            FILTER_BY_BOROUGH,
             FILTER_BY_CITY,
             FILTER_BY_CITY_IN_BOROUGH,
             FILTER_BY_CITY_LIKE,
@@ -760,7 +761,6 @@ TEMPLATES = {
         "description": "Find showers, laundry, toiletries, and hygiene services",
         "required_filters": [FILTER_BY_TAXONOMY_NAME_IN, FILTER_NOT_HIDDEN, FILTER_BY_STATE_NY],
         "optional_filters": [
-            FILTER_BY_BOROUGH,
             FILTER_BY_CITY,
             FILTER_BY_CITY_IN_BOROUGH,
             FILTER_BY_CITY_LIKE,
@@ -790,7 +790,6 @@ TEMPLATES = {
         "description": "Find mental health, counseling, and substance use services",
         "required_filters": [FILTER_BY_TAXONOMY_NAME_IN, FILTER_NOT_HIDDEN, FILTER_BY_STATE_NY],
         "optional_filters": [
-            FILTER_BY_BOROUGH,
             FILTER_BY_CITY,
             FILTER_BY_CITY_IN_BOROUGH,
             FILTER_BY_CITY_LIKE,
@@ -816,7 +815,6 @@ TEMPLATES = {
         "description": "Find benefits, drop-in centers, case workers, and miscellaneous services",
         "required_filters": [FILTER_BY_TAXONOMY_NAME_IN, FILTER_NOT_HIDDEN, FILTER_BY_STATE_NY],
         "optional_filters": [
-            FILTER_BY_BOROUGH,
             FILTER_BY_CITY,
             FILTER_BY_CITY_IN_BOROUGH,
             FILTER_BY_CITY_LIKE,
@@ -864,7 +862,6 @@ TEMPLATES = {
         "description": "Find all services at a specific organization by name",
         "required_filters": [FILTER_BY_ORG_NAME, FILTER_NOT_HIDDEN, FILTER_BY_STATE_NY],
         "optional_filters": [
-            FILTER_BY_BOROUGH,
             FILTER_BY_CITY,
             FILTER_BY_CITY_IN_BOROUGH,
             FILTER_BY_CITY_LIKE,
@@ -1040,9 +1037,10 @@ def build_relaxed_query(template_key: str, user_params: dict) -> tuple[str, dict
     for key in ["lat", "lon", "radius_meters"]:
         relaxed_params.pop(key, None)
 
-    # Drop borough filter — keep city_list as the broader fallback.
-    # This ensures records where pa.borough is NULL can still be found.
-    relaxed_params.pop("borough", None)
+    # Note: the "borough" param used to be dropped here when FILTER_BY_BOROUGH
+    # existed (against pa.borough, which doesn't exist in prod). Removed
+    # Apr 17, 2026 along with the filter itself. Borough narrowing is now
+    # entirely via city_list.
 
     # Promote _borough_city_list (from neighborhood searches) to city_list
     # so the relaxed query broadens from "Harlem" to all of Manhattan.

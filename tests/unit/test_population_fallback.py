@@ -222,7 +222,8 @@ class TestResolveBorough:
         assert _resolve_borough_from_location("Queens") == "Queens"
 
     def test_the_bronx_canonicalizes(self):
-        """'The Bronx' → 'Bronx' so it matches pa.borough values."""
+        """'The Bronx' → 'Bronx' so it keys correctly into _CITY_TO_BOROUGH
+        and the population fallback's borough-wide query."""
         assert _resolve_borough_from_location("the bronx") == "Bronx"
 
     def test_none_returns_none(self):
@@ -551,6 +552,210 @@ class TestFallbackIntegration:
         result, _ = _run_execute_with_mock(slots, main, fallback)
         assert "youth-specific" in result["response"]
         assert "LGBTQ-friendly" in result["response"]
+
+
+# ===========================================================================
+# Regression guards — bugs found during self-review (April 2026)
+# ===========================================================================
+
+class TestGpsUserFallback:
+    """Bug #1: GPS users couldn't trigger the fallback.
+
+    When a user has browser geolocation active, slots['location'] is the
+    NEAR_ME_SENTINEL ('__near_me__') rather than a neighborhood name.
+    Before the fix, _resolve_borough_from_location returned None for the
+    sentinel, silently skipping the fallback for every GPS user — the
+    opposite of the design intent (GPS users are precisely the ones
+    affected by proximity exclusion).
+
+    Fix: when location is the sentinel and lat/lon are present, reverse-
+    geocode against borough centroids.
+    """
+
+    def test_gps_user_in_soho_triggers_fallback(self):
+        from app.services.slot_extractor import NEAR_ME_SENTINEL
+        main = [_card(f"g{i}", ["Shelter", "Single Adult"]) for i in range(5)]
+        fallback = [_card("afc", ["Shelter", "LGBTQ Young Adult"],
+                          name="Ali Forney Center")]
+        slots = {
+            "service_type": "shelter",
+            "location": NEAR_ME_SENTINEL,
+            # Soho coordinates
+            "_latitude": 40.7235,
+            "_longitude": -74.0024,
+            "age": 21,
+            "_gender": "lgbtq",
+        }
+        result, calls = _run_execute_with_mock(slots, main, fallback)
+        assert len(calls) == 2, "GPS user should trigger fallback query"
+        # Soho coords are closest to Manhattan's centroid
+        assert calls[1]["location"] == "Manhattan"
+        assert any(
+            s["service_name"] == "Ali Forney Center" for s in result["services"]
+        )
+
+    def test_gps_user_in_brooklyn_resolves_to_brooklyn(self):
+        """GPS coords in Brooklyn resolve to Brooklyn borough, not Manhattan."""
+        from app.services.slot_extractor import NEAR_ME_SENTINEL
+        main = [_card("g1", ["Shelter", "Single Adult"])]
+        fallback = [_card("bk", ["Shelter", "LGBTQ Young Adult"])]
+        slots = {
+            "service_type": "shelter",
+            "location": NEAR_ME_SENTINEL,
+            # Williamsburg coordinates
+            "_latitude": 40.7081,
+            "_longitude": -73.9571,
+            "age": 21,
+            "_gender": "lgbtq",
+        }
+        _, calls = _run_execute_with_mock(slots, main, fallback)
+        assert calls[1]["location"] == "Brooklyn"
+
+    def test_borough_centroid_matches_nearest(self):
+        """Unit check on the reverse-geocode math directly, across 21
+        landmarks spanning all 5 boroughs including known edge cases:
+        Washington Heights (far north Manhattan — closer to Bronx
+        centroid than Manhattan centroid), Battery Park (south
+        Manhattan — close to Brooklyn across the river), and LaGuardia
+        (north Queens — close to Bronx across the water). These all
+        need to resolve to their correct borough for GPS users."""
+        from app.services.chatbot import _nearest_borough_by_centroid
+        landmarks = [
+            # Manhattan — including edge cases
+            ("Times Square", 40.758, -73.985, "Manhattan"),
+            ("Washington Heights", 40.840, -73.939, "Manhattan"),
+            ("Battery Park", 40.703, -74.017, "Manhattan"),
+            ("Inwood", 40.867, -73.921, "Manhattan"),
+            # Brooklyn
+            ("Williamsburg", 40.708, -73.957, "Brooklyn"),
+            ("Coney Island", 40.575, -73.984, "Brooklyn"),
+            ("Brownsville", 40.663, -73.907, "Brooklyn"),
+            # Queens — edge cases near water/boundaries
+            ("LaGuardia", 40.774, -73.872, "Queens"),
+            ("JFK", 40.644, -73.782, "Queens"),
+            ("Far Rockaway", 40.604, -73.755, "Queens"),
+            # Bronx
+            ("Yankee Stadium", 40.829, -73.926, "Bronx"),
+            ("Co-op City", 40.873, -73.829, "Bronx"),
+            # Staten Island — supplemented manually since
+            # NEIGHBORHOOD_CENTERS has no SI entries
+            ("St George SI", 40.644, -74.074, "Staten Island"),
+            ("Tottenville SI", 40.510, -74.230, "Staten Island"),
+        ]
+        for name, lat, lon, expected in landmarks:
+            assert _nearest_borough_by_centroid(lat, lon) == expected, \
+                f"{name} at ({lat}, {lon}) should resolve to {expected}"
+
+    def test_borough_centroid_rejects_non_numeric(self):
+        from app.services.chatbot import _nearest_borough_by_centroid
+        assert _nearest_borough_by_centroid(None, -74.0) is None
+        assert _nearest_borough_by_centroid(40.7, None) is None
+        assert _nearest_borough_by_centroid("abc", -74.0) is None
+
+
+class TestFallbackPagination:
+    """Bug #2: fallback cards reappeared on 'Show more' page 2.
+
+    Before the fix, fallback cards were appended to `all_services`, which
+    is stored as `_last_results` and drives pagination. With main=10 and
+    fallback=1, the user saw the fallback card once on page 1 (correct)
+    AND again on page 2 (wrong — no contextual note, looks like a main
+    result).
+
+    Fix: fallback cards go into `services_list` only. `all_services`
+    (and therefore `_last_results`) stays main-only. Pagination uses
+    `_main_displayed_count` which tracks main cards displayed, not the
+    combined displayed count.
+    """
+
+    def test_fallback_not_in_last_results(self):
+        """_last_results (pagination source) must contain only main cards."""
+        main = [_card(f"g{i}", ["Shelter", "Single Adult"]) for i in range(10)]
+        fallback = [_card("afc", ["Shelter", "LGBTQ Young Adult"])]
+        slots = {
+            "service_type": "shelter", "location": "soho",
+            "age": 21, "_gender": "lgbtq",
+        }
+        result, _ = _run_execute_with_mock(slots, main, fallback)
+        last_ids = {s["service_id"] for s in result["slots"].get("_last_results", [])}
+        assert "afc" not in last_ids
+        assert last_ids == {f"g{i}" for i in range(10)}
+
+    def test_displayed_count_is_main_only(self):
+        """_displayed_count tracks what the user has seen of MAIN results
+        — not main + fallback — so pagination math stays correct."""
+        main = [_card(f"g{i}", ["Shelter", "Single Adult"]) for i in range(10)]
+        fallback = [_card("afc", ["Shelter", "LGBTQ Young Adult"])]
+        slots = {
+            "service_type": "shelter", "location": "soho",
+            "age": 21, "_gender": "lgbtq",
+        }
+        result, _ = _run_execute_with_mock(slots, main, fallback)
+        # 5 main cards displayed, NOT 5 main + 1 fallback = 6
+        assert result["slots"]["_displayed_count"] == 5
+
+    def test_next_page_excludes_fallback(self):
+        """Simulate 'Show more': next page slice of _last_results[5:10]
+        should be main cards 5..9, never the fallback card."""
+        main = [_card(f"g{i}", ["Shelter", "Single Adult"]) for i in range(10)]
+        fallback = [_card("afc", ["Shelter", "LGBTQ Young Adult"])]
+        slots = {
+            "service_type": "shelter", "location": "soho",
+            "age": 21, "_gender": "lgbtq",
+        }
+        result, _ = _run_execute_with_mock(slots, main, fallback)
+        last = result["slots"]["_last_results"]
+        d = result["slots"]["_displayed_count"]
+        next_page_ids = [s["service_id"] for s in last[d:d + 5]]
+        assert "afc" not in next_page_ids
+        assert next_page_ids == ["g5", "g6", "g7", "g8", "g9"]
+
+
+class TestFallbackPerCardAttribution:
+    """Bug #3: fallback_population always marked with labels[0].
+
+    A 20-year-old trans user has labels ['youth', 'lgbtq']. Ali Forney
+    Center (tagged LGBTQ Young Adult, not Youth) should be marked
+    `fallback_population: 'lgbtq'` — its distinguishing match — not
+    'youth' just because youth was first in the labels list.
+    """
+
+    def test_afc_marked_lgbtq_not_youth_for_trans_young_adult(self):
+        main = [_card("g1", ["Shelter", "Single Adult"])]
+        fallback = [_card("afc", ["Shelter", "LGBTQ Young Adult"])]
+        slots = {
+            "service_type": "shelter", "location": "soho",
+            "age": 20, "_gender": "transgender",
+        }
+        result, _ = _run_execute_with_mock(slots, main, fallback)
+        afc = next(s for s in result["services"] if s["service_id"] == "afc")
+        assert afc["fallback_population"] == "lgbtq"
+
+    def test_youth_card_marked_youth_for_same_user(self):
+        """Same trans 20yo user — a Youth-tagged (but not LGBTQ-tagged)
+        fallback card should be marked 'youth', not 'lgbtq'."""
+        main = [_card("g1", ["Shelter", "Single Adult"])]
+        fallback = [_card("ch", ["Shelter", "Youth"], name="Covenant House")]
+        slots = {
+            "service_type": "shelter", "location": "soho",
+            "age": 20, "_gender": "transgender",
+        }
+        result, _ = _run_execute_with_mock(slots, main, fallback)
+        ch = next(s for s in result["services"] if s["service_id"] == "ch")
+        assert ch["fallback_population"] == "youth"
+
+    def test_veteran_short_term_housing_tag_matches_veteran(self):
+        """A service tagged 'Veterans Short-Term Housing' should attribute
+        to the 'veteran' population."""
+        main = [_card("g1", ["Shelter", "Single Adult"])]
+        fallback = [_card("va", ["Shelter", "Veterans Short-Term Housing"])]
+        slots = {
+            "service_type": "shelter", "location": "manhattan",
+            "age": 45, "_populations": ["veteran"],
+        }
+        result, _ = _run_execute_with_mock(slots, main, fallback)
+        va = next(s for s in result["services"] if s["service_id"] == "va")
+        assert va["fallback_population"] == "veteran"
 
 
 # ===========================================================================

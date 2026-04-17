@@ -78,7 +78,7 @@ See [CRISIS_DETECTION.md](CRISIS_DETECTION.md) for architecture, phrase list des
 
 ## Search & Results
 
-- **Borough-level search** — uses `pa.borough` column directly (not city name expansion), which is clean and consistent across all five boroughs including Staten Island
+- **Borough-level search** — matches `pa.city` against the full list of known city values for that borough (Manhattan → "New York", Queens → "Queens" + "Astoria" + "Flushing" + all other neighborhood-level city values, etc.). This is how every borough search actually runs because `physical_addresses` has no `borough` column; see `docs/BOUNDARY_AUDIT.md` for the known limitations and the plan to move to coordinate-derived borough via NYC DCP polygons.
 - **Neighborhood proximity search** — PostGIS `ST_DWithin` with 59 neighborhood center coordinates returns genuinely local results; falls back to full-borough on no results
 - **Near-me handling** — detects "food near me" and offers browser geolocation ("Use my location") alongside borough buttons; falls back to asking for a neighborhood if geolocation is denied
 - **Location-unknown handling** — when the bot asks for location and the user responds with uncertainty ("I don't know", "idk", "not sure"), indifference ("anywhere", "wherever", "doesn't matter"), or self-location ("here", "right here"), offers geolocation and borough buttons instead of falling into the confused handler. Guards ensure this only fires during an active service search (service_type set, no location yet). 19 phrases via substring matching plus 2 exact-match phrases
