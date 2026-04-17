@@ -35,6 +35,7 @@ from app.rag.query_templates import (
     format_service_card,
     deduplicate_results,
     TEMPLATES,
+    _FRESHNESS_DAYS,
 )
 
 load_dotenv()
@@ -119,11 +120,14 @@ def test_connection() -> bool:
 # FRESHNESS STATS
 # ---------------------------------------------------------------------------
 
-_FRESHNESS_DAYS = 90
+# _FRESHNESS_DAYS is imported from query_templates to keep the SQL sort's
+# "fresh" tier threshold in lockstep with the displayed freshness stats.
+# If you change the threshold, change it in query_templates._FRESHNESS_DAYS
+# only — this module picks up the new value automatically.
 
 
 def _compute_freshness(rows: list[dict]) -> dict:
-    """Count how many results were verified within the last 90 days.
+    """Count how many results were verified within the last _FRESHNESS_DAYS.
 
     Operates on raw query rows (before format_service_card drops
     the last_validated_at field).

@@ -430,22 +430,31 @@ FILTER_BY_CLOTHING_OCCASION = (
 # ---------------------------------------------------------------------------
 # ORDER + LIMIT
 # ---------------------------------------------------------------------------
-# Sorting priority:
-#   1. Recently verified — freshest data first (NULLS LAST)
-#   2. Service name — stable tiebreaker
+# Sorting priority (base):
+#   1. Freshness tier (CASE 0/1/2)  — fresh ≤90d first, stale next, NULL last
+#   2. Continuous timestamp          — most recently verified within a tier
+#   3. Service name                  — stable alphabetical tiebreaker
+#
+# With optional layers (prepended/inserted in this order):
+#   - Population boosts (LGBTQ, veteran, description) sort BEFORE the base
+#     — see _LGBTQ_BOOST_RANK, _VETERAN_BOOST_RANK, _DESCRIPTION_BOOST_RANK
+#   - Distance band (_DISTANCE_BAND_RANK) sorts BETWEEN boosts and freshness
+#     — so freshness wins within a walking-time band
+#   - Continuous distance (_DISTANCE_TIEBREAK) sorts AFTER freshness but
+#     BEFORE name — a closer service beats a farther one when band + tier tie
 #
 # Open-now ordering is applied in Python by `_sort_open_first()` after the
 # SQL query returns (see query_executor.py). This is the single source of
 # truth for open-status sorting — SQL does not contribute.
 #
-# When proximity (lat/lon) is available, distance is the primary sort.
-# The Python re-sort still applies open-first as a stable overlay.
+# Why not SQL for open-now? The Python `_sort_open_first()` distinguishes
+# three buckets (open < closed < unknown), while a SQL CASE expression
+# conflates closed and unknown at 1. Earlier revisions had both layers
+# running — Python's rank always overrode SQL's, making SQL's contribution
+# cosmetic. One source of truth eliminates a drift vector.
 #
-# Why not SQL? The Python `_sort_open_first()` distinguishes three buckets
-# (open < closed < unknown), while a SQL CASE expression conflates closed
-# and unknown at 1. Earlier revisions had both layers running — Python's
-# rank always overrode SQL's, making SQL's contribution cosmetic. One
-# source of truth eliminates a drift vector.
+# See docs/FRESHNESS_TIER_SPEC.md and docs/BUCKETED_DISTANCE_SORT_SPEC.md
+# for the motivation behind the tiered freshness + distance-band design.
 
 # Open-now sort expression — INTENTIONALLY NOT USED in _BASE_ORDER_PARTS
 # (see comment above). Retained as documentation of the shape of a SQL-level
@@ -528,10 +537,32 @@ _DISTANCE_TIEBREAK = (
 # name. The old continuous-only behavior is equivalent to _DISTANCE_TIEBREAK.
 _DISTANCE_RANK = _DISTANCE_TIEBREAK
 
-# Base sort tiebreakers: freshness, then name.
+# Freshness threshold in days. Shared with query_executor._compute_freshness
+# (imported from here) so the SQL sort's "fresh" tier matches what the
+# displayed "X of Y verified in last N days" stats report.
+_FRESHNESS_DAYS = 90
+
+# Tiered freshness CASE — 3 buckets:
+#   0 = fresh (verified within _FRESHNESS_DAYS)
+#   1 = stale (verified, but older than _FRESHNESS_DAYS)
+#   2 = never verified (last_validated_at IS NULL)
+#
+# Within a distance band, this promotes "recent enough to trust" services
+# over older-but-still-verified ones, and demotes unverified ones to the
+# bottom. Paired with the continuous timestamp as a tiebreaker within
+# each tier. See docs/FRESHNESS_TIER_SPEC.md for the full design.
+_FRESHNESS_TIER_RANK = f"""CASE
+    WHEN l.last_validated_at >= CURRENT_DATE - INTERVAL '{_FRESHNESS_DAYS} days' THEN 0
+    WHEN l.last_validated_at IS NOT NULL THEN 1
+    ELSE 2
+END"""
+
+# Base sort tiebreakers: tiered freshness, then continuous timestamp within
+# each tier, then name.
 # Open-now ordering is handled post-query by Python `_sort_open_first()`
 # — see comment block above for rationale.
 _BASE_ORDER_PARTS = [
+    _FRESHNESS_TIER_RANK,
     "l.last_validated_at DESC NULLS LAST",
     "s.name",
 ]
@@ -972,15 +1003,17 @@ def build_query(template_key: str, user_params: dict) -> tuple[str, dict]:
     if _has_distance:
         order_parts.append(_DISTANCE_BAND_RANK)
 
-    # 3. Base tiebreakers: freshness DESC, then name.
-    #    When proximity is active, continuous distance is inserted
-    #    BETWEEN freshness and name so a closer service still beats a
+    # 3. Base tiebreakers: tiered freshness, then continuous timestamp
+    #    within each tier, then name.
+    #    When proximity is active, continuous distance is inserted BEFORE
+    #    name (but AFTER freshness) so a closer service still beats a
     #    farther one within the same band + freshness tier.
     if _has_distance:
-        # Keep the "name is the last stable tiebreaker" contract stable
-        # across future extensions to _BASE_ORDER_PARTS (e.g., an added
-        # freshness-tier rank). Everything before the final element
-        # comes before continuous distance; name comes after it.
+        # Split _BASE_ORDER_PARTS into (fresh_parts, name_part): everything
+        # that sorts before continuous distance comes first (freshness tier
+        # + continuous timestamp), then distance goes in, then name is the
+        # final stable tiebreaker. Unpacking rather than indexing keeps this
+        # robust against future reshaping of _BASE_ORDER_PARTS.
         *fresh_parts, name_part = _BASE_ORDER_PARTS
         order_parts.extend(fresh_parts)
         order_parts.append(_DISTANCE_TIEBREAK)
