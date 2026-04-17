@@ -32,15 +32,22 @@ from app.services.chatbot import (
 def llm_enabled(monkeypatch):
     """Enable the LLM gate for a test and inject a mockable ``classify_unified``.
 
-    The real chatbot module imports ``classify_unified`` conditionally — only
-    when ``ANTHROPIC_API_KEY`` is set — so in the CI environment (no key)
-    the name isn't bound. The gate's first check is ``_USE_LLM`` so nothing
-    else runs without a key. This fixture flips both so the gate's
-    downstream behavior can be exercised under test.
+    ``classify_unified`` is imported at the top of ``chatbot.pipeline``
+    under an ``if _USE_LLM`` guard — only when ``ANTHROPIC_API_KEY`` is
+    set does the name get bound. In CI (no key), the name isn't there
+    and the gate short-circuits on the ``_USE_LLM`` check before ever
+    referencing it. This fixture flips both on the pipeline module so
+    the gate's downstream behavior is exercised under test.
+
+    Note on target modules (Phase 3 decomposition, April 2026): the LLM
+    gate lives in ``chatbot.pipeline`` now, not the top-level package.
+    Attribute patches must target pipeline directly so the name lookup
+    inside ``_run_llm_gate`` picks them up.
     """
+    from app.services.chatbot import pipeline as pipeline_module
     mock_classify = MagicMock(return_value=None)
-    monkeypatch.setattr(chatbot_module, "_USE_LLM", True)
-    monkeypatch.setattr(chatbot_module, "classify_unified", mock_classify,
+    monkeypatch.setattr(pipeline_module, "_USE_LLM", True)
+    monkeypatch.setattr(pipeline_module, "classify_unified", mock_classify,
                         raising=False)
     return mock_classify
 
@@ -158,7 +165,7 @@ class TestComputeTonePrefix:
         """When no emotional signal fires and it's a service flow, a random
         warmth prefix is emitted (to avoid 'functional but flat' tone)."""
         # Patch the RNG source so the test is deterministic
-        with patch("app.services.chatbot.random_warmth_prefix",
+        with patch("app.services.chatbot.tone.random_warmth_prefix",
                    return_value="Got it — "):
             prefix, ctx = _compute_tone_prefix(
                 message="food in brooklyn",

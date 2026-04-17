@@ -71,9 +71,9 @@ def _run_execute_with_mock(slots: dict, main_services: list[dict], fallback_serv
             "execution_ms": 10,
         }
 
-    with patch("app.services.chatbot.query_services", side_effect=fake_query_services), \
-         patch("app.services.chatbot.save_session_slots"), \
-         patch("app.services.chatbot.log_query_execution"):
+    with patch("app.services.chatbot.execution.query_services", side_effect=fake_query_services), \
+         patch("app.services.chatbot.execution.save_session_slots"), \
+         patch("app.services.chatbot.execution.log_query_execution"):
         result = _execute_and_respond("test-session", "msg", dict(slots))
     return result, calls
 
@@ -443,9 +443,9 @@ class TestFallbackIntegration:
             "service_type": "shelter", "location": "soho",
             "age": 21, "_gender": "lgbtq",
         }
-        with patch("app.services.chatbot.query_services", side_effect=fake_query_services), \
-             patch("app.services.chatbot.save_session_slots"), \
-             patch("app.services.chatbot.log_query_execution"):
+        with patch("app.services.chatbot.execution.query_services", side_effect=fake_query_services), \
+             patch("app.services.chatbot.execution.save_session_slots"), \
+             patch("app.services.chatbot.execution.log_query_execution"):
             result = _execute_and_respond("s", "msg", dict(slots))
         assert len(calls) == 1
 
@@ -515,9 +515,9 @@ class TestFallbackIntegration:
             "service_type": "shelter", "location": "soho",
             "age": 21, "_gender": "lgbtq",
         }
-        with patch("app.services.chatbot.query_services", side_effect=fake_query_services), \
-             patch("app.services.chatbot.save_session_slots"), \
-             patch("app.services.chatbot.log_query_execution"):
+        with patch("app.services.chatbot.execution.query_services", side_effect=fake_query_services), \
+             patch("app.services.chatbot.execution.save_session_slots"), \
+             patch("app.services.chatbot.execution.log_query_execution"):
             result = _execute_and_respond("s", "msg", dict(slots))
         # Main result survives
         assert result["result_count"] == 1

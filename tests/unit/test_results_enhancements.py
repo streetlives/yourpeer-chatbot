@@ -104,7 +104,7 @@ class TestSortPatterns:
     def test_sort_by_recently_verified(self):
         sid, results = _session_with_results(5)
         with patch("app.services.chatbot.claude_reply", return_value=""), \
-             patch("app.services.chatbot.query_services"), \
+             patch("app.services.chatbot.execution.query_services"), \
              patch("app.services.chatbot.detect_crisis", return_value=None):
             result = generate_reply("Sort by recently verified", session_id=sid)
         assert "recently verified" in result["response"].lower()
@@ -118,7 +118,7 @@ class TestSortPatterns:
     def test_sort_by_most_services(self):
         sid, results = _session_with_results(5)
         with patch("app.services.chatbot.claude_reply", return_value=""), \
-             patch("app.services.chatbot.query_services"), \
+             patch("app.services.chatbot.execution.query_services"), \
              patch("app.services.chatbot.detect_crisis", return_value=None):
             result = generate_reply("Sort by most services", session_id=sid)
         assert "most services" in result["response"].lower()
@@ -133,7 +133,7 @@ class TestSortPatterns:
         """After sorting, _last_results should be in the new order."""
         sid, results = _session_with_results(5)
         with patch("app.services.chatbot.claude_reply", return_value=""), \
-             patch("app.services.chatbot.query_services"), \
+             patch("app.services.chatbot.execution.query_services"), \
              patch("app.services.chatbot.detect_crisis", return_value=None):
             generate_reply("Sort by recently verified", session_id=sid)
         from app.services.session_store import get_session_slots
@@ -148,7 +148,7 @@ class TestSortPatterns:
         """An unrecognized sort phrase should not match."""
         sid, results = _session_with_results(3)
         with patch("app.services.chatbot.claude_reply", return_value=""), \
-             patch("app.services.chatbot.query_services"), \
+             patch("app.services.chatbot.execution.query_services"), \
              patch("app.services.chatbot.detect_crisis", return_value=None):
             result = generate_reply("Sort by cheapest", session_id=sid)
         # Should NOT match the sort handler
@@ -240,9 +240,9 @@ class TestHandleHoursForDay:
             "svc-1": [{"opens_at": time(10, 0), "closes_at": time(14, 0)}],
         }
         with patch("app.services.chatbot.claude_reply", return_value=""), \
-             patch("app.services.chatbot.query_services"), \
+             patch("app.services.chatbot.execution.query_services"), \
              patch("app.services.chatbot.detect_crisis", return_value=None), \
-             patch("app.services.chatbot.fetch_schedule_for_day", return_value=mock_schedule):
+             patch("app.services.chatbot.handlers.post_results.fetch_schedule_for_day", return_value=mock_schedule):
             result = generate_reply("are they open on Saturday?", session_id=sid)
         assert "Saturday" in result["response"]
         assert "Service 1" in result["response"]
@@ -253,9 +253,9 @@ class TestHandleHoursForDay:
     def test_no_schedule_data_message(self):
         sid, results = _session_with_results(2)
         with patch("app.services.chatbot.claude_reply", return_value=""), \
-             patch("app.services.chatbot.query_services"), \
+             patch("app.services.chatbot.execution.query_services"), \
              patch("app.services.chatbot.detect_crisis", return_value=None), \
-             patch("app.services.chatbot.fetch_schedule_for_day", return_value={}):
+             patch("app.services.chatbot.handlers.post_results.fetch_schedule_for_day", return_value={}):
             result = generate_reply("hours on Sunday?", session_id=sid)
         assert "Sunday" in result["response"]
         assert "No schedule data" in result["response"]
@@ -270,9 +270,9 @@ class TestHandleHoursForDay:
             return {}
 
         with patch("app.services.chatbot.claude_reply", return_value=""), \
-             patch("app.services.chatbot.query_services"), \
+             patch("app.services.chatbot.execution.query_services"), \
              patch("app.services.chatbot.detect_crisis", return_value=None), \
-             patch("app.services.chatbot.fetch_schedule_for_day", side_effect=mock_fetch):
+             patch("app.services.chatbot.handlers.post_results.fetch_schedule_for_day", side_effect=mock_fetch):
             generate_reply("what are the weekend hours?", session_id=sid)
         assert 6 in call_args  # Saturday
         assert 7 in call_args  # Sunday

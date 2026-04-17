@@ -204,9 +204,15 @@ def send(message, session_id=None, mock_query_return=None, latitude=None, longit
         session_id = f"test-{uuid.uuid4().hex[:8]}"
         clear_session(session_id)
 
-    with patch("app.services.chatbot.claude_reply", return_value="How can I help?"), \
-         patch("app.services.chatbot.query_services", return_value=mock_query_return), \
-         patch("app.services.chatbot.detect_crisis", return_value=mock_crisis_return):
+    # Phase 3: patch paths target the specific submodule that holds the
+    # binding (not the top-level package). `handlers.meta.claude_reply` is
+    # where the bot-capability handler does the LLM call;
+    # `execution.query_services` is the primary DB call site inside
+    # `_execute_and_respond`; `orchestrator.detect_crisis` is the single
+    # caller of the crisis detector in the dispatch flow.
+    with patch("app.services.chatbot.handlers.meta.claude_reply", return_value="How can I help?"), \
+         patch("app.services.chatbot.execution.query_services", return_value=mock_query_return), \
+         patch("app.services.chatbot.orchestrator.detect_crisis", return_value=mock_crisis_return):
         return generate_reply(message, session_id=session_id, latitude=latitude, longitude=longitude)
 
 
@@ -242,9 +248,9 @@ def send_multi(messages, session_id=None, mock_query_return=None, latitude=None,
         clear_session(session_id)
 
     results = []
-    with patch("app.services.chatbot.claude_reply", return_value="How can I help?"), \
-         patch("app.services.chatbot.query_services", return_value=mock_query_return), \
-         patch("app.services.chatbot.detect_crisis", return_value=mock_crisis_return):
+    with patch("app.services.chatbot.handlers.meta.claude_reply", return_value="How can I help?"), \
+         patch("app.services.chatbot.execution.query_services", return_value=mock_query_return), \
+         patch("app.services.chatbot.orchestrator.detect_crisis", return_value=mock_crisis_return):
         for msg in messages:
             results.append(generate_reply(msg, session_id=session_id, latitude=latitude, longitude=longitude))
     return results

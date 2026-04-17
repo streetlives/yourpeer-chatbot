@@ -61,7 +61,7 @@ def _send(message, session_id, mock_crisis_return=None):
     crisis_val = mock_crisis_return
     with (
         patch("app.services.chatbot._USE_LLM", False),
-        patch("app.services.chatbot.query_services", return_value=MOCK_QUERY_RESULTS),
+        patch("app.services.chatbot.execution.query_services", return_value=MOCK_QUERY_RESULTS),
         patch("app.services.chatbot.claude_reply", return_value="How can I help?"),
         patch("app.services.chatbot.detect_crisis", return_value=crisis_val),
     ):
@@ -165,7 +165,7 @@ class TestLLMContradictoryCategory:
     other detectors, the chatbot should not crash or loop."""
 
     @patch("app.services.chatbot.detect_crisis", return_value=None)
-    @patch("app.services.chatbot.query_services", return_value=MOCK_QUERY_RESULTS)
+    @patch("app.services.chatbot.execution.query_services", return_value=MOCK_QUERY_RESULTS)
     @patch("app.services.chatbot.claude_reply", return_value="I can help with that.")
     @patch("app.llm.claude_client.classify_message_llm", return_value="crisis")
     def test_llm_says_crisis_but_detector_says_no(
@@ -184,7 +184,7 @@ class TestLLMContradictoryCategory:
         clear_session(sid)
 
     @patch("app.services.chatbot.detect_crisis", return_value=None)
-    @patch("app.services.chatbot.query_services", return_value=MOCK_QUERY_RESULTS)
+    @patch("app.services.chatbot.execution.query_services", return_value=MOCK_QUERY_RESULTS)
     @patch("app.services.chatbot.claude_reply", return_value="Let me help.")
     @patch("app.llm.claude_client.classify_message_llm", return_value=None)
     def test_llm_returns_none(self, mock_llm_cls, mock_claude, mock_query, mock_crisis):
@@ -215,7 +215,7 @@ class TestNearMeSentinelSafety:
         })
         # Confirming should trigger _execute_and_respond
         with (
-            patch("app.services.chatbot.query_services") as mock_qs,
+            patch("app.services.chatbot.execution.query_services") as mock_qs,
             patch("app.services.chatbot.claude_reply", return_value="fallback"),
             patch("app.services.chatbot.detect_crisis", return_value=None),
         ):

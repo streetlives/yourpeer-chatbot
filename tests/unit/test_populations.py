@@ -855,7 +855,7 @@ def _send_with_crisis(message, crisis_category, session_id=None):
     crisis_return = (crisis_category, _DV_CRISIS_RESPONSE)
 
     with _patch("app.services.chatbot.claude_reply", return_value="How can I help?"), \
-         _patch("app.services.chatbot.query_services", return_value=_MOCK_RESULTS), \
+         _patch("app.services.chatbot.execution.query_services", return_value=_MOCK_RESULTS), \
          _patch("app.services.chatbot.detect_crisis", return_value=crisis_return):
         result = generate_reply(message, session_id=session_id)
 
@@ -944,7 +944,7 @@ class TestDVCrisisPopulationInjection:
 
         # Step 1: DV crisis with service intent → step-down
         with _patch("app.services.chatbot.claude_reply", return_value=""), \
-             _patch("app.services.chatbot.query_services", return_value=_MOCK_RESULTS), \
+             _patch("app.services.chatbot.execution.query_services", return_value=_MOCK_RESULTS), \
              _patch("app.services.chatbot.detect_crisis",
                     return_value=("domestic_violence", _DV_CRISIS_RESPONSE)):
             generate_reply("he hits me and I need shelter in Brooklyn",
@@ -952,7 +952,7 @@ class TestDVCrisisPopulationInjection:
 
         # Step 2: User confirms → query executes
         with _patch("app.services.chatbot.claude_reply", return_value=""), \
-             _patch("app.services.chatbot.query_services", return_value=_MOCK_RESULTS) as mock_qs, \
+             _patch("app.services.chatbot.execution.query_services", return_value=_MOCK_RESULTS) as mock_qs, \
              _patch("app.services.chatbot.detect_crisis", return_value=None):
             generate_reply("Yes, search", session_id=session_id)
 
@@ -978,14 +978,14 @@ class TestDVCrisisPopulationInjection:
 
         # Step 1: DV crisis, no service intent
         with _patch("app.services.chatbot.claude_reply", return_value=""), \
-             _patch("app.services.chatbot.query_services", return_value=_MOCK_RESULTS), \
+             _patch("app.services.chatbot.execution.query_services", return_value=_MOCK_RESULTS), \
              _patch("app.services.chatbot.detect_crisis",
                     return_value=("domestic_violence", _DV_CRISIS_RESPONSE)):
             generate_reply("he hits me", session_id=session_id)
 
         # Step 2: Follow-up with service intent → should reach confirmation
         with _patch("app.services.chatbot.claude_reply", return_value=""), \
-             _patch("app.services.chatbot.query_services", return_value=_MOCK_RESULTS), \
+             _patch("app.services.chatbot.execution.query_services", return_value=_MOCK_RESULTS), \
              _patch("app.services.chatbot.detect_crisis", return_value=None):
             result = generate_reply("I need shelter in Brooklyn",
                                     session_id=session_id)

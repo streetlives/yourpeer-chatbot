@@ -21,7 +21,7 @@ import pytest
 
 CHATBOT_FILE = (
     Path(__file__).resolve().parent.parent.parent
-    / "backend" / "app" / "services" / "chatbot.py"
+    / "backend" / "app" / "services" / "chatbot" / "pipeline.py"
 )
 
 

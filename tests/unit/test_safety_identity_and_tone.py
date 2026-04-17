@@ -309,11 +309,15 @@ class TestResultsPersonalization:
     """Results delivery should use personal, warm framing."""
 
     def test_results_say_found_for_you(self):
-        """Results text should say 'I found X option(s) for you'."""
+        """Results text should say 'I found X option(s) for you'.
+
+        The literal lives in ``_build_success_response`` in
+        ``chatbot.execution`` (Phase 3 decomposition, April 2026).
+        """
         # We can't easily test the full flow without a DB, but we can
         # check the string exists in the source code
         import inspect
-        from app.services import chatbot
-        source = inspect.getsource(chatbot)
+        from app.services.chatbot import execution
+        source = inspect.getsource(execution)
         assert "I found" in source, "Results should use 'I found'"
         assert "for you" in source, "Results should include 'for you'"

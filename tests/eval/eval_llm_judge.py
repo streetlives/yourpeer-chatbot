@@ -3278,7 +3278,7 @@ def simulate_conversation(
 
         # Send to chatbot
         with patch(
-            "app.services.chatbot.query_services",
+            "app.services.chatbot.execution.query_services",
             return_value=MOCK_QUERY_RESULTS,
         ), patch(
             "app.services.chatbot.claude_reply",
