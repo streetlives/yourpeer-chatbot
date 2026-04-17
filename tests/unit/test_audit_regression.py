@@ -62,6 +62,30 @@ def _query(service_type: str, **kwargs) -> dict:
     return captured.get("params", {})
 
 
+def _query_user_params(service_type: str, **kwargs) -> dict:
+    """Invoke query_services and return the user_params dict BEFORE SQL binding.
+
+    Unlike _query(), this captures params before build_query() processes them.
+    Needed for testing params that are consumed during SQL generation
+    (e.g., lgbtq_boost is popped by build_query for ORDER BY, so it
+    doesn't appear in SQL bind params).
+    """
+    captured = {}
+
+    def mock_exec(template_key, user_params, max_results):
+        captured.update(user_params)
+        return {
+            "services": [], "result_count": 0, "template_used": template_key,
+            "params_applied": user_params, "relaxed": False, "execution_ms": 0,
+        }
+
+    with patch("app.rag.execute_service_query", side_effect=mock_exec):
+        from app.rag import query_services
+        query_services(service_type=service_type, **kwargs)
+
+    return captured
+
+
 def _shelter_tax(**kwargs) -> list[str]:
     """Shorthand for shelter queries that returns just the taxonomy_names list."""
     return _query("shelter", location="Manhattan", **kwargs).get("taxonomy_names", [])
@@ -2002,3 +2026,249 @@ class TestClothingOccasionFilter:
                 f"Template '{key}' has FILTER_BY_CLOTHING_OCCASION — "
                 f"this filter is clothing-specific."
             )
+
+
+# =============================================================================
+# 12. FAMILY STATUS — "for my family" detection (April 16, 2026 user test fix)
+# =============================================================================
+
+class TestFamilyStatusExtraction:
+    """
+    WHY: User testing query 2.2 ("I need shelter for my family in Manhattan")
+    did not detect family_status. Root cause: _extract_family_status had
+    "with my family" but not "for my family" — one preposition difference.
+
+    Five phrases added:
+        "for my family", "my family needs", "me and my family",
+        "our family", "family shelter"
+    """
+
+    # --- Positive cases: should detect family_status ---
+
+    @pytest.mark.parametrize("phrase,expected", [
+        # New phrases (the fix)
+        ("I need shelter for my family in Manhattan", "with_family"),
+        ("my family needs shelter in Brooklyn", "with_family"),
+        ("me and my family need a place to stay", "with_family"),
+        ("I need a family shelter", "with_family"),
+        ("our family is homeless", "with_family"),
+        # Pre-existing phrases (regression check)
+        ("I need shelter with my family", "with_family"),
+        ("I need shelter with my partner", "with_family"),
+        ("I need shelter with my wife", "with_family"),
+        # Children detection (regression check)
+        ("I need shelter with my kids", "with_children"),
+        ("single mom needs shelter", "with_children"),
+        ("I have kids", "with_children"),
+        ("I'm here with my baby", "with_children"),  # "my baby" → with_children
+        ("I need shelter for my daughter", "with_children"),
+        # Alone detection (regression check)
+        ("I need shelter, just me", "alone"),
+        ("I am alone and need shelter", "alone"),
+        ("I'm by myself", "alone"),
+    ])
+    def test_family_status_detected(self, phrase, expected):
+        slots = extract_slots(phrase)
+        assert slots.get("family_status") == expected, (
+            f"'{phrase}' → family_status={slots.get('family_status')}, "
+            f"expected {expected}"
+        )
+
+    # --- Negative cases: should NOT detect family_status ---
+
+    @pytest.mark.parametrize("phrase", [
+        "I need shelter",
+        "I need food in Manhattan",
+        "my family doctor is in Brooklyn",
+        "family court in Manhattan",
+        "I have a family emergency",
+        "I need to help my family find food",
+    ])
+    def test_family_status_not_false_positive(self, phrase):
+        slots = extract_slots(phrase)
+        assert slots.get("family_status") is None, (
+            f"'{phrase}' falsely detected family_status="
+            f"{slots.get('family_status')}. Should be None."
+        )
+
+    # --- Priority: children > family > alone ---
+
+    def test_children_beats_family(self):
+        """'with my kids and my wife' → with_children (children checked first)."""
+        slots = extract_slots("I need shelter with my kids and my wife")
+        assert slots.get("family_status") == "with_children"
+
+    def test_family_beats_alone(self):
+        """'I'm alone but my family needs help' → with_family (family overrides)."""
+        # "my family needs" phrase should match before "alone"
+        slots = extract_slots("my family needs shelter")
+        assert slots.get("family_status") == "with_family"
+
+
+# =============================================================================
+# 13. LGBTQ CROSS-POPULATION — trans identity preservation
+#     (April 16, 2026 user test fix)
+# =============================================================================
+
+class TestLgbtqCrossPopulation:
+    """
+    WHY: User testing query 10.4 ("I cannot afford clothes on Amazon. I am
+    a transman") revealed that "transman" maps to gender="male" in
+    _extract_gender — which is correct for eligibility filtering — but the
+    LGBTQ identity was completely lost. The shelter enrichment checked
+    gender in ("lgbtq", "transgender", "nonbinary") and "male" didn't match,
+    so a trans man searching for shelter never saw Ali Forney Center or
+    other LGBTQ-affirming services.
+
+    Fix: extract_slots() now cross-populates _populations with "lgbtq"
+    when any of 21 LGBTQ signal phrases are detected in the message.
+    The enrichment check in rag/__init__.py now checks both gender AND
+    populations for the LGBTQ signal.
+    """
+
+    # --- Slot extraction: _populations includes "lgbtq" ---
+
+    @pytest.mark.parametrize("phrase", [
+        # Trans-identifying (maps to male/female in gender, but should still flag lgbtq)
+        "I am a transman",
+        "I'm a trans man",
+        "I am a transwoman",
+        "I'm a trans woman",
+        "I'm ftm",
+        "I'm mtf",
+        # Direct identity terms
+        "I'm transgender",
+        "I'm nonbinary",
+        "I'm non-binary",
+        "I'm enby",
+        "I'm genderqueer",
+        "I'm gender fluid",
+        "I'm agender",
+        # LGBTQ umbrella
+        "I'm LGBTQ",
+        "I'm lgbtq+",
+        "I'm LGBT",
+        "I'm queer",
+        "I'm gay",
+        "I'm a lesbian",
+        "I'm bisexual",
+        # In context (compound messages)
+        "21, LGBTQ, in Soho, need a bed tonight",
+        "I cannot afford clothes on Amazon. I am a transman",
+        "I'm a gay man and need shelter",
+    ])
+    def test_lgbtq_signal_in_populations(self, phrase):
+        """LGBTQ signal phrases must add 'lgbtq' to _populations."""
+        slots = extract_slots(phrase)
+        pops = slots.get("_populations", [])
+        assert "lgbtq" in pops, (
+            f"'{phrase}' did not add 'lgbtq' to _populations. "
+            f"Got _populations={pops}, _gender={slots.get('_gender')}. "
+            f"Without this, shelter enrichment won't fire for LGBTQ services."
+        )
+
+    # --- No false positives ---
+
+    @pytest.mark.parametrize("phrase", [
+        "I need food in Manhattan",
+        "I'm a man and need shelter",
+        "I'm a woman and need food",
+        "I need clothes for work",
+        "I'm 21 and need help",
+        "where can I get a shower",
+    ])
+    def test_no_lgbtq_false_positive(self, phrase):
+        """Non-LGBTQ messages must NOT have 'lgbtq' in _populations."""
+        slots = extract_slots(phrase)
+        pops = slots.get("_populations", [])
+        assert "lgbtq" not in pops, (
+            f"'{phrase}' falsely added 'lgbtq' to _populations: {pops}"
+        )
+
+    # --- Gender extraction preserved (regression) ---
+
+    @pytest.mark.parametrize("phrase,expected_gender", [
+        ("I am a transman", "male"),
+        ("I'm a trans woman", "female"),
+        ("I'm ftm", "male"),
+        ("I'm mtf", "female"),
+        ("I'm transgender", "transgender"),
+        ("I'm nonbinary", "nonbinary"),
+        ("I'm LGBTQ", "lgbtq"),
+        ("I'm a gay man", "male"),
+    ])
+    def test_gender_not_overwritten(self, phrase, expected_gender):
+        """LGBTQ cross-population must NOT change the _gender value.
+        The gender maps to the identified gender for eligibility filtering.
+        A trans man should filter as 'male', not 'transgender'."""
+        slots = extract_slots(phrase)
+        assert slots.get("_gender") == expected_gender, (
+            f"'{phrase}' → _gender={slots.get('_gender')}, "
+            f"expected {expected_gender}. The cross-population step "
+            f"should add to _populations, not change _gender."
+        )
+
+    # --- Shelter enrichment fires via populations ---
+
+    def test_transman_shelter_enrichment_fires(self):
+        """A trans man searching for shelter must get LGBTQ enrichment
+        even though gender='male'. This is the bug that made Ali Forney
+        invisible to query 3.1."""
+        # Use _query for taxonomy check (SQL bind params have taxonomy_names)
+        p = _query("shelter", gender="male", populations=["lgbtq"],
+                    family_status="alone", location="Manhattan")
+        assert "lgbtq young adult" in p.get("taxonomy_names", []), (
+            f"LGBTQ enrichment did not fire for gender='male' + "
+            f"populations=['lgbtq']. Taxonomy: {p.get('taxonomy_names')}"
+        )
+        # Use _query_user_params for lgbtq_boost (consumed before SQL binding)
+        up = _query_user_params("shelter", gender="male", populations=["lgbtq"],
+                                family_status="alone", location="Manhattan")
+        assert up.get("lgbtq_boost") is True, (
+            "lgbtq_boost not set for trans man shelter query"
+        )
+
+    def test_cis_male_shelter_no_lgbtq_enrichment(self):
+        """A cis man searching for shelter must NOT get LGBTQ enrichment."""
+        p = _query("shelter", gender="male", populations=[],
+                    family_status="alone", location="Manhattan")
+        assert "lgbtq young adult" not in p.get("taxonomy_names", []), (
+            f"LGBTQ enrichment fired for cis male. Taxonomy: "
+            f"{p.get('taxonomy_names')}"
+        )
+        up = _query_user_params("shelter", gender="male", populations=[],
+                                family_status="alone", location="Manhattan")
+        assert not up.get("lgbtq_boost"), (
+            "lgbtq_boost set for cis male — should not be"
+        )
+
+    def test_transgender_shelter_enrichment_via_both_paths(self):
+        """When gender='transgender' AND populations=['lgbtq'], enrichment
+        should fire (both paths match). No double-add of taxonomies."""
+        p = _query("shelter", gender="transgender", populations=["lgbtq"],
+                    family_status="alone", location="Manhattan")
+        names = p.get("taxonomy_names", [])
+        assert "lgbtq young adult" in names
+        assert names.count("lgbtq young adult") == 1, (
+            f"lgbtq young adult appears {names.count('lgbtq young adult')} "
+            f"times — should be exactly 1 (no double-add)"
+        )
+
+    def test_lgbtq_boost_fires_for_non_shelter_with_populations(self):
+        """lgbtq_boost should also fire for non-shelter templates
+        when populations includes 'lgbtq'."""
+        up = _query_user_params("food", gender="male", populations=["lgbtq"],
+                                location="Manhattan")
+        assert up.get("lgbtq_boost") is True, (
+            "lgbtq_boost not set for food query with populations=['lgbtq']. "
+            "A trans man searching for food should get LGBTQ-friendly "
+            "services boosted."
+        )
+
+    def test_lgbtq_boost_not_set_without_signal(self):
+        """No LGBTQ signal → no lgbtq_boost."""
+        up = _query_user_params("food", gender="male", populations=[],
+                                location="Manhattan")
+        assert not up.get("lgbtq_boost"), (
+            "lgbtq_boost set without any LGBTQ signal"
+        )

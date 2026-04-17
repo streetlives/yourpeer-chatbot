@@ -147,7 +147,9 @@ def query_services(
         # For LGBTQ/trans/nonbinary: skip the eligibility filter but
         # activate the sort boost so affirming services (e.g., Ali Forney
         # Center) float to the top of results without excluding anything.
-        if gender in ("lgbtq", "transgender", "nonbinary"):
+        # Also check populations: "transman" → gender="male" but
+        # populations=["lgbtq"] from the cross-population step.
+        if gender in ("lgbtq", "transgender", "nonbinary") or (populations and "lgbtq" in populations):
             user_params["lgbtq_boost"] = True
     if weekday is not None:
         user_params["weekday"] = weekday
@@ -226,7 +228,15 @@ def query_services(
         # contain LGBTQ-affirming services (DB verified: Drop-in Center
         # and Crisis are parented under Shelter, not Health).
         # "lgbtq young adult" is a Shelter child that narrowing strips out.
-        if gender in ("lgbtq", "transgender", "nonbinary"):
+        #
+        # Check both gender AND populations: "transman" maps to gender="male"
+        # (the identified gender) but slot_extractor adds "lgbtq" to
+        # _populations to preserve the LGBTQ signal for enrichment.
+        _is_lgbtq = (
+            gender in ("lgbtq", "transgender", "nonbinary")
+            or (populations and "lgbtq" in populations)
+        )
+        if _is_lgbtq:
             safety_extras.extend(["drop-in center", "crisis", "lgbtq young adult"])
 
         # (3) Senior age (≥ 62) → senior-specific shelters visible

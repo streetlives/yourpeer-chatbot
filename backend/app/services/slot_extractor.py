@@ -1090,7 +1090,10 @@ def _extract_family_status(text: str) -> Optional[str]:
     # With family — broader family unit
     # NOTE: "me and my" removed — too broad ("me and my friend" is not family)
     family_phrases = [
-        "with my family", "with my partner", "with my wife",
+        "with my family", "for my family", "my family needs",
+        "me and my family", "our family",
+        "family shelter",  # explicit request for family shelter
+        "with my partner", "with my wife",
         "with my husband", "with my spouse",
         "with my girlfriend", "with my boyfriend",
         "me and my wife", "me and my husband", "me and my partner",
@@ -1472,6 +1475,33 @@ def extract_slots(message: str) -> dict:
     else:
         primary_location = _extract_location(message)
 
+    # --- Extract gender and populations ---
+    gender = _extract_gender(message)
+    populations = _extract_populations(message)
+
+    # Cross-populate: when a trans/LGBTQ phrase is detected in the
+    # gender extraction, add "lgbtq" to _populations so that the
+    # shelter enrichment fires correctly.
+    #
+    # Without this, "I am a transman" → gender="male" (correct for
+    # eligibility filtering) but the LGBTQ enrichment at
+    # rag/__init__.py:229 never fires because it checks
+    # gender in ("lgbtq", "transgender", "nonbinary") — "male" ≠ any.
+    #
+    # The gender mapping is intentionally "transman" → "male" (the
+    # identified gender), so we can't change that. Instead, we detect
+    # the LGBTQ signal separately and carry it in _populations.
+    _LGBTQ_SIGNAL_PHRASES = (
+        "transman", "trans man", "transwoman", "trans woman",
+        "ftm", "mtf", "transgender", "nonbinary", "non-binary",
+        "non binary", "enby", "genderqueer", "gender fluid", "agender",
+        "lgbtq", "lgbtq+", "lgbt", "queer", "gay", "lesbian", "bisexual",
+    )
+    lower = message.lower()
+    if any(phrase in lower for phrase in _LGBTQ_SIGNAL_PHRASES):
+        if "lgbtq" not in populations:
+            populations.append("lgbtq")
+
     return {
         "service_type": service_type,
         "service_detail": service_detail,
@@ -1480,8 +1510,8 @@ def extract_slots(message: str) -> dict:
         "urgency": _extract_urgency(message),
         "age": _extract_age(message),
         "family_status": _extract_family_status(message),
-        "_gender": _extract_gender(message),
-        "_populations": _extract_populations(message),
+        "_gender": gender,
+        "_populations": populations,
         "org_name": _extract_org_name(message),
         "no_requirements": _extract_no_requirements(message),
         "_contradiction": _find_contradiction_signal(message) >= 0,
