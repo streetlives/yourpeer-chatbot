@@ -2223,17 +2223,46 @@ def _build_neighborhood_borough_table() -> list[tuple[float, float, str]]:
 
 
 def _nearest_borough_by_centroid(lat: float, lon: float) -> Optional[str]:
-    """Return the borough of the NYC neighborhood whose coordinates are
-    closest to (lat, lon). Uses simple squared Euclidean distance in
-    lat/lon space — accurate enough at NYC latitudes for coarse reverse
-    geocoding. Name preserved for back-compat; actually uses the
-    neighborhood table, not pure borough centroids.
+    """Resolve (lat, lon) to a canonical NYC borough name.
 
-    Returns None if inputs aren't numeric or the lookup table is empty.
+    Two-tier strategy:
+
+    1. **Polygon containment** via NYC DCP boundary polygons (authoritative
+       within NYC). If the point is inside any of the five boroughs, that
+       borough wins. This is the accurate path — no false attribution near
+       borough edges.
+
+    2. **Centroid fallback** if the point is outside NYC (e.g., NJ GPS drift,
+       Yonkers, Long Island). Returns the borough of the closest NYC
+       neighborhood by squared Euclidean distance in lat/lon space. This
+       preserves the original useful property of always returning *some*
+       borough for callers like the population-critical fallback, which
+       needs a borough to query.
+
+    Function name preserved for back-compat with existing callers.
+
+    Returns None if inputs aren't numeric or the neighborhood fallback
+    table is also empty (pathological case — shouldn't happen in prod).
     """
     if not isinstance(lat, (int, float)) or not isinstance(lon, (int, float)):
         return None
 
+    # Tier 1: polygon containment
+    try:
+        from app.rag.boundaries import borough_from_coords
+        poly_borough = borough_from_coords(lat, lon)
+        if poly_borough is not None:
+            return poly_borough
+    except Exception as e:
+        # Boundaries module should never fail, but if the vendored GeoJSON
+        # is corrupt or shapely blows up, fall through to the centroid
+        # path rather than taking down the whole population fallback.
+        logger.warning(
+            "borough_from_coords failed (lat=%s lon=%s): %s — "
+            "falling back to centroid-based resolution", lat, lon, e,
+        )
+
+    # Tier 2: centroid fallback (also handles out-of-NYC GPS)
     global _NEIGHBORHOOD_TO_BOROUGH_TABLE
     if not _NEIGHBORHOOD_TO_BOROUGH_TABLE:
         _NEIGHBORHOOD_TO_BOROUGH_TABLE = _build_neighborhood_borough_table()

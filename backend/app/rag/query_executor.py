@@ -23,6 +23,7 @@ Usage:
 import os
 import time
 import logging
+import threading
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 from sqlalchemy import create_engine, text
@@ -177,8 +178,10 @@ def _compute_freshness(rows: list[dict]) -> dict:
 
 # pa.city value (lowercased) → canonical borough name.
 # Derived from NYC_LOCATION_ALIASES so adding a new neighborhood alias
-# automatically extends the mismatch-check coverage. Computed lazily.
+# automatically extends the mismatch-check coverage. Computed lazily
+# because NYC_LOCATION_ALIASES is defined later in this module.
 _CITY_TO_STATED_BOROUGH: Optional[dict] = None
+_CITY_TO_BOROUGH_LOCK = threading.Lock()
 
 
 def _build_city_to_borough() -> dict:
@@ -208,13 +211,21 @@ def _build_city_to_borough() -> dict:
 def _get_city_to_borough() -> dict:
     """Lazy-initialized _CITY_TO_STATED_BOROUGH accessor.
 
-    Not initialized at import because NYC_LOCATION_ALIASES is defined
-    later in the module. The first call after module load populates it.
+    Double-checked locking so concurrent first-requests don't both run
+    _build_city_to_borough. Writes are idempotent so even without the
+    lock nothing corrupts — but we save a few hundred µs of wasted work
+    per cold start and keep this consistent with boundaries._load.
     """
     global _CITY_TO_STATED_BOROUGH
-    if _CITY_TO_STATED_BOROUGH is None:
-        _CITY_TO_STATED_BOROUGH = _build_city_to_borough()
-    return _CITY_TO_STATED_BOROUGH
+    # Fast path: already built. No lock needed because the assignment
+    # at the end of the slow path is an atomic reference swap in CPython.
+    if _CITY_TO_STATED_BOROUGH is not None:
+        return _CITY_TO_STATED_BOROUGH
+
+    with _CITY_TO_BOROUGH_LOCK:
+        if _CITY_TO_STATED_BOROUGH is None:
+            _CITY_TO_STATED_BOROUGH = _build_city_to_borough()
+        return _CITY_TO_STATED_BOROUGH
 
 
 def _stated_borough_from_city(city: Optional[str]) -> Optional[str]:
@@ -229,15 +240,31 @@ def _stated_borough_from_city(city: Optional[str]) -> Optional[str]:
     return _get_city_to_borough().get(city.strip().lower())
 
 
+# Services we've already warned about this process. Rate-limits the
+# borough_mismatch WARNING log so a popular wrong-borough service doesn't
+# flood the logs each time it's returned from a search. Set membership is
+# O(1), and `set.add` is atomic under CPython's GIL — safe without a lock.
+# Bounded in practice by the DB size (~2,500 services), so memory growth
+# is trivial. Reset via _reset_mismatch_warnings() (test-only).
+_WARNED_MISMATCH_SERVICE_IDS: set[str] = set()
+
+
+def _reset_mismatch_warnings() -> None:
+    """Clear the "already warned" set. ONLY for tests. Not public API."""
+    _WARNED_MISMATCH_SERVICE_IDS.clear()
+
+
 def _annotate_geographic_borough(cards: list[dict]) -> list[dict]:
     """Tag each card with geographic_borough (from coords) and
     borough_mismatch (True if stated city disagrees with coords).
 
     Mutates and returns the input list for caller convenience.
 
-    Policy: log every mismatch at INFO level. Do NOT filter — the data
-    is still delivered to the user, just annotated so downstream code
-    can surface/filter based on the flag. See boundaries module docstring.
+    Policy: log every mismatch at WARNING level (so they surface in
+    default log aggregation — this is a data-quality issue worth
+    noticing). Do NOT filter — the data is still delivered to the
+    user, just annotated so downstream code can surface/filter based
+    on the flag. See boundaries module docstring.
     """
     # Import here to avoid a circular: boundaries has no deps, but
     # query_executor is imported early at app startup and we want to
@@ -270,14 +297,21 @@ def _annotate_geographic_borough(cards: list[dict]) -> list[dict]:
         card["borough_mismatch"] = mismatch
 
         if mismatch:
-            logger.warning(
-                "borough_mismatch service_id=%s service=%r city=%r "
-                "stated_borough=%s geographic_borough=%s lat=%s lon=%s",
-                card.get("service_id"),
-                card.get("service_name"),
-                card.get("city"),
-                stated, geo_borough, lat, lon,
-            )
+            # Rate-limit: only warn the first time we see each service_id.
+            # The card flag (borough_mismatch=True) is still set on every
+            # response, so downstream code always sees the mismatch — only
+            # the log is deduplicated.
+            service_id = card.get("service_id")
+            if service_id and service_id not in _WARNED_MISMATCH_SERVICE_IDS:
+                _WARNED_MISMATCH_SERVICE_IDS.add(service_id)
+                logger.warning(
+                    "borough_mismatch service_id=%s service=%r city=%r "
+                    "stated_borough=%s geographic_borough=%s lat=%s lon=%s",
+                    service_id,
+                    card.get("service_name"),
+                    card.get("city"),
+                    stated, geo_borough, lat, lon,
+                )
 
     return cards
 

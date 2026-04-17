@@ -5,6 +5,7 @@ Covers:
   - _annotate_geographic_borough: full per-card annotation with mismatch flag
   - Integration: mismatch detection catches the user-reported
     "Manhattan service actually in the Bronx" bug
+  - Warning rate-limiting: each service_id logs at most once per process
 
 The validator's job is to annotate, not filter. Cards flow through
 unchanged in count/order; only the two new fields (geographic_borough,
@@ -19,7 +20,18 @@ from app.rag.query_executor import (
     _annotate_geographic_borough,
     _stated_borough_from_city,
     _build_city_to_borough,
+    _reset_mismatch_warnings,
 )
+
+
+# Reset the rate-limit warning set before every test. Without this,
+# test order would affect whether a warning is emitted — a test that
+# expects the warning could fail if a prior test already consumed it.
+@pytest.fixture(autouse=True)
+def _reset_warnings_before_test():
+    _reset_mismatch_warnings()
+    yield
+    _reset_mismatch_warnings()
 
 
 # -------------------------------------------------------------------------
@@ -284,3 +296,96 @@ class TestAnnotationPolicyIsNonDestructive:
         assert result[0]["address"] == "100 Main St"
         assert result[0]["phone"] == "212-555-1234"
         assert result[0]["some_other_field"] == "should remain"
+
+
+# -------------------------------------------------------------------------
+# WARNING RATE-LIMITING BY service_id
+# -------------------------------------------------------------------------
+
+class TestMismatchWarningRateLimit:
+    """Each service_id should emit at most one WARNING per process.
+
+    Rate-limiting keeps the log from flooding when a mismatched service
+    is a popular result. The card flag is NOT rate-limited — only the
+    log — so downstream code always sees the mismatch flag.
+    """
+
+    def _mismatched_card(self, service_id):
+        # city='New York' but coords in Bronx = guaranteed mismatch
+        return {
+            "service_id": service_id,
+            "service_name": "Example",
+            "city": "New York",
+            "latitude": 40.8296, "longitude": -73.9262,
+        }
+
+    def test_first_call_emits_warning(self, caplog):
+        with caplog.at_level(logging.WARNING, logger="app.rag.query_executor"):
+            _annotate_geographic_borough([self._mismatched_card("svc_1")])
+        msgs = [r.message for r in caplog.records if "borough_mismatch" in r.message]
+        assert len(msgs) == 1
+
+    def test_second_call_same_service_does_not_emit(self, caplog):
+        """Calling again with the same service_id should NOT log again."""
+        _annotate_geographic_borough([self._mismatched_card("svc_dup")])
+        caplog.clear()
+        with caplog.at_level(logging.WARNING, logger="app.rag.query_executor"):
+            _annotate_geographic_borough([self._mismatched_card("svc_dup")])
+        msgs = [r.message for r in caplog.records if "borough_mismatch" in r.message]
+        assert len(msgs) == 0, (
+            "Second occurrence of the same service_id should be rate-limited "
+            f"out of the log, but got: {msgs}"
+        )
+
+    def test_different_services_each_warn_once(self, caplog):
+        with caplog.at_level(logging.WARNING, logger="app.rag.query_executor"):
+            _annotate_geographic_borough([
+                self._mismatched_card("svc_a"),
+                self._mismatched_card("svc_b"),
+                self._mismatched_card("svc_c"),
+            ])
+        msgs = [r.message for r in caplog.records if "borough_mismatch" in r.message]
+        assert len(msgs) == 3
+
+    def test_card_flag_still_set_even_after_warning_suppressed(self):
+        """Rate-limiting affects logs only — the card flag must still fire
+        every time, so downstream UI/telemetry can always rely on it."""
+        card1 = self._mismatched_card("svc_flag")
+        card2 = self._mismatched_card("svc_flag")
+        _annotate_geographic_borough([card1])
+        _annotate_geographic_borough([card2])
+        assert card1["borough_mismatch"] is True
+        assert card2["borough_mismatch"] is True  # not suppressed
+
+    def test_duplicate_in_same_batch_warns_once(self, caplog):
+        """Same service_id appearing twice in one batch of cards should
+        still only log once. (Unlikely in practice since dedup runs
+        upstream, but the rate-limit should be robust to it.)"""
+        with caplog.at_level(logging.WARNING, logger="app.rag.query_executor"):
+            _annotate_geographic_borough([
+                self._mismatched_card("svc_same"),
+                self._mismatched_card("svc_same"),
+            ])
+        msgs = [r.message for r in caplog.records if "borough_mismatch" in r.message]
+        assert len(msgs) == 1
+
+    def test_missing_service_id_does_not_break_or_dedup(self, caplog):
+        """A card without service_id should still produce card flags
+        but not try to dedupe against the shared set (which would be
+        bogus since all such cards share a None key)."""
+        cards = [
+            {"service_name": "No ID 1", "city": "New York",
+             "latitude": 40.8296, "longitude": -73.9262},
+            {"service_name": "No ID 2", "city": "New York",
+             "latitude": 40.8296, "longitude": -73.9262},
+        ]
+        with caplog.at_level(logging.WARNING, logger="app.rag.query_executor"):
+            result = _annotate_geographic_borough(cards)
+        # Flags still set correctly
+        assert all(c["borough_mismatch"] is True for c in result)
+        # No warnings should be logged for cards without service_id —
+        # we can't triage them upstream without an ID, so the log entry
+        # has no value. This intentional choice matches the "add to set
+        # only if service_id" guard in the code.
+        msgs = [r.message for r in caplog.records if "borough_mismatch" in r.message]
+        assert len(msgs) == 0
