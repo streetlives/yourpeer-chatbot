@@ -114,7 +114,7 @@ def query_services(
             # FILTER_BY_BOROUGH clause against pa.borough — but that column
             # does not exist in the Streetlives DB, so the filter errored
             # on every borough query and fell through to the relaxed path.
-            # Removed Apr 17, 2026; see docs/BOUNDARY_AUDIT.md.
+            # Removed Apr 17, 2026; see docs/audits/BOUNDARY_AUDIT.md.
             city_list = get_borough_city_names(normalized_city)
             if len(city_list) > 1:
                 user_params["city_list"] = city_list

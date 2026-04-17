@@ -26,7 +26,7 @@ Used for two things:
    coordinate-based ST_Within queries. For now, pa.city remains the primary
    filter — this module is additive/defensive.
 
-See docs/BOUNDARY_AUDIT.md for the full context and the reported "Manhattan
+See docs/audits/BOUNDARY_AUDIT.md for the full context and the reported "Manhattan
 service actually in Bronx" bug that motivated this.
 
 Design
@@ -96,7 +96,7 @@ def _load() -> None:
             raise FileNotFoundError(
                 f"NYC borough boundaries GeoJSON not found at {_DATA_PATH}. "
                 f"This file should be vendored in the repo — it's not a "
-                f"runtime download. See docs/BOUNDARY_AUDIT.md §Data Sources."
+                f"runtime download. See docs/audits/BOUNDARY_AUDIT.md §Data Sources."
             )
 
         with _DATA_PATH.open() as f:

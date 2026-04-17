@@ -62,7 +62,7 @@ SELECT
     -- query_executor._annotate_geographic_borough. PostGIS geometry
     -- uses (x, y) = (lon, lat). NULL-safe: services without position
     -- data (pilot imports, manual entries) get NULL lat/lon and skip
-    -- validation. See docs/BOUNDARY_AUDIT.md.
+    -- validation. See docs/audits/BOUNDARY_AUDIT.md.
     ST_Y(l.position::geometry) AS latitude,
     ST_X(l.position::geometry) AS longitude,
 
@@ -244,7 +244,7 @@ FILTER_BY_COLOCATED_TAXONOMY = (
 # falling through to the relaxed query. Users saw "I broadened the search a
 # bit" on every direct borough search. Borough filtering is now done via
 # FILTER_BY_CITY_IN_BOROUGH (pa.city = ANY(:city_list)) — the only filter
-# that was actually working. See docs/BOUNDARY_AUDIT.md for the full story
+# that was actually working. See docs/audits/BOUNDARY_AUDIT.md for the full story
 # and follow-up plans (polygon-based geographic borough derivation from
 # l.position using NYC DCP boundaries).
 
@@ -461,7 +461,7 @@ FILTER_BY_CLOTHING_OCCASION = (
 # running — Python's rank always overrode SQL's, making SQL's contribution
 # cosmetic. One source of truth eliminates a drift vector.
 #
-# See docs/FRESHNESS_TIER_SPEC.md and docs/BUCKETED_DISTANCE_SORT_SPEC.md
+# See docs/design/FRESHNESS_TIER_SPEC.md and docs/design/BUCKETED_DISTANCE_SORT_SPEC.md
 # for the motivation behind the tiered freshness + distance-band design.
 
 # Open-now sort expression — INTENTIONALLY NOT USED in _BASE_ORDER_PARTS
@@ -521,7 +521,7 @@ END"""
 # first among "equally walkable" options. Continuous distance is retained as
 # a secondary tiebreaker to keep ordering stable when band + freshness tie.
 #
-# See docs/BUCKETED_DISTANCE_SORT_SPEC.md for the full design.
+# See docs/design/BUCKETED_DISTANCE_SORT_SPEC.md for the full design.
 _DISTANCE_BAND_RANK = (
     "CASE"
     " WHEN ST_Distance(l.position::geography,"
@@ -558,7 +558,7 @@ _FRESHNESS_DAYS = 90
 # Within a distance band, this promotes "recent enough to trust" services
 # over older-but-still-verified ones, and demotes unverified ones to the
 # bottom. Paired with the continuous timestamp as a tiebreaker within
-# each tier. See docs/FRESHNESS_TIER_SPEC.md for the full design.
+# each tier. See docs/design/FRESHNESS_TIER_SPEC.md for the full design.
 _FRESHNESS_TIER_RANK = f"""CASE
     WHEN l.last_validated_at >= CURRENT_DATE - INTERVAL '{_FRESHNESS_DAYS} days' THEN 0
     WHEN l.last_validated_at IS NOT NULL THEN 1

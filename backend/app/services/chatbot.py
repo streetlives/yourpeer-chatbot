@@ -2137,7 +2137,7 @@ def _handle_hours_for_day(
 # taxonomies. Results are appended with a contextual note so the user
 # understands why they're further away.
 #
-# See docs/POPULATION_FALLBACK_SPEC.md for the full design.
+# See docs/design/POPULATION_FALLBACK_SPEC.md for the full design.
 
 # Rare, population-specific shelter taxonomies. Intentionally excludes
 # "drop-in center" and "crisis" — those are in the base default list
@@ -2414,7 +2414,7 @@ def _run_population_fallback(
     (the only LGBTQ Young Adult shelter) is in Manhattan, so a borough-
     scoped query from a Far Rockaway GPS user would return nothing.
     For these rare taxonomies, cross-borough results are strictly
-    better than no results. See docs/POPULATION_FALLBACK_SPEC.md §Scope.
+    better than no results. See docs/design/POPULATION_FALLBACK_SPEC.md §Scope.
 
     Dedupe still applies, so services from the main query don't double-
     up. The "further away" note phrasing is accurate for citywide scope
@@ -2620,7 +2620,7 @@ def _execute_and_respond(session_id: str, message: str, slots: dict, request_id:
             # (E.g., Far Rockaway GPS user + LGBTQ young adult → Ali
             # Forney in Manhattan, which a borough-scoped query would
             # have missed.) See _run_population_fallback for the full
-            # logic and docs/POPULATION_FALLBACK_SPEC.md §Scope.
+            # logic and docs/design/POPULATION_FALLBACK_SPEC.md §Scope.
             #
             # Fallback cards are appended to services_list for display
             # but INTENTIONALLY NOT to all_services. all_services drives

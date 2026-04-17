@@ -125,7 +125,7 @@ class TestAnnotation:
         assert result[0]["borough_mismatch"] is False
 
     def test_reported_bug_manhattan_labeled_bronx_located(self, caplog):
-        """The core scenario from docs/BOUNDARY_AUDIT.md: a service with
+        """The core scenario from docs/audits/BOUNDARY_AUDIT.md: a service with
         pa.city='New York' whose coordinates are actually in the Bronx.
 
         Expected: borough_mismatch=True, both stated and geographic

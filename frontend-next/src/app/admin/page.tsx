@@ -72,7 +72,7 @@ export default function MetricsPage() {
         restart. <strong>n/a</strong> = not yet measurable from audit log alone.
         See{" "}
         <a
-          href="https://github.com/ianlau20/yourpeer-chatbot/blob/main/docs/METRICS.md"
+          href="https://github.com/ianlau20/yourpeer-chatbot/blob/main/docs/ops/METRICS.md"
           target="_blank"
           rel="noopener noreferrer"
           className="text-amber-600 hover:underline"

@@ -136,7 +136,7 @@ export default function MetricsPage() {
         <strong>Click any metric name</strong> for a detailed explanation with
         formula and target rationale from{" "}
         <a
-          href="https://github.com/ianlau20/yourpeer-chatbot/blob/main/docs/METRICS.md"
+          href="https://github.com/ianlau20/yourpeer-chatbot/blob/main/docs/ops/METRICS.md"
           target="_blank"
           className="text-amber-600 hover:underline"
         >

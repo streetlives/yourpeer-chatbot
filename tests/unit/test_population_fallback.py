@@ -13,7 +13,7 @@ that population's rare taxonomy, the chatbot runs a secondary borough-wide
 query for those rare taxonomies. Results are appended with a contextual
 note.
 
-See docs/POPULATION_FALLBACK_SPEC.md for the full design, and
+See docs/design/POPULATION_FALLBACK_SPEC.md for the full design, and
 chatbot._compute_rare_population_taxonomies / _run_population_fallback
 for the implementation.
 """
@@ -831,7 +831,7 @@ class TestCrossBoroughFallback:
     so Ali Forney surfaces regardless of where the user searched from.
 
     Scope: rare populations only (LGBTQ, youth, senior, veteran) for
-    shelter searches. See docs/POPULATION_FALLBACK_SPEC.md §Scope.
+    shelter searches. See docs/design/POPULATION_FALLBACK_SPEC.md §Scope.
     """
 
     def test_far_rockaway_gps_user_gets_manhattan_afc(self):
@@ -942,7 +942,7 @@ class TestCrossBoroughFallback:
             assert calls[1]["location"] is None, (
                 f"Fallback with input {extras!r} passed "
                 f"location={calls[1]['location']!r}; must always be None "
-                f"(citywide). See docs/POPULATION_FALLBACK_SPEC.md §Scope."
+                f"(citywide). See docs/design/POPULATION_FALLBACK_SPEC.md §Scope."
             )
 
     def test_note_still_reads_naturally_for_cross_borough(self):

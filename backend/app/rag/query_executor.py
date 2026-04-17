@@ -559,7 +559,7 @@ def resolve_template_key(service_type: str) -> Optional[str]:
 # run via FILTER_BY_CITY_IN_BOROUGH (pa.city = ANY(:city_list)), with the
 # city_list derived below. This is not ideal — pa.city has inconsistent
 # casing, typos, and some wrong-borough assignments — but it's the only
-# column available. See docs/BOUNDARY_AUDIT.md for follow-up plan to
+# column available. See docs/audits/BOUNDARY_AUDIT.md for follow-up plan to
 # derive geographic borough from l.position against NYC DCP polygons.
 #
 # Note that the "Manhattan" → "Manhattan" mappings below look redundant but

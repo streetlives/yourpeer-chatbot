@@ -500,7 +500,7 @@ def test_format_card_default_service_name():
 # COORDINATES — lat/lon from PostGIS l.position projection
 # -----------------------------------------------------------------------
 # Added when the geographic borough validator shipped (see
-# docs/BOUNDARY_AUDIT.md). The base SELECT projects ST_Y/ST_X on
+# docs/audits/BOUNDARY_AUDIT.md). The base SELECT projects ST_Y/ST_X on
 # l.position so the validator in query_executor can read coordinates
 # off each card without a second query.
 
@@ -772,7 +772,7 @@ def test_unknown_template_raises():
 #
 # Removed Apr 17, 2026. All borough filtering now uses
 # FILTER_BY_CITY_IN_BOROUGH (pa.city = ANY(:city_list)) — the only
-# filter that has ever actually worked. See docs/BOUNDARY_AUDIT.md.
+# filter that has ever actually worked. See docs/audits/BOUNDARY_AUDIT.md.
 #
 # The tests below are guards against regression: they assert the
 # broken filter stays GONE, and that borough searches use city_list.
@@ -785,7 +785,7 @@ def test_filter_by_borough_not_exported():
     import app.rag.query_templates as qt
     assert not hasattr(qt, "FILTER_BY_BOROUGH"), (
         "FILTER_BY_BOROUGH was re-added. pa.borough does not exist in the "
-        "Streetlives DB; see docs/BOUNDARY_AUDIT.md. Use "
+        "Streetlives DB; see docs/audits/BOUNDARY_AUDIT.md. Use "
         "FILTER_BY_CITY_IN_BOROUGH (pa.city = ANY(:city_list)) instead."
     )
 
@@ -1107,7 +1107,7 @@ def test_base_query_selects_last_validated_at():
 
 
 # -----------------------------------------------------------------------
-# Bucketed distance sort (see docs/BUCKETED_DISTANCE_SORT_SPEC.md)
+# Bucketed distance sort (see docs/design/BUCKETED_DISTANCE_SORT_SPEC.md)
 # -----------------------------------------------------------------------
 # When proximity search is active, the SQL ORDER BY splits distance into:
 #   (1) a 4-band rank (0/1/2/3 for <500m / 500m-1km / 1km-2km / 2km+)
@@ -1455,7 +1455,7 @@ def test_sort_open_first_single():
 # sorts before the continuous timestamp so recently verified services
 # beat older ones within a distance band, and unverified services sink.
 # Paired with the bucketed-distance sort — see
-# docs/FRESHNESS_TIER_SPEC.md and docs/BUCKETED_DISTANCE_SORT_SPEC.md.
+# docs/design/FRESHNESS_TIER_SPEC.md and docs/design/BUCKETED_DISTANCE_SORT_SPEC.md.
 #
 # The single source of truth for _FRESHNESS_DAYS lives in
 # query_templates.py and is re-exported by query_executor.py.
@@ -1558,7 +1558,7 @@ def test_base_order_parts_current_shape():
     assert len(_BASE_ORDER_PARTS) == 3, (
         f"_BASE_ORDER_PARTS has {len(_BASE_ORDER_PARTS)} elements; "
         f"expected 3 (freshness tier CASE, continuous timestamp, name). "
-        f"See docs/FRESHNESS_TIER_SPEC.md."
+        f"See docs/design/FRESHNESS_TIER_SPEC.md."
     )
     assert _BASE_ORDER_PARTS[0] == _FRESHNESS_TIER_RANK, \
         "Index 0 should be the freshness tier CASE"
