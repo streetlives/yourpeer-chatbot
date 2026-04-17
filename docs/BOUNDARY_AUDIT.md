@@ -12,9 +12,53 @@ industry standards, and proposes a fix strategy.
 `backend/app/services/chatbot.py` during the Population-Critical Fallback
 work.
 
-**TL;DR**: The reported bug is almost certainly an upstream data quality
-issue in the Streetlives PostgreSQL database (`pa.borough` disagrees with
-the actual coordinates of `l.position`). Our chatbot code trusts `pa.borough`
+---
+
+## Status (as of Apr 17, 2026)
+
+**Parts 1 and 2 shipped.**
+
+- ✅ **Part 1 — `pa.borough` cleanup**: removed `FILTER_BY_BOROUGH` (the
+  column doesn't exist in prod; filter errored on every borough search).
+  Borough filtering now goes via `pa.city = ANY(city_list)` exclusively.
+  Error log storm stopped.
+
+- ✅ **Part 2 — Geographic borough validator**: vendored NYC DCP Borough
+  Boundaries GeoJSON (~195KB, simplified to 0.0001° tolerance → 0 detectable
+  classification disagreements vs source) at
+  `backend/app/rag/data/nyc_boroughs.geojson`. New `app.rag.boundaries`
+  module provides `borough_from_coords(lat, lon)`. The base SELECT now
+  projects `ST_Y(l.position)` and `ST_X(l.position)` as
+  `latitude`/`longitude`. `query_executor._annotate_geographic_borough`
+  compares each returned service's geographic borough against the borough
+  inferred from `pa.city` and logs mismatches at WARNING level, with
+  both boroughs captured for upstream triage. Cards are tagged with
+  `geographic_borough` and `borough_mismatch` fields for downstream code
+  to surface or filter as policy evolves.
+
+  Test suite: 37 tests for `boundaries`, 42 for the validator, 5 for the
+  `format_service_card` lat/lon additions.
+
+- 📋 **Part 3 — File upstream on streetlives-api**: still recommended.
+  The mitigation above is client-side; the real fix is to add a geography-
+  derived `borough` column (or PostGIS-backed view) on the Streetlives
+  schema so every consumer benefits.
+
+- 📋 **Further improvements** (open): NTA-based neighborhood expansion to
+  fix the Staten Island=0 / Bronx=5 / Queens=11 coverage gaps; radius
+  tuning (1600m → 1000m); escalating mismatch policy from log-only to
+  badge/filter once we have real prod data on mismatch frequency.
+
+**Below is the original audit in full** — preserved as rationale for what
+shipped and roadmap for what's left.
+
+---
+
+## TL;DR (original)
+
+The reported bug is almost certainly an upstream data quality issue in the
+Streetlives PostgreSQL database (`pa.borough` disagrees with the actual
+coordinates of `l.position`). Our chatbot code trusts `pa.borough`
 implicitly. We can mitigate this client-side by adding a PostGIS
 `ST_Within`-based borough check against the authoritative NYC DCP borough
 polygon dataset — either by embedding it in the chatbot backend or by

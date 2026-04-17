@@ -58,6 +58,14 @@ SELECT
     pa.state_province AS state,
     pa.postal_code    AS zip_code,
 
+    -- Coordinates projected for coordinate→borough validation in
+    -- query_executor._annotate_geographic_borough. PostGIS geometry
+    -- uses (x, y) = (lon, lat). NULL-safe: services without position
+    -- data (pilot imports, manual entries) get NULL lat/lon and skip
+    -- validation. See docs/BOUNDARY_AUDIT.md.
+    ST_Y(l.position::geometry) AS latitude,
+    ST_X(l.position::geometry) AS longitude,
+
     best_phone.number     AS phone,
     best_phone.extension  AS phone_extension,
 
@@ -1186,6 +1194,22 @@ def _safe_str(value) -> str | None:
     return s if s else None
 
 
+def _coerce_float(value) -> float | None:
+    """Convert a DB value to float, or None if conversion fails.
+
+    PostGIS ST_X/ST_Y return double precision, but psycopg2 + SQLAlchemy
+    may surface them as Decimal in some environments. This keeps the
+    card shape predictable for downstream JSON serialization and the
+    borough validator.
+    """
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _format_phone(number, extension) -> str | None:
     """Format a phone number with optional extension."""
     if not number:
@@ -1282,6 +1306,12 @@ def format_service_card(row: dict) -> dict:
         "description": _safe_str(row.get("service_description")),
         "address": full_address or None,
         "city": _safe_str(row.get("city")),
+        # Coordinates from ST_Y/ST_X projection on l.position. Used by the
+        # geographic-borough validator in query_executor; may also be used
+        # by the frontend for mapping or distance display. NULL-safe —
+        # services without position data pass through as None.
+        "latitude": _coerce_float(row.get("latitude")),
+        "longitude": _coerce_float(row.get("longitude")),
         "phone": _format_phone(row.get("phone"), row.get("phone_extension")),
         "email": _safe_str(row.get("service_email")),
         "website": _normalize_url(row.get("service_url") or row.get("organization_url")),

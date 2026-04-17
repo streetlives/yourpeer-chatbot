@@ -157,8 +157,131 @@ def _compute_freshness(rows: list[dict]) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# OPEN-NOW SORT (post-query)
+# GEOGRAPHIC BOROUGH VALIDATION
 # ---------------------------------------------------------------------------
+# Derive each service's borough from its (lat, lon) coordinates using NYC
+# DCP polygons (see app.rag.boundaries). Compare against the borough
+# inferred from pa.city to detect data-quality issues like the user-reported
+# "Manhattan service that's actually in the Bronx."
+#
+# Why defensive-only (don't filter): this is shipping as a data-quality
+# signal, not a behavior change. Filtering based on polygon mismatch has
+# false-positive risk — a service could legitimately appear in one borough
+# but serve another (e.g., mobile units), and the simplified polygon has
+# ~0.56% disagreement with the full polygon near waterways. For the initial
+# rollout we annotate + log mismatches and surface them in admin telemetry
+# so Community Information Specialists can triage upstream.
+#
+# Once mismatch rates are known and triaged, the policy can escalate to
+# filtering/badging based on real data.
+
+# pa.city value (lowercased) → canonical borough name.
+# Derived from NYC_LOCATION_ALIASES so adding a new neighborhood alias
+# automatically extends the mismatch-check coverage. Computed lazily.
+_CITY_TO_STATED_BOROUGH: Optional[dict] = None
+
+
+def _build_city_to_borough() -> dict:
+    """Invert NYC_LOCATION_ALIASES: each pa.city value → canonical borough."""
+    # Map: primary pa.city value -> canonical borough name
+    # {"New York": "Manhattan", "Brooklyn": "Brooklyn", ...}
+    primary_to_borough = {v: k for k, v in _BOROUGH_TO_PRIMARY_CITY.items()}
+
+    city_to_borough: dict = {}
+    # Start with primary values (covers the bulk of rows)
+    for primary, borough in primary_to_borough.items():
+        city_to_borough[primary.lower()] = borough
+
+    # Add neighborhood-level city values that the DB sometimes stores
+    # (e.g., pa.city='Astoria' → 'Queens'). NYC_LOCATION_ALIASES maps
+    # alias → primary_city; we compose alias → primary_city → borough.
+    for alias, primary_city in NYC_LOCATION_ALIASES.items():
+        borough = primary_to_borough.get(primary_city)
+        if borough:
+            # alias may be lowercase ("manhattan") or titled ("Manhattan")
+            # in DB; store lowercased for case-insensitive lookup
+            city_to_borough[alias.lower()] = borough
+
+    return city_to_borough
+
+
+def _get_city_to_borough() -> dict:
+    """Lazy-initialized _CITY_TO_STATED_BOROUGH accessor.
+
+    Not initialized at import because NYC_LOCATION_ALIASES is defined
+    later in the module. The first call after module load populates it.
+    """
+    global _CITY_TO_STATED_BOROUGH
+    if _CITY_TO_STATED_BOROUGH is None:
+        _CITY_TO_STATED_BOROUGH = _build_city_to_borough()
+    return _CITY_TO_STATED_BOROUGH
+
+
+def _stated_borough_from_city(city: Optional[str]) -> Optional[str]:
+    """Infer the canonical borough from a pa.city value.
+
+    Returns the borough name ("Manhattan", "Bronx", etc.) if city is a
+    known NYC value, or None for out-of-town cities, unmapped values,
+    or empty strings.
+    """
+    if not city:
+        return None
+    return _get_city_to_borough().get(city.strip().lower())
+
+
+def _annotate_geographic_borough(cards: list[dict]) -> list[dict]:
+    """Tag each card with geographic_borough (from coords) and
+    borough_mismatch (True if stated city disagrees with coords).
+
+    Mutates and returns the input list for caller convenience.
+
+    Policy: log every mismatch at INFO level. Do NOT filter — the data
+    is still delivered to the user, just annotated so downstream code
+    can surface/filter based on the flag. See boundaries module docstring.
+    """
+    # Import here to avoid a circular: boundaries has no deps, but
+    # query_executor is imported early at app startup and we want to
+    # keep the boundaries GeoJSON load lazy.
+    from app.rag.boundaries import borough_from_coords
+
+    for card in cards:
+        lat = card.get("latitude")
+        lon = card.get("longitude")
+        if lat is None or lon is None:
+            # No coordinates — nothing to validate. Skip silently; this
+            # is a known gap for pilot imports and manual entries.
+            card["geographic_borough"] = None
+            card["borough_mismatch"] = False
+            continue
+
+        geo_borough = borough_from_coords(lat, lon)
+        card["geographic_borough"] = geo_borough
+
+        # A mismatch is when we CAN determine both boroughs (they're both
+        # non-None) and they disagree. A missing geo_borough means the
+        # point is outside NYC (possibly a legitimate regional service,
+        # e.g., a NJ hotline with NYC presence) — not a mismatch per se.
+        stated = _stated_borough_from_city(card.get("city"))
+        mismatch = (
+            geo_borough is not None
+            and stated is not None
+            and geo_borough != stated
+        )
+        card["borough_mismatch"] = mismatch
+
+        if mismatch:
+            logger.warning(
+                "borough_mismatch service_id=%s service=%r city=%r "
+                "stated_borough=%s geographic_borough=%s lat=%s lon=%s",
+                card.get("service_id"),
+                card.get("service_name"),
+                card.get("city"),
+                stated, geo_borough, lat, lon,
+            )
+
+    return cards
+
+
 # The SQL ORDER BY already includes an open-now rank, but schedule data is
 # sparse (~40-80% coverage for walk-in services, 0% for others). This
 # Python-side stable sort guarantees "Open now" services float to the top
@@ -238,7 +361,9 @@ def execute_service_query(
 
     results = deduplicate_results(rows)
     freshness = _compute_freshness(results)
-    cards = _sort_open_first([format_service_card(r) for r in results])
+    cards = [format_service_card(r) for r in results]
+    cards = _annotate_geographic_borough(cards)
+    cards = _sort_open_first(cards)
 
     if cards or not allow_relaxed:
         return {
@@ -283,7 +408,9 @@ def execute_service_query(
 
     results_relaxed = deduplicate_results(rows_relaxed)
     freshness = _compute_freshness(results_relaxed)
-    cards_relaxed = _sort_open_first([format_service_card(r) for r in results_relaxed])
+    cards_relaxed = [format_service_card(r) for r in results_relaxed]
+    cards_relaxed = _annotate_geographic_borough(cards_relaxed)
+    cards_relaxed = _sort_open_first(cards_relaxed)
 
     return {
         "services": cards_relaxed,

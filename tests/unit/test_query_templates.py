@@ -370,6 +370,8 @@ def _mock_row(**overrides):
         "city": "Brooklyn",
         "state": "NY",
         "zip_code": "11201",
+        "latitude": 40.6826,
+        "longitude": -73.9754,
         "phone": "212-555-0001",
         "today_opens": None,
         "today_closes": None,
@@ -492,6 +494,66 @@ def test_format_card_default_service_name():
     """Card should show 'Unknown Service' if service_name is missing."""
     card = format_service_card(_mock_row(service_name=None))
     assert card["service_name"] == "Unknown Service"
+
+
+# -----------------------------------------------------------------------
+# COORDINATES — lat/lon from PostGIS l.position projection
+# -----------------------------------------------------------------------
+# Added when the geographic borough validator shipped (see
+# docs/BOUNDARY_AUDIT.md). The base SELECT projects ST_Y/ST_X on
+# l.position so the validator in query_executor can read coordinates
+# off each card without a second query.
+
+def test_format_card_includes_lat_lon():
+    """Card should carry latitude and longitude from the row."""
+    card = format_service_card(_mock_row(latitude=40.7484, longitude=-73.9857))
+    assert card["latitude"] == 40.7484
+    assert card["longitude"] == -73.9857
+
+
+def test_format_card_handles_missing_coordinates():
+    """Services without l.position (legacy / manual entries) get None."""
+    card = format_service_card(_mock_row(latitude=None, longitude=None))
+    assert card["latitude"] is None
+    assert card["longitude"] is None
+
+
+def test_format_card_coerces_decimal_coordinates():
+    """psycopg2 may surface PostGIS doubles as Decimal; card stores float."""
+    from decimal import Decimal
+    card = format_service_card(_mock_row(
+        latitude=Decimal("40.7484"),
+        longitude=Decimal("-73.9857"),
+    ))
+    assert isinstance(card["latitude"], float)
+    assert isinstance(card["longitude"], float)
+    assert card["latitude"] == 40.7484
+    assert card["longitude"] == -73.9857
+
+
+def test_format_card_handles_invalid_coord_types():
+    """Unexpected types (e.g., strings from a miswritten query) fall back to None."""
+    card = format_service_card(_mock_row(
+        latitude="not a number",
+        longitude="also not",
+    ))
+    assert card["latitude"] is None
+    assert card["longitude"] is None
+
+
+def test_base_query_projects_lat_lon():
+    """The generated SQL must include ST_Y/ST_X projections so the
+    executor's validator can read coords off each row. If this stops,
+    the validator silently degrades (all cards look like they're missing
+    coords — no mismatches flagged)."""
+    sql, _ = build_query("food", {})
+    assert "ST_Y(l.position::geometry) AS latitude" in sql, (
+        "Base query missing latitude projection — geographic borough "
+        "validator won't see any coordinates"
+    )
+    assert "ST_X(l.position::geometry) AS longitude" in sql, (
+        "Base query missing longitude projection"
+    )
 
 
 # -----------------------------------------------------------------------
