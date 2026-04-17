@@ -2122,6 +2122,229 @@ def _handle_hours_for_day(
 # QUERY EXECUTION (after confirmation)
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Population-Critical Fallback
+# ---------------------------------------------------------------------------
+# When a user belongs to a rare population (LGBTQ, youth, senior, veteran)
+# and the main shelter query returns results that do NOT match that
+# population's rare taxonomy — e.g., 5 generic Soho shelters but no
+# "LGBTQ Young Adult" tag — the proximity filter has excluded relevant
+# services. Only 2 services are tagged "LGBTQ Young Adult" in the whole
+# DB; Ali Forney Center is in Midtown, outside Soho's 1600m radius.
+#
+# This fallback detects that case and runs a second, targeted query that
+# drops proximity in favor of borough-wide, restricted to ONLY the rare
+# taxonomies. Results are appended with a contextual note so the user
+# understands why they're further away.
+#
+# See docs/POPULATION_FALLBACK_SPEC.md for the full design.
+
+# Rare, population-specific shelter taxonomies. Intentionally excludes
+# "drop-in center" and "crisis" — those are in the base default list
+# and nearly always have proximity-local results.
+_POPULATION_RARE_TAXONOMIES = {
+    "youth": ["youth"],
+    "lgbtq": ["lgbtq young adult"],
+    "senior": ["senior"],
+    "veteran": ["veterans", "veterans short-term housing"],
+}
+
+# Population-appropriate note prefix for the fallback section. Keys are
+# the same labels used in _POPULATION_RARE_TAXONOMIES. When multiple
+# populations are active, the composed note joins the relevant labels.
+_POPULATION_FALLBACK_LABEL = {
+    "youth": "youth-specific",
+    "lgbtq": "LGBTQ-friendly",
+    "senior": "senior-specific",
+    "veteran": "veteran",
+}
+
+# How many fallback cards to append. Kept small so the main (proximity-
+# local) results remain the headline answer.
+_POPULATION_FALLBACK_MAX = 3
+
+# Reverse lookup: city value (from normalize_location) → canonical borough
+# name (used for borough-level queries in the fallback). Soho normalizes
+# to "New York" which maps back to Manhattan here.
+_CITY_TO_BOROUGH = {
+    "New York": "Manhattan",
+    "Brooklyn": "Brooklyn",
+    "Queens": "Queens",
+    "Bronx": "Bronx",
+    "Staten Island": "Staten Island",
+}
+
+
+def _compute_rare_population_taxonomies(slots: dict) -> tuple[list[str], list[str]]:
+    """Determine which rare population-specific shelter taxonomies the
+    user's context makes relevant.
+
+    Derives from population context (age/gender/_populations) directly,
+    NOT from a diff against the default taxonomy list. The rare taxonomies
+    (lgbtq young adult, youth, senior, veterans, veterans short-term
+    housing) are ALREADY in the base default list — so a diff would be
+    empty and the fallback would never fire for the Cornell Q1 case.
+
+    Returns:
+        (taxonomies, labels) — both lists, empty when no rare population
+        applies. taxonomies is the flat list of DB taxonomy names to query
+        against; labels is the list of population labels for the note.
+    """
+    taxonomies: list[str] = []
+    labels: list[str] = []
+
+    age = slots.get("age")
+    age_valid = isinstance(age, int) and age != "skipped"
+    populations = slots.get("_populations") or []
+    gender = slots.get("_gender")
+    family_status = slots.get("family_status")
+
+    # Youth: 16-24, unless the user is explicitly searching for family
+    # shelter (family_status set to with_children/with_family) — family
+    # shelter has its own taxonomy track.
+    if age_valid and 16 <= age <= 24 and family_status not in ("with_children", "with_family"):
+        taxonomies.extend(_POPULATION_RARE_TAXONOMIES["youth"])
+        labels.append("youth")
+
+    # LGBTQ: any of gender=lgbtq/transgender/nonbinary, OR lgbtq in populations
+    is_lgbtq = (
+        gender in ("lgbtq", "transgender", "nonbinary")
+        or "lgbtq" in populations
+    )
+    if is_lgbtq:
+        taxonomies.extend(_POPULATION_RARE_TAXONOMIES["lgbtq"])
+        labels.append("lgbtq")
+
+    # Senior: age >= 62
+    if age_valid and age >= 62:
+        taxonomies.extend(_POPULATION_RARE_TAXONOMIES["senior"])
+        labels.append("senior")
+
+    # Veteran
+    if "veteran" in populations:
+        taxonomies.extend(_POPULATION_RARE_TAXONOMIES["veteran"])
+        labels.append("veteran")
+
+    # Dedupe taxonomies while preserving order. Labels are always distinct
+    # by construction, no dedupe needed.
+    seen = set()
+    deduped = [t for t in taxonomies if not (t in seen or seen.add(t))]
+    return deduped, labels
+
+
+def _resolve_borough_from_location(location: Optional[str]) -> Optional[str]:
+    """Resolve a user-facing location (borough name OR neighborhood) to a
+    canonical borough name for borough-wide fallback queries.
+
+    Returns None if the location can't be resolved — caller should skip
+    the fallback in that case rather than querying with no location filter
+    (which would return matches from anywhere in NYS).
+    """
+    if not location:
+        return None
+    from app.rag.query_executor import is_borough, normalize_location
+
+    if is_borough(location):
+        # Already a borough — normalize the casing to match pa.borough.
+        # normalize_location returns the CITY value; for boroughs we want
+        # the canonical borough name itself, which is the Title-cased
+        # input with "The Bronx" normalized to "Bronx".
+        cleaned = location.strip().title()
+        if cleaned.lower() == "the bronx":
+            return "Bronx"
+        return cleaned
+
+    # Neighborhood — normalize to city, then reverse-map to borough.
+    city = normalize_location(location)
+    return _CITY_TO_BOROUGH.get(city)
+
+
+def _taxonomies_overlap(card_taxonomies, rare_set_lower: set) -> bool:
+    """Check whether a service card's taxonomy tags intersect the rare set.
+
+    DB values are stored in Title Case (e.g. "LGBTQ Young Adult") while
+    the rare set is lowercase — compare case-insensitively.
+    """
+    if not card_taxonomies:
+        return False
+    card_lower = {str(t).lower() for t in card_taxonomies if t}
+    return bool(card_lower & rare_set_lower)
+
+
+def _run_population_fallback(
+    slots: dict,
+    rare_taxonomies: list[str],
+    labels: list[str],
+    existing_service_ids: set,
+) -> tuple[list[dict], str]:
+    """Execute the fallback query and return (fallback_cards, note_text).
+
+    Returns ([], "") when no borough can be resolved, when the fallback
+    query errors out, or when all fallback cards are duplicates of the
+    main results. Never raises — any exception is caught and logged so a
+    fallback failure can't break the main response path.
+    """
+    location = slots.get("location")
+    borough = _resolve_borough_from_location(location)
+    if not borough:
+        return [], ""
+
+    _age = slots.get("age")
+    age_valid = isinstance(_age, int) and _age != "skipped"
+
+    try:
+        # Borough-wide, no proximity, no gender. Age is preserved (a
+        # 17-year-old still shouldn't see adult-only shelters), but
+        # family_status and service_detail are dropped — the point of
+        # the fallback is to find the rare taxonomies at all, not to
+        # satisfy every filter the main query applied.
+        fallback_result = query_services(
+            service_type="shelter",
+            location=borough,
+            age=_age if age_valid else None,
+            gender=None,
+            latitude=None,
+            longitude=None,
+            family_status=None,
+            service_detail=None,
+            populations=None,
+            taxonomy_override=rare_taxonomies,
+            max_results=_POPULATION_FALLBACK_MAX,
+        )
+    except Exception as e:
+        logger.warning(f"Population fallback query failed: {e}")
+        return [], ""
+
+    cards = fallback_result.get("services", []) or []
+
+    # Dedupe against main results — same service shouldn't appear twice.
+    deduped = [c for c in cards if c.get("service_id") not in existing_service_ids]
+    if not deduped:
+        return [], ""
+
+    # Mark each card so the frontend can visually distinguish fallback
+    # cards from main results (future-proofing — current UI renders them
+    # in the same carousel). Also attach the population label for future
+    # per-card labeling.
+    primary_label = labels[0] if labels else "population"
+    for card in deduped:
+        card["is_population_fallback"] = True
+        card["fallback_population"] = primary_label
+
+    # Compose the note. Cap at the first two labels to keep prose readable
+    # when a user matches multiple populations (e.g., trans veteran youth).
+    note_parts = [_POPULATION_FALLBACK_LABEL.get(lb, lb) for lb in labels[:2]]
+    if len(note_parts) == 1:
+        note_phrase = note_parts[0]
+    else:
+        note_phrase = " and ".join(note_parts)
+    note = (
+        f"\n\nI also found {note_phrase} services further away "
+        f"that may be helpful:"
+    )
+    return deduped, note
+
+
 def _execute_and_respond(session_id: str, message: str, slots: dict, request_id: str | None = None) -> dict:
     """Execute the DB query and return results. Called after user confirms."""
     bot_response = None
@@ -2230,6 +2453,43 @@ def _execute_and_respond(session_id: str, message: str, slots: dict, request_id:
                 bot_response = (
                     f"I found {_total_count} option(s) for you{qualifier}:"
                 )
+
+            # -----------------------------------------------------------
+            # Population-critical fallback (shelter only).
+            # When the user belongs to a rare population (LGBTQ, youth,
+            # senior, veteran) and the proximity-local results contain
+            # no services tagged with that population's rare taxonomy,
+            # run a borough-wide targeted query for those taxonomies so
+            # Ali Forney / Covenant House / VA etc. can still surface.
+            # See _run_population_fallback for the full logic.
+            # -----------------------------------------------------------
+            if (
+                slots.get("service_type") == "shelter"
+                and not results.get("relaxed")
+                and not colocated_success
+            ):
+                rare_tx, rare_labels = _compute_rare_population_taxonomies(slots)
+                if rare_tx:
+                    rare_set_lower = {t.lower() for t in rare_tx}
+                    has_match = any(
+                        _taxonomies_overlap(card.get("service_taxonomies"), rare_set_lower)
+                        for card in all_services
+                    )
+                    if not has_match:
+                        existing_ids = {c.get("service_id") for c in all_services if c.get("service_id")}
+                        fb_cards, fb_note = _run_population_fallback(
+                            slots, rare_tx, rare_labels, existing_ids
+                        )
+                        if fb_cards:
+                            # Append to both the displayed page AND the full
+                            # _last_results list so pagination + post-results
+                            # handlers see them. Fallback cards are always
+                            # shown immediately (they're why we ran the
+                            # fallback) so they go into services_list too.
+                            all_services = all_services + fb_cards
+                            services_list = services_list + fb_cards
+                            result_count = len(services_list)
+                            bot_response = bot_response + fb_note
         else:
             bot_response = _no_results_message(slots)
 

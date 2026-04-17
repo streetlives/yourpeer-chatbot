@@ -1043,6 +1043,125 @@ def test_base_query_selects_last_validated_at():
         "last_validated_at must be in the base SELECT for ORDER BY to reference it"
 
 
+# -----------------------------------------------------------------------
+# Bucketed distance sort (see docs/BUCKETED_DISTANCE_SORT_SPEC.md)
+# -----------------------------------------------------------------------
+# When proximity search is active, the SQL ORDER BY splits distance into:
+#   (1) a 4-band rank (0/1/2/3 for <500m / 500m-1km / 1km-2km / 2km+)
+#       used BEFORE freshness — so services in closer bands always win
+#   (2) continuous distance as a tiebreaker AFTER freshness — so within
+#       the same band and freshness tier, closer still beats farther
+# The result: freshness can re-order "equally walkable" services without
+# a 1-meter distance difference dominating the sort.
+
+def test_distance_band_rank_has_four_buckets():
+    """The band CASE expression should define exactly 4 bands (0/1/2/3)."""
+    from app.rag.query_templates import _DISTANCE_BAND_RANK
+    assert "THEN 0" in _DISTANCE_BAND_RANK, "Band 0 (<500m) missing"
+    assert "THEN 1" in _DISTANCE_BAND_RANK, "Band 1 (500m-1km) missing"
+    assert "THEN 2" in _DISTANCE_BAND_RANK, "Band 2 (1km-2km) missing"
+    assert "ELSE 3" in _DISTANCE_BAND_RANK, "Band 3 (2km+) missing"
+
+
+def test_distance_band_thresholds_are_500_1000_2000():
+    """Band thresholds match the spec: 500m, 1000m, 2000m."""
+    from app.rag.query_templates import _DISTANCE_BAND_RANK
+    assert "< 500" in _DISTANCE_BAND_RANK, "First threshold should be 500m"
+    assert "< 1000" in _DISTANCE_BAND_RANK, "Second threshold should be 1000m (1km)"
+    assert "< 2000" in _DISTANCE_BAND_RANK, "Third threshold should be 2000m (2km)"
+
+
+def test_proximity_order_uses_distance_band_before_freshness():
+    """When lat/lon present, the distance BAND should sort BEFORE freshness.
+
+    This is the key behavior of bucketed distance: closer bands always win,
+    but within a band, freshness takes over.
+    """
+    sql, _ = build_query("food", {
+        "lat": 40.69, "lon": -73.99, "radius_meters": 1600, "max_results": 5,
+    })
+    order_section = sql[sql.rindex("ORDER BY"):]
+    # Band CASE has the characteristic "< 500 THEN 0" marker
+    assert "< 500 THEN 0" in order_section, \
+        "Proximity ORDER BY should include distance band CASE"
+    band_pos = order_section.index("< 500 THEN 0")
+    fresh_pos = order_section.index("last_validated_at")
+    assert band_pos < fresh_pos, \
+        "Distance band should sort BEFORE freshness — closer bands always win"
+
+
+def test_proximity_order_uses_continuous_distance_after_freshness():
+    """Continuous distance should be a tiebreaker AFTER freshness, BEFORE name.
+
+    Within the same distance band and freshness tier, the physically
+    closer service should still sort first — but freshness has already
+    broken ties within the band.
+    """
+    sql, _ = build_query("food", {
+        "lat": 40.69, "lon": -73.99, "radius_meters": 1600, "max_results": 5,
+    })
+    order_section = sql[sql.rindex("ORDER BY"):]
+    fresh_pos = order_section.index("last_validated_at")
+    # Find the continuous ST_Distance (not the ones inside the CASE).
+    # Count occurrences: the band CASE has 3, then 1 standalone tiebreaker.
+    # So the last occurrence is the tiebreaker.
+    last_dist_pos = order_section.rindex("ST_Distance(l.position::geography, ST_MakePoint(:lon, :lat)::geography)")
+    name_pos = order_section.index("s.name")
+    assert fresh_pos < last_dist_pos, \
+        "Continuous distance tiebreaker should come AFTER freshness"
+    assert last_dist_pos < name_pos, \
+        "Continuous distance tiebreaker should come BEFORE name"
+
+
+def test_proximity_order_full_key_sequence():
+    """Full key sequence for proximity + lgbtq boost:
+    boost → band → freshness → continuous distance → name.
+    """
+    sql, _ = build_query("shelter", {
+        "lat": 40.72, "lon": -74.00, "radius_meters": 1600, "max_results": 5,
+        "lgbtq_boost": True,
+    })
+    order_section = sql[sql.rindex("ORDER BY"):]
+    boost_pos = order_section.index("lgbtq young adult")
+    band_pos = order_section.index("< 500 THEN 0")
+    fresh_pos = order_section.index("last_validated_at")
+    last_dist_pos = order_section.rindex("ST_Distance(l.position::geography, ST_MakePoint(:lon, :lat)::geography)")
+    name_pos = order_section.index("s.name")
+    positions = [boost_pos, band_pos, fresh_pos, last_dist_pos, name_pos]
+    assert positions == sorted(positions), (
+        "Order must be: boost → band → freshness → continuous distance → name. "
+        f"Got positions: {positions}"
+    )
+
+
+def test_non_proximity_order_unaffected_by_band_change():
+    """Non-proximity queries should not contain any distance rank at all.
+
+    Regression guard: we must not accidentally emit band or continuous
+    distance ORDER BY keys when lat/lon are absent.
+    """
+    sql, _ = build_query("food", {"borough": "Brooklyn", "max_results": 5})
+    order_section = sql[sql.rindex("ORDER BY"):]
+    assert "ST_Distance" not in order_section, \
+        "Non-proximity query should not include ST_Distance in ORDER BY"
+    assert "< 500 THEN 0" not in order_section, \
+        "Non-proximity query should not include distance band CASE"
+
+
+def test_relaxed_query_drops_distance_band():
+    """Relaxed queries drop lat/lon — so no band rank, no continuous distance."""
+    sql, _ = build_relaxed_query("food", {
+        "lat": 40.72, "lon": -74.00, "radius_meters": 1600,
+        "_borough_city_list": ["new york", "manhattan"],
+        "max_results": 5,
+    })
+    order_section = sql[sql.rindex("ORDER BY"):]
+    assert "ST_Distance" not in order_section, \
+        "Relaxed query strips proximity, so no ST_Distance in ORDER BY"
+    assert "last_validated_at" in order_section, \
+        "Relaxed query should still sort by freshness"
+
+
 def test_relaxed_query_keeps_sort_order():
     """Relaxed queries should maintain the same sort priority (no SQL open-now)."""
     sql, _ = build_relaxed_query("food", {

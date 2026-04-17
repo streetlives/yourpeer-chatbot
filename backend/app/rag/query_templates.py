@@ -484,9 +484,42 @@ _DESCRIPTION_BOOST_RANK = """CASE
 END"""
 
 # Distance expression for proximity-based ORDER BY.
-_DISTANCE_RANK = (
+#
+# When proximity is active, distance is split into two ORDER BY keys:
+#
+#   _DISTANCE_BAND_RANK   — bucketed (0/1/2/3) band rank, used BEFORE freshness
+#   _DISTANCE_TIEBREAK    — continuous meters, used AFTER freshness as tiebreak
+#
+# Rationale: a continuous distance sort lets a service 800m away always beat
+# one 801m away, even if the closer one hasn't been verified in a year. By
+# bucketing into walking-time bands (<500m / 500m-1km / 1km-2km / 2km+) and
+# sorting by freshness WITHIN each band, recently verified services surface
+# first among "equally walkable" options. Continuous distance is retained as
+# a secondary tiebreaker to keep ordering stable when band + freshness tie.
+#
+# See docs/BUCKETED_DISTANCE_SORT_SPEC.md for the full design.
+_DISTANCE_BAND_RANK = (
+    "CASE"
+    " WHEN ST_Distance(l.position::geography,"
+    " ST_MakePoint(:lon, :lat)::geography) < 500 THEN 0"
+    " WHEN ST_Distance(l.position::geography,"
+    " ST_MakePoint(:lon, :lat)::geography) < 1000 THEN 1"
+    " WHEN ST_Distance(l.position::geography,"
+    " ST_MakePoint(:lon, :lat)::geography) < 2000 THEN 2"
+    " ELSE 3"
+    " END"
+)
+
+# Continuous distance — only used as a secondary tiebreaker after freshness
+# when a proximity search is active. Within the same band + freshness tier,
+# the physically closer service wins.
+_DISTANCE_TIEBREAK = (
     "ST_Distance(l.position::geography, ST_MakePoint(:lon, :lat)::geography)"
 )
+
+# Back-compat alias — some external callers / tests may reference the old
+# name. The old continuous-only behavior is equivalent to _DISTANCE_TIEBREAK.
+_DISTANCE_RANK = _DISTANCE_TIEBREAK
 
 # Base sort tiebreakers: freshness, then name.
 # Open-now ordering is handled post-query by Python `_sort_open_first()`
@@ -937,12 +970,24 @@ def build_query(template_key: str, user_params: dict) -> tuple[str, dict]:
     if _has_pop_boost:
         order_parts.append(_DESCRIPTION_BOOST_RANK)
 
-    # 2. Distance (when proximity search is active)
+    # 2. Distance BAND (when proximity search is active) — bucketed so
+    #    freshness can sort within each walking-time band.
     if _has_distance:
-        order_parts.append(_DISTANCE_RANK)
+        order_parts.append(_DISTANCE_BAND_RANK)
 
-    # 3. Base tiebreakers: open-now, freshness, name
-    order_parts.extend(_BASE_ORDER_PARTS)
+    # 3. Base tiebreakers: freshness DESC, then name.
+    #    When proximity is active, continuous distance is inserted
+    #    BETWEEN freshness and name so a closer service still beats a
+    #    farther one within the same band + freshness tier.
+    if _has_distance:
+        # Freshness DESC first (within each distance band, verified first),
+        # then continuous distance as a tiebreaker, then name as a stable
+        # final tiebreaker. See docs/BUCKETED_DISTANCE_SORT_SPEC.md.
+        order_parts.append(_BASE_ORDER_PARTS[0])   # l.last_validated_at DESC NULLS LAST
+        order_parts.append(_DISTANCE_TIEBREAK)     # continuous meters tiebreaker
+        order_parts.append(_BASE_ORDER_PARTS[1])   # s.name
+    else:
+        order_parts.extend(_BASE_ORDER_PARTS)
 
     order_clause = f"\nORDER BY {', '.join(order_parts)}\nLIMIT :max_results\n"
 

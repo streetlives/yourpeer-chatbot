@@ -36,6 +36,16 @@ export interface ServiceResult {
   /** Raw taxonomy tags for this service — used by post-results
    *  sub-category filtering. Example: ["Shelter", "Families", "Intake"] */
   service_taxonomies?: string[];
+  /** True when this card was surfaced by the population-critical
+   *  fallback (borough-wide, rare-taxonomy secondary query) rather
+   *  than the main proximity-bounded query. Use to visually distinguish
+   *  "also found, further away" cards from the primary results.
+   *  See backend chatbot._run_population_fallback. */
+  is_population_fallback?: boolean;
+  /** Which rare population triggered the fallback for this card:
+   *  "lgbtq", "youth", "senior", or "veteran". Paired with
+   *  is_population_fallback. */
+  fallback_population?: "lgbtq" | "youth" | "senior" | "veteran";
 }
 
 export interface ChatResponse {
