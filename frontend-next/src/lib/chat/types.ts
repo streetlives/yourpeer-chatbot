@@ -36,6 +36,38 @@ export interface ServiceResult {
   /** Raw taxonomy tags for this service — used by post-results
    *  sub-category filtering. Example: ["Shelter", "Families", "Intake"] */
   service_taxonomies?: string[];
+  /** True when this card was surfaced by the population-critical
+   *  fallback (borough-wide, rare-taxonomy secondary query) rather
+   *  than the main proximity-bounded query. Use to visually distinguish
+   *  "also found, further away" cards from the primary results.
+   *  See backend chatbot._run_population_fallback. */
+  is_population_fallback?: boolean;
+  /** Which rare population triggered the fallback for this card:
+   *  "lgbtq", "youth", "senior", or "veteran". Paired with
+   *  is_population_fallback. */
+  fallback_population?: "lgbtq" | "youth" | "senior" | "veteran";
+  /** Latitude from PostGIS l.position. May be null for pilot imports
+   *  or manual entries without coordinates. See BOUNDARY_AUDIT.md. */
+  latitude?: number | null;
+  /** Longitude from PostGIS l.position. See latitude. */
+  longitude?: number | null;
+  /** The borough our NYC DCP polygon lookup says this service is
+   *  physically in, based on (latitude, longitude). Null when the
+   *  service is outside NYC or has no coordinates. */
+  geographic_borough?:
+    | "Manhattan"
+    | "Brooklyn"
+    | "Queens"
+    | "Bronx"
+    | "Staten Island"
+    | null;
+  /** True when geographic_borough (from coords) disagrees with the
+   *  borough inferred from the city field (e.g., city='New York' but
+   *  geographic_borough='Bronx'). Always false when either side is
+   *  unknown — this flag only fires on confirmed disagreement.
+   *  Cards are NOT filtered on this; surface in UI at your discretion.
+   *  See BOUNDARY_AUDIT.md §Status. */
+  borough_mismatch?: boolean;
 }
 
 export interface ChatResponse {

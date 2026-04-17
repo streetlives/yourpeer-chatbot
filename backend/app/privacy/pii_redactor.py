@@ -16,7 +16,7 @@ where most messages are short service requests.
 Detection order matters: SSN before phone (SSNs are a subset of phone
 digit ranges), and each stage skips spans already claimed.
 
-See docs/PII_REDACTION.md for full pattern details and tradeoffs.
+See docs/design/PII_REDACTION.md for full pattern details and tradeoffs.
 """
 
 import re

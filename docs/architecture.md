@@ -85,4 +85,4 @@ User message
 | Semantic router | Degraded -- skips Tier 2, falls to LLM or regex | Model loaded + route counts + utterance count + embedding dimensions |
 | SQLite (pilot DB) | In-memory only -- no data loss, resets on restart | Optional, not checked |
 
-See [CHATBOT_BEHAVIOR.md](CHATBOT_BEHAVIOR.md) for the full routing pipeline and [SEMANTIC_ROUTING_DESIGN.md](SEMANTIC_ROUTING_DESIGN.md) for the embedding model design.
+See [CHATBOT_BEHAVIOR.md](CHATBOT_BEHAVIOR.md) for the full routing pipeline and [SEMANTIC_ROUTING_DESIGN.md](design/SEMANTIC_ROUTING_DESIGN.md) for the embedding model design.

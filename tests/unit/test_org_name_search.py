@@ -202,7 +202,10 @@ class TestOrgNameRouting:
             )
             params = mock_exec.call_args.kwargs["user_params"]
             assert "org_name_pattern" in params
-            assert "city" in params or "borough" in params
+            # Borough-level search surfaces as city_list (pa.city = ANY(...))
+            # since pa.borough doesn't exist. Neighborhood searches surface
+            # as city + city_list. Either shape proves location was applied.
+            assert "city_list" in params or "city" in params
 
 
 # -----------------------------------------------------------------------

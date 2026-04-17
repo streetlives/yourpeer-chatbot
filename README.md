@@ -139,7 +139,7 @@ Three Claude models are used across the system, each assigned to specific tasks 
 
 **Why Sonnet for crisis:** This is a safety-critical classification where false negatives have real consequences for vulnerable people. Sonnet's adaptive thinking adjusts reasoning depth to ambiguity, which is exactly what's needed for indirect crisis language. The volume is very low (~5% of turns reach the LLM stage) so the 3x cost premium over Haiku adds negligible total cost.
 
-**Fail-open:** If the Sonnet call fails for any reason, the system returns a general safety response rather than falling through to normal conversation. See [CRISIS_DETECTION.md](docs/CRISIS_DETECTION.md) for full details.
+**Fail-open:** If the Sonnet call fails for any reason, the system returns a general safety response rather than falling through to normal conversation. See [CRISIS_DETECTION.md](docs/design/CRISIS_DETECTION.md) for full details.
 
 **Requires:** `ANTHROPIC_API_KEY` in `.env`. If absent, the LLM crisis detection stage is disabled and only regex detection runs.
 
@@ -167,26 +167,16 @@ These are tracked issues identified during DB audits and pilot testing, deferred
 
 ## Documentation
 
-| Document | Description |
-|---|---|
-| [FEATURES.md](docs/FEATURES.md) | Full feature reference — conversation & intake, crisis detection, search & results, service cards, privacy & safety, staff tools |
-| [CHATBOT_BEHAVIOR.md](docs/CHATBOT_BEHAVIOR.md) | Chatbot behavior — routing pipeline, message categories, emotional handling design (AVR pattern), crisis step-down, LLM usage, guardrails, conversation modes, limitations, how to extend |
-| [CRISIS_DETECTION.md](docs/CRISIS_DETECTION.md) | Crisis detection — two-stage architecture, category definitions, fail-open policy, emotional phrase guard, crisis step-down, phrase list design, LLM prompt, and how to extend |
-| [PII_REDACTION.md](docs/PII_REDACTION.md) | PII redaction — seven detection categories, pattern details, tradeoffs, known gaps, and future improvements |
-| [METRICS.md](docs/METRICS.md) | Success metrics — 35+ metrics across 7 layers with definitions, targets, measurement methods, and pilot vs. post-pilot phasing |
-| [EVAL_RESULTS.md](docs/EVAL_RESULTS.md) | Eval history — per-scenario scores, critical failures, and fixes across Runs 14–32 |
-| [SEMANTIC_ROUTING_DESIGN.md](docs/SEMANTIC_ROUTING_DESIGN.md) | Semantic routing design — model selection rationale, hybrid multi-intent architecture, route definitions, integration plan, scaling strategy |
-| [MULTI_INTENT_PLAN.md](docs/MULTI_INTENT_PLAN.md) | Multi-intent architecture plan — hybrid regex + semantic extraction, need-based priority, per-service location binding, co-located queries |
-| [REGEX_AUDIT.md](docs/REGEX_AUDIT.md) | Regex keyword audit — collision risk analysis, proven false positives, remediation actions, keyword maintenance guide |
-| [PHRASE_LIST_AUDIT.md](docs/PHRASE_LIST_AUDIT.md) | Phrase list audit — contraction normalization, intensifier stripping, emotional phrase coverage |
-| [ONBOARDING.md](docs/ONBOARDING.md) | Junior engineer onboarding guide — architecture, message lifecycle, 3-tier system, database schema, first-week checklist |
-| [HARDCODED_MESSAGES_REVIEW.md](docs/HARDCODED_MESSAGES_REVIEW.md) | Hardcoded messages review — every user-facing message cataloged with trigger conditions and source locations |
-| [architecture.md](docs/architecture.md) | Architecture overview — system diagram, data flow, component dependencies, design principles |
-| [CLAUDE.md](docs/CLAUDE.md) | Claude Code context — project summary, stack, and key patterns for AI-assisted development |
-| [SETUP.md](docs/SETUP.md) | Local development setup — virtual environment, dependencies, API keys, running locally |
-| [DEPLOY.md](docs/DEPLOY.md) | Render deployment — environment variables, build commands, auto-deploy, starter tier notes |
-| [TESTING.md](docs/TESTING.md) | Test suite guide — 2,033+ tests across 46 files in `unit/` and `integration/` directories + 167-scenario LLM-as-judge evaluation framework (11 dimensions, Opus judge, weighted scoring) |
-| [scripts/DB_AUDIT.md](scripts/DB_AUDIT.md) | Database audit script — why it exists, how to run it, when to run it, and how to interpret results |
+The full directory map lives at **[docs/README.md](docs/README.md)** — it organizes all 25+ docs into "start here," `design/`, `audits/`, and `ops/`.
+
+If you're just browsing the repo and want the highest-traffic entry points:
+
+- [docs/ONBOARDING.md](docs/ONBOARDING.md) — primary onboarding guide
+- [docs/SETUP.md](docs/SETUP.md) — local development setup
+- [docs/FEATURES.md](docs/FEATURES.md) — full feature reference
+- [docs/CHATBOT_BEHAVIOR.md](docs/CHATBOT_BEHAVIOR.md) — routing pipeline, guardrails, how to extend
+- [docs/TESTING.md](docs/TESTING.md) — test suite and eval framework
+- [docs/DEPLOY.md](docs/DEPLOY.md) — Render deployment notes
 
 ## Related Repositories
 

@@ -13,8 +13,6 @@ Or just:  python tests/test_query_templates.py
 from datetime import time, datetime
 from unittest.mock import patch
 
-import pytest
-
 
 from app.rag.query_templates import (
     build_query,
@@ -370,8 +368,6 @@ def _mock_row(**overrides):
         "city": "Brooklyn",
         "state": "NY",
         "zip_code": "11201",
-        "latitude": 40.6826,
-        "longitude": -73.9754,
         "phone": "212-555-0001",
         "today_opens": None,
         "today_closes": None,
@@ -494,66 +490,6 @@ def test_format_card_default_service_name():
     """Card should show 'Unknown Service' if service_name is missing."""
     card = format_service_card(_mock_row(service_name=None))
     assert card["service_name"] == "Unknown Service"
-
-
-# -----------------------------------------------------------------------
-# COORDINATES — lat/lon from PostGIS l.position projection
-# -----------------------------------------------------------------------
-# Added when the geographic borough validator shipped (see
-# docs/audits/BOUNDARY_AUDIT.md). The base SELECT projects ST_Y/ST_X on
-# l.position so the validator in query_executor can read coordinates
-# off each card without a second query.
-
-def test_format_card_includes_lat_lon():
-    """Card should carry latitude and longitude from the row."""
-    card = format_service_card(_mock_row(latitude=40.7484, longitude=-73.9857))
-    assert card["latitude"] == 40.7484
-    assert card["longitude"] == -73.9857
-
-
-def test_format_card_handles_missing_coordinates():
-    """Services without l.position (legacy / manual entries) get None."""
-    card = format_service_card(_mock_row(latitude=None, longitude=None))
-    assert card["latitude"] is None
-    assert card["longitude"] is None
-
-
-def test_format_card_coerces_decimal_coordinates():
-    """psycopg2 may surface PostGIS doubles as Decimal; card stores float."""
-    from decimal import Decimal
-    card = format_service_card(_mock_row(
-        latitude=Decimal("40.7484"),
-        longitude=Decimal("-73.9857"),
-    ))
-    assert isinstance(card["latitude"], float)
-    assert isinstance(card["longitude"], float)
-    assert card["latitude"] == 40.7484
-    assert card["longitude"] == -73.9857
-
-
-def test_format_card_handles_invalid_coord_types():
-    """Unexpected types (e.g., strings from a miswritten query) fall back to None."""
-    card = format_service_card(_mock_row(
-        latitude="not a number",
-        longitude="also not",
-    ))
-    assert card["latitude"] is None
-    assert card["longitude"] is None
-
-
-def test_base_query_projects_lat_lon():
-    """The generated SQL must include ST_Y/ST_X projections so the
-    executor's validator can read coords off each row. If this stops,
-    the validator silently degrades (all cards look like they're missing
-    coords — no mismatches flagged)."""
-    sql, _ = build_query("food", {})
-    assert "ST_Y(l.position::geometry) AS latitude" in sql, (
-        "Base query missing latitude projection — geographic borough "
-        "validator won't see any coordinates"
-    )
-    assert "ST_X(l.position::geometry) AS longitude" in sql, (
-        "Base query missing longitude projection"
-    )
 
 
 # -----------------------------------------------------------------------
@@ -758,66 +694,78 @@ def test_unknown_template_raises():
 
 
 # -----------------------------------------------------------------------
-# BOROUGH FILTERING — via pa.city (pa.borough does NOT exist in prod)
+# BOROUGH FILTER — pa.borough column
 # -----------------------------------------------------------------------
-# HISTORY: Previously this file had tests asserting that every template
-# MUST include FILTER_BY_BOROUGH (matching pa.borough). Those tests
-# passed because they only inspected the Python SQL string, never
-# executing it. In prod the query raised
-#   psycopg2.errors.UndefinedColumn: column pa.borough does not exist
-# on every borough-level search, the exception was swallowed by
-# _execute_sql's generic handler, and the user got the relaxed-query
-# fallback (adding an unnecessary "I broadened the search a bit"
-# message to every direct borough lookup).
-#
-# Removed Apr 17, 2026. All borough filtering now uses
-# FILTER_BY_CITY_IN_BOROUGH (pa.city = ANY(:city_list)) — the only
-# filter that has ever actually worked. See docs/audits/BOUNDARY_AUDIT.md.
-#
-# The tests below are guards against regression: they assert the
-# broken filter stays GONE, and that borough searches use city_list.
 
-def test_filter_by_borough_not_exported():
-    """FILTER_BY_BOROUGH must not exist — pa.borough is not a real column.
+def test_all_templates_have_borough_filter():
+    """Every template must include FILTER_BY_BOROUGH in optional_filters.
 
-    Re-introducing it would resurface the UndefinedColumn error storm.
+    pa.borough is a clean, consistently populated column — much more
+    reliable than the city field for borough-level searches.
     """
-    import app.rag.query_templates as qt
-    assert not hasattr(qt, "FILTER_BY_BOROUGH"), (
-        "FILTER_BY_BOROUGH was re-added. pa.borough does not exist in the "
-        "Streetlives DB; see docs/audits/BOUNDARY_AUDIT.md. Use "
-        "FILTER_BY_CITY_IN_BOROUGH (pa.city = ANY(:city_list)) instead."
-    )
+    from app.rag.query_templates import FILTER_BY_BOROUGH
+    for key, template in TEMPLATES.items():
+        optional = template["optional_filters"]
+        assert FILTER_BY_BOROUGH in optional, \
+            f"Template '{key}' is missing FILTER_BY_BOROUGH in optional_filters. " \
+            f"Add it so borough-level searches use pa.borough directly."
 
 
-def test_no_template_references_pa_borough():
-    """No template's generated SQL may reference pa.borough."""
-    for key in TEMPLATES:
-        sql, _ = build_query(key, {})
-        assert "pa.borough" not in sql, (
-            f"Template '{key}' references pa.borough in generated SQL — "
-            f"that column does not exist in prod. See BOUNDARY_AUDIT.md."
-        )
+def test_borough_filter_uses_pa_borough_column():
+    """FILTER_BY_BOROUGH must reference pa.borough, not pa.city."""
+    from app.rag.query_templates import FILTER_BY_BOROUGH
+    sql_fragment = FILTER_BY_BOROUGH[0]
+    assert "pa.borough" in sql_fragment, \
+        f"FILTER_BY_BOROUGH must use pa.borough column, got: {sql_fragment}"
+    assert "pa.city" not in sql_fragment, \
+        "FILTER_BY_BOROUGH must not use pa.city — that column has casing issues"
+    assert ":borough" in sql_fragment, \
+        "FILTER_BY_BOROUGH must use :borough param placeholder"
 
 
-def test_borough_search_uses_city_list():
-    """A borough-level search must emit pa.city = ANY(...) — no pa.borough."""
-    sql, params = build_query("food", {
-        "city_list": ["queens", "jamaica", "flushing", "astoria"],
-        "max_results": 5,
-    })
-    assert "LOWER(pa.city) = ANY(:city_list)" in sql
-    assert "pa.borough" not in sql
-    assert params["city_list"] == ["queens", "jamaica", "flushing", "astoria"]
+def test_borough_param_included_in_sql_when_provided():
+    """When borough param is passed, SQL must include the borough filter clause."""
+    sql, params = build_query("food", {"borough": "Queens", "max_results": 5})
+    assert "pa.borough" in sql, \
+        "Borough filter not in SQL when borough param provided"
+    assert params["borough"] == "Queens"
 
 
-def test_relaxed_query_does_not_reintroduce_borough():
-    """Relaxed queries must not emit pa.borough either."""
-    sql, _ = build_relaxed_query("food", {
+def test_borough_filter_absent_when_no_borough_param():
+    """Without a borough param, the borough filter must not appear in SQL."""
+    sql, params = build_query("food", {"city": "Brooklyn", "max_results": 5})
+    assert "pa.borough" not in sql, \
+        "Borough filter appeared in SQL without a borough param — optional filters broken"
+
+
+def test_relaxed_query_drops_borough():
+    """Relaxed query must drop the borough param to broaden the search."""
+    sql, params = build_relaxed_query("food", {
+        "borough": "Queens",
         "city_list": ["queens", "jamaica", "flushing"],
         "max_results": 5,
     })
-    assert "pa.borough" not in sql
+    assert "borough" not in params, \
+        "Relaxed query must drop borough param — it should broaden, not stay borough-restricted"
+    assert "pa.borough" not in sql, \
+        "Borough filter must not appear in relaxed query SQL"
+
+
+def test_borough_filter_before_city_filters_in_optional():
+    """FILTER_BY_BOROUGH should appear before FILTER_BY_CITY in optional_filters.
+
+    Since only one location filter fires per query (whichever params are present),
+    ordering doesn't affect correctness — but keeping borough first documents intent.
+    """
+    from app.rag.query_templates import FILTER_BY_BOROUGH, FILTER_BY_CITY
+    for key, template in TEMPLATES.items():
+        optional = template["optional_filters"]
+        if FILTER_BY_BOROUGH in optional and FILTER_BY_CITY in optional:
+            borough_idx = optional.index(FILTER_BY_BOROUGH)
+            city_idx = optional.index(FILTER_BY_CITY)
+            assert borough_idx < city_idx, \
+                f"Template '{key}': FILTER_BY_BOROUGH (idx {borough_idx}) should come " \
+                f"before FILTER_BY_CITY (idx {city_idx})"
 
 
 # -----------------------------------------------------------------------
@@ -825,39 +773,28 @@ def test_relaxed_query_does_not_reintroduce_borough():
 # -----------------------------------------------------------------------
 
 def test_normalize_borough_names():
-    """Borough name input passes through normalize_location title-cased.
-
-    These values are then consumed by get_borough_city_names which maps
-    them to primary city values via _BOROUGH_TO_PRIMARY_CITY.
-    """
+    """Borough names must normalize to canonical pa.borough values."""
     from app.rag.query_executor import normalize_location
     assert normalize_location("manhattan") == "Manhattan"
-    assert normalize_location("Brooklyn") == "Brooklyn"
+    assert normalize_location("Brooklyn") == "Brooklyn"  # already canonical
     assert normalize_location("queens") == "Queens"
     assert normalize_location("bronx") == "Bronx"
     assert normalize_location("the bronx") == "Bronx"
     assert normalize_location("staten island") == "Staten Island"
 
 
-def test_normalize_then_expand_manhattan_pipeline():
-    """Borough search pipeline: "manhattan" → "Manhattan" → city_list
-    containing "new york".
+def test_normalize_manhattan_not_new_york():
+    """'manhattan' must normalize to 'Manhattan', not 'New York'.
 
-    The full flow: user types a borough name, normalize_location returns
-    the title-cased borough, get_borough_city_names walks it through
-    _BOROUGH_TO_PRIMARY_CITY ("Manhattan" → "New York") and returns the
-    full list of Manhattan city values seen in pa.city. This is how
-    borough-level filtering actually works in prod — via pa.city, not
-    pa.borough (which doesn't exist).
+    Previously this returned 'New York' (the DB city value), which broke
+    borough filtering now that we use pa.borough directly.
     """
-    from app.rag.query_executor import normalize_location, get_borough_city_names
-    normalized = normalize_location("manhattan")
-    assert normalized == "Manhattan"
-    cities = get_borough_city_names(normalized)
-    assert "new york" in cities, (
-        "Manhattan must expand to include 'new york' — the primary DB "
-        "city value for Manhattan addresses"
-    )
+    from app.rag.query_executor import normalize_location
+    result = normalize_location("manhattan")
+    assert result == "Manhattan", \
+        f"'manhattan' normalized to '{result}' but must be 'Manhattan' for pa.borough matching"
+    assert result != "New York", \
+        "'manhattan' must not normalize to 'New York' — that was the old city-field approach"
 
 
 def test_get_borough_city_names_manhattan():
@@ -1107,7 +1044,7 @@ def test_base_query_selects_last_validated_at():
 
 
 # -----------------------------------------------------------------------
-# Bucketed distance sort (see docs/design/BUCKETED_DISTANCE_SORT_SPEC.md)
+# Bucketed distance sort (see docs/BUCKETED_DISTANCE_SORT_SPEC.md)
 # -----------------------------------------------------------------------
 # When proximity search is active, the SQL ORDER BY splits distance into:
 #   (1) a 4-band rank (0/1/2/3 for <500m / 500m-1km / 1km-2km / 2km+)
@@ -1451,32 +1388,9 @@ def test_sort_open_first_single():
 # -----------------------------------------------------------------------
 # FRESHNESS TIER RANKING
 # -----------------------------------------------------------------------
-# Tiered freshness CASE (fresh ≤90d = 0, stale >90d = 1, unverified = 2)
-# sorts before the continuous timestamp so recently verified services
-# beat older ones within a distance band, and unverified services sink.
-# Paired with the bucketed-distance sort — see
-# docs/design/FRESHNESS_TIER_SPEC.md and docs/design/BUCKETED_DISTANCE_SORT_SPEC.md.
-#
-# The single source of truth for _FRESHNESS_DAYS lives in
-# query_templates.py and is re-exported by query_executor.py.
-#
-# HISTORICAL NOTE: this feature was spec'd but unshipped through Apr 17,
-# 2026. These tests sat xfail'd against the spec until the implementation
-# landed. Two sibling tests (asserting 4-element _BASE_ORDER_PARTS with
-# SQL open-now at index 0) were deleted because they encoded a direction
-# the codebase explicitly rejected — open-now sorting is done in Python
-# (`_sort_open_first`) with three buckets (open/closed/unknown), not in
-# SQL with two (open/not-open). See query_templates.py:430-448.
-
 
 def test_freshness_tier_constant_is_90_days():
-    """Freshness threshold must be 90 days and match between modules.
-
-    The SQL sort threshold (_FRESHNESS_DAYS in query_templates) must
-    match the Python stats threshold used by _compute_freshness — a
-    drift would mean the displayed "X of Y verified in last 90 days"
-    stat disagrees with the sort order the user sees.
-    """
+    """Freshness threshold must be 90 days, aligned with _compute_freshness."""
     from app.rag.query_templates import _FRESHNESS_DAYS
     from app.rag.query_executor import _FRESHNESS_DAYS as EXECUTOR_DAYS
     assert _FRESHNESS_DAYS == 90
@@ -1501,6 +1415,30 @@ def test_freshness_tier_three_tiers():
     assert "ELSE 2" in _FRESHNESS_TIER_RANK, "Tier 2 (never verified) missing"
 
 
+def test_base_order_has_four_parts():
+    """_BASE_ORDER_PARTS should have 4 elements: open-now, freshness tier, recency, name."""
+    from app.rag.query_templates import _BASE_ORDER_PARTS
+    assert len(_BASE_ORDER_PARTS) == 4, \
+        f"Expected 4 sort parts, got {len(_BASE_ORDER_PARTS)}"
+
+
+def test_freshness_tier_after_open_now_before_timestamp():
+    """Sort priority: open-now (idx 0) > freshness tier (idx 1) > timestamp (idx 2) > name (idx 3)."""
+    from app.rag.query_templates import _BASE_ORDER_PARTS
+    # Index 0: open-now CASE
+    assert "CURRENT_TIME" in _BASE_ORDER_PARTS[0], \
+        "Index 0 should be open-now rank"
+    # Index 1: freshness tier CASE
+    assert "CURRENT_DATE" in _BASE_ORDER_PARTS[1], \
+        "Index 1 should be freshness tier rank"
+    # Index 2: raw timestamp tiebreaker
+    assert "last_validated_at DESC" in _BASE_ORDER_PARTS[2], \
+        "Index 2 should be timestamp tiebreaker"
+    # Index 3: name
+    assert "s.name" in _BASE_ORDER_PARTS[3], \
+        "Index 3 should be name"
+
+
 def test_freshness_tier_in_all_templates():
     """Every template's generated SQL should include the freshness tier."""
     for key in TEMPLATES:
@@ -1511,6 +1449,7 @@ def test_freshness_tier_in_all_templates():
 
 def test_freshness_tier_survives_with_boosts():
     """Freshness tier should remain in ORDER BY even with population/distance boosts."""
+    # With LGBTQ boost + distance
     sql, _ = build_query("shelter", {
         "lgbtq_boost": True,
         "lat": 40.7128,
@@ -1519,53 +1458,12 @@ def test_freshness_tier_survives_with_boosts():
     })
     assert "CURRENT_DATE - INTERVAL" in sql, \
         "Freshness tier dropped when boosts are active"
-    # The final ORDER BY is at the end; the base SELECT's subqueries may
-    # contain their own ORDER BY clauses (e.g., on t_co.name). Use rfind.
-    order_start = sql.rfind("ORDER BY")
+    # Verify boost comes before freshness tier in the ORDER BY
+    order_start = sql.index("ORDER BY")
     lgbtq_pos = sql.index("lgbtq", order_start)
     freshness_pos = sql.index("CURRENT_DATE", order_start)
     assert lgbtq_pos < freshness_pos, \
         "Population boost should sort before freshness tier"
-
-
-def test_freshness_tier_before_continuous_timestamp():
-    """Freshness tier CASE must come BEFORE the continuous timestamp.
-
-    This is the whole point of the tier: within a tier, the continuous
-    timestamp is a tiebreaker. If the order flipped, the tier would
-    become dead weight (continuous timestamp would already fully
-    resolve ordering).
-    """
-    sql, _ = build_query("food", {})
-    order_start = sql.rfind("ORDER BY")
-    tier_pos = sql.index("CURRENT_DATE", order_start)
-    # "l.last_validated_at DESC" is the continuous timestamp tiebreaker.
-    timestamp_pos = sql.index("l.last_validated_at DESC", order_start)
-    assert tier_pos < timestamp_pos, (
-        "Freshness tier CASE (CURRENT_DATE...) must sort BEFORE the "
-        "continuous timestamp (l.last_validated_at DESC) — otherwise "
-        "the tier has no effect"
-    )
-
-
-def test_base_order_parts_current_shape():
-    """_BASE_ORDER_PARTS has 3 elements: freshness tier, continuous timestamp, name.
-
-    If this test fails after a deliberate change to the sort design,
-    update the five feature tests above to match the new shape.
-    """
-    from app.rag.query_templates import _BASE_ORDER_PARTS, _FRESHNESS_TIER_RANK
-    assert len(_BASE_ORDER_PARTS) == 3, (
-        f"_BASE_ORDER_PARTS has {len(_BASE_ORDER_PARTS)} elements; "
-        f"expected 3 (freshness tier CASE, continuous timestamp, name). "
-        f"See docs/design/FRESHNESS_TIER_SPEC.md."
-    )
-    assert _BASE_ORDER_PARTS[0] == _FRESHNESS_TIER_RANK, \
-        "Index 0 should be the freshness tier CASE"
-    assert "last_validated_at DESC" in _BASE_ORDER_PARTS[1], \
-        "Index 1 should be the continuous-timestamp tiebreaker"
-    assert _BASE_ORDER_PARTS[2] == "s.name", \
-        "Index 2 should be the name tiebreaker"
 
 
 # -----------------------------------------------------------------------

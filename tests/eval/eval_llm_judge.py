@@ -812,7 +812,7 @@ SCENARIOS = [
         "category": "taxonomy_regression",
         "description": "Queens has 3 Clothing services and 65 Clothing Pantry services. "
                        "Before the fix, this returned 0 results. Tests that taxonomy_names "
-                       "includes 'clothing pantry' and borough filter uses pa.borough.",
+                       "includes 'clothing pantry' and borough filter uses pa.city (city_list expansion).",
         "user_turns": ["I need clothes in Queens"],
         "expected": {
             "service_type": "clothing",
@@ -909,14 +909,14 @@ SCENARIOS = [
     },
 
     # --- NEW: BOROUGH FILTER CORRECTNESS ---
-    # Tests that borough searches use pa.borough directly (not city-list expansion),
+    # Tests that borough searches use pa.city city-list expansion (pa.borough doesn't exist in prod),
     # covering the Manhattan normalization fix and the all-caps city data issue.
     {
         "id": "borough_manhattan_normalization",
         "name": "Manhattan borough search normalization",
         "category": "borough_filter",
         "description": "User says 'Manhattan'. Previously normalized to city='New York'. "
-                       "Now must use pa.borough='Manhattan'. Tests the normalization fix.",
+                       "Uses pa.city = ANY(city_list_for_Manhattan). Tests the normalization fix.",
         "user_turns": ["I need food in Manhattan"],
         "expected": {
             "service_type": "food",
@@ -929,7 +929,7 @@ SCENARIOS = [
         "name": "'The Bronx' phrasing normalizes correctly",
         "category": "borough_filter",
         "description": "User says 'the Bronx' (with 'the'). Must normalize to 'Bronx' "
-                       "and match pa.borough = 'Bronx', not fail on 'The Bronx' mismatch.",
+                       "and expand to Bronx city_list, not fail on 'The Bronx' mismatch.",
         "user_turns": ["Where can I get clothes in the Bronx?"],
         "expected": {
             "service_type": "clothing",
@@ -1162,7 +1162,7 @@ SCENARIOS = [
         "name": "Services with ALL CAPS city values still returned",
         "category": "data_quality",
         "description": "The DB has city values like 'BROOKLYN', 'BRONX', 'JAMAICA' in all caps. "
-                       "Borough filter uses pa.borough (clean) not pa.city (messy), so these "
+                       "Borough filter uses pa.city via city_list (pa.borough doesn't exist), so these "
                        "should not affect results. Tests Bronx which has BRONX (93), Bronx (216), "
                        "and The Bronx (172) as city values.",
         "user_turns": ["I need food in the Bronx"],

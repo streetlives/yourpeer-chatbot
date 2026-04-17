@@ -23,6 +23,7 @@ Usage:
 import os
 import time
 import logging
+import threading
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 from sqlalchemy import create_engine, text
@@ -35,6 +36,7 @@ from app.rag.query_templates import (
     format_service_card,
     deduplicate_results,
     TEMPLATES,
+    _FRESHNESS_DAYS,
 )
 
 load_dotenv()
@@ -119,11 +121,14 @@ def test_connection() -> bool:
 # FRESHNESS STATS
 # ---------------------------------------------------------------------------
 
-_FRESHNESS_DAYS = 90
+# _FRESHNESS_DAYS is imported from query_templates to keep the SQL sort's
+# "fresh" tier threshold in lockstep with the displayed freshness stats.
+# If you change the threshold, change it in query_templates._FRESHNESS_DAYS
+# only — this module picks up the new value automatically.
 
 
 def _compute_freshness(rows: list[dict]) -> dict:
-    """Count how many results were verified within the last 90 days.
+    """Count how many results were verified within the last _FRESHNESS_DAYS.
 
     Operates on raw query rows (before format_service_card drops
     the last_validated_at field).
@@ -153,8 +158,164 @@ def _compute_freshness(rows: list[dict]) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# OPEN-NOW SORT (post-query)
+# GEOGRAPHIC BOROUGH VALIDATION
 # ---------------------------------------------------------------------------
+# Derive each service's borough from its (lat, lon) coordinates using NYC
+# DCP polygons (see app.rag.boundaries). Compare against the borough
+# inferred from pa.city to detect data-quality issues like the user-reported
+# "Manhattan service that's actually in the Bronx."
+#
+# Why defensive-only (don't filter): this is shipping as a data-quality
+# signal, not a behavior change. Filtering based on polygon mismatch has
+# false-positive risk — a service could legitimately appear in one borough
+# but serve another (e.g., mobile units), and the simplified polygon has
+# ~0.56% disagreement with the full polygon near waterways. For the initial
+# rollout we annotate + log mismatches and surface them in admin telemetry
+# so Community Information Specialists can triage upstream.
+#
+# Once mismatch rates are known and triaged, the policy can escalate to
+# filtering/badging based on real data.
+
+# pa.city value (lowercased) → canonical borough name.
+# Derived from NYC_LOCATION_ALIASES so adding a new neighborhood alias
+# automatically extends the mismatch-check coverage. Computed lazily
+# because NYC_LOCATION_ALIASES is defined later in this module.
+_CITY_TO_STATED_BOROUGH: Optional[dict] = None
+_CITY_TO_BOROUGH_LOCK = threading.Lock()
+
+
+def _build_city_to_borough() -> dict:
+    """Invert NYC_LOCATION_ALIASES: each pa.city value → canonical borough."""
+    # Map: primary pa.city value -> canonical borough name
+    # {"New York": "Manhattan", "Brooklyn": "Brooklyn", ...}
+    primary_to_borough = {v: k for k, v in _BOROUGH_TO_PRIMARY_CITY.items()}
+
+    city_to_borough: dict = {}
+    # Start with primary values (covers the bulk of rows)
+    for primary, borough in primary_to_borough.items():
+        city_to_borough[primary.lower()] = borough
+
+    # Add neighborhood-level city values that the DB sometimes stores
+    # (e.g., pa.city='Astoria' → 'Queens'). NYC_LOCATION_ALIASES maps
+    # alias → primary_city; we compose alias → primary_city → borough.
+    for alias, primary_city in NYC_LOCATION_ALIASES.items():
+        borough = primary_to_borough.get(primary_city)
+        if borough:
+            # alias may be lowercase ("manhattan") or titled ("Manhattan")
+            # in DB; store lowercased for case-insensitive lookup
+            city_to_borough[alias.lower()] = borough
+
+    return city_to_borough
+
+
+def _get_city_to_borough() -> dict:
+    """Lazy-initialized _CITY_TO_STATED_BOROUGH accessor.
+
+    Double-checked locking so concurrent first-requests don't both run
+    _build_city_to_borough. Writes are idempotent so even without the
+    lock nothing corrupts — but we save a few hundred µs of wasted work
+    per cold start and keep this consistent with boundaries._load.
+    """
+    global _CITY_TO_STATED_BOROUGH
+    # Fast path: already built. No lock needed because the assignment
+    # at the end of the slow path is an atomic reference swap in CPython.
+    if _CITY_TO_STATED_BOROUGH is not None:
+        return _CITY_TO_STATED_BOROUGH
+
+    with _CITY_TO_BOROUGH_LOCK:
+        if _CITY_TO_STATED_BOROUGH is None:
+            _CITY_TO_STATED_BOROUGH = _build_city_to_borough()
+        return _CITY_TO_STATED_BOROUGH
+
+
+def _stated_borough_from_city(city: Optional[str]) -> Optional[str]:
+    """Infer the canonical borough from a pa.city value.
+
+    Returns the borough name ("Manhattan", "Bronx", etc.) if city is a
+    known NYC value, or None for out-of-town cities, unmapped values,
+    or empty strings.
+    """
+    if not city:
+        return None
+    return _get_city_to_borough().get(city.strip().lower())
+
+
+# Services we've already warned about this process. Rate-limits the
+# borough_mismatch WARNING log so a popular wrong-borough service doesn't
+# flood the logs each time it's returned from a search. Set membership is
+# O(1), and `set.add` is atomic under CPython's GIL — safe without a lock.
+# Bounded in practice by the DB size (~2,500 services), so memory growth
+# is trivial. Reset via _reset_mismatch_warnings() (test-only).
+_WARNED_MISMATCH_SERVICE_IDS: set[str] = set()
+
+
+def _reset_mismatch_warnings() -> None:
+    """Clear the "already warned" set. ONLY for tests. Not public API."""
+    _WARNED_MISMATCH_SERVICE_IDS.clear()
+
+
+def _annotate_geographic_borough(cards: list[dict]) -> list[dict]:
+    """Tag each card with geographic_borough (from coords) and
+    borough_mismatch (True if stated city disagrees with coords).
+
+    Mutates and returns the input list for caller convenience.
+
+    Policy: log every mismatch at WARNING level (so they surface in
+    default log aggregation — this is a data-quality issue worth
+    noticing). Do NOT filter — the data is still delivered to the
+    user, just annotated so downstream code can surface/filter based
+    on the flag. See boundaries module docstring.
+    """
+    # Import here to avoid a circular: boundaries has no deps, but
+    # query_executor is imported early at app startup and we want to
+    # keep the boundaries GeoJSON load lazy.
+    from app.rag.boundaries import borough_from_coords
+
+    for card in cards:
+        lat = card.get("latitude")
+        lon = card.get("longitude")
+        if lat is None or lon is None:
+            # No coordinates — nothing to validate. Skip silently; this
+            # is a known gap for pilot imports and manual entries.
+            card["geographic_borough"] = None
+            card["borough_mismatch"] = False
+            continue
+
+        geo_borough = borough_from_coords(lat, lon)
+        card["geographic_borough"] = geo_borough
+
+        # A mismatch is when we CAN determine both boroughs (they're both
+        # non-None) and they disagree. A missing geo_borough means the
+        # point is outside NYC (possibly a legitimate regional service,
+        # e.g., a NJ hotline with NYC presence) — not a mismatch per se.
+        stated = _stated_borough_from_city(card.get("city"))
+        mismatch = (
+            geo_borough is not None
+            and stated is not None
+            and geo_borough != stated
+        )
+        card["borough_mismatch"] = mismatch
+
+        if mismatch:
+            # Rate-limit: only warn the first time we see each service_id.
+            # The card flag (borough_mismatch=True) is still set on every
+            # response, so downstream code always sees the mismatch — only
+            # the log is deduplicated.
+            service_id = card.get("service_id")
+            if service_id and service_id not in _WARNED_MISMATCH_SERVICE_IDS:
+                _WARNED_MISMATCH_SERVICE_IDS.add(service_id)
+                logger.warning(
+                    "borough_mismatch service_id=%s service=%r city=%r "
+                    "stated_borough=%s geographic_borough=%s lat=%s lon=%s",
+                    service_id,
+                    card.get("service_name"),
+                    card.get("city"),
+                    stated, geo_borough, lat, lon,
+                )
+
+    return cards
+
+
 # The SQL ORDER BY already includes an open-now rank, but schedule data is
 # sparse (~40-80% coverage for walk-in services, 0% for others). This
 # Python-side stable sort guarantees "Open now" services float to the top
@@ -234,7 +395,9 @@ def execute_service_query(
 
     results = deduplicate_results(rows)
     freshness = _compute_freshness(results)
-    cards = _sort_open_first([format_service_card(r) for r in results])
+    cards = [format_service_card(r) for r in results]
+    cards = _annotate_geographic_borough(cards)
+    cards = _sort_open_first(cards)
 
     if cards or not allow_relaxed:
         return {
@@ -279,7 +442,9 @@ def execute_service_query(
 
     results_relaxed = deduplicate_results(rows_relaxed)
     freshness = _compute_freshness(results_relaxed)
-    cards_relaxed = _sort_open_first([format_service_card(r) for r in results_relaxed])
+    cards_relaxed = [format_service_card(r) for r in results_relaxed]
+    cards_relaxed = _annotate_geographic_borough(cards_relaxed)
+    cards_relaxed = _sort_open_first(cards_relaxed)
 
     return {
         "services": cards_relaxed,
@@ -390,16 +555,19 @@ def resolve_template_key(service_type: str) -> Optional[str]:
 # CITY / BOROUGH NORMALIZATION
 # ---------------------------------------------------------------------------
 
-# physical_addresses has a clean `borough` column (Manhattan, Brooklyn,
-# Queens, Bronx, Staten Island) — borough-level searches now use
-# FILTER_BY_BOROUGH against pa.borough directly, which is far more reliable
-# than city field matching (the city field has inconsistent casing, typos,
-# and wrong borough assignments in the source data).
-# City normalization and expansion are kept for neighborhood-level searches
-# and as a fallback for records where pa.borough is NULL.
+# physical_addresses in prod has NO `borough` column. Borough-level searches
+# run via FILTER_BY_CITY_IN_BOROUGH (pa.city = ANY(:city_list)), with the
+# city_list derived below. This is not ideal — pa.city has inconsistent
+# casing, typos, and some wrong-borough assignments — but it's the only
+# column available. See docs/audits/BOUNDARY_AUDIT.md for follow-up plan to
+# derive geographic borough from l.position against NYC DCP polygons.
+#
+# Note that the "Manhattan" → "Manhattan" mappings below look redundant but
+# are used by get_borough_city_names (which does an ALIAS → primary city
+# lookup via _BOROUGH_TO_PRIMARY_CITY to build the city_list).
 
 NYC_LOCATION_ALIASES = {
-    # Boroughs → canonical borough names matching pa.borough
+    # Boroughs → canonical city value used in pa.city for that borough
     "manhattan":      "Manhattan",
     "brooklyn":       "Brooklyn",
     "queens":         "Queens",
@@ -480,8 +648,9 @@ _BOROUGH_KEYS = {
     "manhattan", "brooklyn", "queens", "bronx", "the bronx", "staten island",
 }
 
-# Maps canonical borough names (as stored in pa.borough) to the primary city
-# value used in pa.city for that borough. Used for city-field fallback searches.
+# Maps canonical borough names to the primary city value used in pa.city for
+# that borough. Since physical_addresses has no borough column, this is the
+# central mapping that drives borough-level filtering via pa.city.
 _BOROUGH_TO_PRIMARY_CITY = {
     "Manhattan":   "New York",
     "Brooklyn":    "Brooklyn",
@@ -500,13 +669,14 @@ def is_borough(raw_location: str) -> bool:
 
 def normalize_location(raw_location: str) -> str:
     """
-    Normalize a user-provided location string to a canonical borough name
-    (e.g. "manhattan" → "Manhattan", "the bronx" → "Bronx") or to the
-    DB city value for neighborhoods (e.g. "harlem" → "New York").
+    Normalize a user-provided location string to the DB city value used in
+    pa.city. Boroughs return their primary city ("manhattan" → "Manhattan",
+    "the bronx" → "Bronx"); neighborhoods return the containing borough's
+    primary city ("harlem" → "New York").
 
-    For borough-level searches, the returned value is passed as the `borough`
-    param and matched against pa.borough directly.
-    For neighborhood searches, it's used for city-field filtering.
+    Used by callers to populate the `city` / `city_list` query params, which
+    drive FILTER_BY_CITY / FILTER_BY_CITY_IN_BOROUGH (the only location
+    filters that actually work — pa.borough does not exist in the DB).
     """
     if not raw_location:
         return raw_location
@@ -516,8 +686,11 @@ def normalize_location(raw_location: str) -> str:
 # ---------------------------------------------------------------------------
 # BOROUGH → CITY EXPANSION
 # ---------------------------------------------------------------------------
-# Fallback for records where pa.borough is NULL — search by city field instead.
-# Builds a reverse map: borough primary city → all city values in that borough.
+# pa.city is the only borough-identifying column in the DB. Values are
+# inconsistent: "New York" covers all Manhattan addresses, but outer
+# boroughs use both the borough name ("Brooklyn") AND neighborhood names
+# ("Williamsburg", "Astoria", "Far Rockaway", etc.). This builds a reverse
+# map so a "Queens" search catches all Queens cities.
 
 def _build_borough_to_cities() -> dict:
     """Build a reverse map: primary city value → all city values in that borough."""
@@ -538,7 +711,10 @@ def get_borough_city_names(borough: str) -> list[str]:
     Given a canonical borough name (e.g. "Queens", "Manhattan"), return all
     city values that might appear in pa.city for that borough.
 
-    Used as a fallback for records where pa.borough is NULL.
+    This is the core of borough-level search: the returned list drives
+    FILTER_BY_CITY_IN_BOROUGH (pa.city = ANY(:city_list)). The DB has no
+    borough column, so pa.city is all we have.
+
     Returns a lowercased list for case-insensitive SQL ANY() matching.
 
     Example:

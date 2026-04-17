@@ -58,6 +58,14 @@ SELECT
     pa.state_province AS state,
     pa.postal_code    AS zip_code,
 
+    -- Coordinates projected for coordinate→borough validation in
+    -- query_executor._annotate_geographic_borough. PostGIS geometry
+    -- uses (x, y) = (lon, lat). NULL-safe: services without position
+    -- data (pilot imports, manual entries) get NULL lat/lon and skip
+    -- validation. See docs/audits/BOUNDARY_AUDIT.md.
+    ST_Y(l.position::geometry) AS latitude,
+    ST_X(l.position::geometry) AS longitude,
+
     best_phone.number     AS phone,
     best_phone.extension  AS phone_extension,
 
@@ -229,15 +237,16 @@ FILTER_BY_COLOCATED_TAXONOMY = (
     ["colocated_taxonomy_names"],
 )
 
-# Borough filter — uses the physical_addresses.borough column directly.
-# This is the most reliable borough filter: the borough column is clean,
-# consistently populated, and avoids the city-field casing chaos
-# (e.g. "BRONX" vs "Bronx" vs "The Bronx" all in the same borough).
-# Case-insensitive match handles any remaining inconsistencies.
-FILTER_BY_BOROUGH = (
-    "LOWER(pa.borough) = LOWER(:borough)",
-    ["borough"],
-)
+# REMOVED (Apr 17, 2026): FILTER_BY_BOROUGH referenced pa.borough, which does
+# NOT exist in the Streetlives DB. Every borough-level search had been silently
+# erroring with `psycopg2.errors.UndefinedColumn: column pa.borough does not
+# exist`, getting caught by _execute_sql's generic exception handler, and
+# falling through to the relaxed query. Users saw "I broadened the search a
+# bit" on every direct borough search. Borough filtering is now done via
+# FILTER_BY_CITY_IN_BOROUGH (pa.city = ANY(:city_list)) — the only filter
+# that was actually working. See docs/audits/BOUNDARY_AUDIT.md for the full story
+# and follow-up plans (polygon-based geographic borough derivation from
+# l.position using NYC DCP boundaries).
 
 FILTER_BY_CITY = (
     "LOWER(pa.city) = LOWER(:city)",
@@ -248,6 +257,12 @@ FILTER_BY_CITY = (
 # When a user says "Queens", this matches "Queens", "Astoria", "Flushing",
 # "Jamaica", "Long Island City", etc.
 # The SQL uses ANY() with an array parameter, which SQLAlchemy handles natively.
+#
+# This is the de-facto borough filter. The city_list is built by
+# get_borough_city_names() in query_executor.py by walking NYC_LOCATION_ALIASES.
+# Known limitation: pa.city has casing/typo inconsistencies and sometimes
+# wrong-borough assignments. A polygon-based filter using l.position against
+# NYC DCP borough boundaries would be authoritative; see BOUNDARY_AUDIT.md.
 FILTER_BY_CITY_IN_BOROUGH = (
     "LOWER(pa.city) = ANY(:city_list)",
     ["city_list"],
@@ -423,22 +438,31 @@ FILTER_BY_CLOTHING_OCCASION = (
 # ---------------------------------------------------------------------------
 # ORDER + LIMIT
 # ---------------------------------------------------------------------------
-# Sorting priority:
-#   1. Recently verified — freshest data first (NULLS LAST)
-#   2. Service name — stable tiebreaker
+# Sorting priority (base):
+#   1. Freshness tier (CASE 0/1/2)  — fresh ≤90d first, stale next, NULL last
+#   2. Continuous timestamp          — most recently verified within a tier
+#   3. Service name                  — stable alphabetical tiebreaker
+#
+# With optional layers (prepended/inserted in this order):
+#   - Population boosts (LGBTQ, veteran, description) sort BEFORE the base
+#     — see _LGBTQ_BOOST_RANK, _VETERAN_BOOST_RANK, _DESCRIPTION_BOOST_RANK
+#   - Distance band (_DISTANCE_BAND_RANK) sorts BETWEEN boosts and freshness
+#     — so freshness wins within a walking-time band
+#   - Continuous distance (_DISTANCE_TIEBREAK) sorts AFTER freshness but
+#     BEFORE name — a closer service beats a farther one when band + tier tie
 #
 # Open-now ordering is applied in Python by `_sort_open_first()` after the
 # SQL query returns (see query_executor.py). This is the single source of
 # truth for open-status sorting — SQL does not contribute.
 #
-# When proximity (lat/lon) is available, distance is the primary sort.
-# The Python re-sort still applies open-first as a stable overlay.
+# Why not SQL for open-now? The Python `_sort_open_first()` distinguishes
+# three buckets (open < closed < unknown), while a SQL CASE expression
+# conflates closed and unknown at 1. Earlier revisions had both layers
+# running — Python's rank always overrode SQL's, making SQL's contribution
+# cosmetic. One source of truth eliminates a drift vector.
 #
-# Why not SQL? The Python `_sort_open_first()` distinguishes three buckets
-# (open < closed < unknown), while a SQL CASE expression conflates closed
-# and unknown at 1. Earlier revisions had both layers running — Python's
-# rank always overrode SQL's, making SQL's contribution cosmetic. One
-# source of truth eliminates a drift vector.
+# See docs/design/FRESHNESS_TIER_SPEC.md and docs/design/BUCKETED_DISTANCE_SORT_SPEC.md
+# for the motivation behind the tiered freshness + distance-band design.
 
 # Open-now sort expression — INTENTIONALLY NOT USED in _BASE_ORDER_PARTS
 # (see comment above). Retained as documentation of the shape of a SQL-level
@@ -484,14 +508,69 @@ _DESCRIPTION_BOOST_RANK = """CASE
 END"""
 
 # Distance expression for proximity-based ORDER BY.
-_DISTANCE_RANK = (
+#
+# When proximity is active, distance is split into two ORDER BY keys:
+#
+#   _DISTANCE_BAND_RANK   — bucketed (0/1/2/3) band rank, used BEFORE freshness
+#   _DISTANCE_TIEBREAK    — continuous meters, used AFTER freshness as tiebreak
+#
+# Rationale: a continuous distance sort lets a service 800m away always beat
+# one 801m away, even if the closer one hasn't been verified in a year. By
+# bucketing into walking-time bands (<500m / 500m-1km / 1km-2km / 2km+) and
+# sorting by freshness WITHIN each band, recently verified services surface
+# first among "equally walkable" options. Continuous distance is retained as
+# a secondary tiebreaker to keep ordering stable when band + freshness tie.
+#
+# See docs/design/BUCKETED_DISTANCE_SORT_SPEC.md for the full design.
+_DISTANCE_BAND_RANK = (
+    "CASE"
+    " WHEN ST_Distance(l.position::geography,"
+    " ST_MakePoint(:lon, :lat)::geography) < 500 THEN 0"
+    " WHEN ST_Distance(l.position::geography,"
+    " ST_MakePoint(:lon, :lat)::geography) < 1000 THEN 1"
+    " WHEN ST_Distance(l.position::geography,"
+    " ST_MakePoint(:lon, :lat)::geography) < 2000 THEN 2"
+    " ELSE 3"
+    " END"
+)
+
+# Continuous distance — only used as a secondary tiebreaker after freshness
+# when a proximity search is active. Within the same band + freshness tier,
+# the physically closer service wins.
+_DISTANCE_TIEBREAK = (
     "ST_Distance(l.position::geography, ST_MakePoint(:lon, :lat)::geography)"
 )
 
-# Base sort tiebreakers: freshness, then name.
+# Back-compat alias — some external callers / tests may reference the old
+# name. The old continuous-only behavior is equivalent to _DISTANCE_TIEBREAK.
+_DISTANCE_RANK = _DISTANCE_TIEBREAK
+
+# Freshness threshold in days. Shared with query_executor._compute_freshness
+# (imported from here) so the SQL sort's "fresh" tier matches what the
+# displayed "X of Y verified in last N days" stats report.
+_FRESHNESS_DAYS = 90
+
+# Tiered freshness CASE — 3 buckets:
+#   0 = fresh (verified within _FRESHNESS_DAYS)
+#   1 = stale (verified, but older than _FRESHNESS_DAYS)
+#   2 = never verified (last_validated_at IS NULL)
+#
+# Within a distance band, this promotes "recent enough to trust" services
+# over older-but-still-verified ones, and demotes unverified ones to the
+# bottom. Paired with the continuous timestamp as a tiebreaker within
+# each tier. See docs/design/FRESHNESS_TIER_SPEC.md for the full design.
+_FRESHNESS_TIER_RANK = f"""CASE
+    WHEN l.last_validated_at >= CURRENT_DATE - INTERVAL '{_FRESHNESS_DAYS} days' THEN 0
+    WHEN l.last_validated_at IS NOT NULL THEN 1
+    ELSE 2
+END"""
+
+# Base sort tiebreakers: tiered freshness, then continuous timestamp within
+# each tier, then name.
 # Open-now ordering is handled post-query by Python `_sort_open_first()`
 # — see comment block above for rationale.
 _BASE_ORDER_PARTS = [
+    _FRESHNESS_TIER_RANK,
     "l.last_validated_at DESC NULLS LAST",
     "s.name",
 ]
@@ -511,7 +590,6 @@ TEMPLATES = {
         "description": "Find food services (pantries, soup kitchens, meals) by location",
         "required_filters": [FILTER_BY_TAXONOMY_NAME_IN, FILTER_NOT_HIDDEN, FILTER_BY_STATE_NY],
         "optional_filters": [
-            FILTER_BY_BOROUGH,
             FILTER_BY_CITY,
             FILTER_BY_CITY_IN_BOROUGH,
             FILTER_BY_CITY_LIKE,
@@ -555,7 +633,6 @@ TEMPLATES = {
         "description": "Find shelters and housing with eligibility checks",
         "required_filters": [FILTER_BY_TAXONOMY_NAME_IN, FILTER_NOT_HIDDEN, FILTER_BY_STATE_NY],
         "optional_filters": [
-            FILTER_BY_BOROUGH,
             FILTER_BY_CITY,
             FILTER_BY_CITY_IN_BOROUGH,
             FILTER_BY_CITY_LIKE,
@@ -618,7 +695,6 @@ TEMPLATES = {
         "description": "Find clothing distribution services",
         "required_filters": [FILTER_BY_TAXONOMY_NAME_IN, FILTER_NOT_HIDDEN, FILTER_BY_STATE_NY],
         "optional_filters": [
-            FILTER_BY_BOROUGH,
             FILTER_BY_CITY,
             FILTER_BY_CITY_IN_BOROUGH,
             FILTER_BY_CITY_LIKE,
@@ -648,7 +724,6 @@ TEMPLATES = {
         "description": "Find medical and healthcare services",
         "required_filters": [FILTER_BY_TAXONOMY_NAME_IN, FILTER_NOT_HIDDEN, FILTER_BY_STATE_NY],
         "optional_filters": [
-            FILTER_BY_BOROUGH,
             FILTER_BY_CITY,
             FILTER_BY_CITY_IN_BOROUGH,
             FILTER_BY_CITY_LIKE,
@@ -686,7 +761,6 @@ TEMPLATES = {
         "description": "Find legal aid and immigration services",
         "required_filters": [FILTER_BY_TAXONOMY_NAME_IN, FILTER_NOT_HIDDEN, FILTER_BY_STATE_NY],
         "optional_filters": [
-            FILTER_BY_BOROUGH,
             FILTER_BY_CITY,
             FILTER_BY_CITY_IN_BOROUGH,
             FILTER_BY_CITY_LIKE,
@@ -706,7 +780,6 @@ TEMPLATES = {
         "description": "Find job training and employment services",
         "required_filters": [FILTER_BY_TAXONOMY_NAME_IN, FILTER_NOT_HIDDEN, FILTER_BY_STATE_NY],
         "optional_filters": [
-            FILTER_BY_BOROUGH,
             FILTER_BY_CITY,
             FILTER_BY_CITY_IN_BOROUGH,
             FILTER_BY_CITY_LIKE,
@@ -727,7 +800,6 @@ TEMPLATES = {
         "description": "Find showers, laundry, toiletries, and hygiene services",
         "required_filters": [FILTER_BY_TAXONOMY_NAME_IN, FILTER_NOT_HIDDEN, FILTER_BY_STATE_NY],
         "optional_filters": [
-            FILTER_BY_BOROUGH,
             FILTER_BY_CITY,
             FILTER_BY_CITY_IN_BOROUGH,
             FILTER_BY_CITY_LIKE,
@@ -757,7 +829,6 @@ TEMPLATES = {
         "description": "Find mental health, counseling, and substance use services",
         "required_filters": [FILTER_BY_TAXONOMY_NAME_IN, FILTER_NOT_HIDDEN, FILTER_BY_STATE_NY],
         "optional_filters": [
-            FILTER_BY_BOROUGH,
             FILTER_BY_CITY,
             FILTER_BY_CITY_IN_BOROUGH,
             FILTER_BY_CITY_LIKE,
@@ -783,7 +854,6 @@ TEMPLATES = {
         "description": "Find benefits, drop-in centers, case workers, and miscellaneous services",
         "required_filters": [FILTER_BY_TAXONOMY_NAME_IN, FILTER_NOT_HIDDEN, FILTER_BY_STATE_NY],
         "optional_filters": [
-            FILTER_BY_BOROUGH,
             FILTER_BY_CITY,
             FILTER_BY_CITY_IN_BOROUGH,
             FILTER_BY_CITY_LIKE,
@@ -831,7 +901,6 @@ TEMPLATES = {
         "description": "Find all services at a specific organization by name",
         "required_filters": [FILTER_BY_ORG_NAME, FILTER_NOT_HIDDEN, FILTER_BY_STATE_NY],
         "optional_filters": [
-            FILTER_BY_BOROUGH,
             FILTER_BY_CITY,
             FILTER_BY_CITY_IN_BOROUGH,
             FILTER_BY_CITY_LIKE,
@@ -937,12 +1006,28 @@ def build_query(template_key: str, user_params: dict) -> tuple[str, dict]:
     if _has_pop_boost:
         order_parts.append(_DESCRIPTION_BOOST_RANK)
 
-    # 2. Distance (when proximity search is active)
+    # 2. Distance BAND (when proximity search is active) — bucketed so
+    #    freshness can sort within each walking-time band.
     if _has_distance:
-        order_parts.append(_DISTANCE_RANK)
+        order_parts.append(_DISTANCE_BAND_RANK)
 
-    # 3. Base tiebreakers: open-now, freshness, name
-    order_parts.extend(_BASE_ORDER_PARTS)
+    # 3. Base tiebreakers: tiered freshness, then continuous timestamp
+    #    within each tier, then name.
+    #    When proximity is active, continuous distance is inserted BEFORE
+    #    name (but AFTER freshness) so a closer service still beats a
+    #    farther one within the same band + freshness tier.
+    if _has_distance:
+        # Split _BASE_ORDER_PARTS into (fresh_parts, name_part): everything
+        # that sorts before continuous distance comes first (freshness tier
+        # + continuous timestamp), then distance goes in, then name is the
+        # final stable tiebreaker. Unpacking rather than indexing keeps this
+        # robust against future reshaping of _BASE_ORDER_PARTS.
+        *fresh_parts, name_part = _BASE_ORDER_PARTS
+        order_parts.extend(fresh_parts)
+        order_parts.append(_DISTANCE_TIEBREAK)
+        order_parts.append(name_part)
+    else:
+        order_parts.extend(_BASE_ORDER_PARTS)
 
     order_clause = f"\nORDER BY {', '.join(order_parts)}\nLIMIT :max_results\n"
 
@@ -993,9 +1078,10 @@ def build_relaxed_query(template_key: str, user_params: dict) -> tuple[str, dict
     for key in ["lat", "lon", "radius_meters"]:
         relaxed_params.pop(key, None)
 
-    # Drop borough filter — keep city_list as the broader fallback.
-    # This ensures records where pa.borough is NULL can still be found.
-    relaxed_params.pop("borough", None)
+    # Note: the "borough" param used to be dropped here when FILTER_BY_BOROUGH
+    # existed (against pa.borough, which doesn't exist in prod). Removed
+    # Apr 17, 2026 along with the filter itself. Borough narrowing is now
+    # entirely via city_list.
 
     # Promote _borough_city_list (from neighborhood searches) to city_list
     # so the relaxed query broadens from "Harlem" to all of Manhattan.
@@ -1108,6 +1194,22 @@ def _safe_str(value) -> str | None:
     return s if s else None
 
 
+def _coerce_float(value) -> float | None:
+    """Convert a DB value to float, or None if conversion fails.
+
+    PostGIS ST_X/ST_Y return double precision, but psycopg2 + SQLAlchemy
+    may surface them as Decimal in some environments. This keeps the
+    card shape predictable for downstream JSON serialization and the
+    borough validator.
+    """
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _format_phone(number, extension) -> str | None:
     """Format a phone number with optional extension."""
     if not number:
@@ -1204,6 +1306,12 @@ def format_service_card(row: dict) -> dict:
         "description": _safe_str(row.get("service_description")),
         "address": full_address or None,
         "city": _safe_str(row.get("city")),
+        # Coordinates from ST_Y/ST_X projection on l.position. Used by the
+        # geographic-borough validator in query_executor; may also be used
+        # by the frontend for mapping or distance display. NULL-safe —
+        # services without position data pass through as None.
+        "latitude": _coerce_float(row.get("latitude")),
+        "longitude": _coerce_float(row.get("longitude")),
         "phone": _format_phone(row.get("phone"), row.get("phone_extension")),
         "email": _safe_str(row.get("service_email")),
         "website": _normalize_url(row.get("service_url") or row.get("organization_url")),

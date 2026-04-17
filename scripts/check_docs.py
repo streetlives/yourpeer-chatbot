@@ -27,8 +27,10 @@ BACKEND_DIR = ROOT / "backend"
 
 
 def all_md_files():
-    """Return all markdown files from root and docs/."""
-    return list(all_md_files()) + list(DOCS_DIR.glob("*.md"))
+    """Return all markdown files from repo root and docs/ (recursive into subdirs)."""
+    files = list(ROOT.glob("*.md"))
+    files.extend(DOCS_DIR.rglob("*.md"))
+    return files
 
 # Track all issues found
 issues = []
@@ -126,7 +128,7 @@ def check_model_ids():
         return
 
     # Check each doc file for model ID references
-    for md_file in ["README.md", "docs/DEPLOY.md", "docs/CRISIS_DETECTION.md"]:
+    for md_file in ["README.md", "docs/DEPLOY.md", "docs/design/CRISIS_DETECTION.md"]:
         path = ROOT / md_file
         if not path.exists():
             continue

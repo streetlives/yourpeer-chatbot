@@ -150,7 +150,7 @@ The system already has a pattern for this: `responses.py` contains all hardcoded
 
 ### 6.2 Messages to translate
 
-Organized by the categories in `HARDCODED_MESSAGES_REVIEW.md`:
+Organized by the categories in `../audits/HARDCODED_MESSAGES_REVIEW.md`:
 
 **Welcome and greeting (7 messages):**
 - Welcome message with service category buttons

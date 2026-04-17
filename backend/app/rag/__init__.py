@@ -42,6 +42,7 @@ def query_services(
     populations: list = None,
     org_name: str = None,
     no_requirements: bool = False,
+    taxonomy_override: list = None,
 ) -> dict:
     """
     High-level entry point: go from intake slots to service results.
@@ -62,6 +63,13 @@ def query_services(
                       If provided, results are restricted to locations that
                       also have these services. Falls back to unrestricted
                       query if co-located search returns 0 results.
+        taxonomy_override: If provided, skip the template's default taxonomy
+                      list AND any enrichment logic, and use these taxonomy
+                      names directly. Used by the population-critical
+                      fallback (see chatbot.py `_execute_and_respond`) to
+                      run a targeted second query for rare population-
+                      specific taxonomies like "lgbtq young adult" when
+                      the main proximity-bounded query returned none.
 
     Returns:
         dict with keys: services, result_count, template_used,
@@ -101,10 +109,12 @@ def query_services(
         user_location_is_borough = is_borough(location)
 
         if user_location_is_borough:
-            # Borough-level search: pass the borough name directly to use the
-            # clean pa.borough column (avoids city field casing chaos).
-            # Also keep city_list as a fallback for records where borough is NULL.
-            user_params["borough"] = normalized_city
+            # Borough-level search: filter via city_list (pa.city = ANY(...)).
+            # Previously we also set user_params["borough"] here to drive a
+            # FILTER_BY_BOROUGH clause against pa.borough — but that column
+            # does not exist in the Streetlives DB, so the filter errored
+            # on every borough query and fell through to the relaxed path.
+            # Removed Apr 17, 2026; see docs/audits/BOUNDARY_AUDIT.md.
             city_list = get_borough_city_names(normalized_city)
             if len(city_list) > 1:
                 user_params["city_list"] = city_list
@@ -160,6 +170,10 @@ def query_services(
 
     # Shelter taxonomy enrichment.
     #
+    # SKIPPED when taxonomy_override is set — the caller (population-critical
+    # fallback) wants a targeted query with ONLY the rare population-specific
+    # taxonomies, not the default list plus enrichment.
+    #
     # YourPeer parity (as of April 2026 source review + DB verification):
     #   - Default shelter search → parent "Shelter" taxonomy, API expands to
     #     all children. Chatbot equivalent: default_params.taxonomy_names
@@ -192,7 +206,7 @@ def query_services(
     # "single adult" narrowing to the families narrow — pregnant women
     # typically qualify for family shelter for prenatal services even
     # without existing children.
-    if template_key == "shelter":
+    if template_key == "shelter" and taxonomy_override is None:
         base_taxonomies = list(TEMPLATES["shelter"]["default_params"]["taxonomy_names"])
         is_pregnant = bool(populations and "pregnant" in populations)
 
@@ -499,6 +513,14 @@ def query_services(
                 colocated_names.extend(co_tax)
         if colocated_names:
             user_params["colocated_taxonomy_names"] = colocated_names
+
+    # Taxonomy override — last writer wins. Used by the population-critical
+    # fallback to run a targeted query for rare population-specific taxonomies
+    # (e.g., ["lgbtq young adult"]) instead of the full shelter default list
+    # plus enrichment. Applied AFTER all other taxonomy logic so it cannot
+    # be accidentally overwritten by service_detail narrowing or enrichment.
+    if taxonomy_override is not None:
+        user_params["taxonomy_names"] = list(taxonomy_override)
 
     result = execute_service_query(
         template_key=template_key,
