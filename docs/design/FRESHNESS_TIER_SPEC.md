@@ -8,7 +8,7 @@ re-exported to `query_executor.py` as the single source of truth for the
 freshness threshold.
 
 **Original spec date**: April 17, 2026 (written same day, shipped same day)
-**Related**: `docs/BUCKETED_DISTANCE_SORT_SPEC.md` (shipped earlier)
+**Related**: `docs/design/BUCKETED_DISTANCE_SORT_SPEC.md` (shipped earlier)
 
 ---
 

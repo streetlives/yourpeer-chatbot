@@ -1,8 +1,68 @@
 # Population-Critical Fallback — Design Spec
 
-**Date**: April 16, 2026
-**Status**: Proposed
+**Date**: April 16, 2026 (spec), April 17, 2026 (scope change to citywide)
+**Status**: Shipped. See §Scope for the Option B change.
 **Priority**: P0 — directly affects the Cornell sample query Q1
+
+---
+
+## Status (Apr 17, 2026) — Option B shipped
+
+The fallback is now **citywide**, not borough-scoped as originally specced.
+
+**Why the change.** A Far Rockaway (Queens) GPS user asking for LGBTQ young
+adult shelter got nothing. Under the original borough-scoped design, the
+fallback resolved to Queens and searched Queens — but Ali Forney Center,
+the only LGBTQ YA shelter in NYC, is in Manhattan. The rare-taxonomy
+services this fallback is designed to surface are sparse by definition,
+and scoping them to one borough defeats the purpose for ~80% of NYC.
+
+**What's different.**
+- `_run_population_fallback` no longer calls `_resolve_borough_from_location`
+- The fallback query is issued with `location=None` (no borough filter)
+- An unresolvable input location no longer blocks the fallback — rare
+  taxonomies are returned citywide regardless
+- The "further away" framing in the user-facing note is unchanged — it's
+  still accurate (often more so — Ali Forney from Far Rockaway is further
+  away than any same-borough fallback ever was)
+
+**What's the same.**
+- Trigger conditions: still fires only when the main query returned
+  results AND none of them carry the rare taxonomy the user qualifies for
+- Per-card `fallback_population` attribution
+- Age filter still applied (17-year-old still shouldn't see adult-only)
+- Gender filter still dropped
+- Proximity still dropped
+- `_POPULATION_FALLBACK_MAX` cap still 3
+
+**Regression guard.** `TestCrossBoroughFallback.test_fallback_location_none_regardless_of_input`
+parameterizes across every location-input pattern (Manhattan, soho,
+Brooklyn, Staten Island, "the bronx", "somewhere unknown", None) and
+asserts `location=None` on the fallback query for all of them. If this
+ever fails, someone re-introduced borough scoping.
+
+---
+
+## Scope
+
+The fallback is **citywide for rare populations only**. The full gate is:
+
+1. Service type is `shelter`
+2. Main query returned results but NOT via relaxation
+3. No colocated-success path fired
+4. User qualifies for a rare population (LGBTQ, youth 16–24, senior 62+,
+   or veteran) per `_compute_rare_population_taxonomies`
+5. None of the main results are tagged with any of the user's rare
+   taxonomies
+
+When all five conditions hold, the fallback runs with:
+- `location=None` (citywide)
+- `latitude=None, longitude=None` (no proximity)
+- `gender=None` (rare-population services often serve multiple genders)
+- `family_status=None, service_detail=None, populations=None`
+- `age=<user's age>` (retained — protects minors from adult-only)
+- `taxonomy_override=<user's rare taxonomies>`
+- `max_results=3` (cap on how many extras we surface)
 
 ---
 
@@ -72,16 +132,21 @@ taxonomies that are population-specific and rare.
 
 ### What does the fallback query look like?
 
+> ⚠️ **Superseded.** The original spec below says borough-wide; the
+> shipped implementation is citywide. See §Status above for the
+> rationale. The rest of this paragraph is preserved for historical
+> context — the non-location parts still apply.
+
 ```
 Template: shelter
 Taxonomy: ONLY the unmatched enrichment taxonomies (e.g., ["lgbtq young adult"])
-Location: borough-wide (city_list for the borough, no proximity filter)
+Location: citywide (no location filter, no proximity)
 Filters: hidden, state, age (if set) — NO proximity, NO gender
 Max results: 3
 ```
 
-This is a targeted query: "find the nearest LGBTQ Young Adult services anywhere in
-Manhattan" — not "find all shelters in Manhattan."
+This is a targeted query: "find the rare-taxonomy services anywhere in
+NYC" — not "find all shelters near the user."
 
 ### How are fallback results presented?
 
@@ -224,8 +289,10 @@ No proximity filter active → no geographic exclusion → fallback unnecessary.
 The main query already searches borough-wide or city-wide.
 
 ### User searches with browser geolocation
-Proximity filter is active (lat/lon + 1600m radius). Fallback should use
-borough-wide (drop lat/lon, keep city_list). This is the primary use case.
+Proximity filter is active (lat/lon + 1600m radius). Fallback drops
+location entirely (citywide — see §Status). This is the primary use
+case and the reason for the citywide scope change: a GPS user in
+Far Rockaway would otherwise miss Manhattan-only rare services.
 
 ### Multiple enrichments active (e.g., trans + youth + veteran)
 Compute the full enrichment set. Check if ANY enrichment taxonomy has a match.

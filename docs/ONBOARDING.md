@@ -146,7 +146,7 @@ A small AI model called `all-MiniLM-L6-v2` runs locally on the server (no API ca
 
 → `backend/app/services/semantic_router.py` — the embedding and matching logic
 → `backend/app/services/semantic_routes.py` — the example phrases for each category
-→ `docs/SEMANTIC_ROUTING_DESIGN.md` — design rationale and how to add routes
+→ `docs/design/SEMANTIC_ROUTING_DESIGN.md` — design rationale and how to add routes
 
 ### How Tiers 1 and 2 work together
 
@@ -245,7 +245,7 @@ The key tables are:
 There are several gotchas that have tripped up engineers before: there is no "type" column on services (you must join through the taxonomy tables), the junction table is called `service_at_locations` with an "s" (not `service_at_location`), and eligibility values are JSONB that varies in shape by parameter.
 
 → `backend/app/rag/query_templates.py` — the SQL templates and full schema documentation in the file header
-→ `docs/METRICS.md` — database coverage statistics (schedule data, taxonomy distribution)
+→ `docs/ops/METRICS.md` — database coverage statistics (schedule data, taxonomy distribution)
 
 ```mermaid
 erDiagram
@@ -422,14 +422,14 @@ Once you're comfortable with the architecture, these documents cover specific ar
 |---|---|---|
 | Full feature list | `docs/FEATURES.md` | Every feature organized by area — conversation, crisis, search, cards, privacy, accessibility, staff tools |
 | Chatbot behavior | `docs/CHATBOT_BEHAVIOR.md` | Routing pipeline, message categories, emotional handling, crisis step-down, LLM usage, guardrails |
-| Crisis detection | `docs/CRISIS_DETECTION.md` | Two-stage architecture, 7 crisis categories, fail-open policy, phrase list design |
-| PII handling | `docs/PII_REDACTION.md` | Seven detection categories, pattern details, known gaps |
-| Semantic routing | `docs/SEMANTIC_ROUTING_DESIGN.md` | Model selection, 3-tier cascade, route definitions, how to add new routes |
-| Multi-intent design | `docs/MULTI_INTENT_PLAN.md` | How multiple services in one message are extracted, prioritized, and queued |
-| Evaluation framework | `docs/EVAL_RESULTS.md` | LLM-as-judge system, 11 scoring dimensions, run history |
-| Regex keyword audit | `docs/REGEX_AUDIT.md` | Collision risk analysis, word boundary decisions |
-| Metrics | `docs/METRICS.md` | 35+ success metrics with definitions, targets, and measurement methods |
-| Hardcoded messages | `docs/HARDCODED_MESSAGES_REVIEW.md` | Every user-facing hardcoded message with trigger conditions and source locations |
+| Crisis detection | `docs/design/CRISIS_DETECTION.md` | Two-stage architecture, 7 crisis categories, fail-open policy, phrase list design |
+| PII handling | `docs/design/PII_REDACTION.md` | Seven detection categories, pattern details, known gaps |
+| Semantic routing | `docs/design/SEMANTIC_ROUTING_DESIGN.md` | Model selection, 3-tier cascade, route definitions, how to add new routes |
+| Multi-intent design | `docs/audits/MULTI_INTENT_PLAN.md` | How multiple services in one message are extracted, prioritized, and queued |
+| Evaluation framework | `docs/ops/EVAL_RESULTS.md` | LLM-as-judge system, 11 scoring dimensions, run history |
+| Regex keyword audit | `docs/audits/REGEX_AUDIT.md` | Collision risk analysis, word boundary decisions |
+| Metrics | `docs/ops/METRICS.md` | 35+ success metrics with definitions, targets, and measurement methods |
+| Hardcoded messages | `docs/audits/HARDCODED_MESSAGES_REVIEW.md` | Every user-facing hardcoded message with trigger conditions and source locations |
 | Test suite | `docs/TESTING.md` | 2,000+ tests across 46 files — how they're organized, how to run them, where to add new ones |
 | Setup | `docs/SETUP.md` | Local development setup, environment variables, dependencies |
 | Deployment | `docs/DEPLOY.md` | Render deployment, environment variables, build commands |

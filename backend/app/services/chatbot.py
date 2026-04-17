@@ -2338,15 +2338,19 @@ def _compute_rare_population_taxonomies(slots: dict) -> tuple[list[str], list[st
 
 def _resolve_borough_from_location(location: Optional[str], slots: Optional[dict] = None) -> Optional[str]:
     """Resolve a user-facing location (borough name OR neighborhood) to a
-    canonical borough name for borough-wide fallback queries.
+    canonical borough name.
 
     If `slots` is provided and `location` is the NEAR_ME_SENTINEL (browser
     geolocation active — no text location), falls back to reverse-geocoding
     the user's lat/lon against borough centroids.
 
-    Returns None if the location can't be resolved — caller should skip
-    the fallback in that case rather than querying with no location filter
-    (which would return matches from anywhere in NYS).
+    Returns None if the location can't be resolved.
+
+    Note: as of the Option B change to _run_population_fallback, this
+    function is no longer called by the population-critical fallback
+    (which now runs citywide regardless of user borough). It's retained
+    for potential future "browse by borough" UI and for its test coverage
+    of the text→borough normalization logic.
     """
     from app.rag.query_executor import is_borough, normalize_location
 
@@ -2398,30 +2402,37 @@ def _run_population_fallback(
     labels: list[str],
     existing_service_ids: set,
 ) -> tuple[list[dict], str]:
-    """Execute the fallback query and return (fallback_cards, note_text).
+    """Execute the fallback query citywide and return (fallback_cards, note_text).
 
-    Returns ([], "") when no borough can be resolved, when the fallback
-    query errors out, or when all fallback cards are duplicates of the
-    main results. Never raises — any exception is caught and logged so a
-    fallback failure can't break the main response path.
+    Returns ([], "") when the fallback query errors out or when all
+    fallback cards are duplicates of the main results. Never raises — any
+    exception is caught and logged so a fallback failure can't break the
+    main response path.
+
+    **Scope: citywide.** We intentionally do NOT filter by the user's
+    borough here. Rare-population services are sparse — Ali Forney Center
+    (the only LGBTQ Young Adult shelter) is in Manhattan, so a borough-
+    scoped query from a Far Rockaway GPS user would return nothing.
+    For these rare taxonomies, cross-borough results are strictly
+    better than no results. See docs/POPULATION_FALLBACK_SPEC.md §Scope.
+
+    Dedupe still applies, so services from the main query don't double-
+    up. The "further away" note phrasing is accurate for citywide scope
+    too — these cards ARE further from the user, often in a different
+    borough, which is exactly why they need the contextual framing.
     """
-    location = slots.get("location")
-    borough = _resolve_borough_from_location(location, slots=slots)
-    if not borough:
-        return [], ""
-
     _age = slots.get("age")
     age_valid = isinstance(_age, int) and _age != "skipped"
 
     try:
-        # Borough-wide, no proximity, no gender. Age is preserved (a
-        # 17-year-old still shouldn't see adult-only shelters), but
-        # family_status and service_detail are dropped — the point of
-        # the fallback is to find the rare taxonomies at all, not to
-        # satisfy every filter the main query applied.
+        # Citywide, no proximity, no gender, no borough. Age is preserved
+        # (a 17-year-old still shouldn't see adult-only shelters), but
+        # family_status, service_detail, AND location are all dropped —
+        # the point of the fallback is to find the rare taxonomies at
+        # all, not to satisfy every filter the main query applied.
         fallback_result = query_services(
             service_type="shelter",
-            location=borough,
+            location=None,
             age=_age if age_valid else None,
             gender=None,
             latitude=None,
@@ -2603,9 +2614,13 @@ def _execute_and_respond(session_id: str, message: str, slots: dict, request_id:
             # When the user belongs to a rare population (LGBTQ, youth,
             # senior, veteran) and the proximity-local results contain
             # no services tagged with that population's rare taxonomy,
-            # run a borough-wide targeted query for those taxonomies so
-            # Ali Forney / Covenant House / VA etc. can still surface.
-            # See _run_population_fallback for the full logic.
+            # run a CITYWIDE targeted query for those taxonomies so
+            # Ali Forney / Covenant House / VA etc. can still surface
+            # regardless of which borough the user is searching from.
+            # (E.g., Far Rockaway GPS user + LGBTQ young adult → Ali
+            # Forney in Manhattan, which a borough-scoped query would
+            # have missed.) See _run_population_fallback for the full
+            # logic and docs/POPULATION_FALLBACK_SPEC.md §Scope.
             #
             # Fallback cards are appended to services_list for display
             # but INTENTIONALLY NOT to all_services. all_services drives

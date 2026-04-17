@@ -2,7 +2,7 @@
 
 This document describes exactly how the YourPeer chatbot processes messages, what it can and cannot do, and the guardrails that govern its behavior. It serves as a reference for staff reviewing conversations, engineers extending the system, and stakeholders evaluating the chatbot's design.
 
-For crisis detection details, see [CRISIS_DETECTION.md](CRISIS_DETECTION.md). For service card rendering and database queries, see [FEATURES.md](FEATURES.md).
+For crisis detection details, see [CRISIS_DETECTION.md](design/CRISIS_DETECTION.md). For service card rendering and database queries, see [FEATURES.md](FEATURES.md).
 
 ---
 
@@ -14,7 +14,7 @@ Every incoming message passes through five stages: slot extraction, semantic rou
 
 Regex-based slot extraction runs on every message before classification. This extracts service type(s), location, age, urgency, family status, and service detail. The result determines `has_service_intent` — whether the message contains a service request.
 
-The regex keyword set has been audited for collision risk (see `REGEX_AUDIT.md`). The 384 remaining keywords are split into 208 multi-word phrases (safe from substring collisions), 151 domain-specific single words, and 25 collision-prone keywords protected by `\b` word-boundary matching. Context-dependent keywords (e.g., "court", "bail", "vision") were retired — the semantic routing layer handles them instead.
+The regex keyword set has been audited for collision risk (see `audits/REGEX_AUDIT.md`). The 384 remaining keywords are split into 208 multi-word phrases (safe from substring collisions), 151 domain-specific single words, and 25 collision-prone keywords protected by `\b` word-boundary matching. Context-dependent keywords (e.g., "court", "bail", "vision") were retired — the semantic routing layer handles them instead.
 
 When multiple services are detected with different locations (e.g. "food in Brooklyn and shelter in Manhattan"), per-service location binding matches each service to its nearest location by text position within the same priority tier. Services are sorted by need-based priority (Maslow/Housing First/SAMHSA): shelter and medical first, then food, then clothing, then stability services. Text position is tiebreaker within the same tier. The primary service gets the highest-need location; queued services get their bound locations stored as 3-tuples `(service_type, detail, location)`.
 
@@ -68,7 +68,7 @@ Two independent classifiers run in parallel:
 
 | Tone | Trigger | Example |
 |---|---|---|
-| `crisis` | Regex + LLM crisis detection (see [CRISIS_DETECTION.md](CRISIS_DETECTION.md)) | "I want to hurt myself" |
+| `crisis` | Regex + LLM crisis detection (see [CRISIS_DETECTION.md](design/CRISIS_DETECTION.md)) | "I want to hurt myself" |
 | `frustrated` | "not helpful", "waste of time", "already tried", "you're no help", "going in circles", "whatever", "smh", "this is bs", "this ain't working" | "that wasn't helpful" |
 | `emotional` | "feeling down", "rough day", "I'm scared", "nobody cares", "can't take it anymore", "end of my rope", "crying all day", "I hate my life", "what's the point", "I'm broken", "feel empty inside", "giving up" | "I'm feeling really down" |
 | `confused` | "I don't know what to do", "I'm overwhelmed" | "I'm lost" |
@@ -126,7 +126,7 @@ If the LLM is unavailable or returns an unrecognized category, the system falls 
 
 ### Crisis
 
-Crisis resources are shown immediately. The session is NOT cleared — the user can continue their service search afterward. See [CRISIS_DETECTION.md](CRISIS_DETECTION.md) for full details on the two-stage detection pipeline, six crisis categories, and fail-open policy.
+Crisis resources are shown immediately. The session is NOT cleared — the user can continue their service search afterward. See [CRISIS_DETECTION.md](design/CRISIS_DETECTION.md) for full details on the two-stage detection pipeline, six crisis categories, and fail-open policy.
 
 **Crisis step-down:** When crisis fires on a non-acute category (`safety_concern` or `domestic_violence`) AND the user has explicit service intent (regex found a service keyword like "shelter"), the bot shows crisis resources AND preserves the extracted service slots in session. The response appends: "I can also help you find [service] in [location] — would you like me to search?" with quick replies for "Yes, search" and "Peer navigator." For `domestic_violence` crises, `dv_survivor` is injected into the session's `_populations` so that the subsequent search boosts DV-specific services (shelters, legal aid, counseling) via description-based ORDER BY ranking. This injection bridges the gap between the crisis detector's 54 DV phrases and the population extractor's 10 — ensuring phrases like "he hits me" (which the crisis detector catches but the population extractor doesn't) still trigger the DV service boost. The injection also fires in the non-step-down branch (no service intent) so that if the user later asks for a service, the boost is already in session. This handles cases like "I was kicked out and need shelter in Brooklyn" where both safety resources and practical help are appropriate. Acute crisis categories (suicide, medical, trafficking, violence) always show crisis resources only.
 

@@ -305,8 +305,10 @@ class TestFallbackIntegration:
         assert len(calls) == 2
         assert calls[0].get("taxonomy_override") is None
         assert calls[1].get("taxonomy_override") is not None
-        # Fallback uses borough Manhattan (resolved from 'soho')
-        assert calls[1]["location"] == "Manhattan"
+        # Fallback is citywide — no borough filter. Ali Forney is in
+        # Manhattan but a Far-Rockaway user wouldn't care where it is
+        # as long as it's the rare LGBTQ YA shelter they need.
+        assert calls[1]["location"] is None
         # Fallback override contains the rare LGBTQ taxonomy
         assert "lgbtq young adult" in calls[1]["taxonomy_override"]
         # Fallback drops proximity
@@ -393,21 +395,34 @@ class TestFallbackIntegration:
         result, calls = _run_execute_with_mock(slots, main, fallback)
         assert len(calls) == 1
 
-    def test_no_fallback_when_borough_unresolvable(self):
-        """If the location can't be resolved to a borough, skip fallback
-        rather than run a bogus query. The fallback query still runs to get
-        a borough value — but when _resolve_borough_from_location returns
-        None, _run_population_fallback short-circuits before the DB call."""
+    def test_fallback_runs_even_when_location_unresolvable(self):
+        """Unresolvable text location should NOT block the fallback, because
+        the fallback is citywide and doesn't need a resolved borough.
+
+        Prior behavior (borough-scoped fallback) required a borough and
+        short-circuited on unresolvable location. Option B removed that
+        gate — a rare-population user whose location we can't parse
+        should still get citywide rare-taxonomy results rather than
+        being denied a chance at Ali Forney just because their location
+        text was weird.
+        """
         main = [_card("g1", ["Shelter", "Single Adult"])]
-        fallback = [_card("afc", ["Shelter", "LGBTQ Young Adult"])]
+        fallback = [_card("afc", ["Shelter", "LGBTQ Young Adult"],
+                          name="Ali Forney Center")]
         slots = {
             "service_type": "shelter", "location": "somewhere unknown",
             "age": 21, "_gender": "lgbtq",
         }
         result, calls = _run_execute_with_mock(slots, main, fallback)
-        # Only main call — fallback short-circuited before DB call
-        assert len(calls) == 1
-        assert not any(s.get("is_population_fallback") for s in result["services"])
+        # Both main and fallback calls should fire
+        assert len(calls) == 2
+        # Fallback is citywide — no borough filter
+        assert calls[1]["location"] is None
+        # AFC surfaces as a fallback card
+        names = [s["service_name"] for s in result["services"]]
+        assert "Ali Forney Center" in names
+        afc = next(s for s in result["services"] if s["service_name"] == "Ali Forney Center")
+        assert afc["is_population_fallback"] is True
 
     def test_no_fallback_on_relaxed_main_query(self):
         """If the main query already relaxed (broadened past original
@@ -563,13 +578,15 @@ class TestGpsUserFallback:
 
     When a user has browser geolocation active, slots['location'] is the
     NEAR_ME_SENTINEL ('__near_me__') rather than a neighborhood name.
-    Before the fix, _resolve_borough_from_location returned None for the
-    sentinel, silently skipping the fallback for every GPS user — the
-    opposite of the design intent (GPS users are precisely the ones
+    Before the original fix, _resolve_borough_from_location returned None
+    for the sentinel, silently skipping the fallback for every GPS user
+    — the opposite of the design intent (GPS users are precisely the ones
     affected by proximity exclusion).
 
-    Fix: when location is the sentinel and lat/lon are present, reverse-
-    geocode against borough centroids.
+    As of Option B, the fallback is citywide — it doesn't need a borough
+    resolved at all. These tests still verify GPS users trigger the
+    fallback path (two DB calls, rare-taxonomy card returned) but no
+    longer check a specific borough since borough scoping was removed.
     """
 
     def test_gps_user_in_soho_triggers_fallback(self):
@@ -588,28 +605,37 @@ class TestGpsUserFallback:
         }
         result, calls = _run_execute_with_mock(slots, main, fallback)
         assert len(calls) == 2, "GPS user should trigger fallback query"
-        # Soho coords are closest to Manhattan's centroid
-        assert calls[1]["location"] == "Manhattan"
+        # Citywide scope — no borough filter
+        assert calls[1]["location"] is None
         assert any(
             s["service_name"] == "Ali Forney Center" for s in result["services"]
         )
 
-    def test_gps_user_in_brooklyn_resolves_to_brooklyn(self):
-        """GPS coords in Brooklyn resolve to Brooklyn borough, not Manhattan."""
+    def test_gps_user_in_brooklyn_still_gets_manhattan_service(self):
+        """The cross-borough case: a Williamsburg GPS user looking for
+        LGBTQ young adult shelter must see Ali Forney Center (Manhattan)
+        because it's the only such service in the DB. Under borough-
+        scoped fallback this user would see nothing."""
         from app.services.slot_extractor import NEAR_ME_SENTINEL
         main = [_card("g1", ["Shelter", "Single Adult"])]
-        fallback = [_card("bk", ["Shelter", "LGBTQ Young Adult"])]
+        fallback = [_card("afc", ["Shelter", "LGBTQ Young Adult"],
+                          name="Ali Forney Center")]
         slots = {
             "service_type": "shelter",
             "location": NEAR_ME_SENTINEL,
-            # Williamsburg coordinates
+            # Williamsburg coordinates — different borough from AFC
             "_latitude": 40.7081,
             "_longitude": -73.9571,
             "age": 21,
             "_gender": "lgbtq",
         }
-        _, calls = _run_execute_with_mock(slots, main, fallback)
-        assert calls[1]["location"] == "Brooklyn"
+        result, calls = _run_execute_with_mock(slots, main, fallback)
+        # Fallback fired, citywide
+        assert len(calls) == 2
+        assert calls[1]["location"] is None
+        # Cross-borough result surfaces
+        names = [s["service_name"] for s in result["services"]]
+        assert "Ali Forney Center" in names
 
     def test_borough_centroid_matches_nearest(self):
         """Unit check on the reverse-geocode math directly, across 21
@@ -788,3 +814,153 @@ class TestConstants:
         lgbtq_rare = _POPULATION_RARE_TAXONOMIES["lgbtq"]
         assert "drop-in center" not in lgbtq_rare
         assert "crisis" not in lgbtq_rare
+
+
+# ---------------------------------------------------------------------------
+# CROSS-BOROUGH FALLBACK (Option B scope change)
+# ---------------------------------------------------------------------------
+
+class TestCrossBoroughFallback:
+    """Option B: the population fallback is citywide, not borough-scoped.
+
+    The canonical case: a Far Rockaway (Queens) user asking for LGBTQ
+    Young Adult shelter. The only such service in NYC is Ali Forney
+    Center, which is in Manhattan. Under the old borough-scoped
+    fallback, the Queens-scoped query returned nothing and the user
+    saw no rare-taxonomy results. Option B drops the borough filter
+    so Ali Forney surfaces regardless of where the user searched from.
+
+    Scope: rare populations only (LGBTQ, youth, senior, veteran) for
+    shelter searches. See docs/POPULATION_FALLBACK_SPEC.md §Scope.
+    """
+
+    def test_far_rockaway_gps_user_gets_manhattan_afc(self):
+        """The motivating scenario: GPS user in Far Rockaway, Queens,
+        rare population (LGBTQ YA), should surface Ali Forney (Manhattan)."""
+        from app.services.slot_extractor import NEAR_ME_SENTINEL
+        main = [_card("gen-q1", ["Shelter", "Single Adult"]),
+                _card("gen-q2", ["Shelter", "Single Adult"])]
+        # AFC tagged with LGBTQ YA only (not Youth) — matches the pattern
+        # in test_afc_marked_lgbtq_not_youth_for_trans_young_adult, and
+        # gives us a distinguishing LGBTQ tag for fallback_population.
+        fallback = [_card("afc", ["Shelter", "LGBTQ Young Adult"],
+                          name="Ali Forney Center")]
+        slots = {
+            "service_type": "shelter",
+            "location": NEAR_ME_SENTINEL,
+            # Far Rockaway, Queens — as far as you can get from Manhattan
+            # while still being in NYC
+            "_latitude": 40.6044,
+            "_longitude": -73.7547,
+            "age": 21,
+            "_gender": "lgbtq",
+            "_populations": ["lgbtq"],
+        }
+        result, calls = _run_execute_with_mock(slots, main, fallback)
+        # Both queries fired
+        assert len(calls) == 2
+        # Fallback is citywide — that's what makes this scenario work
+        assert calls[1]["location"] is None, (
+            "Fallback must be citywide; a Queens-scoped fallback would "
+            "miss Ali Forney in Manhattan and this whole feature would "
+            "be useless for Far Rockaway users."
+        )
+        # AFC shows up in results
+        names = [s["service_name"] for s in result["services"]]
+        assert "Ali Forney Center" in names
+        # AFC marked as fallback + LGBTQ
+        afc = next(s for s in result["services"] if s["service_name"] == "Ali Forney Center")
+        assert afc["is_population_fallback"] is True
+        assert afc["fallback_population"] == "lgbtq"
+
+    def test_text_location_brooklyn_gets_manhattan_lgbtq_service(self):
+        """Same cross-borough guarantee for text locations, not just GPS.
+        A user who types 'Brooklyn' for LGBTQ YA shelter still gets AFC."""
+        main = [_card("gen-bk", ["Shelter", "Single Adult"])]
+        fallback = [_card("afc", ["Shelter", "LGBTQ Young Adult"],
+                          name="Ali Forney Center")]
+        slots = {
+            "service_type": "shelter", "location": "Brooklyn",
+            "age": 21, "_gender": "lgbtq",
+        }
+        result, calls = _run_execute_with_mock(slots, main, fallback)
+        assert len(calls) == 2
+        assert calls[1]["location"] is None  # citywide
+        names = [s["service_name"] for s in result["services"]]
+        assert "Ali Forney Center" in names
+
+    def test_staten_island_gps_user_gets_manhattan_service(self):
+        """Staten Island is the most isolated borough (no subway
+        connection to Manhattan). Under borough scoping, a SI user
+        would have basically zero options for rare populations. Option
+        B makes sure they're not cut off from NYC-wide resources."""
+        from app.services.slot_extractor import NEAR_ME_SENTINEL
+        main = [_card("gen-si", ["Shelter", "Single Adult"])]
+        fallback = [_card("afc", ["Shelter", "LGBTQ Young Adult"],
+                          name="Ali Forney Center")]
+        slots = {
+            "service_type": "shelter",
+            "location": NEAR_ME_SENTINEL,
+            # St George, Staten Island
+            "_latitude": 40.6437, "_longitude": -74.0759,
+            "age": 21, "_gender": "lgbtq",
+        }
+        result, calls = _run_execute_with_mock(slots, main, fallback)
+        assert len(calls) == 2
+        assert calls[1]["location"] is None
+        names = [s["service_name"] for s in result["services"]]
+        assert "Ali Forney Center" in names
+
+    def test_fallback_location_none_regardless_of_input(self):
+        """Regression guard: the fallback must ALWAYS pass location=None
+        to the query layer, regardless of what the user's input was. If
+        this test ever starts failing, someone re-introduced borough
+        scoping and needs to update the spec first."""
+        scenarios = [
+            {"location": "Manhattan"},
+            {"location": "soho"},
+            {"location": "Brooklyn"},
+            {"location": "Staten Island"},
+            {"location": "the bronx"},
+            {"location": "somewhere unknown"},
+            {"location": None},
+        ]
+        for extras in scenarios:
+            main = [_card("g1", ["Shelter", "Single Adult"])]
+            fallback = [_card("rare", ["Shelter", "LGBTQ Young Adult"])]
+            slots = {
+                "service_type": "shelter", "age": 21, "_gender": "lgbtq",
+                **extras,
+            }
+            _, calls = _run_execute_with_mock(slots, main, fallback)
+            if len(calls) < 2:
+                # Some input values (e.g., None location) may prevent the
+                # main query from running in the first place. If main
+                # didn't run, fallback can't run either — that's fine,
+                # we just can't assert on calls[1].
+                continue
+            assert calls[1]["location"] is None, (
+                f"Fallback with input {extras!r} passed "
+                f"location={calls[1]['location']!r}; must always be None "
+                f"(citywide). See docs/POPULATION_FALLBACK_SPEC.md §Scope."
+            )
+
+    def test_note_still_reads_naturally_for_cross_borough(self):
+        """The 'further away' framing in the note needs to land as
+        honestly informative even when the card is in a different
+        borough. 'Further away' is literally true (Manhattan is far
+        from Queens) so no rewrite is strictly needed — but check
+        that the user-facing phrasing doesn't accidentally imply
+        'further away but in your borough.'"""
+        main = [_card("gen", ["Shelter", "Single Adult"])]
+        fallback = [_card("afc", ["Shelter", "LGBTQ Young Adult"],
+                          name="Ali Forney Center")]
+        slots = {
+            "service_type": "shelter", "location": "Brooklyn",
+            "age": 21, "_gender": "lgbtq",
+        }
+        result, _ = _run_execute_with_mock(slots, main, fallback)
+        response = result["response"]
+        assert "further away" in response
+        # Don't promise the card is in Brooklyn — it isn't
+        assert "in Brooklyn" not in response or response.count("in Brooklyn") <= 1  # main-query framing is fine

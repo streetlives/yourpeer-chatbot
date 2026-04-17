@@ -121,7 +121,7 @@ not filtering mismatched results from users yet — just annotating and
 collecting frequency data.
 
 Full write-up:
-[docs/BOUNDARY_AUDIT.md](LINK-TO-OUR-REPO/docs/BOUNDARY_AUDIT.md)
+[docs/audits/BOUNDARY_AUDIT.md](LINK-TO-OUR-REPO/docs/audits/BOUNDARY_AUDIT.md)
 
 ### How we'd like to help
 
@@ -154,7 +154,7 @@ service IDs in a public issue):
    adjust before submitting.
 
 2. **Substitute the placeholders**:
-   - `LINK-TO-OUR-REPO/docs/BOUNDARY_AUDIT.md` — point to wherever this
+   - `LINK-TO-OUR-REPO/docs/audits/BOUNDARY_AUDIT.md` — point to wherever this
      repo gets published / shared (or attach the PDF if keeping it private)
 
 3. **Attach evidence carefully**: don't include specific `service_id`
