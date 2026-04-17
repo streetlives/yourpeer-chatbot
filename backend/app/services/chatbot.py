@@ -17,6 +17,8 @@ import uuid
 import re
 import os
 import logging
+from dataclasses import dataclass, field
+from typing import Optional
 
 from app.llm.claude_client import claude_reply
 from app.services.session_store import (
@@ -104,6 +106,54 @@ else:
 # filtering, but we paginate the display to avoid overwhelming users —
 # especially in crisis situations where cognitive load is high.
 _DISPLAY_PAGE_SIZE = 5
+
+
+# ---------------------------------------------------------------------------
+# MESSAGE CONTEXT — shared state between classification and handlers
+# ---------------------------------------------------------------------------
+# Built by _build_context() from the classification pipeline. Passed to
+# every handler function so they don't need 15+ positional arguments.
+# Mutable: handlers may modify `existing` (session slots) and should
+# call save_session_slots() when they do.
+
+@dataclass
+class MessageContext:
+    """All state produced by the classification pipeline for a single message.
+
+    Built once by _build_context(), consumed by handler functions.
+    Replaces the 15+ local variables that were previously shared via
+    closure inside the monolithic generate_reply().
+    """
+    # --- Identifiers ---
+    session_id: str
+    request_id: str
+    # --- Message variants ---
+    message: str              # original user message
+    redacted_message: str     # PII-scrubbed version (for logging)
+    pii_warning: str          # prepend to response if user shared SSN/phone
+    # --- Session state (mutable) ---
+    existing: dict            # session slots — handlers may modify + save
+    # --- Classification results ---
+    category: str             # routing key ("crisis", "service", "greeting", etc.)
+    action: str               # classified action ("confirm_yes", "reset", etc.)
+    tone: Optional[str]       # emotional tone ("crisis", "emotional", "frustrated", etc.)
+    confidence: str           # "high" | "semantic" | "medium" | "low"
+    extraction_source: Optional[str]  # "regex" | "semantic" | "llm_gate" | None
+    # --- Extracted slots from this message ---
+    early_extracted: dict     # raw extraction result (service_type, location, age, etc.)
+    has_service_intent: bool  # True if service_type or org_name was extracted
+    # --- Crisis ---
+    crisis_result: Optional[dict]  # from detect_crisis(), None if no crisis
+    # --- Post-results state ---
+    last_results: Optional[list]   # cached query results from session, or None
+    is_confirmation_action: bool   # True if action is confirm_yes/deny/change/reset/greeting
+    # --- Geolocation ---
+    has_coords: bool          # True if lat/lon were provided by browser
+    latitude: Optional[float]
+    longitude: Optional[float]
+    # --- Language ---
+    spanish_detected: bool    # True if Spanish phrases found in message
+    spanish_acknowledgment: str  # bilingual prefix if Spanish + service intent
 
 
 def _count_unique_locations(services: list[dict]) -> int:
