@@ -980,12 +980,14 @@ def build_query(template_key: str, user_params: dict) -> tuple[str, dict]:
     #    BETWEEN freshness and name so a closer service still beats a
     #    farther one within the same band + freshness tier.
     if _has_distance:
-        # Freshness DESC first (within each distance band, verified first),
-        # then continuous distance as a tiebreaker, then name as a stable
-        # final tiebreaker. See docs/BUCKETED_DISTANCE_SORT_SPEC.md.
-        order_parts.append(_BASE_ORDER_PARTS[0])   # l.last_validated_at DESC NULLS LAST
-        order_parts.append(_DISTANCE_TIEBREAK)     # continuous meters tiebreaker
-        order_parts.append(_BASE_ORDER_PARTS[1])   # s.name
+        # Keep the "name is the last stable tiebreaker" contract stable
+        # across future extensions to _BASE_ORDER_PARTS (e.g., an added
+        # freshness-tier rank). Everything before the final element
+        # comes before continuous distance; name comes after it.
+        *fresh_parts, name_part = _BASE_ORDER_PARTS
+        order_parts.extend(fresh_parts)
+        order_parts.append(_DISTANCE_TIEBREAK)
+        order_parts.append(name_part)
     else:
         order_parts.extend(_BASE_ORDER_PARTS)
 
