@@ -147,7 +147,9 @@ def query_services(
         # For LGBTQ/trans/nonbinary: skip the eligibility filter but
         # activate the sort boost so affirming services (e.g., Ali Forney
         # Center) float to the top of results without excluding anything.
-        if gender in ("lgbtq", "transgender", "nonbinary"):
+        # Also check populations: "transman" → gender="male" but
+        # populations=["lgbtq"] from the cross-population step.
+        if gender in ("lgbtq", "transgender", "nonbinary") or (populations and "lgbtq" in populations):
             user_params["lgbtq_boost"] = True
     if weekday is not None:
         user_params["weekday"] = weekday
@@ -156,42 +158,107 @@ def query_services(
     if no_requirements:
         user_params["no_requirements"] = True
 
-    # Shelter taxonomy enrichment based on user profile.
-    # The DB has shelter sub-categories as separate taxonomy names with
-    # parent_name="Shelter": "Families", "Single Adult", "Youth", "Senior",
-    # "LGBTQ Young Adult", "Veterans". Services tagged as e.g. "Families"
-    # are NOT also tagged with the generic "Shelter" taxonomy, so they're
-    # invisible to the base shelter query unless explicitly included.
+    # Shelter taxonomy enrichment.
+    #
+    # YourPeer parity (as of April 2026 source review + DB verification):
+    #   - Default shelter search → parent "Shelter" taxonomy, API expands to
+    #     all children. Chatbot equivalent: default_params.taxonomy_names
+    #     already lists every Shelter child (see query_templates.py).
+    #   - "families" sub-filter → YourPeer REPLACES taxonomy with "Families"
+    #     child only. Chatbot narrows to ["families", "shelter"] to preserve
+    #     parent — DB shows "Families" child has only 3 services, so strict
+    #     narrowing would often return 0 results. Parent preservation keeps
+    #     the 18 generic Shelter-tagged services visible too.
+    #   - "single adult" sub-filter → YourPeer REPLACES with "Single Adult"
+    #     child + passes ageMin=18, ageMax=99 to API. Chatbot narrows to
+    #     ["single adult", "shelter"] for the same parent-preservation reason.
+    #
+    # NOVEL safety enrichments (intentional divergence from YourPeer — flagged
+    # in QUERY_PARITY_AUDIT.md). These add population-specific Shelter children
+    # back on top of narrowing, because narrowing-by-family-composition strips
+    # out services the user plausibly qualifies for based on age/identity:
+    #
+    #   (1) Age 16–24 → add "youth"               (Covenant House, Ali Forney)
+    #   (2) LGBTQ/trans/nonbinary → add           (Ali Forney Center)
+    #       "lgbtq young adult" + "drop-in
+    #       center" + "crisis"
+    #   (3) Age ≥ 62 → add "senior"               (senior-specific shelters)
+    #   (4) Veteran → add "veterans" +            (VA shelters, veteran transitional)
+    #       "veterans short-term housing"
+    #   (5) DV survivor → add "drop-in center"    (Safe Horizon services)
+    #       + "crisis"
+    #
+    # PREGNANT OVERRIDE: pregnant + family_status=alone overrides the
+    # "single adult" narrowing to the families narrow — pregnant women
+    # typically qualify for family shelter for prenatal services even
+    # without existing children.
     if template_key == "shelter":
-        extra_taxonomies = []
+        base_taxonomies = list(TEMPLATES["shelter"]["default_params"]["taxonomy_names"])
+        is_pregnant = bool(populations and "pregnant" in populations)
 
-        # Family composition
+        # Step 1: Narrow taxonomy list based on family_status.
+        # When narrowing fires, include the parent "shelter" taxonomy so
+        # generic-tagged services remain visible (DB verification showed
+        # the Families child has only 3 services, Single Adult has 38,
+        # while the Shelter parent alone has 18 generic-tagged services
+        # that a strict narrow would exclude).
         if family_status in ("with_children", "with_family"):
-            extra_taxonomies.append("families")
+            narrowed = ["families", "shelter"]
+        elif family_status == "alone" and is_pregnant:
+            # Novel override: pregnant + alone → families (for prenatal services).
+            narrowed = ["families", "shelter"]
         elif family_status == "alone":
-            extra_taxonomies.append("single adult")
+            narrowed = ["single adult", "shelter"]
+        else:
+            # No family_status → use the full shelter taxonomy list (equivalent
+            # to YourPeer's default: parent Shelter ID + API expansion).
+            narrowed = base_taxonomies
 
-        # Age-based sub-categories
-        if age is not None and age < 18:
-            extra_taxonomies.append("youth")
+        # Step 2: Population-specific safety enrichments (novel, additive).
+        # These are no-ops when no narrowing fires (taxonomies already in
+        # default list), and restorative when narrowing fires.
+        safety_extras = []
+
+        # (1) Youth age range (16–24) → ensure youth-serving shelters are visible
+        if age is not None and 16 <= age <= 24:
+            safety_extras.append("youth")
+
+        # (2) LGBTQ/trans/nonbinary → affirming services visible
+        # "drop-in center" + "crisis" are separate Shelter children that
+        # contain LGBTQ-affirming services (DB verified: Drop-in Center
+        # and Crisis are parented under Shelter, not Health).
+        # "lgbtq young adult" is a Shelter child that narrowing strips out.
+        #
+        # Check both gender AND populations: "transman" maps to gender="male"
+        # (the identified gender) but slot_extractor adds "lgbtq" to
+        # _populations to preserve the LGBTQ signal for enrichment.
+        _is_lgbtq = (
+            gender in ("lgbtq", "transgender", "nonbinary")
+            or (populations and "lgbtq" in populations)
+        )
+        if _is_lgbtq:
+            safety_extras.extend(["drop-in center", "crisis", "lgbtq young adult"])
+
+        # (3) Senior age (≥ 62) → senior-specific shelters visible
         if age is not None and age >= 62:
-            extra_taxonomies.append("senior")
+            safety_extras.append("senior")
 
-        # Always include LGBTQ Young Adult — we can't detect this from
-        # slots, so include it by default so these services are never
-        # invisible to any shelter search.
-        extra_taxonomies.append("lgbtq young adult")
+        # (4) Veteran → veteran-specific shelters visible
+        if populations and "veteran" in populations:
+            safety_extras.extend(["veterans", "veterans short-term housing"])
 
-        # When user explicitly identified as LGBTQ, trans, or nonbinary,
-        # also include sub-categories that may be LGBTQ-affirming
-        if gender in ("lgbtq", "transgender", "nonbinary"):
-            extra_taxonomies.append("drop-in center")
-            extra_taxonomies.append("crisis")
+        # (5) DV survivor → DV-tagged services (often under Crisis/Drop-in Center)
+        if populations and "dv_survivor" in populations:
+            for tx in ("drop-in center", "crisis"):
+                if tx not in safety_extras:
+                    safety_extras.append(tx)
 
-        if extra_taxonomies:
-            enriched = list(TEMPLATES["shelter"]["default_params"]["taxonomy_names"])
-            enriched.extend(extra_taxonomies)
-            user_params["taxonomy_names"] = enriched
+        # Compose final taxonomy list (dedupe while preserving order).
+        final = list(narrowed)
+        for tx in safety_extras:
+            if tx not in final:
+                final.append(tx)
+        user_params["taxonomy_names"] = final
 
     # -----------------------------------------------------------------
     # Sub-category narrowing (Phase 4)
@@ -221,45 +288,164 @@ def query_services(
             "haircuts": ["haircut"],
             "toiletries": ["toiletries"],
             "restrooms": ["restrooms"],
-            # Clothing sub-types — "interview clothing" intentionally omitted
-            # because "interview" conflicts with the employment keyword.
-            # TODO: revisit when phrase-level disambiguation is added.
+            # Mental health — substance use sub-types
+            # Without these, "detox" returns ALL mental health services
+            # (counseling, support groups, etc.) instead of just treatment.
+            "detox": ["substance use treatment", "residential recovery"],
+            "substance use treatment": ["substance use treatment", "residential recovery"],
+            "substance abuse services": ["substance use treatment", "residential recovery"],
+            "addiction services": ["substance use treatment", "residential recovery"],
+            "rehab services": ["substance use treatment", "residential recovery"],
+            "inpatient treatment": ["substance use treatment", "residential recovery"],
+            "outpatient treatment": ["substance use treatment"],
+            # "supportive housing" removed from sober living / halfway houses —
+            # DB verified April 16, 2026: 0 services tagged with Supportive Housing.
+            "sober living": ["residential recovery"],
+            "halfway houses": ["residential recovery"],
+            "recovery services": ["substance use treatment", "residential recovery", "support groups"],
         }
 
         narrowed_taxonomies = _DETAIL_TO_TAXONOMY_NARROWING.get(service_detail)
         if narrowed_taxonomies:
             user_params["taxonomy_names"] = narrowed_taxonomies
+            # BUG FIX: When taxonomy narrowing fires, prevent any default
+            # description_pattern from double-filtering. The narrowed taxonomy
+            # is already specific enough — applying a description regex on top
+            # would be overly restrictive and could return 0 results.
+            #
+            # We can't set description_pattern=None because build_query's
+            # params.update() skips None values (so the default_params entry
+            # would survive). Instead, set a flag that build_query checks.
+            user_params["_skip_description_filter"] = True
 
-        # 4b. Description filter for "other" sub-types
-        # These services are mostly tagged "Other service" so taxonomy
-        # narrowing alone won't help — we filter by description keywords.
-        if template_key == "other":
-            _DETAIL_DESCRIPTION_PATTERNS = {
-                "English classes": r"ESL|ESOL|english class|learn.*english",
-                "GED programs": r"GED|high school equiv|HSE|diploma|equivalency",
-                "adult education": r"adult education|adult literacy|continuing education",
-                "computer classes": r"computer|digital literacy|computer skills|computer training",
-                "digital literacy": r"computer|digital literacy|computer skills",
-                "disability services": r"disability|disabled|SSI|SSDI|accessible|special needs",
-                "financial services": r"financial|money management|budget|credit|debt|financial literacy",
-                "financial literacy": r"financial literacy|financial education|money management|budget",
-                "budgeting help": r"budget|financial|money management|savings",
-                "senior services": r"senior|older adult|aging|elder|60\+|65\+|over 60",
-                "re-entry services": r"reentry|re-entry|parole|probation|incarcerat|released|formerly",
-                "anger management": r"anger management|violence prevention|conflict resolution",
-                "parenting classes": r"parenting|parent class|parent support|fatherhood|motherhood",
-                "baby supplies": r"diaper|baby|infant|stroller|car seat|formula",
-                "transportation help": r"access.a.ride|metrocard|metro card|transit|transportation",
-                "insurance enrollment": r"insurance|medicaid enroll|medicare enroll|health insurance",
-                "health insurance enrollment": r"health insurance|insurance enroll|medicaid|marketplace",
-                "LGBTQ services": r"LGBTQ|queer|transgender|gay|lesbian|bisexual|nonbinary",
-                "LGBTQ support": r"LGBTQ|queer|transgender|gay|lesbian|bisexual|nonbinary",
-                "DACA services": r"DACA|deferred action|dreamer",
-                "accessibility services": r"accessibility|accessible|wheelchair|disability|ADA",
-            }
-            pattern = _DETAIL_DESCRIPTION_PATTERNS.get(service_detail)
+        # 4b. Description filter for sub-types that share a generic taxonomy.
+        # These services can't be distinguished by taxonomy alone — they need
+        # a description keyword filter to narrow from the parent category.
+        #
+        # Originally only applied to "other" template, but health_care and
+        # legal services also have sub-types (dental, immigration) that
+        # share a parent taxonomy ("Health", "Legal") and can only be
+        # narrowed by description.
+        _DETAIL_DESCRIPTION_FILTERS = {
+            # ── "other" sub-types ──
+            "English classes": r"ESL|ESOL|english class|learn.*english",
+            "GED programs": r"GED|high school equiv|HSE|diploma|equivalency",
+            "adult education": r"adult education|adult literacy|continuing education",
+            "computer classes": r"computer|digital literacy|computer skills|computer training",
+            "digital literacy": r"computer|digital literacy|computer skills",
+            "disability services": r"disability|disabled|\mSSI\M|\mSSDI\M|accessible|special needs",
+            "financial services": r"financial|money management|budget|credit|debt|financial literacy",
+            "financial literacy": r"financial literacy|financial education|money management|budget",
+            "budgeting help": r"budget|financial|money management|savings",
+            "senior services": r"senior|older adult|aging|elder|60\+|65\+|over 60",
+            "re-entry services": r"reentry|re-entry|parole|probation|incarcerat|released|formerly",
+            "anger management": r"anger management|violence prevention|conflict resolution",
+            "parenting classes": r"parenting|parent class|parent support|fatherhood|motherhood",
+            "baby supplies": r"diaper|baby|infant|stroller|car seat|formula",
+            "transportation help": r"access.a.ride|metrocard|metro card|transit|transportation",
+            "insurance enrollment": r"insurance|medicaid enroll|medicare enroll|health insurance",
+            "health insurance enrollment": r"health insurance|insurance enroll|medicaid|marketplace",
+            "LGBTQ services": r"LGBTQ|queer|transgender|gay|lesbian|bisexual|nonbinary",
+            "LGBTQ support": r"LGBTQ|queer|transgender|gay|lesbian|bisexual|nonbinary",
+            "DACA services": r"DACA|deferred action|dreamer",
+            "accessibility services": r"accessibility|accessible|wheelchair|disability|ADA",
+            # other — benefits & financial (previously unhandled)
+            "Access-A-Ride help": r"access.a.ride|paratransit|disability.*transport",
+            "EBT / food stamps": r"EBT|food stamp|SNAP|electronic benefit",
+            "Medicaid enrollment": r"medicaid|health insurance|enroll",
+            "Social Security": r"social security|\mSSA\M|\mSSI\M|\mSSDI\M|disability benefit",
+            "benefits enrollment": r"benefit|enroll|eligib|public assist|apply",
+            "cash assistance": r"cash assist|public assist|TANF|welfare|emergency.*cash",
+            "financial advisors": r"financial advis|financial counsel|money manage|budget",
+            "food stamps / SNAP": r"food stamp|SNAP|EBT|electronic benefit",
+            "money management": r"money manage|budget|financial|savings|debt",
+            "public assistance": r"public assist|welfare|benefit|TANF|cash assist",
+            "SYEP programs": r"SYEP|summer youth|summer employment|youth employment",
+            # ── health_care sub-types ──
+            "dental care": r"dental|dentist|oral health|tooth|teeth",
+            "vision care": r"vision|eye|optometr|ophthalmol|glasses|optical",
+            "urgent care": r"urgent care|walk.in clinic|immediate care",
+            "prenatal care": r"prenatal|maternity|pregnan|obstetric|OB.GYN",
+            "diabetes / insulin care": r"diabet|insulin|blood sugar|endocrin|A1C",
+            "HIV services": r"HIV|AIDS|antiretroviral|PrEP|\mPEP\M",
+            "harm reduction services": r"harm reduction|needle|syringe|naloxone|narcan|overdose",
+            # health_care — previously unhandled
+            "HIV testing": r"HIV.*test|HIV.*screen|rapid.*test.*HIV",
+            "STD testing": r"STD|STI|sexual.*health|sexually transmitted",
+            "STI testing": r"STI|STD|sexual.*health|sexually transmitted",
+            "PrEP services": r"PrEP|pre.exposure|HIV prevent|truvada|descovy",
+            "allergy / EpiPen care": r"allerg|epipen|anaphyla",
+            "asthma care": r"asthma|inhaler|respiratory|pulmon|breathing",
+            "diabetes care": r"diabet|insulin|blood sugar|endocrin|A1C",
+            # "dialysis services" removed — DB verified April 16, 2026: 0 matches.
+            # No service description mentions dialysis, kidney, or renal.
+            "hepatitis services": r"hepatitis|\mhep\M|liver",
+            "hepatitis C services": r"hepatitis.*C|hep.*C|HCV",
+            "maternity services": r"matern|pregnan|prenatal|postpartum|obstetric",
+            "postpartum care": r"postpartum|after.*birth|newborn|maternal",
+            "needle exchange": r"needle|syringe|harm reduction|safe.*inject",
+            "syringe exchange": r"syringe|needle|harm reduction|safe.*inject",
+            "vaccinations": r"vaccin|immuniz|flu.*shot|COVID.*shot|booster",
+            # ── legal sub-types ──
+            "immigration services": r"immigra|asylum|refugee|undocument|visa|green card|USCIS|naturali|citizen|deporta|removal|\mICE\M",
+            "asylum services": r"asylum|refugee|persecution|fear|credible fear|withholding",
+            "eviction help": r"evict|tenant|landlord|housing court|rental|lease",
+            "domestic violence services": r"domestic violence|\mDV\M|intimate partner|protective order|abuse|safety plan",
+            # legal — previously unhandled
+            "abuse counseling": r"abuse|domestic violence|\mDV\M|survivor|violence.*counsel",
+            "citizenship services": r"citizen|naturali|civics|passport|N-400",
+            "naturalization services": r"naturali|citizen|civics|N-400|oath",
+            "order of protection": r"order of protection|protective order|restraining order|\mOOP\M",
+            # ── mental_health sub-types (previously unhandled) ──
+            "AA meetings": r"\mAA\M|alcoholics anonymous|12.step|twelve.step|sobriety",
+            "NA meetings": r"\mNA\M|narcotics anonymous|12.step|twelve.step|recovery.*meeting",
+            "counseling": r"counsel|therap|talk.*someone|mental health.*support",
+            "therapy": r"therap|counsel|psycho|CBT|DBT|mental health",
+            "treatment centers": r"treatment center|treatment facility|rehab|recovery center",
+            "treatment programs": r"treatment program|recovery program|rehab program",
+            # ── housing program sub-types (routed via "other" — matches YourPeer) ──
+            "Housing Connect": r"Housing Connect|housing lottery|affordable.*apply",
+            "NYCHA housing": r"NYCHA|public housing|housing authority",
+            "Section 8 vouchers": r"section 8|housing voucher|rental assist|\mHCV\M",
+            "affordable housing": r"affordable housing|low.income housing|subsidiz|below market",
+            "eviction prevention": r"eviction prevent|anti.eviction|stay.*home|keep.*housed",
+            "homeless prevention programs": r"homeless prevent|prevention|diversion",
+            "housing assistance": r"housing assist|housing help|housing support|find.*housing",
+            "housing lottery": r"housing lottery|Housing Connect|affordable.*apply",
+            "housing programs": r"housing program|housing service|housing support",
+            "housing vouchers": r"housing voucher|section 8|rental voucher|\mHCV\M",
+            "rental assistance": r"rental assist|rent help|rent subsid|emergency rent|\mERAP\M|one shot",
+        }
+        if not narrowed_taxonomies:
+            pattern = _DETAIL_DESCRIPTION_FILTERS.get(service_detail)
             if pattern:
                 user_params["description_pattern"] = pattern
+
+    # -----------------------------------------------------------------
+    # Clothing occasion filter (Phase 4b)
+    # -----------------------------------------------------------------
+    # When the user asks for casual or professional clothing, filter
+    # by the clothingOccasion attribute in service_taxonomy_specific_attributes.
+    # DB verified April 16, 2026: 62 services tagged "Everyday", 28 tagged
+    # "Job Interview" (overlapping — many services carry both).
+    #
+    # This is better than taxonomy narrowing (Interview-Ready Clothing has
+    # only 1 service) because the attribute system has 28 services tagged
+    # for professional clothing.
+    #
+    # YourPeer uses taxonomySpecificAttributes API param for this.
+    _CLOTHING_OCCASION_MAP = {
+        "professional clothing": '["Job Interview"]',
+        "interview clothing": '["Job Interview"]',
+        "business clothing": '["Job Interview"]',
+        "casual clothing": '["Everyday"]',
+        "everyday clothing": '["Everyday"]',
+        "winter clothing": '["Winter"]',
+    }
+    if template_key == "clothing" and service_detail:
+        occasion_value = _CLOTHING_OCCASION_MAP.get(service_detail)
+        if occasion_value:
+            user_params["clothing_occasion_value"] = occasion_value
 
     # -----------------------------------------------------------------
     # Population-based query boost (Phase 3)
@@ -282,9 +468,9 @@ def query_services(
     # Services matching these patterns sort to the top without excluding
     # non-matching services.
     _POPULATION_DESCRIPTION_BOOSTS = {
-        "disabled": r"disabilit|disabled|wheelchair|accessible|ADA|blind|deaf|SSI|SSDI",
+        "disabled": r"disabilit|disabled|wheelchair|accessible|\mADA\M|blind|deaf|\mSSI\M|\mSSDI\M",
         "reentry": r"reentry|re-entry|parole|probation|incarcerat|released|formerly",
-        "dv_survivor": r"domestic violence|DV|intimate partner|safety plan|abuse|protective order",
+        "dv_survivor": r"domestic violence|\mDV\M|intimate partner|safety plan|abuse|protective order",
         "pregnant": r"prenatal|maternity|postpartum|WIC|pregnan|maternal|newborn",
         "senior": r"senior|older adult|aging|elder|60\+|65\+|over 60|NORC",
     }

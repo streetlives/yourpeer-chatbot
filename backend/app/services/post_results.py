@@ -19,6 +19,19 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
+# DISPLAY PAGINATION
+# ---------------------------------------------------------------------------
+# Filter response handlers cap returned services to this size so a user
+# asking "any open right now?" doesn't get a 25-card dump that breaks the
+# 5-per-page model used elsewhere in the UI. Must match _DISPLAY_PAGE_SIZE
+# in chatbot.py (the initial-search pagination constant). Duplicated rather
+# than cross-imported to keep post_results.py decoupled from chatbot.py —
+# if these ever diverge, the regression test in test_audit_regression will
+# fire.
+_DISPLAY_PAGE_SIZE = 5
+
+
+# ---------------------------------------------------------------------------
 # FILTER MONITORING
 # ---------------------------------------------------------------------------
 # Tracks filter_subcategory events for miss-rate monitoring.
@@ -916,12 +929,23 @@ def _default_qr(services: list) -> list:
     return [_NAVIGATOR_QR, _NEW_SEARCH_QR]
 
 
-def answer_from_results(intent: dict, services: list[dict]) -> dict:
+def answer_from_results(
+    intent: dict,
+    services: list[dict],
+    displayed_count: Optional[int] = None,
+) -> dict:
     """Build an answer from stored service card data.
 
     Args:
         intent: From classify_post_results_question()
-        services: The list of service cards last shown to the user
+        services: The list of service cards the session has cached
+            (typically `_last_results`, which is up to `_FETCH_LIMIT=25`
+            services — more than the user has actually seen on screen).
+        displayed_count: How many of `services` the user has actually
+            seen so far. Used in filter-response phrasing so users don't
+            see "3 of 25 are open" when they only saw 5 cards. If None,
+            defaults to len(services) (preserves legacy behavior for
+            callers that haven't been updated yet).
 
     Returns:
         {
@@ -934,18 +958,23 @@ def answer_from_results(intent: dict, services: list[dict]) -> dict:
     if not services:
         return _cant_answer("I don't have any results to reference.", [])
 
+    # Default: assume the caller has shown everything (preserves behavior
+    # for pre-update callers; filter handlers will clamp to this value).
+    if displayed_count is None:
+        displayed_count = len(services)
+
     intent_type = intent.get("type")
 
     if intent_type == "filter_open":
-        return _handle_filter_open(services)
+        return _handle_filter_open(services, displayed_count)
     elif intent_type == "filter_free":
-        return _handle_filter_free(services)
+        return _handle_filter_free(services, displayed_count)
     elif intent_type == "filter_subcategory":
-        return _handle_filter_subcategory(intent, services)
+        return _handle_filter_subcategory(intent, services, displayed_count)
     elif intent_type == "refine_results":
         # Legacy compat — treat as filter_subcategory with no raw_phrase
         return _handle_filter_subcategory(
-            {"type": "filter_subcategory", "raw_phrase": ""}, services
+            {"type": "filter_subcategory", "raw_phrase": ""}, services, displayed_count
         )
     elif intent_type == "specific_index":
         return _handle_specific_index(intent["index"], services)
@@ -966,18 +995,67 @@ def answer_from_results(intent: dict, services: list[dict]) -> dict:
 # INTENT HANDLERS
 # ---------------------------------------------------------------------------
 
-def _handle_filter_open(services: list[dict]) -> dict:
-    """Filter services to those currently open."""
+def _handle_filter_open(services: list[dict], displayed_count: int) -> dict:
+    """Filter services to those currently open.
+
+    Operates on the full cached result pool (up to `_FETCH_LIMIT=25`), not
+    just what the user has seen (`displayed_count`). This is intentional:
+    the user's question "any open right now?" is about the underlying
+    services, not just the ones currently on screen.
+
+    Phrasing rules:
+      - When `filter_count <= displayed_count`, denominator is
+        `displayed_count` ("3 of the 5 shown are open") — avoids the
+        previous "3 of 25" confusion where users only saw 5 cards.
+      - When `filter_count > displayed_count`, we don't use a ratio
+        (would read as nonsense like "8 of 5"). Instead we say
+        "I found X open services" since some are in pages the user
+        hasn't seen yet.
+
+    Return pagination: capped at `_DISPLAY_PAGE_SIZE` services in the
+    response. This preserves the 5-per-page UI model — a user asking
+    "any open?" shouldn't suddenly get 25 cards dumped. Users can use
+    "Show all results" to see everything including un-shown open ones.
+    """
     open_services = [s for s in services if s.get("is_open") == "open"]
 
     if open_services:
-        count = len(open_services)
+        filter_count = len(open_services)
+        display = open_services[:_DISPLAY_PAGE_SIZE]
+        is_or_are = "is" if filter_count == 1 else "are"
+
+        if filter_count > displayed_count:
+            # Filter found more than the user has seen — avoid nonsensical ratio.
+            if filter_count > len(display):
+                response = (
+                    f"I found {filter_count} open service"
+                    f"{'' if filter_count == 1 else 's'}. "
+                    f"Here are the first {len(display)}:"
+                )
+            else:
+                response = (
+                    f"I found {filter_count} open service"
+                    f"{'' if filter_count == 1 else 's'}:"
+                )
+        else:
+            # All filtered services are within what the user has seen.
+            if filter_count > len(display):
+                # Shouldn't happen given filter_count <= displayed_count <= 5
+                # in most flows, but defensive: still truncate to page size.
+                response = (
+                    f"{filter_count} of the {displayed_count} shown "
+                    f"{is_or_are} currently open. Here are the first "
+                    f"{len(display)}:"
+                )
+            else:
+                response = (
+                    f"{filter_count} of the {displayed_count} shown "
+                    f"{is_or_are} currently open:"
+                )
+
         return {
-            "response": (
-                f"{count} of the {len(services)} results "
-                f"{'is' if count == 1 else 'are'} currently open:"
-            ),
-            "services": open_services,
+            "response": response,
+            "services": display,
             "quick_replies": [_SHOW_ALL_QR, _NAVIGATOR_QR, _NEW_SEARCH_QR],
             "category": "post_results",
         }
@@ -1010,21 +1088,50 @@ def _handle_filter_open(services: list[dict]) -> dict:
     }
 
 
-def _handle_filter_free(services: list[dict]) -> dict:
-    """Filter services to those that are free."""
+def _handle_filter_free(services: list[dict], displayed_count: int) -> dict:
+    """Filter services to those that are free.
+
+    Same displayed_count / pagination rules as _handle_filter_open — see
+    that function's docstring for details.
+    """
     free_services = [
         s for s in services
         if s.get("fees") and "free" in s["fees"].lower()
     ]
 
     if free_services:
-        count = len(free_services)
+        filter_count = len(free_services)
+        display = free_services[:_DISPLAY_PAGE_SIZE]
+        is_or_are = "is" if filter_count == 1 else "are"
+
+        if filter_count > displayed_count:
+            if filter_count > len(display):
+                response = (
+                    f"I found {filter_count} free service"
+                    f"{'' if filter_count == 1 else 's'}. "
+                    f"Here are the first {len(display)}:"
+                )
+            else:
+                response = (
+                    f"I found {filter_count} free service"
+                    f"{'' if filter_count == 1 else 's'}:"
+                )
+        else:
+            if filter_count > len(display):
+                response = (
+                    f"{filter_count} of the {displayed_count} shown "
+                    f"{is_or_are} listed as free. Here are the first "
+                    f"{len(display)}:"
+                )
+            else:
+                response = (
+                    f"{filter_count} of the {displayed_count} shown "
+                    f"{is_or_are} listed as free:"
+                )
+
         return {
-            "response": (
-                f"{count} of the {len(services)} results "
-                f"{'is' if count == 1 else 'are'} listed as free:"
-            ),
-            "services": free_services,
+            "response": response,
+            "services": display,
             "quick_replies": [_SHOW_ALL_QR, _NAVIGATOR_QR, _NEW_SEARCH_QR],
             "category": "post_results",
         }
@@ -1059,7 +1166,11 @@ def _handle_filter_free(services: list[dict]) -> dict:
     }
 
 
-def _handle_filter_subcategory(intent: dict, services: list[dict]) -> dict:
+def _handle_filter_subcategory(
+    intent: dict,
+    services: list[dict],
+    displayed_count: int,
+) -> dict:
     """Filter displayed results by sub-category.
 
     Three-tier deterministic filtering pipeline:
@@ -1070,18 +1181,26 @@ def _handle_filter_subcategory(intent: dict, services: list[dict]) -> dict:
 
     All filtering operates on DB-sourced card data. Zero hallucination.
     The LLM is never used to select or rank services.
+
+    `displayed_count` is used in response phrasing so users don't see
+    "3 of 25" when they only saw 5 — see _handle_filter_open docstring.
     """
     raw_phrase = intent.get("raw_phrase", "")
     original_message = intent.get("_original_message", raw_phrase)
     total = len(services)
 
-    if total <= 2:
+    # Short-circuit: if the user has only seen a tiny number of results,
+    # filtering is pointless. Use displayed_count (what they've seen) rather
+    # than total (full cached pool up to 25) — a user who saw 2 of 25 still
+    # has 23 more they can page through, so we shouldn't tell them "only 2".
+    if displayed_count <= 2:
         return {
             "response": (
-                f"I only found {total} result{'s' if total != 1 else ''} for "
-                f"this search, so there isn't much to filter. You can tap on "
-                f"the card{'s' if total != 1 else ''} for more details, or I "
-                f"can try a new search."
+                f"You've only seen {displayed_count} result"
+                f"{'s' if displayed_count != 1 else ''} so far, so there "
+                f"isn't much to filter. You can tap on the card"
+                f"{'s' if displayed_count != 1 else ''} for more details, "
+                f"or I can try a new search."
             ),
             "services": [],
             "quick_replies": [_SHOW_ALL_QR, _NAVIGATOR_QR, _NEW_SEARCH_QR],
@@ -1222,27 +1341,69 @@ def _handle_filter_subcategory(intent: dict, services: list[dict]) -> dict:
 
     # --- Build response ---
     if matched:
-        count = len(matched)
+        filter_count = len(matched)
+        display = matched[:_DISPLAY_PAGE_SIZE]
         display_phrase = raw_phrase[:50] if raw_phrase else filter_desc
 
+        # Use displayed_count as denominator when filter_count fits within
+        # what the user has seen. Otherwise avoid misleading ratios.
+        use_displayed_as_ref = filter_count <= displayed_count
+
         if is_negation:
-            response = (
-                f"Here {'is' if count == 1 else 'are'} {count} of the "
-                f"{total} results excluding '{display_phrase}':"
+            # "Excluding X" inverts semantics — count is "everything except".
+            # Meaningful ratio is always against the set the user has seen.
+            overflow_suffix = (
+                f". Here are the first {len(display)}"
+                if filter_count > len(display) else ""
             )
-        elif count == 1:
             response = (
-                f"One of the {total} results matches '{display_phrase}':"
+                f"Here {'is' if filter_count == 1 else 'are'} "
+                f"{filter_count} of the {displayed_count} shown "
+                f"excluding '{display_phrase}'{overflow_suffix}:"
             )
+        elif filter_count == 1:
+            # Single match — always fits within display cap.
+            if use_displayed_as_ref:
+                response = (
+                    f"One of the {displayed_count} shown matches "
+                    f"'{display_phrase}':"
+                )
+            else:
+                response = (
+                    f"I found one result matching '{display_phrase}':"
+                )
         else:
-            response = (
-                f"I found {count} of the {total} results matching "
-                f"'{display_phrase}':"
-            )
+            # Multiple matches — consider overflow and displayed_count.
+            if use_displayed_as_ref:
+                if filter_count > len(display):
+                    response = (
+                        f"I found {filter_count} of the {displayed_count} "
+                        f"shown matching '{display_phrase}'. Here are the "
+                        f"first {len(display)}:"
+                    )
+                else:
+                    response = (
+                        f"I found {filter_count} of the {displayed_count} "
+                        f"shown matching '{display_phrase}':"
+                    )
+            else:
+                # Filter found more than the user has seen — don't use ratio.
+                if filter_count > len(display):
+                    response = (
+                        f"I found {filter_count} result"
+                        f"{'s' if filter_count != 1 else ''} matching "
+                        f"'{display_phrase}'. Here are the first {len(display)}:"
+                    )
+                else:
+                    response = (
+                        f"I found {filter_count} result"
+                        f"{'s' if filter_count != 1 else ''} matching "
+                        f"'{display_phrase}':"
+                    )
 
         return {
             "response": response,
-            "services": matched,
+            "services": display,
             "quick_replies": [_SHOW_ALL_QR, _NAVIGATOR_QR, _NEW_SEARCH_QR],
             "category": "post_results_filter",
             # Metadata for chatbot.py to store _filtered_results
@@ -1255,7 +1416,7 @@ def _handle_filter_subcategory(intent: dict, services: list[dict]) -> dict:
     display_phrase = raw_phrase[:50] if raw_phrase else "that"
     return {
         "response": (
-            f"None of the {total} results I showed match "
+            f"None of the {displayed_count} results I showed match "
             f"'{display_phrase}'. This might mean the specific "
             f"service you're looking for isn't in my current results. "
             f"Would you like to try a new search, or would a peer "

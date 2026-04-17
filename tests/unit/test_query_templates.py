@@ -73,15 +73,25 @@ EXPECTED_TAXONOMY_NAMES = {
         "soup kitchen", "mobile soup kitchen", "brown bag", "farmer's markets",
     },
     "shelter": {
+        # Parent + generic housing types
         "shelter", "transitional independent living (til)", "supportive housing",
         "housing lottery", "veterans short-term housing", "warming center", "safe haven",
+        # Population-specific shelter children (Apr 2026 YourPeer parity update):
+        "youth", "families", "single adult", "senior", "lgbtq young adult", "veterans",
+        # Service-type shelter children (Apr 16 DB verification — Covenant House /
+        # Safe Horizon discoverability fix):
+        "crisis", "drop-in center", "referral", "assessment", "residential recovery",
     },
     "clothing": {
         "clothing", "clothing pantry", "interview-ready clothing",
         "professional clothing", "coat drive", "thrift shop",
     },
     "medical": {
-        "health", "general health", "crisis",
+        # DB verified April 2026: Health parent + children (General Health,
+        # Mental Health, Substance Use Treatment, Support Groups).
+        # Mental Health excluded intentionally (handled by mental_health template).
+        # "crisis" removed — was a BUG; Crisis is a Shelter child, not Health.
+        "health", "general health", "substance use treatment", "support groups",
     },
     "legal": {
         "legal services", "immigration services",
@@ -158,13 +168,34 @@ def test_no_taxonomy_name_duplicates_within_template():
 
 
 def test_no_taxonomy_name_in_wrong_template():
-    """Critical: mental_health names must not appear in health, and vice versa."""
+    """Mental Health itself must not appear in the medical template.
+
+    Matches YourPeer's client-side exclusion: YourPeer's API returns Mental
+    Health services for health-care queries, then filter_services_by_name
+    strips them from the health-care view. The chatbot achieves the same
+    by excluding 'mental health' from the medical template's default list.
+
+    Substance Use Treatment and Support Groups ARE shared between medical
+    and mental_health templates — DB verification (April 2026) confirmed
+    they are parented under Health and legitimately belong to both
+    categories. A user asking 'where can I see a doctor about my addiction'
+    routes to medical and finds them; a user asking 'I need a support
+    group' routes to mental_health and finds them.
+    """
     health_names = set(TEMPLATES["medical"]["default_params"]["taxonomy_names"])
     mental_names = set(TEMPLATES["mental_health"]["default_params"]["taxonomy_names"])
-    overlap = health_names & mental_names
-    assert not overlap, \
-        f"'medical' and 'mental_health' templates share taxonomy names: {overlap}. " \
-        f"Mental Health (114 services) must only be in mental_health template."
+
+    # Hard exclusion: Mental Health itself (128 services) must not appear in medical
+    assert "mental health" not in health_names, \
+        "'mental health' must only appear in mental_health template, not medical"
+
+    # Documented intentional overlap
+    expected_overlap = {"substance use treatment", "support groups"}
+    actual_overlap = health_names & mental_names
+    unexpected = actual_overlap - expected_overlap
+    assert not unexpected, \
+        f"Unexpected overlap between medical and mental_health: {unexpected}. " \
+        f"Only {expected_overlap} should be shared."
 
 
 def test_food_includes_soup_kitchen():
@@ -950,38 +981,60 @@ def test_no_schedule_data_card_is_none():
 #   3. Service name (stable tiebreaker)
 # When proximity (lat/lon) is active, distance is the primary sort.
 
-def test_default_order_prioritizes_open_now():
-    """Default ORDER BY (no proximity) should prioritize open services."""
+# Results sorting — as of Apr 16, 2026:
+#   Python (query_executor._sort_open_first) — open-now sort (single source of truth)
+#   SQL _BASE_ORDER_PARTS:
+#     1. Recently verified (l.last_validated_at DESC NULLS LAST)
+#     2. Service name (stable tiebreaker)
+# When proximity (lat/lon) is active, distance is the primary SQL sort.
+#
+# Prior to Apr 16, 2026, SQL also ranked open services first. The SQL rank
+# was redundant with the Python stable sort that always ran afterward and
+# differed in its treatment of unknown-schedule services (SQL: unknown=closed;
+# Python: unknown<closed). Removed for single-source-of-truth.
+
+def test_default_order_uses_freshness_first():
+    """Default ORDER BY (no proximity) should sort by freshness then name.
+
+    Open-now sorting is handled in Python post-query — SQL does not
+    contribute to open-status ordering. See _sort_open_first in
+    query_executor.py.
+    """
     sql, _ = build_query("food", {"borough": "Brooklyn", "max_results": 5})
-    # Should contain the open-now CASE expression before last_validated_at
-    assert "CURRENT_TIME" in sql, "ORDER BY should include open-now ranking"
+    # Should NOT contain the SQL open-now CASE (moved to Python)
+    assert "CURRENT_TIME" not in sql, (
+        "ORDER BY should not include SQL open-now rank — Python is the single "
+        "source of truth for open-status sorting (Apr 16, 2026)."
+    )
     assert "last_validated_at" in sql, "ORDER BY should include freshness sort"
-    # Should NOT contain ST_Distance
+    # No proximity → no distance
     assert "ST_Distance" not in sql
 
 
 def test_proximity_order_uses_distance_first():
-    """When lat/lon present, distance should be the primary sort."""
+    """When lat/lon present, distance should be the primary SQL sort.
+
+    Open-now is still applied post-query in Python.
+    """
     sql, _ = build_query("food", {
         "lat": 40.69, "lon": -73.99, "radius_meters": 1600, "max_results": 5,
     })
     assert "ST_Distance" in sql, "Proximity query should sort by distance"
-    assert "CURRENT_TIME" in sql, "Proximity query should also rank by open-now"
     assert "last_validated_at" in sql, "Proximity query should also sort by freshness"
-    # Distance should appear before open-now in ORDER BY
-    dist_pos = sql.index("ST_Distance")
-    open_pos = sql.index("CURRENT_TIME")
-    assert dist_pos < open_pos, "Distance should sort before open-now in proximity queries"
+    # SQL should not rank open-now
+    assert "CURRENT_TIME" not in sql, (
+        "Proximity query should not include SQL open-now rank — Python handles it."
+    )
 
 
-def test_freshness_after_open_now_in_order():
-    """last_validated_at should come after the open-now ranking in ORDER BY."""
+def test_freshness_is_primary_non_proximity_sort():
+    """last_validated_at should be the first non-distance sort key."""
     sql, _ = build_query("food", {"borough": "Manhattan", "max_results": 5})
     # Only inspect the ORDER BY section (after the last WHERE clause)
     order_section = sql[sql.rindex("ORDER BY"):]
-    open_pos = order_section.index("CURRENT_TIME")
     fresh_pos = order_section.index("last_validated_at")
-    assert open_pos < fresh_pos, "Open-now should sort before freshness in ORDER BY"
+    name_pos = order_section.index("s.name")
+    assert fresh_pos < name_pos, "Freshness should sort before name in ORDER BY"
 
 
 def test_base_query_selects_last_validated_at():
@@ -991,20 +1044,31 @@ def test_base_query_selects_last_validated_at():
 
 
 def test_relaxed_query_keeps_sort_order():
-    """Relaxed queries should maintain the same sort priority."""
+    """Relaxed queries should maintain the same sort priority (no SQL open-now)."""
     sql, _ = build_relaxed_query("food", {
         "borough": "Brooklyn", "max_results": 5,
     })
-    assert "CURRENT_TIME" in sql, "Relaxed query should still sort by open-now"
     assert "last_validated_at" in sql, "Relaxed query should still sort by freshness"
+    assert "CURRENT_TIME" not in sql, (
+        "Relaxed query should not include SQL open-now rank (Python handles it)."
+    )
 
 
-def test_all_templates_use_open_now_sort():
-    """Every template's generated SQL should include open-now sorting."""
+def test_no_template_has_sql_open_now_sort():
+    """No template's generated SQL should include the SQL open-now CASE.
+
+    Python's _sort_open_first is the single source of truth for open-status
+    ordering as of Apr 16, 2026. If any template introduces a SQL-level rank,
+    it risks drift from the Python sort and re-creates the dual-source
+    inconsistency that was just cleaned up.
+    """
     for key in TEMPLATES:
         sql, _ = build_query(key, {"borough": "Brooklyn", "max_results": 5})
-        assert "CURRENT_TIME" in sql, \
-            f"Template '{key}' should include open-now sort in ORDER BY"
+        assert "CURRENT_TIME" not in sql, (
+            f"Template '{key}' includes CURRENT_TIME in SQL — this is the "
+            f"signature of the SQL open-now rank, which was removed for "
+            f"single-source-of-truth. Python handles open-status sort."
+        )
 
 
 # -----------------------------------------------------------------------
@@ -1031,47 +1095,87 @@ def _get_taxonomy_names(service_type, **kwargs):
 
 
 def test_shelter_enrichment_youth():
-    """Shelter query for age < 18 should add 'youth' to taxonomy_names."""
-    names = _get_taxonomy_names("shelter", age=16)
-    assert "youth" in names
-    assert "senior" not in names
+    """Shelter query should always include 'youth' taxonomy (NYC DYCD/HUD
+    define youth as 16-24; age eligibility filter handles exclusion)."""
+    names_16 = _get_taxonomy_names("shelter", age=16)
+    assert "youth" in names_16
+    names_19 = _get_taxonomy_names("shelter", age=19)
+    assert "youth" in names_19, "19yo must see youth shelters (Covenant House serves 16-24)"
+    names_none = _get_taxonomy_names("shelter")
+    assert "youth" in names_none, "Youth should be included even without age"
 
 
 def test_shelter_enrichment_senior():
     """Shelter query for age >= 62 should add 'senior' to taxonomy_names."""
     names = _get_taxonomy_names("shelter", age=65)
     assert "senior" in names
-    assert "youth" not in names
+    assert "youth" in names, "Youth is always included (age eligibility handles exclusion)"
 
 
 def test_shelter_enrichment_families():
-    """Shelter query with family_status=with_children should add 'families'."""
+    """Shelter query with family_status=with_children narrows to families + parent shelter.
+
+    DB verification (April 2026) showed the Families child has only 3 services;
+    strict YourPeer-style narrowing would often return 0 results. The chatbot
+    preserves the parent 'shelter' taxonomy in narrowed queries for better recall
+    — documented divergence from YourPeer in QUERY_PARITY_AUDIT.md.
+    """
     names = _get_taxonomy_names("shelter", family_status="with_children")
-    assert "families" in names
-    assert "single adult" not in names
+    assert names == ["families", "shelter"], f"Expected ['families', 'shelter'], got {names}"
 
 
 def test_shelter_enrichment_single_adult():
-    """Shelter query with family_status=alone should add 'single adult'."""
+    """Shelter query with family_status=alone narrows to single adult + parent shelter.
+
+    Single Adult child has 38 services (DB verified). Parent preservation
+    ensures the 18 generic-Shelter-tagged services remain visible.
+    """
     names = _get_taxonomy_names("shelter", family_status="alone")
-    assert "single adult" in names
-    assert "families" not in names
+    assert names == ["single adult", "shelter"], f"Expected ['single adult', 'shelter'], got {names}"
 
 
-def test_shelter_enrichment_lgbtq_always():
-    """LGBTQ Young Adult should always be included in shelter queries."""
+def test_shelter_default_includes_lgbtq_young_adult():
+    """lgbtq young adult is in the default shelter taxonomy list.
+
+    Previously it was added as an unconditional enrichment; now it's part of the
+    default list (matching YourPeer's parent-taxonomy + API expansion behavior).
+    """
     names = _get_taxonomy_names("shelter")
     assert "lgbtq young adult" in names
 
 
-def test_shelter_enrichment_base_preserved():
-    """Enrichment should ADD to base shelter taxonomies, not replace them."""
-    names = _get_taxonomy_names("shelter", age=16, family_status="with_children")
-    assert "shelter" in names, "Base 'shelter' taxonomy missing"
-    assert "safe haven" in names, "Base 'safe haven' taxonomy missing"
-    assert "youth" in names, "Enriched 'youth' missing"
-    assert "families" in names, "Enriched 'families' missing"
-    assert "lgbtq young adult" in names, "Enriched 'lgbtq young adult' missing"
+def test_shelter_default_includes_all_children():
+    """Default shelter query (no family_status) returns the full taxonomy list —
+    equivalent to YourPeer sending the parent 'Shelter' ID and API expanding to
+    all children."""
+    names = _get_taxonomy_names("shelter")
+    for child in ["shelter", "youth", "families", "single adult", "senior",
+                  "lgbtq young adult", "veterans", "safe haven"]:
+        assert child in names, f"Default shelter list missing '{child}'"
+
+
+def test_shelter_narrowing_excludes_generic_siblings():
+    """When family_status narrows, generic sibling housing taxonomies
+    (safe haven, warming center, TIL) are NOT in the final list.
+
+    Parent 'shelter' IS preserved (see test_shelter_enrichment_families).
+    Uses age=30 to avoid triggering the youth safety enrichment.
+    """
+    names = _get_taxonomy_names("shelter", age=30, family_status="with_children")
+    assert "safe haven" not in names, "Generic 'safe haven' should be excluded under narrow"
+    assert "warming center" not in names, "Generic 'warming center' should be excluded under narrow"
+    assert "single adult" not in names, "Wrong child included under narrow"
+    assert "youth" not in names, "Youth not expected for age 30"
+    assert names == ["families", "shelter"], f"Expected ['families', 'shelter'], got {names}"
+
+
+def test_shelter_narrowing_youth_safety_add():
+    """When family_status narrows BUT user is in the youth age range (16-24),
+    'youth' is added back as a safety enrichment so Covenant House / Ali Forney
+    remain discoverable (Cornell sample outcome)."""
+    names = _get_taxonomy_names("shelter", age=19, family_status="with_children")
+    assert names == ["families", "shelter", "youth"], \
+        f"Expected ['families', 'shelter', 'youth'], got {names}"
 
 
 def test_food_no_enrichment():

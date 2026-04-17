@@ -1,0 +1,113 @@
+# ─────────────────────────────────────────────────
+# SECRETS & CREDENTIALS
+# ─────────────────────────────────────────────────
+# .env files may contain DATABASE_URL, ANTHROPIC_API_KEY,
+# ADMIN_API_KEY, SESSION_SECRET — all of which grant
+# direct access to the production database and LLM billing.
+.env
+.env.*
+.env.local
+.env.production
+.env.development
+
+# ─────────────────────────────────────────────────
+# RUNTIME DATA & STATE
+# ─────────────────────────────────────────────────
+# Pilot database (SQLite) stores session transcripts,
+# audit logs, and potentially PII-adjacent data.
+*.sqlite
+*.sqlite3
+*.db
+pilot_data/
+data/
+
+# Session transcripts — may contain redacted but
+# still sensitive conversation content.
+transcripts/
+*transcript*
+*session_data*
+*conversation_log*
+
+# Eval result files — contain scenario transcripts
+# that may reference real service locations.
+eval_results/
+*eval_run*
+
+# ─────────────────────────────────────────────────
+# KEYS & CERTIFICATES
+# ─────────────────────────────────────────────────
+*.pem
+*.key
+*.crt
+*.cert
+*.p12
+*.pfx
+*.jks
+
+# ─────────────────────────────────────────────────
+# PYTHON ARTIFACTS
+# ─────────────────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+*.egg
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+*.cover
+
+# ─────────────────────────────────────────────────
+# MACOS ARTIFACTS
+# ─────────────────────────────────────────────────
+.DS_Store
+__MACOSX/
+._*
+
+# ─────────────────────────────────────────────────
+# EDITOR & IDE
+# ─────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.settings/
+
+# ─────────────────────────────────────────────────
+# VERSION CONTROL
+# ─────────────────────────────────────────────────
+.git/
+.gitignore
+
+# ─────────────────────────────────────────────────
+# DEPENDENCIES (reinstallable)
+# ─────────────────────────────────────────────────
+node_modules/
+.npm/
+venv/
+.venv/
+env/
+
+# ─────────────────────────────────────────────────
+# LOGS
+# ─────────────────────────────────────────────────
+*.log
+logs/
+
+# ─────────────────────────────────────────────────
+# MODEL ARTIFACTS (large, downloadable)
+# ─────────────────────────────────────────────────
+# Semantic router model (~80MB) is downloaded at
+# startup from HuggingFace. Don't ship it.
+*.onnx
+*.bin
+*.pt
+*.safetensors
+sentence-transformers/
+models/
