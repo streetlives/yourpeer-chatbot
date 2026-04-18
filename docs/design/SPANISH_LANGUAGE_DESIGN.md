@@ -196,7 +196,7 @@ Organized by the categories in `../audits/HARDCODED_MESSAGES_REVIEW.md`:
 - These appear in confirmation messages and quick-reply buttons.
 
 **Quick-reply button labels:**
-- All button labels are generated server-side in `chatbot.py` and `responses.py`.
+- All button labels are generated server-side in the `backend/app/services/chatbot/handlers/*` package (each handler emits its own quick-replies) plus `backend/app/services/responses.py` for shared button-catalog strings. Spanish bilingual acknowledgment specifically fires from `chatbot/handlers/accessibility.py` (post-Phase-3 location; was all in `chatbot.py` pre-April 2026).
 - Category buttons on welcome: "🍽️ Food" → "🍽️ Comida"
 - Borough buttons: "Manhattan", "Brooklyn" etc. — these don't translate.
 - Confirmation buttons: "✅ Yes, search" → "✅ Sí, buscar"
@@ -240,8 +240,9 @@ Every category in `SERVICE_KEYWORDS` needs Spanish equivalents. Currently only f
 | mental_health | counseling, therapy, detox | consejería, terapia, desintoxicación, rehabilitación, adicción, salud mental |
 | legal | lawyer, immigration, asylum | abogado, inmigración, asilo, papeles, documentos, corte, deportación |
 | employment | job, work, resume | trabajo, empleo, currículum, entrevista |
-| housing_assistance | rent, eviction | alquiler, renta, desalojo, desahucio, ayuda con vivienda |
-| other | benefits, ID, money | beneficios, identificación, dinero, ayuda financiera, SNAP |
+| other | benefits, ID, money, rent, eviction | beneficios, identificación, dinero, ayuda financiera, SNAP, alquiler, renta, desalojo, desahucio, ayuda con vivienda |
+
+> **Note**: `housing_assistance` was retired in the April 15 audit. Housing-program keywords (rent, eviction, etc.) and their Spanish translations now route to the `other` category.
 
 ### 7.2 Location keywords
 

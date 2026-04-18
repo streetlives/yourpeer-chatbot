@@ -45,43 +45,45 @@ All detection logic and response text lives in a single file:
 
 ```
 backend/app/services/crisis_detector.py
-tests/test_crisis_detector.py             — 36 unit tests (29 regex, 7 LLM)
+tests/unit/test_crisis_detector.py        — 36 unit tests (29 regex, 7 LLM)
 ```
 
 ### Phrase lists (Stage 1 — regex)
 
-| Constant | Line | Category |
-|---|---|---|
-| `_SUICIDE_SELF_HARM_PHRASES` | [L103](../../backend/app/services/crisis_detector.py#L103) | Suicidal ideation, self-harm, passive hopelessness |
-| `_VIOLENCE_PHRASES` | [L133](../../backend/app/services/crisis_detector.py#L133) | Threats to harm others, weapons |
-| `_DOMESTIC_VIOLENCE_PHRASES` | [L144](../../backend/app/services/crisis_detector.py#L144) | Abuse, threats, fleeing a dangerous home |
-| `_SAFETY_CONCERN_PHRASES` | [L174](../../backend/app/services/crisis_detector.py#L174) | Feeling unsafe, runaway, kicked out, unsafe home |
-| `_TRAFFICKING_PHRASES` | [L199](../../backend/app/services/crisis_detector.py#L199) | Controlled, unable to leave, documents taken |
-| `_MEDICAL_EMERGENCY_PHRASES` | [L215](../../backend/app/services/crisis_detector.py#L215) | Immediate physical danger |
+All constants below are defined in `backend/app/services/crisis_detector.py`. Find any of them with `grep -n "^CONSTANT_NAME" backend/app/services/crisis_detector.py`.
+
+| Constant | Category |
+|---|---|
+| `_SUICIDE_SELF_HARM_PHRASES` | Suicidal ideation, self-harm, passive hopelessness |
+| `_VIOLENCE_PHRASES` | Threats to harm others, weapons |
+| `_DOMESTIC_VIOLENCE_PHRASES` | Abuse, threats, fleeing a dangerous home |
+| `_SAFETY_CONCERN_PHRASES` | Feeling unsafe, runaway, kicked out, unsafe home |
+| `_TRAFFICKING_PHRASES` | Controlled, unable to leave, documents taken |
+| `_MEDICAL_EMERGENCY_PHRASES` | Immediate physical danger |
 
 ### Response strings
 
 Each response is a static string constant — never LLM-generated. To update the text shown to a user in crisis, edit the constant directly.
 
-| Constant | Line | Shown when |
-|---|---|---|
-| `_SUICIDE_RESPONSE` | [L232](../../backend/app/services/crisis_detector.py#L232) | `suicide_self_harm` detected |
-| `_VIOLENCE_RESPONSE` | [L243](../../backend/app/services/crisis_detector.py#L243) | `violence` detected |
-| `_DOMESTIC_VIOLENCE_RESPONSE` | [L252](../../backend/app/services/crisis_detector.py#L252) | `domestic_violence` detected |
-| `_TRAFFICKING_RESPONSE` | [L263](../../backend/app/services/crisis_detector.py#L263) | `trafficking` detected |
-| `_MEDICAL_EMERGENCY_RESPONSE` | [L273](../../backend/app/services/crisis_detector.py#L273) | `medical_emergency` detected |
-| `_SAFETY_CONCERN_RESPONSE` | [L281](../../backend/app/services/crisis_detector.py#L281) | `safety_concern` detected |
-| `_YOUTH_RUNAWAY_RESPONSE` | — | `youth_runaway` detected (Run 31+) |
-| `_ASSAULT_VICTIM_RESPONSE` | — | `assault_victim` detected (Run 31+) |
-| `_FAILOPEN_RESPONSE` | [L320](../../backend/app/services/crisis_detector.py#L320) | LLM unavailable (aliased to `_SAFETY_CONCERN_RESPONSE`) |
+| Constant | Shown when |
+|---|---|
+| `_SUICIDE_RESPONSE` | `suicide_self_harm` detected |
+| `_VIOLENCE_RESPONSE` | `violence` detected |
+| `_DOMESTIC_VIOLENCE_RESPONSE` | `domestic_violence` detected |
+| `_TRAFFICKING_RESPONSE` | `trafficking` detected |
+| `_MEDICAL_EMERGENCY_RESPONSE` | `medical_emergency` detected |
+| `_SAFETY_CONCERN_RESPONSE` | `safety_concern` detected |
+| `_YOUTH_RUNAWAY_RESPONSE` | `youth_runaway` detected (Run 31+) |
+| `_ASSAULT_VICTIM_RESPONSE` | `assault_victim` detected (Run 31+) |
+| `_FAILOPEN_RESPONSE` | LLM unavailable (aliased to `_SAFETY_CONCERN_RESPONSE`) |
 
 ### LLM stage
 
-| Constant | Line | Purpose |
-|---|---|---|
-| `_LLM_CATEGORY_RESPONSES` | [L309](../../backend/app/services/crisis_detector.py#L309) | Maps LLM-returned category names to response strings |
-| `_LLM_SYSTEM_PROMPT` | [L322](../../backend/app/services/crisis_detector.py#L322) | Prompt sent to Claude Sonnet for classification |
-| `_CRISIS_CATEGORIES` | [L299](../../backend/app/services/crisis_detector.py#L299) | Ordered list of `(category, phrases, response)` tuples used by the regex loop |
+| Constant | Purpose |
+|---|---|
+| `_LLM_CATEGORY_RESPONSES` | Maps LLM-returned category names to response strings |
+| `_LLM_SYSTEM_PROMPT` | Prompt sent to Claude Sonnet for classification |
+| `_CRISIS_CATEGORIES` | Ordered list of `(category, phrases, response)` tuples used by the regex loop |
 
 The LLM stage uses a lazy-initialized Anthropic client, consistent with `llm_slot_extractor.py`. It activates automatically when `ANTHROPIC_API_KEY` is present in the environment.
 
@@ -223,7 +225,7 @@ The audit log records every crisis detection event via `log_crisis_detected()`. 
 
 ## Testing
 
-The test suite in `tests/test_crisis_detector.py` has 36 tests across three areas:
+The test suite in `tests/unit/test_crisis_detector.py` has 36 tests across three areas:
 
 **Regex detection (22 tests):** One test per major phrase group for each category, plus response content tests (verifying hotline numbers are present), false positive tests (normal service requests must not trigger), and integration tests (crisis in a longer message, crisis alongside a service request).
 
@@ -233,5 +235,5 @@ The test suite in `tests/test_crisis_detector.py` has 36 tests across three area
 
 ```bash
 # Run the full crisis detection test suite
-python -m pytest tests/test_crisis_detector.py -v
+python -m pytest tests/unit/test_crisis_detector.py -v
 ```

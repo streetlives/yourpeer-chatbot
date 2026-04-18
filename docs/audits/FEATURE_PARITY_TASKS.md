@@ -2,6 +2,9 @@
 
 > **Status: ALL 16 GAPS IMPLEMENTED** as of April 2026. This document is retained as a historical reference for the implementation decisions made. See FEATURES.md for current feature descriptions.
 
+> **📎 Post-Phase-3 location note (April 2026)**: this plan was written before the `chatbot.py` → `services/chatbot/` package decomposition. The two body references to `chatbot.py` (tasks 3.6 and 16.1) both describe orchestrator-level routing logic that now lives at `backend/app/services/chatbot/orchestrator.py`. Task 3.6's "skip 'what kind of help?' when org_name is present" and task 16.1's "skip `_pending_confirmation` on high urgency and go to `_execute_and_respond()`" are both implemented there; `_execute_and_respond()` itself now lives at `backend/app/services/chatbot/execution.py`.
+
+
 > Cross-referenced against: yourpeer.nyc production codebase, IMPLEMENTATION_PLAN_v2.md, AUDIT.md, PHASE3_SPEC.md
 > Phase 6 (Spanish) is deferred. Phase 3 (populations) has its own spec.
 

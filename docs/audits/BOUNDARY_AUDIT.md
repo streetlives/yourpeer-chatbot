@@ -3,6 +3,16 @@
 **Date**: April 17, 2026
 **Context**: User feedback reported a service categorized as "Manhattan" that
 was actually in the Bronx. This audit examines every place in the codebase
+
+> **📎 Post-Phase-3 location note (April 2026)**: this audit was written before
+> the `chatbot.py` → `services/chatbot/` package decomposition. Body references
+> to `chatbot.py` still apply conceptually; the helpers they describe now live
+> at these current paths:
+> - `_CITY_TO_BOROUGH` and `_BOROUGH_TO_PRIMARY_CITY` → `backend/app/services/chatbot/context.py`
+> - `_BOROUGH_CENTROIDS` + nearest-neighborhood table → `backend/app/services/chatbot/context.py`
+> - Population-critical fallback (`_run_population_fallback`) → `backend/app/services/chatbot/execution.py`
+> - Borough polygon validation → `backend/app/rag/boundaries.py` + `backend/app/rag/data/nyc_boroughs.geojson`
+
 that makes borough/neighborhood decisions, identifies the root cause, surveys
 industry standards, and proposes a fix strategy.
 

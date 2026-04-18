@@ -115,7 +115,7 @@ Route every message through Claude Haiku or GPT-3.5 for intent extraction. Most 
 
 The semantic router fires at **two points** in the pipeline for maximum coverage:
 
-**1. Hybrid multi-intent extraction in `chatbot.py`** (runs on every message):
+**1. Hybrid multi-intent extraction in `backend/app/services/chatbot/pipeline.py`** (runs on every message, as part of the unified classification cascade — post-Phase-3 location; was `chatbot.py` pre-April 2026):
 
 ```python
 # After regex extraction — semantic always runs, even when regex found something
@@ -233,8 +233,9 @@ SERVICE_ROUTES = {
         "I need career counseling",
         "help finding work with a criminal record",
     ],
-    # ... similar for: clothing, personal_care, legal, mental_health,
-    #     housing_assistance, other
+    # ... similar for: clothing, personal_care, legal, mental_health, other
+    # (housing_assistance was retired in the April 15 audit — housing-program
+    # keywords now route to `other`)
 }
 
 POPULATION_ROUTES = {
@@ -425,7 +426,7 @@ As YourPeer grows beyond NYC or adds more service categories:
 
 | Risk | Likelihood | Mitigation |
 |---|---|---|
-| Misroute between close categories (e.g., shelter vs housing_assistance) | Medium | Use per-route thresholds tuned on eval data. Add "anti-utterances" to routes that shouldn't match certain phrases. |
+| Misroute between close categories (e.g., shelter vs other when the user's intent is rental help vs temporary bed) | Medium | Use per-route thresholds tuned on eval data. Add "anti-utterances" to routes that shouldn't match certain phrases. (The original version of this risk called out shelter-vs-housing_assistance; `housing_assistance` was retired in the April 15 audit, so the split now lives between `shelter` and `other`.) |
 | Model too large for deployment | Low | Use ONNX quantized model (~30 MB). Or Model2Vec (~8 MB, 90% of MiniLM quality, 500x faster). |
 | Utterances drift from actual user language | Medium | Quarterly review of Tier 3 fallback logs. Any message that reached the LLM but should have been Tier 2 is a candidate utterance. |
 | Startup latency from model load | Low | 1-2 seconds, amortized. Can pre-warm in background thread. |

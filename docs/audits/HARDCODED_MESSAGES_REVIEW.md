@@ -190,7 +190,7 @@ These fire when the user expresses an emotion WITHOUT a service request. The des
 
 Short phrases prepended to the confirmation message when emotional context is detected. These ensure the bot doesn't feel "functional but flat" when the user is expressing distress alongside a service request. Example: user says "I'm really struggling and need food in Brooklyn" → bot says "_I hear you, and I want to help._ I'll look for food in Brooklyn — sound good?"
 
-**Source file:** `backend/app/services/chatbot.py`
+**Source files:** `backend/app/services/chatbot/tone.py` (warmth prefix selection, shame-normalization logic), `backend/app/services/responses.py` (static string catalog for each emotion)
 
 | Context detected | Prefix |
 |---|---|
@@ -286,9 +286,7 @@ Standard responses for common non-service interactions.
 
 ## 5. Frustration Handling
 
-Three escalating tiers when the user expresses frustration. Each tier gets shorter and more direct.
-
-**Source file:** `backend/app/services/chatbot.py`
+**Source file:** `backend/app/services/chatbot/handlers/emotional.py` (`_handle_frustration` — the 3-tier escalation counter lives here, along with the filter-aware post-routing cleanup)
 
 ### 5.1 First Frustration (negative preference)
 
@@ -310,9 +308,7 @@ Three escalating tiers when the user expresses frustration. Each tier gets short
 
 ## 6. Privacy & PII Warnings
 
-Shown when the system detects sensitive personal information in the user's message.
-
-**Source file:** `backend/app/services/chatbot.py`
+**Source file:** `backend/app/services/chatbot/pipeline.py` (warning strings); detection is in `backend/app/privacy/pii_redactor.py`
 
 ### 6.1 SSN Detected
 
@@ -326,9 +322,7 @@ Shown when the system detects sensitive personal information in the user's messa
 
 ## 7. Context-Aware "No" Responses
 
-When the user says "no" after different types of bot responses, the denial is handled differently based on context.
-
-**Source file:** `backend/app/services/chatbot.py`
+**Source file:** `backend/app/services/chatbot/handlers/confirmation.py` (the `_deny_contexts` dict and its `last_action`-aware dispatcher)
 
 | After... | Bot says |
 |---|---|
@@ -342,7 +336,7 @@ When the user says "no" after different types of bot responses, the denial is ha
 
 ## 8. Search Results Messages
 
-**Source files:** `backend/app/services/chatbot.py`, `backend/app/services/confirmation.py`
+**Source files:** `backend/app/services/chatbot/execution.py` (results-found phrasing and queue-offer message), `backend/app/services/confirmation.py` (no-results fallback via `_build_no_results_message`)
 
 ### 8.1 Results Found
 
@@ -364,9 +358,7 @@ When the user says "no" after different types of bot responses, the denial is ha
 
 ---
 
-## 9. Language / Accessibility
-
-**Source file:** `backend/app/services/chatbot.py`
+**Source file:** `backend/app/services/chatbot/handlers/accessibility.py`
 
 ### 9.1 Spanish Only (no service request)
 
@@ -384,7 +376,7 @@ A bilingual note is prepended to the normal confirmation flow (not shown here �
 
 When shame language is detected alongside a service request, this prefix is prepended to the confirmation.
 
-**Source file:** `backend/app/services/chatbot.py`
+**Source file:** `backend/app/services/chatbot/tone.py`
 
 **Shame signals detected:** "embarrassed", "ashamed", "pathetic", "failure", "never thought I'd need", "hard for me to ask", "humiliating", "degrading", "burden", "swallow my pride", "first time asking", "never done this before", "never asked for help", "can't believe I'm", "can't afford to eat", "don't want anyone to know"
 
