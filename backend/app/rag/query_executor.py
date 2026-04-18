@@ -77,7 +77,12 @@ def _get_engine():
             max_overflow=5,         # up to 8 total under burst (was 10→15)
             pool_timeout=10,        # fail fast — 10s, not default 30s
             pool_pre_ping=True,     # verify connections before use
-            pool_recycle=1800,      # recycle connections after 30 min
+            # Recycle after 5 min. Render's managed Postgres closes idle
+            # connections more aggressively than 30 min; pre_ping papers
+            # over it but we still occasionally lose the race and surface
+            # "SSL connection has been closed unexpectedly" to callers.
+            # 5 min keeps connections fresh without churning the pool.
+            pool_recycle=300,
             pool_use_lifo=True,     # reuse most-recent connection first;
                                     # idle connections naturally expire,
                                     # reducing total open connections
@@ -85,9 +90,21 @@ def _get_engine():
             # D3: prevent runaway queries from blocking indefinitely.
             # All queries in this app are parameterized lookups against
             # indexed tables — 5 seconds is generous.
+            #
+            # TCP keepalives: catch half-open sockets at the transport
+            # layer instead of discovering them on next query. Without
+            # these, a connection killed by a NAT / firewall / provider-
+            # side idle timeout sits silently in the pool and surfaces
+            # as OperationalError("SSL connection has been closed
+            # unexpectedly") when pre_ping runs. With keepalives, the
+            # kernel tears down the dead socket and the pool notices.
             connect_args={
                 "options": "-c statement_timeout=5000"
                            " -c idle_in_transaction_session_timeout=10000",
+                "keepalives": 1,
+                "keepalives_idle": 30,       # send keepalive after 30s idle
+                "keepalives_interval": 10,   # retry every 10s
+                "keepalives_count": 3,       # give up after 3 failed probes
             },
         )
     return _engine
@@ -106,14 +123,33 @@ def dispose_engine():
 
 
 def test_connection() -> bool:
-    """Verify the database is reachable."""
+    """Verify the database is reachable.
+
+    Uses a local statement_timeout override (15s) rather than the
+    connection-level 5s cap that applies to business queries. The 5s
+    ceiling exists to protect against runaway chatbot queries; a
+    liveness probe has the opposite requirement — a briefly slow DB
+    should register as "up but slow," not "down." 15s also absorbs the
+    occasional transient stall on Render's managed Postgres (checkpoint,
+    autovacuum spike, noisy neighbor) without flapping the health
+    endpoint.
+
+    Logged at WARNING, not ERROR: intermittent probe failures on shared
+    managed Postgres are routine operational noise, not actionable
+    errors. Alerting should fire on sustained failure rate, not on any
+    single failure.
+    """
     try:
         engine = _get_engine()
         with engine.connect() as conn:
+            # SET LOCAL scopes to the current transaction; rolls back
+            # implicitly when the `with` block exits. The connection
+            # returns to the pool with its original 5s ceiling intact.
+            conn.execute(text("SET LOCAL statement_timeout = '15s'"))
             result = conn.execute(text("SELECT 1"))
             return result.fetchone()[0] == 1
     except Exception as e:
-        logger.error(f"Database connection test failed: {e}")
+        logger.warning(f"Database connection test failed: {e}")
         return False
 
 
@@ -509,8 +545,12 @@ SLOT_SERVICE_TO_TEMPLATE = {
     "shelter":       "shelter",
     "housing":       "shelter",
 
-    # Housing Assistance (non-emergency — rental assistance, eviction prevention)
-    "housing_assistance": "housing_assistance",
+    # Housing Assistance — retired as a dedicated service type (April 2026
+    # audit; YourPeer has no equivalent). Keywords now route to 'other';
+    # this redirect stays so legacy callers producing the old key still
+    # resolve to a valid template. Removal invariant enforced by
+    # tests/unit/test_audit_regression.py::TestHousingAssistanceRemoval.
+    "housing_assistance": "other",
 
     # Clothing
     "clothing":      "clothing",

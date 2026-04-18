@@ -46,6 +46,16 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "backend"))
 # not guaranteed when running `pytest` from the project root.
 sys.path.insert(0, os.path.dirname(__file__))
 
+# Make intra-directory test helpers importable. Several unit-test files
+# use `from test_helpers import _fresh, _send, _build_shelter_results`
+# (referring to tests/unit/test_helpers.py) and similar patterns in
+# tests/integration/. These imports only resolve when the directory
+# containing the helper module is on sys.path directly.
+for _sub in ("unit", "integration"):
+    _path = os.path.join(os.path.dirname(__file__), _sub)
+    if os.path.isdir(_path):
+        sys.path.insert(0, _path)
+
 
 # ---------------------------------------------------------------------------
 # MOCK SERVICE DATA
@@ -61,6 +71,9 @@ MOCK_SERVICE_CARD = {
     "description": "Free meals every weekday",
     "address": "123 Test St, Brooklyn, NY 11201",
     "city": "Brooklyn",
+    # Realistic Brooklyn coordinates for downstream map/distance logic.
+    "latitude": 40.6937,
+    "longitude": -73.9946,
     "phone": "212-555-0001",
     "email": "info@testpantry.org",
     "website": "https://testpantry.org",
@@ -78,6 +91,8 @@ MOCK_SERVICE_CARD = {
     "review_highlight": None,
     "required_documents": None,
     "languages": None,
+    # Raw DB taxonomy tags — used by post-results sub-category filters.
+    "service_taxonomies": ["Food", "Soup Kitchen", "Pantry"],
 }
 
 MOCK_QUERY_RESULTS = {

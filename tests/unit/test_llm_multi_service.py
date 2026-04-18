@@ -143,24 +143,26 @@ def test_smart_llm_adds_service_regex_missed(mock_anthropic):
     """LLM detects a service that regex missed (indirect phrasing).
 
     "a place to crash" doesn't match any shelter keyword in regex,
-    but the LLM understands it means shelter.
+    but the LLM understands it means shelter. Under Housing First
+    (Feature B, April 2026), shelter (tier 1) is the expected
+    primary; the LLM prompt encodes the same urgency hierarchy.
     """
     _reset_client()
     mock_client = MagicMock()
     mock_anthropic.Anthropic.return_value = mock_client
     mock_client.messages.create.return_value = _mock_tool_response({
-        "service_type": "food",
+        "service_type": "shelter",
         "location": "Brooklyn",
-        "additional_service_types": ["shelter"],
+        "additional_service_types": ["food"],
     })
 
     from app.services.llm_slot_extractor import extract_slots_smart
     result = extract_slots_smart(
         "I need food and a place to crash in Brooklyn"
     )
-    assert result["service_type"] == "food"
+    assert result["service_type"] == "shelter"
     additional_types = [svc for svc, *_ in result.get("additional_services", [])]
-    assert "shelter" in additional_types
+    assert "food" in additional_types
 
 
 @patch.dict(os.environ, {"ANTHROPIC_API_KEY": "fake-key"})
@@ -168,26 +170,26 @@ def test_smart_llm_adds_service_regex_missed(mock_anthropic):
 def test_smart_merges_llm_and_regex_additional(mock_anthropic):
     """Both regex and LLM find additional services — combined without dupes.
 
-    Regex detects: food (primary) + shelter (additional via keyword)
-    LLM detects: food (primary) + shelter + mental_health (additional)
-    Result: food (primary), additional = [shelter, mental_health]
+    Under Housing First: regex detects shelter primary + food additional;
+    LLM detects shelter primary + food + mental_health additional.
+    Result: shelter primary, additional = [food, mental_health].
     """
     _reset_client()
     mock_client = MagicMock()
     mock_anthropic.Anthropic.return_value = mock_client
     mock_client.messages.create.return_value = _mock_tool_response({
-        "service_type": "food",
+        "service_type": "shelter",
         "location": "Brooklyn",
-        "additional_service_types": ["shelter", "mental_health"],
+        "additional_service_types": ["food", "mental_health"],
     })
 
     from app.services.llm_slot_extractor import extract_slots_smart
     result = extract_slots_smart(
         "I need food and shelter and someone to talk to in Brooklyn"
     )
-    assert result["service_type"] == "food"
+    assert result["service_type"] == "shelter"
     additional_types = [svc for svc, *_ in result.get("additional_services", [])]
-    assert "shelter" in additional_types
+    assert "food" in additional_types
     assert "mental_health" in additional_types
     # No duplicates
     assert len(additional_types) == len(set(additional_types))
@@ -196,21 +198,26 @@ def test_smart_merges_llm_and_regex_additional(mock_anthropic):
 @patch.dict(os.environ, {"ANTHROPIC_API_KEY": "fake-key"})
 @patch("app.llm.claude_client.anthropic")
 def test_smart_no_duplicate_primary_in_additional(mock_anthropic):
-    """Primary service_type should not appear in additional_services."""
+    """Primary service_type should not appear in additional_services.
+
+    Housing First: shelter is primary, food additional. Even if the LLM
+    includes its own primary (shelter) in additional_service_types
+    redundantly, the merge should exclude it.
+    """
     _reset_client()
     mock_client = MagicMock()
     mock_anthropic.Anthropic.return_value = mock_client
     mock_client.messages.create.return_value = _mock_tool_response({
-        "service_type": "food",
+        "service_type": "shelter",
         "location": "Brooklyn",
-        "additional_service_types": ["food", "shelter"],  # LLM includes primary
+        "additional_service_types": ["shelter", "food"],  # LLM includes primary
     })
 
     from app.services.llm_slot_extractor import extract_slots_smart
     result = extract_slots_smart("I need food and shelter in Brooklyn")
     additional_types = [svc for svc, *_ in result.get("additional_services", [])]
-    assert "food" not in additional_types  # primary excluded
-    assert "shelter" in additional_types
+    assert "shelter" not in additional_types  # primary excluded
+    assert "food" in additional_types
 
 
 @patch.dict(os.environ, {"ANTHROPIC_API_KEY": "fake-key"})

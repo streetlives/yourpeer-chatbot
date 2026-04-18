@@ -43,8 +43,21 @@ def _display_location(location: str) -> str:
 
     Handles NYC-specific casing (SoHo, DUMBO, NoHo) and falls
     back to title case for standard names.
+
+    PII redaction markers ([ADDRESS], [PHONE], [NAME], [EMAIL], [SSN])
+    pass through unchanged. They're already in canonical UI form
+    (all-caps inside square brackets) — .title() would corrupt them
+    to "[Address]", "[Phone]", etc., which breaks the downstream
+    convention that callers grep for the exact uppercase token.
     """
     if not location:
+        return location
+    # Redaction markers: any [ALLCAPS] token. Preserve as-is.
+    if (
+        location.startswith("[")
+        and location.endswith("]")
+        and location[1:-1].isupper()
+    ):
         return location
     override = _LOCATION_DISPLAY_OVERRIDES.get(location.lower())
     if override:

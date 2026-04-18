@@ -427,8 +427,12 @@ def build_capability_context() -> str:
         "mental_health": "Mental health: counseling, therapy, substance use, AA/NA",
         "legal": "Legal help: immigration, eviction, asylum, legal aid",
         "employment": "Jobs: employment programs, job training, resume help",
-        "housing_assistance": "Housing help: rental assistance, Section 8, eviction prevention, NYCHA",
-        "other": "Other: benefits (SNAP/EBT/Medicaid), IDs, drop-in centers, free phones",
+        # "housing_assistance" retired April 15, 2026 — rental assistance,
+        # Section 8, NYCHA, eviction prevention, etc. are now surfaced via
+        # the 'other' category (see semantic_routes.py). The 'other' label
+        # below was updated to mention housing help so users searching for
+        # rental assistance still see it listed among supported categories.
+        "other": "Other: benefits (SNAP/EBT/Medicaid), IDs, rental assistance, Section 8, NYCHA, drop-in centers, free phones",
     }
     for cat in service_cats:
         label = _SERVICE_LABELS.get(cat, cat)

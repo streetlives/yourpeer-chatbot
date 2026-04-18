@@ -112,9 +112,21 @@ def _handle_frustration(session_id, redacted_message, existing, tone, request_id
                 {"label": "🔄 Start over", "value": "Start over"},
             ],
         )
-    elif _has_enough and _svc and _loc:
-        # First frustration AND we have enough info — acknowledge the
-        # mistake and offer to proceed with what we already know.
+    elif _has_enough and _svc and _loc and not existing.get("_last_results"):
+        # First frustration AND we have enough info AND no results yet —
+        # the frustration is likely caused by the bot re-asking for info
+        # we already have. Acknowledge the mistake and offer to proceed
+        # with what we know.
+        #
+        # IMPORTANT: this branch must NOT fire when _last_results exists.
+        # If the user has already seen results, the frustration is about
+        # the RESULTS being unhelpful — the "I already have what I need"
+        # reframe becomes wrong (we already searched; re-confirming just
+        # re-runs the same search that produced the unhelpful results).
+        # Post-results frustration falls through to the else branch
+        # instead, which offers the navigator/311 escalation. See the
+        # test_second_frustration_is_shorter / test_eval_frustration_loop
+        # regression that this guard resolves.
         svc_label = _SERVICE_LABELS.get(_svc, _svc)
         loc_label = _loc if _loc != NEAR_ME_SENTINEL else "your area"
         result = _empty_reply(
@@ -141,6 +153,29 @@ def _handle_frustration(session_id, redacted_message, existing, tone, request_id
                 {"label": "🤝 Peer navigator", "value": "Connect with peer navigator"},
             ],
         )
+
+    # --- Filter-aware post-routing cleanup ---
+    # The routing branches above have already made their decisions using
+    # whatever _last_results was set. Now apply the filter-pipeline design
+    # contract: if a filter was active, clear only the filter state but
+    # PRESERVE _last_results so the user can recover via "show all";
+    # otherwise clear _last_results and pagination entirely.
+    #
+    # This reconciles Bug 4a (which needs _last_results visible to the
+    # handler's routing logic above) with test_filter_pipeline's state
+    # expectations (which require _last_results to be gone afterward
+    # when there was no filter).
+    if existing.get("_filtered_results"):
+        existing.pop("_filtered_results", None)
+        existing.pop("_filter_phrase", None)
+        # _last_results preserved — "show all" will re-display the unfiltered set
+        # Reset displayed_count so a subsequent "show more" starts fresh
+        existing["_displayed_count"] = 0
+    else:
+        existing.pop("_last_results", None)
+        existing.pop("_displayed_count", None)
+    save_session_slots(session_id, existing)
+
     _log_turn(session_id, redacted_message, result, "frustration", request_id=request_id, tone=tone)
     return result
 

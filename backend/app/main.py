@@ -145,17 +145,40 @@ app.include_router(chat_router)
 app.include_router(admin_router)
 
 
+@app.get("/api/health/live")
+def health_live():
+    """Liveness probe — confirms the process is running.
+
+    Intentionally does NOT hit the database, the LLM API, or the
+    semantic router. Returns 200 as long as the HTTP handler can
+    execute. Intended for Render's platform probe, which needs a
+    tight-timeout response and treats non-200 as "restart the
+    service." Coupling that probe to the DB caused a brief DB stall
+    to bounce the whole service (April 17, 2026 incident).
+
+    For a deep check — database reachability, LLM health, router
+    status — use /api/health.
+    """
+    return {"status": "alive", "uptime_seconds": round(time.time() - _start_time)}
+
+
 @app.get("/api/health")
 def health(request: Request):
-    """Readiness check — verifies each dependency independently.
+    """Deep readiness check — verifies each dependency independently.
 
-    Returns 200 when the database is reachable (required for search results).
-    Returns 503 when the database is unreachable.
+    Hits the database, Anthropic API, and semantic router. Intended
+    for monitoring dashboards, admin tooling, and on-demand checks.
+    Not suitable for Render's platform probe — a transient DB stall
+    here will cause Render to consider the service unhealthy and
+    restart it. Render should probe /api/health/live instead.
 
-    Detailed diagnostics (latency, model info, uptime) are only included
-    when the admin API key is provided via Authorization header. Without
-    auth, returns only the status — enough for Render's readiness probe
-    without exposing internal architecture details.
+    Returns 200 when the database is reachable (required for search
+    results). Returns 503 when the database is unreachable.
+
+    Detailed diagnostics (latency, model info, uptime) are only
+    included when the admin API key is provided via Authorization
+    header. Without auth, returns only the status — enough for
+    monitoring without exposing internal architecture details.
     """
     from datetime import datetime, timezone
 

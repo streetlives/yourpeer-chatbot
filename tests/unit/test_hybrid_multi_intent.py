@@ -238,10 +238,6 @@ class TestClassifyAllServices:
         dim = 16
         # A message very close to medical only
         med_vec = _make_unit_vec(dim, 2)
-        with patch.object(
-            type(classify_all_services), "__module__", create=True
-        ):
-            pass
         matches = classify_all_services(
             "I need to see a doctor",
             threshold=0.3,
@@ -591,7 +587,7 @@ class TestNeedBasedPriority:
         Tier 1: shelter, medical (life/safety)
         Tier 2: food, mental_health (survival + behavioral health)
         Tier 3: clothing, personal_care (physiological, non-life-threatening)
-        Tier 4: housing_assistance, legal, employment (stability)
+        Tier 4: legal, employment (stability)
         Tier 5: other (support services)
     """
 
@@ -667,7 +663,7 @@ class TestNeedBasedPriority:
             "shelter": 1, "medical": 1,
             "food": 2, "mental_health": 2,
             "clothing": 3, "personal_care": 3,
-            "housing_assistance": 4, "legal": 4, "employment": 4,
+            "legal": 4, "employment": 4,
             "other": 5,
         }
         for cat in all_categories:

@@ -1164,11 +1164,15 @@ def test_extract_all_no_service():
 
 
 def test_extract_slots_additional_services():
-    """extract_slots should return primary + additional_services."""
+    """extract_slots should return primary + additional_services.
+
+    Housing First priority: shelter (tier 1) wins primary over food
+    (tier 2) even though food is mentioned first.
+    """
     slots = extract_slots("I need food and shelter in Brooklyn")
-    assert slots["service_type"] == "food"
+    assert slots["service_type"] == "shelter"
     assert len(slots["additional_services"]) == 1
-    assert slots["additional_services"][0][0] == "shelter"
+    assert slots["additional_services"][0][0] == "food"
     assert slots["location"] is not None
 
 
@@ -1232,15 +1236,37 @@ def test_extract_all_find_scans_forward():
 
 
 def test_extract_all_text_position_order():
-    """Results should be ordered by text position, not keyword length."""
+    """Within a priority tier, results are ordered by text position.
+
+    After _SERVICE_NEED_PRIORITY was introduced (Housing First, April 2026),
+    the primary sort key is the priority tier; text position is the
+    tiebreaker WITHIN a tier. Food (tier 2) and shelter (tier 1) are in
+    different tiers, so order depends on priority — see
+    test_extract_all_cross_tier_priority below. Use medical+shelter
+    (both tier 1) here to test the position tiebreak.
+    """
     from app.services.slot_extractor import _extract_all_service_types
-    results = _extract_all_service_types("I need food and shelter")
-    assert results[0][0] == "food", f"Expected food first, got {results[0][0]}"
+    results = _extract_all_service_types("I need a doctor and a bed tonight")
+    # Both tier 1. Medical mentioned first → medical primary.
+    assert results[0][0] == "medical", f"Expected medical first, got {results[0][0]}"
     assert results[1][0] == "shelter", f"Expected shelter second, got {results[1][0]}"
 
 
+def test_extract_all_cross_tier_priority():
+    """Across tiers, priority wins regardless of text position.
+
+    Housing First: shelter (tier 1) beats food (tier 2) even if food is
+    mentioned first. See _SERVICE_NEED_PRIORITY in slot_extractor.py.
+    """
+    from app.services.slot_extractor import _extract_all_service_types
+    # Food first in text, but shelter (tier 1) wins the priority.
+    results = _extract_all_service_types("I need food and shelter")
+    assert results[0][0] == "shelter", f"Expected shelter first (priority), got {results[0][0]}"
+    assert results[1][0] == "food", f"Expected food second, got {results[1][0]}"
+
+
 def test_extract_all_text_position_order_reversed():
-    """Reversed order in text should produce reversed results."""
+    """Reversed mention order still respects priority (shelter wins)."""
     from app.services.slot_extractor import _extract_all_service_types
     results = _extract_all_service_types("I need shelter and food")
     assert results[0][0] == "shelter", f"Expected shelter first, got {results[0][0]}"
@@ -1248,15 +1274,21 @@ def test_extract_all_text_position_order_reversed():
 
 
 def test_extract_all_word_boundary_ordered():
-    """Word-boundary fallback matches should also be sorted by text position."""
+    """Word-boundary fallback matches are picked up and sorted correctly.
+
+    "bed" uses the word-boundary pattern (collision-prone keyword). This
+    test verifies two things: (a) "bed" is detected as shelter, and
+    (b) the result is sorted by _SERVICE_NEED_PRIORITY — shelter (tier 1)
+    wins over food (tier 2) regardless of mention order.
+    """
     from app.services.slot_extractor import _extract_all_service_types
-    # "bed" uses word boundary pattern (collision-prone keyword)
-    # If "bed" appears after "food", food should be first
     results = _extract_all_service_types("I need food and a bed")
     types = [r[0] for r in results]
-    if "shelter" in types and "food" in types:
-        assert types.index("food") < types.index("shelter"), \
-            f"food should come before shelter (bed), got {results}"
+    assert "shelter" in types, f"'bed' should match shelter, got {types}"
+    assert "food" in types, f"'food' should match, got {types}"
+    # Housing First: shelter (tier 1) primary over food (tier 2)
+    assert types.index("shelter") < types.index("food"), \
+        f"shelter (tier 1) should rank above food (tier 2), got {results}"
 
 
 # -----------------------------------------------------------------------

@@ -137,10 +137,18 @@ class TestRouteDefinitions:
     """Verify route structure, coverage, and quality."""
 
     def test_service_routes_exist(self):
-        """All expected service types have route definitions."""
+        """All expected service types have route definitions.
+
+        Note: housing_assistance was retired by the April 15, 2026 audit
+        (collapsed into 'other' + description filter — see
+        test_audit_regression.py::TestHousingAssistanceRemoval). If you
+        re-add it here, also re-add the route in semantic_routes.py,
+        the SERVICE_KEYWORDS cluster, and the template redirect in
+        query_executor.SLOT_SERVICE_TO_TEMPLATE.
+        """
         expected = {
             "medical", "shelter", "food", "clothing", "personal_care",
-            "mental_health", "legal", "employment", "housing_assistance",
+            "mental_health", "legal", "employment",
             "other",
         }
         assert expected == set(SERVICE_ROUTES.keys())
@@ -875,13 +883,6 @@ class TestPerRouteThreshold:
         initialize_with_routes(model2, {"other": ["other utterance"]})
         result = classify_service("query text")
         assert result is None  # 0.76 < 0.78
-
-    def test_housing_assistance_elevated_threshold(self):
-        """housing_assistance requires 0.78, higher than default 0.75."""
-        from app.services.semantic_router import ROUTE_THRESHOLDS
-
-        assert "housing_assistance" in ROUTE_THRESHOLDS
-        assert ROUTE_THRESHOLDS["housing_assistance"] > DEFAULT_SERVICE_THRESHOLD
 
 
 # ---------------------------------------------------------------------------

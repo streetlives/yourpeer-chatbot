@@ -187,7 +187,7 @@ class TestPromptBuilderIsolation:
     @pytest.mark.parametrize("service_type", [
         "food", "shelter", "clothing", "personal_care", "medical",
         "mental_health", "legal", "employment", "benefits",
-        "housing_assistance", "other",
+        "other",
     ])
     def test_conversational_prompt_never_leaks_service_type_as_slot(self, service_type):
         """Service type must never appear in slot-context format."""

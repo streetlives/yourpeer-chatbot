@@ -64,6 +64,11 @@ try:
     from sentence_transformers import SentenceTransformer
     _SENTENCE_TRANSFORMERS_AVAILABLE = True
 except ImportError:
+    # Keep the name defined so callers (and tests using
+    # mock.patch("...SentenceTransformer", ...)) can reference it.
+    # The _SENTENCE_TRANSFORMERS_AVAILABLE guard prevents this None
+    # from ever being called at runtime.
+    SentenceTransformer = None
     logger.warning(
         "sentence-transformers not installed — semantic routing (Tier 2) "
         "disabled. Install with: pip install sentence-transformers"
@@ -92,9 +97,6 @@ DEFAULT_POPULATION_THRESHOLD = 0.70
 # Per-route threshold overrides for categories that are semantically
 # close to each other. These can be tuned using eval data.
 ROUTE_THRESHOLDS: dict[str, float] = {
-    # shelter and housing_assistance are close — require higher confidence
-    # to avoid routing "I need help with rent" to shelter
-    "housing_assistance": 0.78,
     # "other" is a broad catch-all — require higher confidence to prevent
     # false positives from nonsense/adversarial inputs
     "other": 0.78,
@@ -419,6 +421,16 @@ def classify_all_services(
         matches.sort(key=lambda m: m.confidence, reverse=True)
 
         # --- Population matching (same as classify_service) ---
+        # When the caller overrides the service threshold (e.g. threshold=0.3
+        # in a loose-match context), apply the same override floor to the
+        # population threshold so population detection stays in sync with
+        # service sensitivity. Without this, a call that widens services
+        # still uses the strict 0.70 population default — asymmetry that
+        # surprises callers (see test_population_attached_to_all_matches).
+        effective_pop_threshold = DEFAULT_POPULATION_THRESHOLD
+        if threshold is not None and threshold < DEFAULT_POPULATION_THRESHOLD:
+            effective_pop_threshold = threshold
+
         best_pop = None
         best_pop_score = 0.0
         for route_name, route_embeddings in _route_embeddings.items():
@@ -426,7 +438,7 @@ def classify_all_services(
                 continue
             similarities = np.dot(route_embeddings, query_embedding)
             max_sim = float(np.max(similarities))
-            if max_sim >= DEFAULT_POPULATION_THRESHOLD and max_sim > best_pop_score:
+            if max_sim >= effective_pop_threshold and max_sim > best_pop_score:
                 best_pop = route_name.replace("pop_", "")
                 best_pop_score = max_sim
 

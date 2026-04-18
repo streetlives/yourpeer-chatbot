@@ -106,14 +106,18 @@ class TestFix1MentalHealthKeywords:
                 f"'{phrase}' → expected {expected}, got {slots['service_type']}"
 
     def test_struggling_with_shelter_multi_intent(self):
-        """'struggling and need food and shelter' → food primary, shelter queued.
-        NOT mental_health."""
+        """'struggling and need food and shelter' → shelter primary (Housing
+        First: shelter tier 1 > food tier 2), food queued, NOT mental_health.
+        The 'NOT mental_health' invariant is the key behavior this test
+        guards; the food vs shelter primary just reflects priority."""
         slots = extract_slots("I'm struggling and need food and shelter in Brooklyn")
-        assert slots["service_type"] == "food", \
-            f"Expected food as primary, got {slots['service_type']}"
+        assert slots["service_type"] == "shelter", \
+            f"Expected shelter as primary (Housing First), got {slots['service_type']}"
         additional = slots.get("additional_services", [])
         additional_types = [s[0] for s in additional]
-        assert "shelter" in additional_types
+        assert "food" in additional_types
+        # Critical: 'struggling' must NOT trigger mental_health classification
+        assert "mental_health" not in [slots["service_type"]] + additional_types
 
 
 # ===================================================================

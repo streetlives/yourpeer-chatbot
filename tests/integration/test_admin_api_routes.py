@@ -437,10 +437,18 @@ def test_admin_eval_run_has_stricter_limit():
 # -----------------------------------------------------------------------
 
 def test_health_endpoint():
-    """GET /api/health should return ok."""
-    response = client.get("/api/health")
+    """GET /api/health/live should return status=alive.
+
+    Uses the liveness probe rather than the deep readiness check so
+    the sanity test doesn't require a live DATABASE_URL. The deep
+    /api/health endpoint is for dashboards and intentionally returns
+    503 when the DB is unreachable — not the signal we want here.
+    """
+    response = client.get("/api/health/live")
     assert response.status_code == 200
-    assert response.json() == {"status": "ok"}
+    body = response.json()
+    assert body["status"] == "alive"
+    assert "uptime_seconds" in body
 
 
 # -----------------------------------------------------------------------

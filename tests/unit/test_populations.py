@@ -667,17 +667,16 @@ class TestDisabledServiceKeywordOverlap:
         assert "disabled" in slots["_populations"]
 
     def test_disabled_veteran_food(self):
-        """'disabled veteran, need food' — 'disabled' is first in text so
-        it becomes primary service_type=other. 'food' goes to additional.
-        Both populations still extract correctly."""
+        """'disabled veteran, need food' — populations extract correctly
+        alongside the service. With _SERVICE_NEED_PRIORITY (Housing First),
+        food (tier 2) wins primary over 'other' (tier 5) that 'disabled'
+        as a keyword would set, regardless of text position. The key
+        invariant here is that both populations still surface."""
         slots = extract_slots("disabled veteran, need food in Brooklyn")
-        # 'disabled' appears first → primary service is 'other'
-        assert slots["service_type"] == "other"
+        # Priority: food (tier 2) beats other (tier 5)
+        assert slots["service_type"] == "food"
         assert "disabled" in slots["_populations"]
         assert "veteran" in slots["_populations"]
-        # 'food' captured in additional_services
-        additional_types = [s[0] for s in slots.get("additional_services", [])]
-        assert "food" in additional_types
 
     def test_reentry_employment_overlap(self):
         """'reentry' keywords appear in both SERVICE_KEYWORDS['other'] and

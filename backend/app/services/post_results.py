@@ -445,6 +445,13 @@ def _filter_by_colocated(cards: list[dict], message: str) -> tuple[list[dict], s
         m = re.search(r"\bwith\s+(food|shelters?|showers?|clothing|health|legal|laundry|mail)\b", message, re.I)
     if m:
         service_label = m.group(1).strip()
+        # Singularize plural captures — user writes "showers" but
+        # also_available entries use the singular form "Shower".
+        # Guard: require >3 chars and non-"ss" ending so "gas" and
+        # "business" (defensive) don't get mangled.
+        lower = service_label.lower()
+        if lower.endswith("s") and len(lower) > 3 and not lower.endswith("ss"):
+            service_label = service_label[:-1]
         matched = [c for c in cards if _also_has(c, service_label)]
         return matched, f"also has {service_label}"
     return [], ""
@@ -524,6 +531,58 @@ def classify_post_results_question(message: str) -> Optional[dict]:
     )
     if _NEW_REQUEST_RE.search(lower):
         return None
+
+    # --- Tier 1a: Unambiguous refinement phrases that NEVER combine with
+    # free/open signals (so they can run before compound detection) ---
+    # Moved ABOVE _extract_service_index, _SPECIFIC_MORE_RE, filter/field
+    # branches, and _RESULT_REFERENCE_RE because refinement is the most
+    # specific classification. Without this precedence: "more like those"
+    # would match "those" in _RESULT_REFERENCE_RE → unknown_about_results;
+    # "similar to the first one" would match "the first" in index extraction
+    # → specific_index; "refine the results" would match "the results" in
+    # _RESULT_REFERENCE_RE. None of those downstream handlers is more
+    # specific than "this is a refinement."
+    #
+    # "ones like/that/with/for" is deliberately EXCLUDED from this regex
+    # and checked later (Tier 1b, below) — those phrases CAN combine with
+    # free/open signals ("Free ones that speak Spanish" is a compound
+    # filter, not pure refinement) and must run after compound detection.
+    _REFINE_RE = re.compile(
+        r"\b(more like that|more like those|more like this"
+        r"|locate more|locate similar"
+        r"|similar to"
+        r"|(?:filter|narrow|refine)(?:ing)?\b"
+        r"|only.*(?:is|are) relevant"
+        # Refinement patterns requiring post-results context to disambiguate.
+        # Safe here because this function is only invoked in that context.
+        r"|just the \w+"                      # "Just the soup kitchens", "Just the intake"
+        r"|only \w+"                          # "Only intake services"
+        r"|the (?:\w+\s+){0,3}intake\b"       # "the adult families intake" (≤3 word gap)
+        r"|the \w+(?:\s+\w+){0,2}\s+ones\b"   # "The intake ones" (plural only — "the first one" is an index reference)
+        r")\b", re.I
+    )
+    if _REFINE_RE.search(lower):
+        return {"type": "filter_subcategory", "raw_phrase": _extract_raw_phrase(message)}
+
+    # --- Targeted negation refinement (regex — only unambiguous signals) ---
+    # Most negation messages ("not the DHS ones", "without referrals") are
+    # natural language best handled by the LLM tier below. Only the patterns
+    # that are NEVER ambiguous in a post-results context go here.
+    #
+    # FIX: the previous pattern used `\w` (single character) followed by `\b`,
+    # which failed any multi-word target — "exclude the" matched `exclude t`
+    # then \b needed a boundary before `h` (word char) and failed. Using
+    # `\w+` matches the full next word.
+    _NEGATION_REFINE_RE = re.compile(
+        r"\b(exclude \w+|anything (?:but|except) \w+|everything (?:but|except) \w+)\b",
+        re.I,
+    )
+    if _NEGATION_REFINE_RE.search(lower):
+        return {
+            "type": "filter_subcategory",
+            "raw_phrase": _extract_raw_phrase(message),
+            "_is_negation": True,
+        }
 
     # Specific service by index: "the first one", "#2", "number 3"
     idx = _extract_service_index(lower)
@@ -606,42 +665,20 @@ def classify_post_results_question(message: str) -> Optional[dict]:
     if _ASK_WEBSITE_RE.search(lower):
         return {"type": "ask_field", "field": "website"}
 
+    # --- Tier 1b: "ones like/that/with/for" refinement ---
+    # These phrases are refinement on their own ("ones that accept walk-ins")
+    # but compound when paired with free/open ("Free ones that speak Spanish").
+    # Running AFTER the compound check above ensures the compound case wins
+    # when applicable, and falls through here otherwise.
+    _ONES_REFINE_RE = re.compile(
+        r"\b(ones like|ones that|ones with|ones for)\b", re.I
+    )
+    if _ONES_REFINE_RE.search(lower):
+        return {"type": "filter_subcategory", "raw_phrase": _extract_raw_phrase(message)}
+
     # General reference to results but we don't understand the question
     if _RESULT_REFERENCE_RE.search(lower):
         return {"type": "unknown_about_results"}
-
-    # --- Tier 1: Unambiguous refinement (regex, <1ms) ---
-    # These signals ONLY appear in refinement context — they inherently
-    # reference the displayed results. No false positives possible.
-    #
-    # IMPORTANT: patterns like "just show", "only the", "the X intake"
-    # are intentionally NOT here — they're ambiguous between refinement
-    # and new request depending on what follows. Those go to Tier 2 (LLM).
-    _REFINE_RE = re.compile(
-        r"\b(more like that|more like those|more like this"
-        r"|locate more|locate similar"
-        r"|similar to"
-        r"|ones like|ones that|ones with|ones for"
-        r"|(?:filter|narrow|refine)(?:ing)?\b"
-        r"|only.*(?:is|are) relevant)\b", re.I
-    )
-    if _REFINE_RE.search(lower):
-        return {"type": "filter_subcategory", "raw_phrase": _extract_raw_phrase(message)}
-
-    # --- Targeted negation refinement (regex — only unambiguous signals) ---
-    # Most negation messages ("not the DHS ones", "without referrals") are
-    # natural language best handled by the LLM tier below. Only the patterns
-    # that are NEVER ambiguous in a post-results context go here.
-    _NEGATION_REFINE_RE = re.compile(
-        r"\b(exclude \w|anything (?:but|except) \w|everything (?:but|except) \w)\b",
-        re.I,
-    )
-    if _NEGATION_REFINE_RE.search(lower):
-        return {
-            "type": "filter_subcategory",
-            "raw_phrase": _extract_raw_phrase(message),
-            "_is_negation": True,
-        }
 
     # --- Tier 2: Ambiguous intent — LLM classification (~100ms) ---
     # Messages that MIGHT be refinements or MIGHT be new requests.
@@ -1197,8 +1234,8 @@ def _handle_filter_subcategory(
         return {
             "response": (
                 f"You've only seen {displayed_count} result"
-                f"{'s' if displayed_count != 1 else ''} so far, so there "
-                f"isn't much to filter. You can tap on the card"
+                f"{'s' if displayed_count != 1 else ''} so far, so there's "
+                f"not much to filter. You can tap on the card"
                 f"{'s' if displayed_count != 1 else ''} for more details, "
                 f"or I can try a new search."
             ),
@@ -1401,15 +1438,31 @@ def _handle_filter_subcategory(
                         f"'{display_phrase}':"
                     )
 
+        # Build quick replies: show-more first if the filter overflows the page,
+        # then the standard Show all / Navigator / New search trio.
+        remaining = filter_count - len(display)
+        quick_replies = []
+        if remaining > 0:
+            quick_replies.append({
+                "label": f"📋 Show {remaining} more result{'s' if remaining != 1 else ''}",
+                "value": "Show more results",
+            })
+        quick_replies.extend([_SHOW_ALL_QR, _NAVIGATOR_QR, _NEW_SEARCH_QR])
+
         return {
             "response": response,
             "services": display,
-            "quick_replies": [_SHOW_ALL_QR, _NAVIGATOR_QR, _NEW_SEARCH_QR],
+            "quick_replies": quick_replies,
             "category": "post_results_filter",
-            # Metadata for chatbot.py to store _filtered_results
+            # Metadata for the post-results handler to persist in session.
+            # _full_filtered carries the complete filter match set — larger
+            # than `services` when filter_count > _DISPLAY_PAGE_SIZE — so
+            # subsequent "show more" pagination pages through the filtered
+            # set rather than falling back to _last_results.
             "_filter_matched": True,
             "_filter_tier": filter_tier,
             "_filter_phrase": raw_phrase,
+            "_full_filtered": matched,
         }
 
     # --- No matches ---

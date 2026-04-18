@@ -213,7 +213,11 @@ def test_service_card_serialization():
     assert "service_name" in data
     assert "phone" in data
     assert "organization" in data  # None but present
-    assert len(data) == 21  # 17 original + 5 new optional fields
+    # Derive from the model itself so adding optional fields to
+    # ServiceCard doesn't require re-editing this hardcoded count.
+    # Previous magic numbers: 17 original → 21 (+4 optional fields) →
+    # 24 (+latitude, +longitude, +service_taxonomies).
+    assert len(data) == len(ServiceCard.model_fields)
 
 
 # -----------------------------------------------------------------------

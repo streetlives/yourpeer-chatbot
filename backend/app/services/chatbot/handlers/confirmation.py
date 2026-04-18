@@ -515,8 +515,13 @@ def _handle_post_pending_confirmation(session_id, message, redacted_message, exi
         )
     else:
         pending_extracted = extract_slots(message)
-    pending_has_new = any(v is not None and v != [] for k, v in pending_extracted.items()
-                          if k not in ("additional_services", "_populations", "_contradiction"))
+    # no_requirements is always present as False when not set — exclude it
+    # so the default value doesn't falsely trigger the pending_has_new branch.
+    pending_has_new = any(
+        v is not None and v != [] and v is not False
+        for k, v in pending_extracted.items()
+        if k not in ("additional_services", "_populations", "_contradiction", "no_requirements")
+    )
 
     # Path 1+2: something changed or filled
     if pending_has_new:
@@ -561,7 +566,18 @@ def _handle_post_pending_confirmation(session_id, message, redacted_message, exi
         # FILLS (None → new) — e.g. crisis step-down "Yes, search" → location
         # follow-up → user provides location. They already said yes; they're
         # just providing the missing piece, not requesting a new search.
-        if not changed:
+        #
+        # RESTRICTED to REQUIRED slot fills (service_type or location). Optional
+        # demographic slots (age, _gender, family_status) falling alone during
+        # pending_confirmation should re-nudge, NOT auto-execute, because the
+        # user never said yes — they just added a qualifier to a "sound good?"
+        # prompt that is still outstanding. The contradiction-auto-execute
+        # regression (test_new_slot_no_contradiction_reconfirms) covers this.
+        required_fill = (
+            pending_extracted.get("service_type") is not None
+            or pending_extracted.get("location") is not None
+        )
+        if not changed and required_fill:
             merged_pending = merge_slots(existing, pending_extracted)
             geolocation_fill = (
                 merged_pending.get("location") == NEAR_ME_SENTINEL
@@ -583,7 +599,12 @@ def _handle_post_pending_confirmation(session_id, message, redacted_message, exi
                 return result
 
     # Path 3: nothing new — re-nudge. Restore the pending flag so the
-    # next message is interpreted as a confirmation response.
+    # next message is interpreted as a confirmation response. Merge any
+    # pending_extracted slots (typically optional demographics like age,
+    # family_status, _gender) into existing first so the info isn't lost
+    # — it'll be used when the user eventually confirms.
+    if pending_has_new:
+        existing = merge_slots(existing, pending_extracted)
     existing["_pending_confirmation"] = True
     save_session_slots(session_id, existing)
 

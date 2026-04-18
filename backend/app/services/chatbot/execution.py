@@ -514,12 +514,25 @@ def _build_success_response(
         combined = " and ".join(all_labels) if len(all_labels) <= 2 else (
             ", ".join(all_labels[:-1]) + ", and " + all_labels[-1]
         )
-        bot_response = (
-            f"I found {total_count} location(s) that offer both "
-            f"{combined.lower()}{qualifier}:"
-        )
+        if total_count > main_displayed_count:
+            bot_response = (
+                f"I found {total_count} location(s) that offer both "
+                f"{combined.lower()}{qualifier} — showing the first "
+                f"{main_displayed_count}:"
+            )
+        else:
+            bot_response = (
+                f"I found {total_count} location(s) that offer both "
+                f"{combined.lower()}{qualifier}:"
+            )
     else:
-        bot_response = f"I found {total_count} option(s) for you{qualifier}:"
+        if total_count > main_displayed_count:
+            bot_response = (
+                f"I found {total_count} option(s) for you{qualifier} — "
+                f"showing the first {main_displayed_count}:"
+            )
+        else:
+            bot_response = f"I found {total_count} option(s) for you{qualifier}:"
 
     # Population-critical fallback (shelter only). When the user belongs
     # to a rare population (LGBTQ, youth, senior, veteran) and the
