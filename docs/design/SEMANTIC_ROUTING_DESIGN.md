@@ -77,7 +77,7 @@ The model was fine-tuned on 1 billion+ sentence pairs for semantic similarity ta
 
 Higher-quality embeddings (1536 dimensions) but requires an API call for every message. At $0.02 per million tokens, cost is negligible (~$0.50/month at YourPeer's volume), but it introduces a network dependency, ~50ms latency per call, and sends user messages to a third party.
 
-**Why not:** YourPeer handles sensitive population data (homelessness, DV, reentry). Sending messages to an external API — even for embedding, not generation — adds privacy risk and a single point of failure. The quality difference between MiniLM (384d) and OpenAI (1536d) is irrelevant for routing across 10 categories; both achieve >95% precision at this granularity.
+**Why not:** YourPeer handles sensitive population data (homelessness, DV, reentry). Sending messages to an external API — even for embedding, not generation — adds privacy risk and a single point of failure. The quality difference between MiniLM (384d) and OpenAI (1536d) is irrelevant for routing across 9 categories; both achieve >95% precision at this granularity.
 
 #### Option C: Fine-tuned DistilBERT classifier
 
@@ -266,7 +266,7 @@ POPULATION_ROUTES = {
 
 ### Initialization (One-Time)
 
-At server startup, all route utterances are pre-embedded and stored in memory. This takes ~1 second and produces ~200 vectors (16 routes × ~13 utterances each):
+At server startup, all route utterances are pre-embedded and stored in memory. This takes ~1 second and produces ~200 vectors (15 routes × ~13 utterances each):
 
 ```python
 # app/services/semantic_router.py
@@ -351,7 +351,7 @@ def classify_all_services(message: str, threshold: float = None,
 |---|---|---|
 | Model load + pre-embed routes | ~1-2 seconds | Once at startup |
 | Embed user message (384d) | ~2-5ms | Every Tier 2 call |
-| Cosine similarity (16 routes × ~13 embeddings) | <0.1ms | Every Tier 2 call |
+| Cosine similarity (15 routes × ~13 embeddings) | <0.1ms | Every Tier 2 call |
 | **Total per message** | **~2-5ms** | **~15% of messages** |
 | Memory footprint | ~100 MB | Constant |
 
@@ -394,7 +394,7 @@ With the semantic layer handling generalization, the regex layer can be reduced 
 
 ### Short Term (Pilot)
 
-Define 10 service routes + 6 population routes with 10-15 utterances each from the sample queries document, field experience, and eval scenarios. This gives immediate coverage for novel phrasings without keyword patching.
+Define 9 service routes + 6 population routes with 10-15 utterances each from the sample queries document, field experience, and eval scenarios. This gives immediate coverage for novel phrasings without keyword patching.
 
 ### Medium Term (Post-Pilot)
 
@@ -440,7 +440,7 @@ As YourPeer grows beyond NYC or adds more service categories:
 
 | Phase | Work | Effort | Dependencies |
 |---|---|---|---|
-| 1. Route definitions | Write 10-15 utterances for each of 16 routes | 2-3 hours | Sample queries doc, eval scenarios |
+| 1. Route definitions | Write 10-15 utterances for each of 15 routes | 2-3 hours | Sample queries doc, eval scenarios |
 | 2. Core module | `semantic_router.py`: model load, embed, classify | 1-2 hours | `pip install sentence-transformers` |
 | 3. Integration | Insert between regex and LLM in `extract_slots_smart()` | 1 hour | Phase 2 |
 | 4. Testing | Unit tests: each route with known matches and non-matches | 2 hours | Phase 3 |

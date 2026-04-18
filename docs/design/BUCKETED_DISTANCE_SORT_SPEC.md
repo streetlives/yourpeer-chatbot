@@ -127,7 +127,7 @@ _DISTANCE_TIEBREAK = (
 )
 ```
 
-In the ORDER BY builder (~line 940):
+In the ORDER BY builder (`_BASE_ORDER_PARTS` and surrounding logic in `backend/app/rag/query_templates.py`):
 
 ```python
 # 2. Distance (when proximity search is active)

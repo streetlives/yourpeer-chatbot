@@ -214,7 +214,7 @@ Sets `_last_action = "frustration"` so "yes" connects to a peer navigator.
 
 ### Emotional
 
-Follows the **Acknowledge-Validate-Redirect (AVR)** pattern established in the clinical chatbot literature (see [Emotional Handling Design](#emotional-handling-design) below). Uses a **static-first approach** — the LLM is NOT called for emotional messages, because it frequently steers toward service-finding mode despite prompt instructions. Instead, `_pick_emotional_response(message)` selects from 6 emotion-specific static responses keyed by detected emotion:
+Follows the **Acknowledge-Validate-Redirect (AVR)** pattern established in the clinical chatbot literature (see [Emotional Handling Design](#emotional-handling-design) below). Uses a **static-first approach** — the LLM is NOT called for emotional messages, because it frequently steers toward service-finding mode despite prompt instructions. Instead, `_pick_emotional_response(message)` selects from 9 emotion-specific static responses keyed by detected emotion:
 
 | Emotion | Trigger words | Response focus |
 |---|---|---|
@@ -280,7 +280,7 @@ Extracts structured slots (service type, service detail, location, age, urgency,
 
 **Service flow continuation:** When a user already has a `service_type` in session and their new message extracts fresh slot data (location, age, family_status, etc.) but isn't classified as a "service" message by the classifier, the system treats it as a continuation of the service flow rather than falling through to the LLM. This handles replies like "near me", "close by", "I'm 25", or "with my kids" to follow-up questions — messages that contain slot data but no service keyword. Without this, these messages would route to the general conversation handler and the user would lose their search context.
 
-**Narrative extraction:** Long messages (20+ words) are detected as narratives by the slot extractor and processed with urgency-aware extraction. When multiple service types are mentioned in a narrative (e.g., "I just got out of Rikers and I don't have anywhere to sleep or anything to eat"), both regex and semantic layers extract all services, including negation phrasings ("don't have anywhere to sleep" → shelter). The system prioritizes based on need-based tiers grounded in Maslow/Housing First/SAMHSA: tier 1 (shelter, medical), tier 2 (food, mental_health), tier 3 (clothing, personal_care), tier 4 (housing_assistance, legal, employment), tier 5 (other). The primary service drives the current search; additional services are queued. Regex fallback handles narrative extraction when the LLM is unavailable.
+**Narrative extraction:** Long messages (20+ words) are detected as narratives by the slot extractor and processed with urgency-aware extraction. When multiple service types are mentioned in a narrative (e.g., "I just got out of Rikers and I don't have anywhere to sleep or anything to eat"), both regex and semantic layers extract all services, including negation phrasings ("don't have anywhere to sleep" → shelter). The system prioritizes based on need-based tiers grounded in Maslow/Housing First/SAMHSA: tier 1 (shelter, medical), tier 2 (food, mental_health), tier 3 (clothing, personal_care), tier 4 (legal, employment), tier 5 (other). The primary service drives the current search; additional services are queued. Regex fallback handles narrative extraction when the LLM is unavailable. (`housing_assistance` was retired in the April 15 audit; its former keywords now route to `other`.)
 
 ### General
 
@@ -395,7 +395,7 @@ After search results are displayed, follow-up questions are answered determinist
 
 **Sort options:** Users can type "sort by recently verified" or "sort by most services" to re-sort `_last_results` in Python and return re-ordered cards. Sort is available via text input only — the quick reply button was removed to reduce visual clutter.
 
-**Pagination / show more:** Initial query fetches 25 results but displays the first 10. When undisplayed results exist, a "📋 Show N more results" quick reply is offered. "Show more", "more results", "any others", "what else" (10 patterns) return the undisplayed remainder.
+**Pagination / show more:** Initial query fetches 25 results but displays the first 5 (`_DISPLAY_PAGE_SIZE` in `chatbot/context.py`). When undisplayed results exist, a "📋 Show N more results" quick reply is offered. "Show more", "more results", "any others", "what else" (10 patterns) return the undisplayed remainder.
 
 **Day-specific hours:** When the user asks about a specific day ("are they open Saturday?"), the system detects the day name, queries `holiday_schedules` for that weekday (ISO DOW: Monday=1, Sunday=7), and returns per-service hours. Weekend queries fetch both Saturday and Sunday.
 

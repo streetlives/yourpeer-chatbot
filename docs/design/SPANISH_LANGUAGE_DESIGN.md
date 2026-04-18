@@ -22,7 +22,7 @@ The chatbot has minimal Spanish support today:
 - **Detection:** a regex (`_SPANISH_RE`) matches ~15 Spanish phrases (necesito, ayuda, comida, refugio, etc.)
 - **Acknowledgment:** when Spanish is detected with a service request, the bot prepends a bilingual note ("I can see you may prefer Spanish — lo siento, por ahora solo puedo ayudar en inglés") and processes the search in English.
 - **Spanish-only messages** (no service intent) get a full bilingual response directing the user to a peer navigator who may speak Spanish.
-- **Keywords:** only 5 Spanish service keywords exist (comida, tengo hambre, alimentos, refugio, albergue) across 2 of 10 categories.
+- **Keywords:** only 5 Spanish service keywords exist (comida, tengo hambre, alimentos, refugio, albergue) across 2 of 9 categories.
 - **Eval:** one scenario (`edge_spanish_input`) tests basic Spanish input. Scores 4.5-4.9 because the LLM handles it, not because the system does.
 - **Service data:** all database content (organization names, descriptions, addresses, hours) is in English. The `languages` table tracks which services offer Spanish-speaking staff.
 
@@ -400,7 +400,7 @@ Add a new dimension or sub-metric: `Language Consistency` — did the bot respon
 - Spanish quick-reply button labels
 - Spanish service category labels
 - Spanish LLM system prompt
-- Spanish keywords for all 10 service categories in `slot_extractor.py`
+- Spanish keywords for all 9 service categories in `slot_extractor.py`
 - Spanish confirmation/action phrase lists in `classifier.py`
 - 5-10 Spanish utterances per semantic route
 

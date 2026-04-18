@@ -1,3 +1,4 @@
+<!-- drift:ignore-file: historical audit — see the Post-Phase-3 location note in this file for current paths of body references -->
 # Feature Parity Gap — Implementation Tasks (v2)
 
 > **Status: ALL 16 GAPS IMPLEMENTED** as of April 2026. This document is retained as a historical reference for the implementation decisions made. See FEATURES.md for current feature descriptions.

@@ -382,7 +382,7 @@ These modules sit alongside the `chatbot/` package:
 
 **`phrase_lists.py`** — all the keyword and phrase lists used by the classifier, plus the quick-reply catalog, service labels, and borough-suggestion data. Adding a new phrase or quick-reply usually means editing this file, not a handler.
 
-**`crisis_detector.py`** — two-stage crisis detection: regex first (<1ms), then Claude Sonnet as the fallback. Seven crisis categories: suicide_self_harm, medical_emergency, domestic_violence, youth_runaway (Runaway Safeline, Covenant House), assault_victim (Safe Horizon), safety_concern (911/988/311 — no DV hotlines), trafficking. Fail-open: if Sonnet fails, show safety resources anyway.
+**`crisis_detector.py`** — two-stage crisis detection: regex first (<1ms), then Claude Sonnet as the fallback. Eight crisis categories: suicide_self_harm, medical_emergency, domestic_violence, youth_runaway (Runaway Safeline, Covenant House), assault_victim (Safe Horizon), safety_concern (911/988/311 — no DV hotlines), trafficking, and violence (threats to harm others, weapons). Fail-open: if Sonnet fails, show safety resources anyway.
 
 **`responses.py`** — hardcoded bot messages (greetings, emotional responses, crisis responses, warmth prefixes) and the LLM prompt builders.
 
@@ -529,7 +529,7 @@ Once you're comfortable with the architecture, these documents cover specific ar
 |---|---|---|
 | Full feature list | `docs/FEATURES.md` | Every feature organized by area — conversation, crisis, search, cards, privacy, accessibility, staff tools |
 | Chatbot behavior | `docs/CHATBOT_BEHAVIOR.md` | Routing pipeline, message categories, emotional handling, crisis step-down, LLM usage, guardrails |
-| Crisis detection | `docs/design/CRISIS_DETECTION.md` | Two-stage architecture, 7 crisis categories, fail-open policy, phrase list design |
+| Crisis detection | `docs/design/CRISIS_DETECTION.md` | Two-stage architecture, 8 crisis categories, fail-open policy, phrase list design |
 | PII handling | `docs/design/PII_REDACTION.md` | Seven detection categories, pattern details, known gaps |
 | Semantic routing | `docs/design/SEMANTIC_ROUTING_DESIGN.md` | Model selection, 3-tier cascade, route definitions, how to add new routes |
 | Multi-intent design | `docs/audits/MULTI_INTENT_PLAN.md` | How multiple services in one message are extracted, prioritized, and queued |

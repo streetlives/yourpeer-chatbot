@@ -2819,6 +2819,7 @@ Run 18 validated the phrase audit and PII redactor improvements: PII phone redac
 ## Run 20 — 2026-04-09 (142-Scenario Suite — Emotional Handler Gate + Conversational Routing + Privacy/Bot-Knowledge)
 
 **Branch:** `multi-intent`
+<!-- drift:ignore: Run 20 period commentary — this commit's emotion count (6) was accurate then; current count is 9 -->
 **Commit:** Emotional handler pre-LLM override gate (6 emotion-specific responses), conversational awareness guard, privacy FAQ intent handler, negative-preference acknowledgment, nonsense service graceful redirect
 **Runner:** `eval_llm_judge.py` v5 (142 scenarios, 20 categories) — temperature=0
 
@@ -3913,7 +3914,7 @@ New series highs: Overall (4.73), Passing rate (98.8%), Critical failures (9, lo
 
 **`peer_diabetic_insulin` investigation:** The semantic router has "I ran out of insulin" as an utterance in the medical route, and unit tests confirm it classifies correctly. The eval failure suggests the model wasn't downloaded before the eval ran. Fix: add a pre-warm step to the eval runner that calls `semantic_router.initialize()` before starting scenarios. Also investigate why "Yes, search" didn't trigger confirmation handling.
 
-**`multiturn_change_mind` contradiction detection:** This has been stable at 2.50 for three runs. Requires a contradiction detector in the slot merger — when a user says "actually, shelter" while the session has `service_type=food`, the merger should overwrite rather than preserve the existing value. This is an architectural change to `merge_slots()` in `chatbot.py`.
+**`multiturn_change_mind` contradiction detection:** This has been stable at 2.50 for three runs. Requires a contradiction detector in the slot merger — when a user says "actually, shelter" while the session has `service_type=food`, the merger should overwrite rather than preserve the existing value. This is an architectural change to `merge_slots()` — originally in `chatbot.py`; post-Phase-3, the merger lives in the `services/chatbot/` package (see `pipeline.py` / `orchestrator.py`).
 
 **Response Tone (4.39):** The weakest dimension, below the 4.5 target. Driven by shame/empathy gaps (`multi_shame_single_service`, `multi_emotional_accept_second_still_warm`) and the multi-turn failure. Shame-specific tone detection would help — adding phrases like "hard for me to say", "embarrassed to ask" to the emotional classifier with a normalizing prefix.
 
@@ -4838,7 +4839,7 @@ All 20 categories pass. Adversarial improved 4.16 → 4.64 (+0.48) from the `adv
  
 ## What's Next
  
-**Baseline warmth:** 82 scenarios still score response_tone=3. The highest-leverage fix remains adding a default `_tone_prefix` at chatbot.py line 1153 for routine service flows.
+**Baseline warmth:** 82 scenarios still score response_tone=3. The highest-leverage fix remains adding a default `_tone_prefix` in the routine-service-flow response-building path (`services/chatbot/tone.py` and `services/chatbot/execution.py` post-Phase-3; was `chatbot.py` pre-April 2026).
  
 **`peer_diabetic_insulin` (3.18):** Semantic router now routes "insulin" → medical, but the confirmation flow breaks when the user says "Yes, search." This is the longest-standing failure — needs confirmation flow debugging.
  

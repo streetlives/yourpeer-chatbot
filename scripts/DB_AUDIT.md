@@ -87,7 +87,7 @@ Run `--section taxonomy` at minimum. New taxonomy names in the DB are the highes
 Run all sections. The current application logic was validated against staging data (April 2026). Production may have a different service distribution, taxonomy vocabulary, eligibility structure, or freshness profile. In particular:
 
 - `--section taxonomy` — may reveal new names requiring template updates
-- `--section borough` — validates the no-result borough suggestions in `chatbot.py`
+- `--section borough` — validates the no-result borough suggestions in `backend/app/services/confirmation.py`
 - `--section schedule` — determines whether the open-now filter can be safely enabled
 - `--section freshness` — establishes the production freshness baseline against our ≥80% target
 
@@ -117,7 +117,7 @@ If the Metrics tab shows a sudden increase in the no-result rate, run `--section
 
 A `✗` means the taxonomy name isn't matched by any template. A `[NEW]` tag means it wasn't present in the staging DB audit. Any `✗` with ≥5 services is flagged as an action item.
 
-**Fix:** Add the name (lowercased) to the appropriate template's `taxonomy_names` list in `backend/app/rag/query_templates.py`, and add the display name to the corresponding `taxonomy_aliases` list. Then add it to `VALID_DB_TAXONOMY_NAMES` and `EXPECTED_TAXONOMY_NAMES` in `tests/test_query_templates.py`.
+**Fix:** Add the name (lowercased) to the appropriate template's `taxonomy_names` list in `backend/app/rag/query_templates.py`, and add the display name to the corresponding `taxonomy_aliases` list. Then add it to `VALID_DB_TAXONOMY_NAMES` and `EXPECTED_TAXONOMY_NAMES` in `tests/unit/test_query_templates.py`.
 
 ### Borough section
 
@@ -133,7 +133,7 @@ Shower          Staten Island   2
 Shower          Brooklyn        2
 ```
 
-If the production distribution differs significantly from staging — for example, if Brooklyn now has 20 shower services — update `_NEARBY_BOROUGHS_BY_SERVICE` in `backend/app/services/chatbot.py` to reflect the new ordering.
+If the production distribution differs significantly from staging — for example, if Brooklyn now has 20 shower services — update `_NEARBY_BOROUGHS_BY_SERVICE` in `backend/app/services/phrase_lists.py` to reflect the new ordering.
 
 ### Schedule section
 

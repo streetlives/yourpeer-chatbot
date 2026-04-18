@@ -1,3 +1,4 @@
+<!-- drift:ignore-file: historical audit — see the Post-Phase-3 location note in this file for current paths of body references -->
 # Multi-Service Intent — Architecture Plan
 
 > **📎 Post-Phase-3 location note (April 2026)**: this plan was written before the `chatbot.py` → `services/chatbot/` package decomposition. Body references to `chatbot.py` in code-home attribution tables still apply conceptually; the current paths are:
