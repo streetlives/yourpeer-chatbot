@@ -884,24 +884,6 @@ class TestPerRouteThreshold:
         result = classify_service("query text")
         assert result is None  # 0.76 < 0.78
 
-    @pytest.mark.skip(
-        reason=(
-            "housing_assistance was retired by the April 15, 2026 audit — "
-            "the dedicated service type and its elevated threshold were "
-            "removed. Enforcement of the removal lives in "
-            "test_audit_regression.py::TestHousingAssistanceRemoval. "
-            "Keeping this test (skipped) so the historical threshold "
-            "rationale is searchable if anyone considers reintroducing the "
-            "split."
-        )
-    )
-    def test_housing_assistance_elevated_threshold(self):
-        """housing_assistance requires 0.78, higher than default 0.75."""
-        from app.services.semantic_router import ROUTE_THRESHOLDS
-
-        assert "housing_assistance" in ROUTE_THRESHOLDS
-        assert ROUTE_THRESHOLDS["housing_assistance"] > DEFAULT_SERVICE_THRESHOLD
-
 
 # ---------------------------------------------------------------------------
 # 12. MULTIPLE POPULATIONS — HIGHEST WINS

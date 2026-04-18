@@ -17,6 +17,13 @@ class ServiceCard(BaseModel):
     description: Optional[str] = None
     address: Optional[str] = None
     city: Optional[str] = None
+    # Geographic coordinates from the DB's ST_Y/ST_X projection on
+    # location.position. Used by the frontend for map markers and
+    # distance display; also consumed by the geographic-borough validator
+    # in query_executor. NULL-safe — services without position data pass
+    # through as None.
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
     phone: Optional[str] = None
     email: Optional[str] = None
     website: Optional[str] = None
@@ -32,6 +39,12 @@ class ServiceCard(BaseModel):
     review_highlight: Optional[str] = None
     required_documents: Optional[List[str]] = None
     languages: Optional[List[str]] = None
+    # Raw DB taxonomy tags for this service (e.g. ["Shelter", "Families",
+    # "Intake"]). Kept as canonical DB names (not display-label-mapped)
+    # so post-results filters can match against them. Enforced as a
+    # ServiceCard field by tests/integration/test_schema_and_mock_sync.py
+    # so format_service_card output round-trips cleanly through Pydantic.
+    service_taxonomies: Optional[List[str]] = None
 
 
 class QuickReply(BaseModel):

@@ -7,11 +7,14 @@ Covers: loc_label None display, confirm_change_location, service_taxonomies,
 Run with: python -m pytest tests/unit/test_display_and_pagination.py -v
 """
 
+from unittest.mock import patch
+
 from app.services.post_results import classify_post_results_question
-from app.services.chatbot import _DISPLAY_PAGE_SIZE
+from app.services.chatbot import _DISPLAY_PAGE_SIZE, generate_reply
 from app.services.session_store import get_session_slots, save_session_slots
 
 from test_helpers import _fresh, _send, _build_shelter_results
+from conftest import send_multi
 
 
 # =======================================================================

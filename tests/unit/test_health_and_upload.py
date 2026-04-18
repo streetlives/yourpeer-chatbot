@@ -19,6 +19,7 @@ import os
 import time
 from unittest.mock import patch, MagicMock, PropertyMock
 
+import anthropic as _real_anthropic
 import pytest
 from fastapi.testclient import TestClient
 
@@ -33,6 +34,30 @@ client = TestClient(app)
 # -----------------------------------------------------------------------
 # HELPERS
 # -----------------------------------------------------------------------
+
+def _install_real_anthropic_exceptions(mock_anthropic):
+    """Wire a mocked ``anthropic`` module's exception classes to the real ones.
+
+    ``@patch("app.llm.claude_client.anthropic")`` replaces the whole module
+    reference with a MagicMock, so attributes like
+    ``mock_anthropic.AuthenticationError`` are MagicMock classes, not
+    real exception types. The implementation's error-classification branch
+    uses ``isinstance(e, anthropic.AuthenticationError)`` — that always
+    returns False against a MagicMock class, and the code silently falls
+    through to the "up" branch.
+
+    Calling this helper before raising an exception fixes the isinstance
+    checks by overwriting each mocked exception attribute with the real
+    ``anthropic.*`` class.
+    """
+    for name in (
+        "AuthenticationError",
+        "RateLimitError",
+        "APITimeoutError",
+        "APIConnectionError",
+        "APIStatusError",
+    ):
+        setattr(mock_anthropic, name, getattr(_real_anthropic, name))
 
 def _reset_ping_cache():
     """Clear the ping_llm cache between tests."""
@@ -100,6 +125,8 @@ class TestPingLlm:
     @patch("app.llm.claude_client.anthropic")
     def test_ping_auth_error(self, mock_anthropic):
         """Invalid API key should return 'auth_error'."""
+        _install_real_anthropic_exceptions(mock_anthropic)
+        _reset_ping_cache(); _reset_client()
         mock_client = MagicMock()
         mock_client.messages.create.side_effect = mock_anthropic.AuthenticationError(
             "Invalid API key", response=MagicMock(), body={}
@@ -115,6 +142,8 @@ class TestPingLlm:
     @patch("app.llm.claude_client.anthropic")
     def test_ping_rate_limit(self, mock_anthropic):
         """Rate limit should return 'rate_limited'."""
+        _install_real_anthropic_exceptions(mock_anthropic)
+        _reset_ping_cache(); _reset_client()
         mock_client = MagicMock()
         mock_client.messages.create.side_effect = mock_anthropic.RateLimitError(
             "Rate limit exceeded", response=MagicMock(), body={}
@@ -130,6 +159,8 @@ class TestPingLlm:
     @patch("app.llm.claude_client.anthropic")
     def test_ping_timeout(self, mock_anthropic):
         """API timeout should return 'timeout'."""
+        _install_real_anthropic_exceptions(mock_anthropic)
+        _reset_ping_cache(); _reset_client()
         mock_client = MagicMock()
         mock_client.messages.create.side_effect = mock_anthropic.APITimeoutError(
             request=MagicMock()
@@ -145,6 +176,8 @@ class TestPingLlm:
     @patch("app.llm.claude_client.anthropic")
     def test_ping_connection_error(self, mock_anthropic):
         """Connection failure should return 'api_error'."""
+        _install_real_anthropic_exceptions(mock_anthropic)
+        _reset_ping_cache(); _reset_client()
         mock_client = MagicMock()
         mock_client.messages.create.side_effect = mock_anthropic.APIConnectionError(
             request=MagicMock()
@@ -160,6 +193,8 @@ class TestPingLlm:
     @patch("app.llm.claude_client.anthropic")
     def test_ping_server_error_5xx(self, mock_anthropic):
         """5xx API error should return 'api_error' with status code."""
+        _install_real_anthropic_exceptions(mock_anthropic)
+        _reset_ping_cache(); _reset_client()
         mock_client = MagicMock()
         err = mock_anthropic.APIStatusError(
             "Internal Server Error", response=MagicMock(), body={}

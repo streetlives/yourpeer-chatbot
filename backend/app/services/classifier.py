@@ -155,6 +155,22 @@ def _classify_action(text: str) -> str | None:
             return "escalation"
 
     # Confirmation actions
+    #
+    # Disambiguate "change to <borough>" / "switch to <borough>" BEFORE the
+    # service-change phrase list runs. Without this guard, "change to
+    # Brooklyn" matches "change to" in _CONFIRM_CHANGE_SERVICE and gets
+    # classified as confirm_change_service — wiping the user's service
+    # type instead of updating their location. Fixes
+    # test_change_to_brooklyn_sets_location_directly and kin.
+    _BOROUGH_CHANGE_RE = re.compile(
+        r"\b(?:change|switch)\s+to\s+"
+        r"(?:the\s+)?"
+        r"(brooklyn|manhattan|queens|bronx|staten\s+island)\b",
+        re.IGNORECASE,
+    )
+    if _BOROUGH_CHANGE_RE.search(cleaned):
+        return "confirm_change_location"
+
     for phrase in _CONFIRM_CHANGE_SERVICE:
         if phrase in cleaned:
             return "confirm_change_service"
