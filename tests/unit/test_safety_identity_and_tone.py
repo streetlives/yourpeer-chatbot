@@ -274,7 +274,10 @@ class TestConfirmationWarmReframe:
             "location": "Brooklyn",
         })
         assert "look for" in msg, "Should use 'I\u2019ll look for' (warm)"
-        assert "does that sound right?" in msg, "Should ask 'does that sound right?'"
+        # Current phrasing is "sound good?" — an earlier iteration used
+        # "does that sound right?". Both are warm/collaborative; we accept
+        # the current one. If the phrasing changes again, update here.
+        assert "sound good?" in msg, "Should close with 'sound good?'"
 
     def test_no_cold_framing(self):
         msg = _build_confirmation_message({

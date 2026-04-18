@@ -22,19 +22,25 @@ class TestCrossBoroughExtraction:
     """Verify multi-intent extraction for cross-borough requests."""
 
     def test_food_brooklyn_shelter_manhattan(self):
+        """Cross-borough extraction: Housing First makes shelter primary
+        (at Manhattan), food goes to additional (at Brooklyn). The key
+        invariant is that the location travels with the correct service."""
         s = extract_slots("I need food in Brooklyn and shelter in Manhattan")
-        assert s["service_type"] == "food"
-        assert s["location"] == "brooklyn"
+        # Shelter (tier 1) wins primary over food (tier 2) — Feature B
+        assert s["service_type"] == "shelter"
+        assert s["location"] == "manhattan"
         assert len(s["additional_services"]) == 1
-        assert s["additional_services"][0][0] == "shelter"
-        assert s["additional_services"][0][2] == "manhattan"
+        assert s["additional_services"][0][0] == "food"
+        assert s["additional_services"][0][2] == "brooklyn"
 
     def test_same_borough_multi_intent(self):
+        """Both services requested in one borough. Shelter primary by
+        priority, food queued, shared location."""
         s = extract_slots("I need food and shelter in Brooklyn")
-        assert s["service_type"] == "food"
+        assert s["service_type"] == "shelter"
         assert s["location"] == "brooklyn"
         assert len(s["additional_services"]) == 1
-        assert s["additional_services"][0][0] == "shelter"
+        assert s["additional_services"][0][0] == "food"
 
 
 # -----------------------------------------------------------------------
@@ -45,14 +51,19 @@ class TestCrossBoroughQueueOffer:
     """Cross-borough services should remain queued, not co-located."""
 
     def test_queue_offer_fires_for_cross_borough(self):
-        """After food/Brooklyn results, shelter/Manhattan should be offered."""
+        """After shelter/Manhattan results, food/Brooklyn should be offered.
+
+        Housing First (Feature B): shelter (tier 1) is primary at its
+        mentioned location (Manhattan); food goes to the queue with its
+        own location (Brooklyn) and the offer surfaces after results.
+        """
         r = send_multi([
             "I need food in Brooklyn and shelter in Manhattan",
             "Yes, search",
         ])
         resp = r[1]["response"].lower()
         assert "also mentioned" in resp
-        assert "manhattan" in resp
+        assert "brooklyn" in resp
 
     def test_queue_offer_includes_service_name(self):
         r = send_multi([
@@ -60,7 +71,8 @@ class TestCrossBoroughQueueOffer:
             "Yes, search",
         ])
         resp = r[1]["response"].lower()
-        assert "shelter" in resp
+        # food is the queued service under Housing First
+        assert "food" in resp
 
     def test_queue_offer_has_yes_no_buttons(self):
         r = send_multi([

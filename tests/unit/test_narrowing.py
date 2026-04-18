@@ -10,6 +10,7 @@ Run with: python -m pytest tests/test_narrowing.py -v
 
 import re
 import sys
+from pathlib import Path
 import pytest
 from unittest.mock import patch
 
@@ -20,6 +21,15 @@ from app.services.slot_extractor import (
     _NOTABLE_SUB_TYPES,
     SERVICE_KEYWORDS,
     extract_slots,
+)
+
+
+# Path to the narrowing-config file, resolved from this test module's
+# location rather than CWD. Without this anchoring, the tests only pass
+# when pytest is invoked from the `backend/` directory.
+_RAG_INIT = (
+    Path(__file__).resolve().parent.parent.parent
+    / "backend" / "app" / "rag" / "__init__.py"
 )
 
 
@@ -321,7 +331,7 @@ class TestWordBoundaryCorrectness:
     """No pattern in the codebase should use \\b (backspace in PostgreSQL)."""
 
     def _all_patterns(self) -> dict:
-        with open("app/rag/__init__.py") as f:
+        with open(_RAG_INIT) as f:
             src = f.read()
         return dict(re.findall(r'"([^"]+)"\s*:\s*r"([^"]+)"', src))
 
@@ -480,7 +490,7 @@ class TestDvShelterEnrichment:
 class TestNarrowingCoverage:
 
     def _get_handled_details(self) -> set:
-        with open("app/rag/__init__.py") as f:
+        with open(_RAG_INIT) as f:
             src = f.read()
         narrowing = set(re.findall(r'"([^"]+)"\s*:\s*\[',
             src[src.find("_DETAIL_TO_TAXONOMY_NARROWING"):
@@ -752,7 +762,7 @@ class TestEdgeCases:
 
     def test_narrowing_taxonomy_names_are_lowercase(self):
         """All taxonomy narrowing values should be lowercase (DB comparison is LOWER)."""
-        with open("app/rag/__init__.py") as f:
+        with open(_RAG_INIT) as f:
             src = f.read()
         block = src[src.find("_DETAIL_TO_TAXONOMY_NARROWING"):
                      src.find("}", src.find("_DETAIL_TO_TAXONOMY_NARROWING")) + 1]

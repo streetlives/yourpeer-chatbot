@@ -238,10 +238,6 @@ class TestClassifyAllServices:
         dim = 16
         # A message very close to medical only
         med_vec = _make_unit_vec(dim, 2)
-        with patch.object(
-            type(classify_all_services), "__module__", create=True
-        ):
-            pass
         matches = classify_all_services(
             "I need to see a doctor",
             threshold=0.3,

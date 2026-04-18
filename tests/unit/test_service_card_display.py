@@ -346,11 +346,14 @@ class TestShowMore:
 
     def test_show_more_returns_remaining(self):
         from conftest import send_multi
+        # _DISPLAY_PAGE_SIZE is 5 (documented choice — reduces cognitive
+        # load, especially in crisis). Use 10 inputs so first page and
+        # show-more page are both complete (5 + 5 = 10).
         results = send_multi(
             ["I need food", "Brooklyn", "Yes, search", "Show more results"],
-            mock_query_return=self._build_many_results(15),
+            mock_query_return=self._build_many_results(10),
         )
-        assert len(results[2]["services"]) == 10
+        assert len(results[2]["services"]) == 5
         show_more = results[3]
         assert len(show_more["services"]) == 5
         assert "more" in show_more["response"].lower()

@@ -81,9 +81,12 @@ class TestBug9ConfirmationPreposition:
 
     def test_confirmation_neighborhood(self):
         from app.services.confirmation import _build_confirmation_message
+        # Neighborhood input is lowercase (as it comes out of the slot
+        # extractor), but the confirmation message titlecases it for
+        # display — same path the borough variants above take.
         slots = {"service_type": "food", "location": "harlem"}
         msg = _build_confirmation_message(slots)
-        assert "in harlem" in msg
+        assert "in Harlem" in msg
 
     def test_confirmation_near_location_no_in(self):
         """'near your location' should NOT get an extra 'in' prefix."""
@@ -288,11 +291,12 @@ class TestBug14SmartExtractorFallback:
                                  "gender": None, "family_status": None}):
             result = extract_slots_smart("I need food and shelter in Brooklyn")
 
-        assert result.get("service_type") == "food"
+        # Housing First: shelter (tier 1) wins primary over food (tier 2)
+        assert result.get("service_type") == "shelter"
         assert result.get("location") is not None
         additional = result.get("additional_services", [])
         assert len(additional) >= 1
-        assert any(svc == "shelter" for svc, *_ in additional)
+        assert any(svc == "food" for svc, *_ in additional)
 
     def test_fallback_returns_regex_result_directly(self):
         """On LLM fallback, the returned dict should be the regex result itself."""

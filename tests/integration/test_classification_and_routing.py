@@ -1512,13 +1512,17 @@ def test_classify_action_none_for_urgent():
 # -----------------------------------------------------------------------
 
 def test_multi_intent_queues_additional_services(fresh_session):
-    """'I need food and shelter in Brooklyn' should queue shelter."""
+    """'I need food and shelter in Brooklyn' should queue food.
+
+    Housing First priority (Feature B, April 2026): shelter (tier 1)
+    wins primary over food (tier 2), food goes on the queue.
+    """
     result = send("I need food and shelter in Brooklyn", session_id=fresh_session)
     from app.services.session_store import get_session_slots
     slots = get_session_slots(fresh_session)
-    assert slots.get("service_type") == "food"
+    assert slots.get("service_type") == "shelter"
     assert "_queued_services" in slots
-    assert any(s[0] == "shelter" for s in slots["_queued_services"])
+    assert any(s[0] == "food" for s in slots["_queued_services"])
 
 
 def test_multi_intent_offers_queued_after_results(fresh_session):
@@ -1651,14 +1655,17 @@ def test_multi_intent_queue_offer_uses_detail_label(fresh_session):
 
 
 def test_multi_intent_queue_preserved_through_confirmation(fresh_session):
-    """Queue should survive the confirmation flow."""
+    """Queue should survive the confirmation flow.
+
+    Housing First: shelter primary, food queued.
+    """
     result = send("I need food and shelter in Brooklyn", session_id=fresh_session)
     from app.services.session_store import get_session_slots
     slots = get_session_slots(fresh_session)
     # Should have pending confirmation AND queue
     assert slots.get("_pending_confirmation") is True
     assert "_queued_services" in slots
-    assert any(s[0] == "shelter" for s in slots["_queued_services"])
+    assert any(s[0] == "food" for s in slots["_queued_services"])
 
 
 # -----------------------------------------------------------------------

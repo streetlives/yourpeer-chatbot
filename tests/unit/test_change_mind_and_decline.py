@@ -312,9 +312,13 @@ class TestContradictionSignalExtraction:
         ("scratch that, I need clothing", "clothing"),
         # "actually" is NOT a contradiction signal (too common in normal speech)
         # — "I actually need food and shelter" would false-positive
-        # These rely on negation or the confirm_change_service handler instead
-        ("I need food and shelter", "food"),            # no signal — first wins
-        ("I actually need food and shelter", "food"),   # "actually" not a signal
+        # These rely on negation or the confirm_change_service handler instead.
+        #
+        # When no contradiction signal is present, primary service is
+        # decided by _SERVICE_NEED_PRIORITY (Housing First): shelter
+        # (tier 1) outranks food (tier 2), regardless of mention order.
+        ("I need food and shelter", "shelter"),            # Housing First
+        ("I actually need food and shelter", "shelter"),   # "actually" not a signal — priority still applies
     ])
     def test_contradiction_reordering(self, msg, expected_service):
         s = extract_slots(msg)

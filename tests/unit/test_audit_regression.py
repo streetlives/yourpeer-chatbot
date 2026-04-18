@@ -26,6 +26,7 @@ Run with:
 
 import re
 import sys
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -35,6 +36,15 @@ sys.path.insert(0, ".")
 from app.rag.query_templates import TEMPLATES
 from app.rag.query_executor import resolve_template_key, SLOT_SERVICE_TO_TEMPLATE
 from app.services.slot_extractor import SERVICE_KEYWORDS, extract_slots
+
+
+# Path to the narrowing-config file, resolved from this test module's
+# location rather than CWD. Without this anchoring, the file-inspection
+# tests only pass when pytest is invoked from the `backend/` directory.
+_RAG_INIT = (
+    Path(__file__).resolve().parent.parent.parent
+    / "backend" / "app" / "rag" / "__init__.py"
+)
 
 
 # =============================================================================
@@ -1868,7 +1878,7 @@ class TestDescriptionFilterCleanup:
         services without narrowing.
         """
         import re
-        with open("app/rag/__init__.py") as f:
+        with open(_RAG_INIT) as f:
             src = f.read()
         desc_block = src[src.find("_DETAIL_DESCRIPTION_FILTERS"):
                          src.find("        }", src.find("_DETAIL_DESCRIPTION_FILTERS")) + 9]

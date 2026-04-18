@@ -179,7 +179,10 @@ class TestNegationAwareExtraction:
         assert extract_slots("not food, not shelter")["service_type"] is None
 
     def test_normal_extraction_unaffected(self):
-        assert extract_slots("I need food and shelter")["service_type"] == "food"
+        # Negation check doesn't block legitimate compound extraction.
+        # Primary service is decided by _SERVICE_NEED_PRIORITY:
+        # shelter (tier 1) wins over food (tier 2).
+        assert extract_slots("I need food and shelter")["service_type"] == "shelter"
 
     def test_shelter_not_food(self):
         assert extract_slots("shelter not food")["service_type"] == "shelter"

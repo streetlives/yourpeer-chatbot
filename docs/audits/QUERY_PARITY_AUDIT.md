@@ -48,7 +48,7 @@ A prod DB query was run to verify taxonomy tree parentage and service counts. Se
 
 1. **Removed `housing_assistance` template** — YourPeer has no equivalent. Keywords (rental assistance, Section 8, eviction prevention) now route to `other` template, which is what YourPeer does via "Other service" taxonomy tree. Full details in audit diff Apr 15, 2026.
 
-2. **Shelter default taxonomy expanded** from 7 to 13 taxonomies (all Shelter children) — matches YourPeer's parent-to-child API expansion behavior.
+2. **Shelter default taxonomy expanded** from 7 to 18 taxonomies (all non-zero Shelter children) — matches YourPeer's parent-to-child API expansion behavior. Initial expansion to 13 (population-specific children); later expanded to 18 after DB verification revealed 5 service-type children were missing (item 8).
 
 3. **Shelter narrowing with parent preservation** — `family_status=with_children` now produces `["families", "shelter"]` instead of strict YourPeer `["families"]`. Rationale: DB verification showed Families child has only 3 services; strict narrowing would regularly return 0 results. The 18 services tagged only with parent `Shelter` are preserved. Same pattern for `alone` → `["single adult", "shelter"]`.
 
@@ -63,6 +63,14 @@ A prod DB query was run to verify taxonomy tree parentage and service counts. Se
 5. **Medical template bug fix** — removed `crisis` (was a Shelter child, not Health). Added `substance use treatment` and `support groups` (confirmed Health children). Now matches the effective output of YourPeer's health-care view (API returns all Health children, client strips Mental Health).
 
 6. **Display whitelist cleanup** — removed phantom taxonomies `Harm Reduction`, `Needle Exchange`, `Overdose Prevention` from `_DISPLAY_CATEGORIES`. They never existed in the DB.
+
+7. **Open-now: sort-only semantics (intentional divergence)** — chatbot sorts open services first but never excludes closed services. YourPeer uses exclude-semantics via `openAt`. Decision rationale: sparse schedule coverage (40-80% walk-in, near-zero others) makes exclusion dangerous for this population. SQL `_OPEN_NOW_RANK` removed from ORDER BY (Python `_sort_open_first` is single source of truth). `FILTER_BY_OPEN_NOW` removed from food template optional_filters. Filter response handlers updated with `displayed_count` phrasing and `_DISPLAY_PAGE_SIZE` pagination cap.
+
+8. **Shelter default list expanded from 13 to 18** — DB verification of Covenant House, Ali Forney, and Safe Horizon revealed 5 Shelter children with non-zero service counts were missing: `crisis` (13), `drop-in center` (6), `referral` (6), `assessment` (1), `residential recovery` (2). Safe Horizon's "Shelter Placement" services (tagged `Referral`) were invisible to ALL shelter queries. Now all non-zero Shelter children are in the default list.
+
+9. **Description filter pattern validation** — ran all 79 description filter regex patterns against prod `services.description` (April 16, 2026). Found 1 dead pattern (`dialysis services`: 0 matches — removed) and 2 taxonomy narrowing entries with dead `supportive housing` (0 services tagged — removed from `sober living` and `halfway houses`). Also validated all 18 taxonomy narrowing entries have ≥1 match. 7 duplicate pattern pairs documented as intentional user-language synonyms. 7 very broad patterns (>200 matches) documented as functional but worth monitoring.
+
+10. **Clothing casual/professional filter** — implemented via the DB's `taxonomy_specific_attributes` system, matching YourPeer's `taxonomySpecificAttributes` API parameter. New `FILTER_BY_CLOTHING_OCCASION` SQL filter uses JSONB `@>` containment operator on `service_taxonomy_specific_attributes."values"`. DB verified: `clothingOccasion` attribute has 62 Everyday and 28 Job Interview services (much better than taxonomy-only approach with 2 professional services). Slot extractor updated with 10 multi-word phrases ("interview clothes", "professional clothing", etc.) that resolve the "interview" keyword conflict with employment — multi-word phrases win in longest-first sort, blocking the single-word "interview" employment keyword via span overlap. Bonus DB attributes found for future features: `tgncClothing` (36 TGNC-friendly services), `wearerAge` (age/gender targeting), `hasHivNutrition` (23 HIV nutrition services).
 
 ### Known Intentional Divergences from YourPeer
 
@@ -95,7 +103,27 @@ These are DB-side inconsistencies surfaced during the audit. Not chatbot bugs �
 
 ### Remaining P0 Items (not yet addressed)
 
-- **Verify taxonomy tags on Covenant House NYC** — the DB query returned NJ-based Covenant House services but no NYC location. Either the NYC location is missing from the DB, or the org name query missed it. Needs direct verification with Streetlives team before the shelter enrichment can be fully validated in production.
+None. All P0 items have been resolved.
+
+### Covenant House / Ali Forney / Safe Horizon — DB Verification (Resolved Apr 16, 2026)
+
+All three orgs exist in the DB. Taxonomy tag verification revealed that the shelter default list was missing 5 Shelter children with non-zero service counts:
+
+| Org | Service | Taxonomy tag | Was discoverable? | Now discoverable? |
+|---|---|---|---|---|
+| Covenant House NYC | Emergency Bed Placement | `Crisis` | ❌ default, ✅ DV/LGBTQ only | ✅ always |
+| Ali Forney Center | LGBTQIA2S+ Young Adult Overnight | `LGBTQ Young Adult` | ✅ always | ✅ always |
+| Safe Horizon (LES + Harlem) | Shelter Placement | `Referral` | ❌ **NOWHERE** | ✅ always |
+| Safe Horizon (Harlem) | Day Sleeping Room | `Drop-in Center` | ❌ default, ✅ DV/LGBTQ only | ✅ always |
+| Safe Horizon (Queens) | Respite and Community Bed | `Shelter` | ✅ always | ✅ always |
+
+**Fix**: expanded shelter default taxonomy list from 13 to 18 entries, adding all 5 missing non-zero Shelter children: `crisis` (13 services), `drop-in center` (6), `referral` (6), `assessment` (1), `residential recovery` (2). Only `Cooling Center` (0 services) and `Intake` (0 services) are omitted.
+
+**Impact**: Safe Horizon's "Shelter Placement" services were previously invisible to ALL shelter queries. Now discoverable in every default shelter query. Covenant House's "Emergency Bed Placement" was previously only visible when DV/LGBTQ safety enrichments fired; now visible in all shelter queries.
+
+**Data quality note for Streetlives team**: Ali Forney Center's "Drop-in Space" service is tagged `Other service`, not `Drop-in Center`. It's a drop-in service at a youth shelter — likely a tagging oversight. Similarly, Safe Horizon's "Shelter Placement" services at LES and Harlem are tagged `Referral` rather than `Shelter` — functional but non-obvious.
+
+**Known limitation — Referral under narrow**: DV safety enrichment adds `drop-in center` + `crisis` but NOT `referral`. When family-composition narrowing fires (e.g., DV survivor with children → `['families', 'shelter', 'drop-in center', 'crisis']`), Safe Horizon's "Shelter Placement" services (tagged `{Referral}`) become invisible. These services are still findable in DEFAULT shelter queries (no narrowing) because `referral` is in the full 18-taxonomy list. The gap only affects narrowed DV queries. If this becomes P0: add `referral` to the DV safety enrichment list. Documented in `test_audit_regression.py::TestDBVerifiedOrgDiscoverability::test_safe_horizon_shelter_placement_under_dv_narrow`.
 
 ### Open-Now Behavior — Intentional Divergence (Resolved Apr 16, 2026)
 
@@ -124,11 +152,14 @@ These are DB-side inconsistencies surfaced during the audit. Not chatbot bugs �
 
 - Pagination (chatbot caps at 10, YourPeer defaults to 20 with paging) — actually already improved: chatbot fetches 25 and paginates display in 5-card chunks via `_displayed_count` session state. Still diverges from YourPeer's behavior, but the gap is narrower than the original audit framing.
 - Proximity sort + search interaction (YourPeer disables when search active)
-- Clothing `taxonomySpecificAttributes` (casual vs professional)
 - Requirement filter granularity (chatbot has single flag vs YourPeer's 3 booleans)
 - Free-text `searchString` parameter (not implemented in chatbot)
 - Drift detection CI check (documented as needed, not implemented)
 - **Sparse-category open-now gap**: for categories with near-zero schedule coverage (legal, medical), the 25 services in the cached pool may all lack schedule data, leaving filter responses unable to surface open services even when some exist deeper in the DB. Mitigation options: (a) raise `_FETCH_LIMIT` for specific categories, (b) add re-query fallback when cached filter returns empty. Both have costs — deferred pending usage signal.
+- **`tgncClothing` attribute boost** — DB has 36 services marked as TGNC-friendly clothing. Could add a sort boost for LGBTQ/trans/nonbinary users in clothing queries (same pattern as the existing veteran/LGBTQ taxonomy boosts).
+- **`wearerAge` attribute filter** — DB has age/gender targeting (men, women, adults, children, etc.). Could filter clothing results by user demographics.
+- **`hasHivNutrition` attribute filter** — 23 food services marked as HIV-specific nutrition. Could surface for users who disclose HIV status.
+- **Referral not re-added under narrow for DV survivors** — Safe Horizon's "Shelter Placement" is tagged `{Referral}`. Under narrowed shelter queries (family_status set), `referral` is stripped. DV enrichment adds `crisis` + `drop-in center` but not `referral`. This means DV survivors with family_status set can't find Safe Horizon's shelter placement service via the shelter query. Possible fix: add `referral` to DV safety enrichment.
 
 ---
 

@@ -56,6 +56,26 @@ SERVICE_KEYWORDS = {
         "aging out", "aged out", "foster care", "aging out of foster",
         # Spanish (basic bilingual support)
         "refugio", "albergue",
+        # Negation-as-request phrases.
+        #
+        # "I have no place to sleep" is semantically a request for
+        # shelter, but the bare keyword "place to sleep" at position
+        # 10 in that sentence gets rejected by _is_negated because
+        # the 25-char lookback ends in "no " (a negation prefix).
+        # Including the negation word in the keyword itself means
+        # the match starts earlier (position 7 for "I have no..."),
+        # and the preceding window is "I have " — not a negation
+        # prefix — so the keyword is accepted.
+        #
+        # Longest-first sort in _extract_all_service_types ensures
+        # these phrases are tried before the bare "place to sleep" /
+        # "place to stay" variants that would otherwise get negated.
+        "no place to sleep", "no place to stay", "no place to go",
+        "nowhere to sleep", "nowhere to stay", "nowhere to go",
+        "don't have anywhere to sleep", "dont have anywhere to sleep",
+        "don't have anywhere to stay", "dont have anywhere to stay",
+        "don't have a place to sleep", "dont have a place to sleep",
+        "don't have a place to stay", "dont have a place to stay",
     ],
 
     # --- Clothing (taxonomy: Clothing) ---
@@ -183,6 +203,13 @@ SERVICE_KEYWORDS = {
     # Includes housing assistance programs (rental assistance, Section 8,
     # eviction prevention, etc.) — YourPeer surfaces these under "Other service".
     # "housing" alone stays in shelter (ambiguous → urgent interpretation).
+    #
+    # NOTE (April 2026 audit): a dedicated "housing_assistance" service type
+    # was briefly split out as a Phase 2 feature, then removed to match
+    # YourPeer's taxonomy structure. The audit-regression tests in
+    # TestHousingAssistanceRemoval enforce that these keywords stay here.
+    # service_detail is still set (see _NOTABLE_SUB_TYPES below) so the
+    # narrowing-within-other mechanism in rag/__init__.py can kick in.
     "other": [
         "other services", "other service",
         "benefits", "ebt", "food stamps", "medicaid",
@@ -295,6 +322,20 @@ _WORD_BOUNDARY_PATTERNS = {
     kw: (re.compile(r"\b" + re.escape(kw) + r"\b", re.IGNORECASE), svc)
     for kw, svc in _WORD_BOUNDARY_KEYWORDS.items()
 }
+
+# Override "bed" with a stricter pattern that excludes hyphen-followed
+# occurrences. Python's \b matches between \w and non-\w, so \bbed\b
+# DOES match "bed" inside "bed-stuy" (hyphen is non-\w) and inside
+# "bed-and-breakfast". The negative lookahead (?!-) blocks these
+# without affecting normal uses like "I need a bed".
+#
+# "bedford" is already handled by plain \bbed\b — "f" is a word char,
+# so the trailing \b fails to match between "d" and "f". Only the
+# hyphen case needs special handling.
+_WORD_BOUNDARY_PATTERNS["bed"] = (
+    re.compile(r"\bbed\b(?!-)", re.IGNORECASE),
+    "shelter",
+)
 
 # Phrases that mean "where I am" but don't contain an actual location.
 # When detected, we store a sentinel so the follow-up logic knows to ask
@@ -687,6 +728,48 @@ def _find_contradiction_signal(text: str) -> int:
     return best_pos
 
 
+# ---------------------------------------------------------------------------
+# Service-need priority ("Housing First" ordering)
+# ---------------------------------------------------------------------------
+# When a message mentions multiple service categories, we sort by priority
+# tier first and text position second — so "I need food and a place to
+# sleep" extracts shelter as the primary intent even though food came
+# first textually. Explicit contradiction signals ("actually, I need X")
+# still override this (handled after the sort, below).
+#
+# Research grounding:
+#   * HUD Housing First principle — stable housing is the foundation;
+#     other services are more effective once housing is in place.
+#   * Fleury et al. 2021 (PMC) — Maslow adapted for homelessness:
+#     basic needs > health > stability > growth.
+#   * SAMHSA 2025 crisis care — safety above physiological when a
+#     safety signal is present.
+#   * Zheng et al. 2016 — safety above physiological in mental-health
+#     contexts.
+#
+# Tiers (lower number = higher priority):
+#   Tier 1 — life / safety:                shelter, medical
+#   Tier 2 — survival + behavioral health: food, mental_health
+#   Tier 3 — physiological, non-critical:  clothing, personal_care
+#   Tier 4 — stability:                    legal, employment
+#   Tier 5 — support:                      other
+#
+# If a new service category gets added to SERVICE_KEYWORDS, add it
+# here too. Missing categories fall back to priority 99 (lowest).
+# test_audit_regression + test_hybrid_multi_intent both enforce this.
+_SERVICE_NEED_PRIORITY = {
+    "shelter": 1,
+    "medical": 1,
+    "food": 2,
+    "mental_health": 2,
+    "clothing": 3,
+    "personal_care": 3,
+    "legal": 4,
+    "employment": 4,
+    "other": 5,
+}
+
+
 def _extract_all_service_types(text: str) -> list[tuple[str, Optional[str]]]:
     """Extract ALL service type categories from a message.
 
@@ -772,9 +855,13 @@ def _extract_all_service_types(text: str) -> list[tuple[str, Optional[str]]]:
                 found.append((m.start(), service, detail))
                 seen_categories.add(service)
 
-    # Sort by text position so the primary service is what the user
-    # mentioned first, not whichever keyword happens to be longest.
-    found.sort(key=lambda x: x[0])
+    # Sort by (priority tier, text position). Housing First / Maslow
+    # grounding: a higher-priority service wins even if it was mentioned
+    # later in the message. Within a tier, text position breaks the tie
+    # so "I need a doctor and a bed tonight" (both tier 1) keeps medical
+    # primary. See _SERVICE_NEED_PRIORITY above for the tier table and
+    # the research citations that informed it.
+    found.sort(key=lambda x: (_SERVICE_NEED_PRIORITY.get(x[1], 99), x[0]))
 
     # Contradiction reordering: when the user signals a change of mind
     # ("actually", "instead", "I changed my mind") and multiple services
@@ -1433,44 +1520,57 @@ def extract_slots(message: str) -> dict:
     service_type = None
     service_detail = None
     additional_services = []
+    primary_location_override = None
 
     if all_types:
         service_type, service_detail = all_types[0]
 
         if len(all_types) > 1 and len(all_locations) > 1:
-            # Per-service location binding: match each service to
-            # its nearest location by text position.
-            # Re-extract with positions for binding.
-            _svc_positions = []
+            # Per-service location binding: match each service to its
+            # nearest location by text position. Keep the priority order
+            # from _extract_all_service_types (primary first) — don't
+            # re-sort by text position, or Housing First gets silently
+            # overridden and the primary ends up duplicated in
+            # additional_services. See test_food_brooklyn_shelter_manhattan.
             lower = message.lower()
-            for svc, detail in all_types:
-                for kw_list_svc, keywords in SERVICE_KEYWORDS.items():
-                    if kw_list_svc == svc:
-                        for kw in keywords:
-                            pos = lower.find(kw)
-                            if pos >= 0:
-                                _svc_positions.append((pos, svc, detail))
-                                break
-                        break
 
-            _svc_positions.sort(key=lambda x: x[0])
+            def _first_keyword_pos(svc: str) -> int:
+                """Earliest text position where any keyword for `svc` appears."""
+                best = -1
+                for kw in SERVICE_KEYWORDS.get(svc, []):
+                    pos = lower.find(kw)
+                    if pos >= 0 and (best < 0 or pos < best):
+                        best = pos
+                return best
 
-            # Bind: for each service, find the nearest location
-            for i, (svc_pos, svc, detail) in enumerate(_svc_positions):
-                if i == 0:
-                    # Primary service — find closest location
-                    closest = min(all_locations, key=lambda x: abs(x[0] - svc_pos))
-                    # Primary location set below via _extract_location override
-                else:
-                    # Queue service — find closest location not already used
-                    closest = min(all_locations, key=lambda x: abs(x[0] - svc_pos))
+            # Primary: its closest location becomes the primary location,
+            # so "food in Brooklyn and shelter in Manhattan" with shelter
+            # as priority-primary returns location="manhattan" (not
+            # "brooklyn" — which was the first-mentioned fallback).
+            primary_pos = _first_keyword_pos(service_type)
+            if primary_pos >= 0:
+                closest = min(all_locations, key=lambda x: abs(x[0] - primary_pos))
+                primary_location_override = closest[1]
+
+            # Each remaining service: bind to its own closest location
+            # and append to additional_services in priority order.
+            for svc, detail in all_types[1:]:
+                pos = _first_keyword_pos(svc)
+                if pos >= 0:
+                    closest = min(all_locations, key=lambda x: abs(x[0] - pos))
                     additional_services.append((svc, detail, closest[1]))
+                else:
+                    additional_services.append((svc, detail, None))
         else:
             # Single location or single service — no per-service binding needed
             additional_services = [(s, d, None) for s, d in all_types[1:]]
 
-    # Location: use first-mentioned for primary service when multiple exist
-    if all_locations:
+    # Location: prefer the primary-service-bound location if we computed
+    # one (cross-borough case); otherwise fall back to first-mentioned,
+    # then to the generic single-location extractor.
+    if primary_location_override is not None:
+        primary_location = primary_location_override
+    elif all_locations:
         primary_location = all_locations[0][1]
     else:
         primary_location = _extract_location(message)

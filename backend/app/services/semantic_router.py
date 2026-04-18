@@ -419,6 +419,16 @@ def classify_all_services(
         matches.sort(key=lambda m: m.confidence, reverse=True)
 
         # --- Population matching (same as classify_service) ---
+        # When the caller overrides the service threshold (e.g. threshold=0.3
+        # in a loose-match context), apply the same override floor to the
+        # population threshold so population detection stays in sync with
+        # service sensitivity. Without this, a call that widens services
+        # still uses the strict 0.70 population default — asymmetry that
+        # surprises callers (see test_population_attached_to_all_matches).
+        effective_pop_threshold = DEFAULT_POPULATION_THRESHOLD
+        if threshold is not None and threshold < DEFAULT_POPULATION_THRESHOLD:
+            effective_pop_threshold = threshold
+
         best_pop = None
         best_pop_score = 0.0
         for route_name, route_embeddings in _route_embeddings.items():
@@ -426,7 +436,7 @@ def classify_all_services(
                 continue
             similarities = np.dot(route_embeddings, query_embedding)
             max_sim = float(np.max(similarities))
-            if max_sim >= DEFAULT_POPULATION_THRESHOLD and max_sim > best_pop_score:
+            if max_sim >= effective_pop_threshold and max_sim > best_pop_score:
                 best_pop = route_name.replace("pop_", "")
                 best_pop_score = max_sim
 

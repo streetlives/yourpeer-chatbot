@@ -219,6 +219,17 @@ class TestEducation:
         assert r["service_type"] == "other"
 
 
+@pytest.mark.skip(
+    reason=(
+        "The 'Phase 2: dedicated housing_assistance service type' feature was "
+        "intentionally retired by the April 15, 2026 audit — YourPeer has no "
+        "equivalent and the dedicated template was diverging from parity. "
+        "Housing program keywords now route to 'other'. Enforcement of the "
+        "removal lives in test_audit_regression.py::TestHousingAssistanceRemoval. "
+        "These tests are kept (skipped) rather than deleted so the historical "
+        "intent is searchable if anyone considers reintroducing the split."
+    )
+)
 class TestHousingAssistance:
     """112 services — distinct from shelter (beds vs rent programs).
     Phase 2: split into dedicated housing_assistance service type."""
@@ -518,6 +529,15 @@ class TestYourPeerAlignment:
         assert "ISODOW FROM CURRENT_DATE)::int" in sql
 
 
+@pytest.mark.skip(
+    reason=(
+        "The 'Phase 2: dedicated housing_assistance template' feature was "
+        "intentionally retired by the April 15, 2026 audit — YourPeer has no "
+        "equivalent template. Housing programs are now served via the 'other' "
+        "template's description filter. Enforcement of the removal lives in "
+        "test_audit_regression.py::TestHousingAssistanceRemoval."
+    )
+)
 class TestHousingAssistanceTemplate:
     """Phase 2: housing_assistance template uses description-level filtering
     to return housing programs (rental assistance, eviction prevention)
