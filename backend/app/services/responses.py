@@ -545,12 +545,9 @@ _WARMTH_PREFIXES = [
     "Let's find something for you. ",
     "I'll look into that. ",
     "Let me see what I can find. ",
-    "Absolutely! let me look. ",
-    "I can help with that. ",
+    "I think I can help with that. ",
+    "I think I can help. ",
     "Ok, let me look. ",
-    "On it! ",
-    "Let me see what I can find. ",
-    "Absolutely! Let's see... ",
 ]
 
 
