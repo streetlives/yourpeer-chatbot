@@ -240,9 +240,13 @@ class TestResponseTemplates:
     def test_single_match_wording(self):
         from app.services.post_results import _handle_filter_subcategory
         cards = _build_shelter_results(10)["services"]
-        cards[0]["service_taxonomies"] = ["Shelter", "Veterans"]
+        # Use a unique synthetic taxonomy label to guarantee exactly one match.
+        # (Plain "Veterans" would also match cards[3] via its Veterans taxonomy
+        # AND its service_name/organization/description text, defeating the
+        # single-match assertion this test is checking.)
+        cards[0]["service_taxonomies"] = ["Shelter", "LGBTQ-only"]
         result = _handle_filter_subcategory(
-            {"raw_phrase": "veterans", "_original_message": "ones for veterans"},
+            {"raw_phrase": "LGBTQ-only", "_original_message": "ones for LGBTQ-only"},
             cards,
             len(cards),  # displayed_count
         )

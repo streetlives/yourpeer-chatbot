@@ -153,6 +153,29 @@ def _handle_frustration(session_id, redacted_message, existing, tone, request_id
                 {"label": "🤝 Peer navigator", "value": "Connect with peer navigator"},
             ],
         )
+
+    # --- Filter-aware post-routing cleanup ---
+    # The routing branches above have already made their decisions using
+    # whatever _last_results was set. Now apply the filter-pipeline design
+    # contract: if a filter was active, clear only the filter state but
+    # PRESERVE _last_results so the user can recover via "show all";
+    # otherwise clear _last_results and pagination entirely.
+    #
+    # This reconciles Bug 4a (which needs _last_results visible to the
+    # handler's routing logic above) with test_filter_pipeline's state
+    # expectations (which require _last_results to be gone afterward
+    # when there was no filter).
+    if existing.get("_filtered_results"):
+        existing.pop("_filtered_results", None)
+        existing.pop("_filter_phrase", None)
+        # _last_results preserved — "show all" will re-display the unfiltered set
+        # Reset displayed_count so a subsequent "show more" starts fresh
+        existing["_displayed_count"] = 0
+    else:
+        existing.pop("_last_results", None)
+        existing.pop("_displayed_count", None)
+    save_session_slots(session_id, existing)
+
     _log_turn(session_id, redacted_message, result, "frustration", request_id=request_id, tone=tone)
     return result
 

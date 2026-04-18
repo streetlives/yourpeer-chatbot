@@ -445,6 +445,13 @@ def _filter_by_colocated(cards: list[dict], message: str) -> tuple[list[dict], s
         m = re.search(r"\bwith\s+(food|shelters?|showers?|clothing|health|legal|laundry|mail)\b", message, re.I)
     if m:
         service_label = m.group(1).strip()
+        # Singularize plural captures — user writes "showers" but
+        # also_available entries use the singular form "Shower".
+        # Guard: require >3 chars and non-"ss" ending so "gas" and
+        # "business" (defensive) don't get mangled.
+        lower = service_label.lower()
+        if lower.endswith("s") and len(lower) > 3 and not lower.endswith("ss"):
+            service_label = service_label[:-1]
         matched = [c for c in cards if _also_has(c, service_label)]
         return matched, f"also has {service_label}"
     return [], ""
@@ -1227,8 +1234,8 @@ def _handle_filter_subcategory(
         return {
             "response": (
                 f"You've only seen {displayed_count} result"
-                f"{'s' if displayed_count != 1 else ''} so far, so there "
-                f"isn't much to filter. You can tap on the card"
+                f"{'s' if displayed_count != 1 else ''} so far, so there's "
+                f"not much to filter. You can tap on the card"
                 f"{'s' if displayed_count != 1 else ''} for more details, "
                 f"or I can try a new search."
             ),
@@ -1431,15 +1438,31 @@ def _handle_filter_subcategory(
                         f"'{display_phrase}':"
                     )
 
+        # Build quick replies: show-more first if the filter overflows the page,
+        # then the standard Show all / Navigator / New search trio.
+        remaining = filter_count - len(display)
+        quick_replies = []
+        if remaining > 0:
+            quick_replies.append({
+                "label": f"📋 Show {remaining} more result{'s' if remaining != 1 else ''}",
+                "value": "Show more results",
+            })
+        quick_replies.extend([_SHOW_ALL_QR, _NAVIGATOR_QR, _NEW_SEARCH_QR])
+
         return {
             "response": response,
             "services": display,
-            "quick_replies": [_SHOW_ALL_QR, _NAVIGATOR_QR, _NEW_SEARCH_QR],
+            "quick_replies": quick_replies,
             "category": "post_results_filter",
-            # Metadata for chatbot.py to store _filtered_results
+            # Metadata for the post-results handler to persist in session.
+            # _full_filtered carries the complete filter match set — larger
+            # than `services` when filter_count > _DISPLAY_PAGE_SIZE — so
+            # subsequent "show more" pagination pages through the filtered
+            # set rather than falling back to _last_results.
             "_filter_matched": True,
             "_filter_tier": filter_tier,
             "_filter_phrase": raw_phrase,
+            "_full_filtered": matched,
         }
 
     # --- No matches ---

@@ -36,6 +36,9 @@ _SHOW_MORE_PATTERNS = (
     "any others", "what else", "next results",
     "any more", "see more",
 )
+# Subset of _SHOW_MORE_PATTERNS that explicitly mean "everything, unfiltered".
+# Tapping these while a filter is active clears the filter.
+_SHOW_ALL_PATTERNS = ("show all results", "show all", "show results")
 
 # Sort-mode phrases → internal sort key.
 _SORT_PATTERNS = {
@@ -54,25 +57,68 @@ _ISODOW_NAMES = {1: "Monday", 2: "Tuesday", 3: "Wednesday", 4: "Thursday",
 def _handle_show_more(session_id, message, redacted_message, existing,
                       last_results, request_id):
     """Handle 'show more results' / 'show all' after results were displayed."""
-    if message.lower().strip() not in _SHOW_MORE_PATTERNS:
+    msg_lower = message.lower().strip()
+    if msg_lower not in _SHOW_MORE_PATTERNS:
         return None
 
+    # When a filter is active, "show all" escapes back to unfiltered results;
+    # "show more" paginates through the filtered set.
+    filtered = existing.get("_filtered_results")
+    is_show_all = msg_lower in _SHOW_ALL_PATTERNS
+
+    if filtered and is_show_all:
+        # Escape the filter — clear state and re-display the first page
+        # of the unfiltered set (same pagination UX as initial display).
+        existing.pop("_filtered_results", None)
+        existing.pop("_filter_phrase", None)
+        first_page = last_results[:_DISPLAY_PAGE_SIZE]
+        existing["_displayed_count"] = len(first_page)
+        save_session_slots(session_id, existing)
+        qr = [
+            {"label": "🔍 New search", "value": "Start over"},
+            {"label": "🤝 Peer navigator", "value": "Connect with peer navigator"},
+        ]
+        remaining = len(last_results) - len(first_page)
+        if remaining > 0:
+            remaining_locs = _count_unique_locations(
+                last_results[len(first_page):len(first_page) + _DISPLAY_PAGE_SIZE]
+            )
+            qr.insert(0, {
+                "label": f"📋 Show {remaining_locs} more result{'s' if remaining_locs != 1 else ''}",
+                "value": "Show more results",
+            })
+        result = {
+            "session_id": session_id,
+            "response": "Here are all the results again:",
+            "follow_up_needed": False,
+            "slots": existing,
+            "services": first_page,
+            "result_count": len(first_page),
+            "relaxed_search": False,
+            "quick_replies": qr,
+        }
+        _log_turn(session_id, redacted_message, result, "post_results", request_id=request_id)
+        return result
+
+    # Source set: filtered when active, otherwise the full last_results.
+    source = filtered if filtered else last_results
+
     displayed = existing.get("_displayed_count", 0)
-    if displayed and displayed < len(last_results):
+    if displayed and displayed < len(source):
         # Show the next page of results (not all remaining)
-        next_page = last_results[displayed:displayed + _DISPLAY_PAGE_SIZE]
+        next_page = source[displayed:displayed + _DISPLAY_PAGE_SIZE]
         new_displayed = displayed + len(next_page)
         existing["_displayed_count"] = new_displayed
         save_session_slots(session_id, existing)
 
-        still_remaining = len(last_results) - new_displayed
+        still_remaining = len(source) - new_displayed
         qr = [
             {"label": "🔍 New search", "value": "Start over"},
             {"label": "🤝 Peer navigator", "value": "Connect with peer navigator"},
         ]
         if still_remaining > 0:
             remaining_locs = _count_unique_locations(
-                last_results[new_displayed:new_displayed + _DISPLAY_PAGE_SIZE]
+                source[new_displayed:new_displayed + _DISPLAY_PAGE_SIZE]
             )
             qr.insert(0, {
                 "label": f"📋 Show {remaining_locs} more result{'s' if remaining_locs != 1 else ''}",
@@ -91,14 +137,14 @@ def _handle_show_more(session_id, message, redacted_message, existing,
             "quick_replies": qr,
         }
     else:
-        # No more to show — re-display all
+        # No more to show — re-display everything from the active source.
         result = {
             "session_id": session_id,
             "response": "Here are all the results again:",
             "follow_up_needed": False,
             "slots": existing,
-            "services": last_results,
-            "result_count": len(last_results),
+            "services": source,
+            "result_count": len(source),
             "relaxed_search": False,
             "quick_replies": [
                 {"label": "🔍 New search", "value": "Start over"},
@@ -250,6 +296,18 @@ def _handle_post_results_question(session_id, message, redacted_message, existin
         existing.get("_displayed_count", len(last_results)),
     )
     if pr is not None:
+        # Persist filter state when _handle_filter_subcategory matched.
+        # _full_filtered is the complete filter result set (possibly larger
+        # than the page shown); subsequent "show more" and questions about
+        # the displayed results will operate on this filtered view until
+        # it's cleared by a state transition (no-thanks / frustration /
+        # new search).
+        if pr.get("_filter_matched"):
+            existing["_filtered_results"] = pr.get("_full_filtered", [])
+            existing["_filter_phrase"] = pr.get("_filter_phrase")
+            existing["_displayed_count"] = len(pr.get("services", []))
+            save_session_slots(session_id, existing)
+
         result = {
             "session_id": session_id,
             "response": pr["response"],
@@ -348,6 +406,44 @@ def _handle_post_results_interaction(
             return result
 
         # confirm_deny
+        # With filter active, treat as "escape the filter" rather than
+        # "I'm done" — clear filter state, preserve _last_results, and
+        # re-display the first page of the unfiltered set. This matches
+        # the filter-pipeline design where "no thanks" after filter is
+        # an escape path, not a session end.
+        if existing.get("_filtered_results"):
+            existing.pop("_filtered_results", None)
+            existing.pop("_filter_phrase", None)
+            first_page = last_results[:_DISPLAY_PAGE_SIZE]
+            existing["_displayed_count"] = len(first_page)
+            save_session_slots(session_id, existing)
+            qr = [
+                {"label": "🔍 New search", "value": "Start over"},
+                {"label": "🤝 Peer navigator", "value": "Connect with peer navigator"},
+            ]
+            remaining = len(last_results) - len(first_page)
+            if remaining > 0:
+                remaining_locs = _count_unique_locations(
+                    last_results[len(first_page):len(first_page) + _DISPLAY_PAGE_SIZE]
+                )
+                qr.insert(0, {
+                    "label": f"📋 Show {remaining_locs} more result{'s' if remaining_locs != 1 else ''}",
+                    "value": "Show more results",
+                })
+            result = {
+                "session_id": session_id,
+                "response": "No problem — here are all the results again:",
+                "follow_up_needed": False,
+                "slots": existing,
+                "services": first_page,
+                "result_count": len(first_page),
+                "relaxed_search": False,
+                "quick_replies": qr,
+            }
+            _log_turn(session_id, redacted_message, result, "post_results_filter_escape",
+                      request_id=request_id, tone=tone)
+            return result
+
         existing.pop("_last_results", None)
         save_session_slots(session_id, existing)
         result = _empty_reply(
@@ -425,6 +521,10 @@ def _handle_post_results_interaction(
             existing.pop("_queue_offer_pending", None)
             existing.pop("_pending_confirmation", None)
             existing.pop("_displayed_count", None)
+            # Filter state was tied to the prior _last_results — clear it
+            # so it doesn't bleed into the new search's results.
+            existing.pop("_filtered_results", None)
+            existing.pop("_filter_phrase", None)
         save_session_slots(session_id, existing)
 
     return None
