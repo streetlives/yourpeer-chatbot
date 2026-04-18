@@ -112,9 +112,21 @@ def _handle_frustration(session_id, redacted_message, existing, tone, request_id
                 {"label": "🔄 Start over", "value": "Start over"},
             ],
         )
-    elif _has_enough and _svc and _loc:
-        # First frustration AND we have enough info — acknowledge the
-        # mistake and offer to proceed with what we already know.
+    elif _has_enough and _svc and _loc and not existing.get("_last_results"):
+        # First frustration AND we have enough info AND no results yet —
+        # the frustration is likely caused by the bot re-asking for info
+        # we already have. Acknowledge the mistake and offer to proceed
+        # with what we know.
+        #
+        # IMPORTANT: this branch must NOT fire when _last_results exists.
+        # If the user has already seen results, the frustration is about
+        # the RESULTS being unhelpful — the "I already have what I need"
+        # reframe becomes wrong (we already searched; re-confirming just
+        # re-runs the same search that produced the unhelpful results).
+        # Post-results frustration falls through to the else branch
+        # instead, which offers the navigator/311 escalation. See the
+        # test_second_frustration_is_shorter / test_eval_frustration_loop
+        # regression that this guard resolves.
         svc_label = _SERVICE_LABELS.get(_svc, _svc)
         loc_label = _loc if _loc != NEAR_ME_SENTINEL else "your area"
         result = _empty_reply(

@@ -64,6 +64,11 @@ try:
     from sentence_transformers import SentenceTransformer
     _SENTENCE_TRANSFORMERS_AVAILABLE = True
 except ImportError:
+    # Keep the name defined so callers (and tests using
+    # mock.patch("...SentenceTransformer", ...)) can reference it.
+    # The _SENTENCE_TRANSFORMERS_AVAILABLE guard prevents this None
+    # from ever being called at runtime.
+    SentenceTransformer = None
     logger.warning(
         "sentence-transformers not installed — semantic routing (Tier 2) "
         "disabled. Install with: pip install sentence-transformers"
@@ -92,9 +97,6 @@ DEFAULT_POPULATION_THRESHOLD = 0.70
 # Per-route threshold overrides for categories that are semantically
 # close to each other. These can be tuned using eval data.
 ROUTE_THRESHOLDS: dict[str, float] = {
-    # shelter and housing_assistance are close — require higher confidence
-    # to avoid routing "I need help with rent" to shelter
-    "housing_assistance": 0.78,
     # "other" is a broad catch-all — require higher confidence to prevent
     # false positives from nonsense/adversarial inputs
     "other": 0.78,

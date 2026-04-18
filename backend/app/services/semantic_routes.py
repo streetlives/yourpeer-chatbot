@@ -273,30 +273,28 @@ SERVICE_ROUTES = {
         "I can't get hired because of my record",
     ],
 
-    "housing_assistance": [
-        "I need help paying my rent",
-        "I'm behind on rent and might get evicted",
-        "where can I apply for Section 8",
-        "I need rental assistance",
-        "I need help with a housing application",
-        "how do I apply for NYCHA",
-        "I need eviction prevention help",
-        "where can I find affordable housing",
-        "I need a housing voucher",
-        "I need help with Housing Connect",
-        "I need homeless prevention services",
-        # Expanded coverage (HYBRID_MULTI_INTENT)
-        "I'm about to lose my apartment",
-        "I got an eviction notice and need help",
-        "I need help finding an apartment I can afford",
-        "where can I apply for public housing",
-        "I need emergency rental assistance",
-        # Negation phrasings (HYBRID_MULTI_INTENT)
-        "I can't afford my rent anymore",
-        "I don't have enough for next month's rent",
-        "I can't find an affordable place to live",
-        "I have nowhere to move because rent is too high",
-    ],
+    # --- housing_assistance route retired (April 15, 2026 audit) ---
+    # housing_assistance was collapsed into SERVICE_KEYWORDS['other'] with
+    # a description filter on the 'other' template (matches YourPeer).
+    # The regex layer in slot_extractor.py now handles the common keywords
+    # ("rental assistance", "section 8", "nycha", "eviction prevention",
+    # etc.) via the 'other' cluster. Semantic routing for these phrasings
+    # was dropped along with the dedicated service type.
+    #
+    # If production data shows we're missing coverage on indirect phrasings,
+    # the utterances below can be promoted into the 'other' route (mind
+    # cross-route duplicates — "where can I apply for Section 8" etc. are
+    # a natural fit for 'other' since Section 8 is a benefits application):
+    #     "I need help paying my rent"
+    #     "I'm behind on rent and might get evicted"
+    #     "where can I apply for Section 8" / "... for NYCHA"
+    #     "I need rental assistance" / "... eviction prevention help"
+    #     "where can I find affordable housing" / "... a housing voucher"
+    #     "I need homeless prevention services"
+    #     "I'm about to lose my apartment"
+    #     "I got an eviction notice and need help"
+    #     "I can't afford my rent anymore"
+    #     "I have nowhere to move because rent is too high"
 
     "other": [
         "I need help applying for food stamps",
@@ -322,7 +320,6 @@ SERVICE_ROUTES = {
         # Coverage for moved regex keywords (REGEX_AUDIT_2)
         "I need a place to store my belongings",
         "is there storage for my stuff",
-        "where can I charge my phone",
         "I need to charge my phone and it's dead",
         # Negation phrasings (HYBRID_MULTI_INTENT)
         "I don't have an ID",

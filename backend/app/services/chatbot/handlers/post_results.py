@@ -374,8 +374,15 @@ def _handle_post_results_interaction(
             or action_pre == "correction"
         )
         if is_frustration_or_rejection:
-            existing.pop("_last_results", None)
-            save_session_slots(session_id, existing)
+            # Intentionally DO NOT pop _last_results here. The downstream
+            # frustration handler (_handle_frustration in emotional.py)
+            # uses _last_results to distinguish post-results frustration
+            # ("these results weren't helpful" → escalate to navigator)
+            # from pre-results frustration ("you keep re-asking" →
+            # apologize + reconfirm). Popping it here blinds that branch.
+            # _last_results is naturally replaced by the next successful
+            # search or cleared on reset, so leaving it in place is safe.
+            pass
         elif early_extracted.get("location"):
             existing.pop("_last_results", None)
             save_session_slots(session_id, existing)
