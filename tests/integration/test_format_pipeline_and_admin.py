@@ -69,7 +69,7 @@ def _fresh():
 
 def _send(msg, sid, mock_crisis=None):
     with (
-        patch("app.services.chatbot.query_services", return_value=MOCK_QUERY_RESULTS),
+        patch("app.services.chatbot.execution.query_services", return_value=MOCK_QUERY_RESULTS),
         patch("app.services.chatbot.claude_reply", return_value="How can I help?"),
         patch("app.services.chatbot.detect_crisis", return_value=mock_crisis),
     ):
@@ -299,7 +299,7 @@ class TestSkipLlmPipeline:
         # On the "yes" confirmation, detect_crisis should be called
         # with skip_llm=True (or not called at all for short actions)
         with (
-            patch("app.services.chatbot.query_services", return_value=MOCK_QUERY_RESULTS),
+            patch("app.services.chatbot.execution.query_services", return_value=MOCK_QUERY_RESULTS),
             patch("app.services.chatbot.claude_reply", return_value="ok"),
             patch("app.services.chatbot.detect_crisis", return_value=None) as mock_crisis,
         ):
@@ -316,7 +316,7 @@ class TestSkipLlmPipeline:
         sid = _fresh()
         _send("food in Manhattan", sid)
         with (
-            patch("app.services.chatbot.query_services", return_value=MOCK_QUERY_RESULTS),
+            patch("app.services.chatbot.execution.query_services", return_value=MOCK_QUERY_RESULTS),
             patch("app.services.chatbot.claude_reply", return_value="ok"),
             patch("app.services.chatbot.detect_crisis",
                   return_value=("suicide_self_harm", "Call 988.")) as mock_crisis,

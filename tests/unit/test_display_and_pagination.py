@@ -231,7 +231,7 @@ class TestDisplayPagination:
     def test_all_results_stored_in_session(self):
         sid = _fresh()
         results = []
-        with patch("app.services.chatbot.query_services",
+        with patch("app.services.chatbot.execution.query_services",
                    return_value=_build_shelter_results(15)), \
              patch("app.services.chatbot.claude_reply", return_value=""), \
              patch("app.services.chatbot.detect_crisis", return_value=None):
@@ -269,7 +269,7 @@ class TestDisplayPagination:
 
     def test_show_more_third_page_gets_remainder(self):
         sid = _fresh()
-        with patch("app.services.chatbot.query_services",
+        with patch("app.services.chatbot.execution.query_services",
                    return_value=_build_shelter_results(12)), \
              patch("app.services.chatbot.claude_reply", return_value=""), \
              patch("app.services.chatbot.detect_crisis", return_value=None):

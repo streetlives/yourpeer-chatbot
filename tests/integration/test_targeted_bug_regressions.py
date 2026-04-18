@@ -188,9 +188,9 @@ class TestBug11DoubleCrisisCall:
 
     def test_generate_reply_calls_detect_crisis_once(self, fresh_session):
         """generate_reply should call detect_crisis exactly once, not twice."""
-        with patch("app.services.chatbot.detect_crisis", return_value=None) as mock_dc, \
-             patch("app.services.chatbot.claude_reply", return_value="Hi"), \
-             patch("app.services.chatbot.query_services", return_value=MOCK_QUERY_RESULTS):
+        with patch("app.services.chatbot.orchestrator.detect_crisis", return_value=None) as mock_dc, \
+             patch("app.services.chatbot.handlers.meta.claude_reply", return_value="Hi"), \
+             patch("app.services.chatbot.execution.query_services", return_value=MOCK_QUERY_RESULTS):
             from app.services.chatbot import generate_reply
             generate_reply("I need food in Brooklyn", session_id=fresh_session)
             assert mock_dc.call_count == 1, \
@@ -199,9 +199,9 @@ class TestBug11DoubleCrisisCall:
     def test_crisis_message_calls_detect_crisis_once(self, fresh_session):
         """Even for crisis messages, detect_crisis should only be called once."""
         crisis_result = ("suicide_self_harm", "Please call 988.")
-        with patch("app.services.chatbot.detect_crisis", return_value=crisis_result) as mock_dc, \
-             patch("app.services.chatbot.claude_reply", return_value="Hi"), \
-             patch("app.services.chatbot.query_services", return_value=MOCK_QUERY_RESULTS):
+        with patch("app.services.chatbot.orchestrator.detect_crisis", return_value=crisis_result) as mock_dc, \
+             patch("app.services.chatbot.handlers.meta.claude_reply", return_value="Hi"), \
+             patch("app.services.chatbot.execution.query_services", return_value=MOCK_QUERY_RESULTS):
             from app.services.chatbot import generate_reply
             result = generate_reply("I want to end it all", session_id=fresh_session)
             assert mock_dc.call_count == 1, \

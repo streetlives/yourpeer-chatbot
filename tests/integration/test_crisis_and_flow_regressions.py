@@ -41,7 +41,7 @@ def send_with_crisis(message, session_id=None, mock_query_return=None):
         session_id = _fresh_sid()
 
     with patch("app.services.chatbot.claude_reply", return_value="How can I help?"), \
-         patch("app.services.chatbot.query_services", return_value=mock_query_return):
+         patch("app.services.chatbot.execution.query_services", return_value=mock_query_return):
         return generate_reply(message, session_id=session_id)
 
 
@@ -55,7 +55,7 @@ def send_multi_with_crisis(messages, session_id=None, mock_query_return=None):
 
     results = []
     with patch("app.services.chatbot.claude_reply", return_value="How can I help?"), \
-         patch("app.services.chatbot.query_services", return_value=mock_query_return):
+         patch("app.services.chatbot.execution.query_services", return_value=mock_query_return):
         for msg in messages:
             results.append(generate_reply(msg, session_id=session_id))
     return results

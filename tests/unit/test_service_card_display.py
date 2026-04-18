@@ -372,7 +372,7 @@ class TestShowMore:
                 "_displayed_count": 10,
             })
             with patch("app.services.chatbot.claude_reply", return_value=""), \
-                 patch("app.services.chatbot.query_services", return_value={"services": [], "result_count": 0}), \
+                 patch("app.services.chatbot.execution.query_services", return_value={"services": [], "result_count": 0}), \
                  patch("app.services.chatbot.detect_crisis", return_value=None):
                 result = generate_reply(pattern, session_id=sid)
                 assert len(result["services"]) == 5, \
@@ -389,7 +389,7 @@ class TestShowMore:
             "_displayed_count": 15,
         })
         with patch("app.services.chatbot.claude_reply", return_value=""), \
-             patch("app.services.chatbot.query_services", return_value={"services": [], "result_count": 0}), \
+             patch("app.services.chatbot.execution.query_services", return_value={"services": [], "result_count": 0}), \
              patch("app.services.chatbot.detect_crisis", return_value=None):
             result = generate_reply("show all results", session_id=sid)
             assert len(result["services"]) == 15

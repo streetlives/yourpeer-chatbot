@@ -879,37 +879,48 @@ class TestOpenNowSortOnlySemantics:
     """
 
     def test_chatbot_does_not_pass_current_time_to_queries(self):
-        """chatbot.py must not pass current_time to query_services().
+        """The chatbot execution layer must not pass current_time to query_services().
 
         Passing current_time would activate FILTER_BY_OPEN_NOW and switch
         the chatbot to exclude-semantics. This test greps the call site to
         ensure the kwarg is absent.
+
+        Note: Phase 3 moved the ``query_services()`` call site from
+        ``chatbot.py`` (monolith) to ``chatbot.execution`` (package
+        submodule). ``inspect.getsource`` on a package returns only the
+        ``__init__`` source, so this test targets the execution submodule
+        where the call site now lives.
         """
         import inspect
-        from app.services import chatbot
-        source = inspect.getsource(chatbot)
-        # The main query_services call site is in _run_search / fulfill_query
+        from app.services.chatbot import execution
+        source = inspect.getsource(execution)
+        # The main query_services call site is in _execute_and_respond.
         # Look for the arguments it actually passes.
         # A regression would add 'current_time=' somewhere near the call.
         lines_with_current_time = [
             l for l in source.splitlines() if "current_time=" in l
         ]
         assert not lines_with_current_time, (
-            "chatbot.py passes current_time — this activates FILTER_BY_OPEN_NOW "
-            "and switches to exclude-semantics. If intentional, update "
-            "QUERY_PARITY_AUDIT.md. Found: " + str(lines_with_current_time)
+            "chatbot.execution passes current_time — this activates "
+            "FILTER_BY_OPEN_NOW and switches to exclude-semantics. If "
+            "intentional, update QUERY_PARITY_AUDIT.md. Found: "
+            + str(lines_with_current_time)
         )
 
     def test_chatbot_does_not_pass_weekday_to_main_query(self):
-        """chatbot.py must not pass weekday to the primary query_services() call.
+        """The primary ``query_services()`` call must not pass weekday.
 
         weekday IS used by _handle_hours_for_day (post-results handler for
         'what are their hours Saturday?'), but NOT by the primary search.
+
+        Note: Phase 3 moved the primary ``query_services()`` call site
+        from ``chatbot.py`` (monolith) to ``chatbot.execution`` (package
+        submodule). See the sibling current_time test for context.
         """
         import re
         import inspect
-        from app.services import chatbot
-        source = inspect.getsource(chatbot)
+        from app.services.chatbot import execution
+        source = inspect.getsource(execution)
         # Find the primary query_services call
         # It spans multiple lines starting with "results = query_services("
         match = re.search(
@@ -918,8 +929,8 @@ class TestOpenNowSortOnlySemantics:
             re.DOTALL,
         )
         assert match, (
-            "Could not find the primary query_services call site in chatbot.py. "
-            "If the call was refactored, update this test."
+            "Could not find the primary query_services call site in "
+            "chatbot.execution. If the call was refactored, update this test."
         )
         call_text = match.group(0)
         assert "weekday=" not in call_text, (
@@ -1313,20 +1324,23 @@ class TestFilterResponsePagination:
         assert "services" in result
 
     def test_chatbot_call_site_passes_displayed_count(self):
-        """chatbot.py must pass displayed_count to answer_from_results.
+        """The ``answer_from_results`` call site must pass displayed_count.
 
         Without this, the filter-response fix is inert — the handlers
         default to len(services)=25 and the "of 25" bug returns.
+
+        Note: Phase 3 moved the ``answer_from_results()`` call site from
+        ``chatbot.py`` (monolith) to ``chatbot.handlers.post_results``.
         """
         import inspect
-        from app.services import chatbot
-        source = inspect.getsource(chatbot)
+        from app.services.chatbot.handlers import post_results
+        source = inspect.getsource(post_results)
         # Look for the answer_from_results call — should pass 3 positional args
         # including displayed_count from session
         assert "_displayed_count" in source, (
-            "chatbot.py should reference _displayed_count (session key) "
-            "when calling answer_from_results — this is the wiring that "
-            "activates the UX fix."
+            "chatbot.handlers.post_results should reference _displayed_count "
+            "(session key) when calling answer_from_results — this is the "
+            "wiring that activates the UX fix."
         )
         # More specific: the answer_from_results call should be
         # receiving _displayed_count or existing.get("_displayed_count", ...)

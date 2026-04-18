@@ -26,7 +26,7 @@ def _fresh():
 
 def _send(msg, sid, mock_crisis=None, mock_query=None, latitude=None, longitude=None):
     with (
-        patch("app.services.chatbot.query_services",
+        patch("app.services.chatbot.execution.query_services",
               return_value=mock_query or MOCK_QUERY_RESULTS),
         patch("app.services.chatbot.claude_reply",
               return_value="How can I help?"),

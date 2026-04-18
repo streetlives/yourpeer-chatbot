@@ -148,7 +148,7 @@ def test_service_no_results(fresh_session):
     assert results[-1]["result_count"] == 0
     assert "wasn't able to find" in results[-1]["response"] or "try" in results[-1]["response"].lower()
 @patch("app.services.chatbot.detect_crisis", return_value=None)
-@patch("app.services.chatbot.query_services", side_effect=Exception("DB connection failed"))
+@patch("app.services.chatbot.execution.query_services", side_effect=Exception("DB connection failed"))
 def test_db_failure_uses_static_fallback(mock_query, mock_crisis, fresh_session):
     """If DB query throws after confirmation, should return a static error
     message — NOT an LLM response (which can generate follow-up questions
@@ -161,7 +161,7 @@ def test_db_failure_uses_static_fallback(mock_query, mock_crisis, fresh_session)
     # Should contain a clear error message directing user to yourpeer.nyc
     assert "yourpeer.nyc" in result["response"]
 @patch("app.services.chatbot.detect_crisis", return_value=None)
-@patch("app.services.chatbot.query_services", side_effect=Exception("DB down"))
+@patch("app.services.chatbot.execution.query_services", side_effect=Exception("DB down"))
 def test_both_db_and_claude_fail(mock_query, mock_crisis, fresh_session):
     """If DB query fails, static fallback should still work (no Claude needed)."""
     generate_reply("I need food in Brooklyn", session_id=fresh_session)
@@ -170,7 +170,7 @@ def test_both_db_and_claude_fail(mock_query, mock_crisis, fresh_session):
     assert len(result["response"]) > 0
     assert result["services"] == []
 @patch("app.services.chatbot.detect_crisis", return_value=None)
-@patch("app.services.chatbot.query_services", return_value=MOCK_ERROR_RESULTS)
+@patch("app.services.chatbot.execution.query_services", return_value=MOCK_ERROR_RESULTS)
 def test_query_error_uses_static_fallback(mock_query, mock_crisis, fresh_session):
     """If query_services returns an error key, should return a static error
     message — NOT an LLM response."""
@@ -181,7 +181,7 @@ def test_query_error_uses_static_fallback(mock_query, mock_crisis, fresh_session
     # Should contain a clear error message
     assert "try again" in result["response"].lower() or "yourpeer" in result["response"]
 @patch("app.services.chatbot.detect_crisis", return_value=None)
-@patch("app.services.chatbot.query_services", side_effect=Exception("DB down"))
+@patch("app.services.chatbot.execution.query_services", side_effect=Exception("DB down"))
 def test_repeated_db_failure_escalates_message(mock_query, mock_crisis, fresh_session):
     """Second consecutive DB failure should show a stronger 'still having trouble' message."""
     generate_reply("I need food in Brooklyn", session_id=fresh_session)
@@ -205,7 +205,7 @@ def test_service_needs_followup(fresh_session):
 # -----------------------------------------------------------------------
 @patch("app.services.chatbot._USE_LLM", False)
 @patch("app.services.chatbot.detect_crisis", return_value=None)
-@patch("app.services.chatbot.query_services")
+@patch("app.services.chatbot.execution.query_services")
 @patch("app.services.responses.claude_reply", return_value="I understand. How can I help you find what you need?")
 @patch("app.services.chatbot.claude_reply", return_value="I understand. How can I help you find what you need?")
 def test_general_conversation(mock_chatbot_claude, mock_responses_claude, mock_query, mock_crisis, fresh_session):
@@ -301,7 +301,7 @@ def test_response_has_all_required_keys(fresh_session):
         for key in required_keys:
             assert key in result, f"Missing key '{key}' in response for: {msg}"
 @patch("app.services.chatbot.detect_crisis", return_value=None)
-@patch("app.services.chatbot.query_services", return_value=MOCK_QUERY_RESULTS)
+@patch("app.services.chatbot.execution.query_services", return_value=MOCK_QUERY_RESULTS)
 @patch("app.services.chatbot.claude_reply")
 def test_relaxed_search_flag(mock_claude, mock_query, mock_crisis, fresh_session):
     """relaxed_search should reflect whether the query was relaxed."""
@@ -621,7 +621,7 @@ def test_crisis_clears_pending_confirmation(fresh_session):
     with patch("app.services.chatbot.detect_crisis",
                return_value=("suicide_self_harm", "Crisis response")), \
          patch("app.services.chatbot.claude_reply", return_value=""), \
-         patch("app.services.chatbot.query_services"):
+         patch("app.services.chatbot.execution.query_services"):
         generate_reply("I want to hurt myself", session_id=fresh_session)
 
     # The pending flag should be cleared
@@ -788,7 +788,7 @@ def test_text_location_overrides_stored_coords(fresh_session):
     from conftest import MOCK_QUERY_RESULTS
 
     with patch("app.services.chatbot.claude_reply", return_value="How can I help?"), \
-         patch("app.services.chatbot.query_services", return_value=MOCK_QUERY_RESULTS) as mock_query, \
+         patch("app.services.chatbot.execution.query_services", return_value=MOCK_QUERY_RESULTS) as mock_query, \
          patch("app.services.chatbot.detect_crisis", return_value=None):
 
         # Step 1: User says "food near me" with browser coordinates (Harlem)

@@ -176,7 +176,7 @@ class TestReplyResponseSync:
         sid = "drift-check"
         clear_session(sid)
         with (
-            patch("app.services.chatbot.query_services"),
+            patch("app.services.chatbot.execution.query_services"),
             patch("app.services.chatbot.claude_reply", return_value="ok"),
             patch("app.services.chatbot.detect_crisis", return_value=None),
         ):
@@ -238,7 +238,7 @@ class TestFullPipeline:
         sid = "pipeline-test"
         clear_session(sid)
         with (
-            patch("app.services.chatbot.query_services", return_value=mock_results),
+            patch("app.services.chatbot.execution.query_services", return_value=mock_results),
             patch("app.services.chatbot.claude_reply", return_value="ok"),
             patch("app.services.chatbot.detect_crisis", return_value=None),
         ):
@@ -473,7 +473,7 @@ class TestPersistenceFailureIsolation:
             sid = "persist-fail-test"
             clear_session(sid)
             with (
-                patch("app.services.chatbot.query_services", return_value={
+                patch("app.services.chatbot.execution.query_services", return_value={
                     "services": [{"service_name": "Test", "service_id": "1",
                                   "is_open": None, "hours_today": None,
                                   "phone": "555", "address": "100 Main", "fees": "Free"}],
