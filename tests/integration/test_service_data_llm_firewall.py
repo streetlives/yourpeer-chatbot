@@ -248,7 +248,6 @@ class TestLLMCallSiteCapture:
     def test_no_slots_in_any_llm_call_during_full_flow(self, sid):
         """Track ALL claude_reply calls during a multi-turn flow."""
         captured_prompts = []
-        original_claude = None
 
         def capturing_claude(prompt):
             captured_prompts.append(prompt)
@@ -331,7 +330,7 @@ class TestSearchExecutionFirewall:
              patch("app.services.chatbot.execution.query_services", return_value=empty_no_error), \
              patch("app.services.responses.claude_reply") as mock_llm:
             generate_reply("I need food in Brooklyn", session_id=sid)
-            result = generate_reply("Yes, search", session_id=sid)
+            _result = generate_reply("Yes, search", session_id=sid)
             # Even if the no-results handler runs, Claude should NOT be called
             mock_llm.assert_not_called()
 
@@ -369,7 +368,7 @@ class TestSearchExecutionFirewall:
                    return_value=MOCK_EMPTY_RESULTS), \
              patch("app.services.responses.claude_reply") as mock_llm:
             generate_reply("I need food in Brooklyn", session_id=sid)
-            result = generate_reply("Yes, search", session_id=sid)
+            _result = generate_reply("Yes, search", session_id=sid)
             mock_llm.assert_not_called()
 
 

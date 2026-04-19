@@ -48,8 +48,6 @@ import logging
 import time
 from typing import Optional, Tuple
 
-logger = logging.getLogger(__name__)
-
 # ---------------------------------------------------------------------------
 # LLM CLIENT — uses shared Anthropic client from claude_client.py
 # ---------------------------------------------------------------------------
@@ -59,6 +57,7 @@ from app.llm.claude_client import get_client, CRISIS_DETECTION_MODEL, _track_llm
 # Whether LLM crisis detection is enabled (requires ANTHROPIC_API_KEY)
 _USE_LLM_DETECTION = bool(os.getenv("ANTHROPIC_API_KEY"))
 
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # CRISIS KEYWORD PATTERNS

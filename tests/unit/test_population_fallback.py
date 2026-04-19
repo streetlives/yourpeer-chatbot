@@ -95,19 +95,19 @@ class TestComputeRareTaxonomies:
     def test_lgbtq_via_populations_triggers_rare_tx(self):
         """LGBTQ signal can come from _populations too (e.g. 'transman' sets
         gender=male but adds 'lgbtq' to _populations)."""
-        tx, labels = _compute_rare_population_taxonomies(
+        tx, _labels = _compute_rare_population_taxonomies(
             {"age": 30, "_gender": "male", "_populations": ["lgbtq"]}
         )
         assert "lgbtq young adult" in tx
 
     def test_transgender_triggers_rare_tx(self):
-        tx, labels = _compute_rare_population_taxonomies(
+        tx, _labels = _compute_rare_population_taxonomies(
             {"age": 30, "_gender": "transgender"}
         )
         assert "lgbtq young adult" in tx
 
     def test_nonbinary_triggers_rare_tx(self):
-        tx, labels = _compute_rare_population_taxonomies(
+        tx, _labels = _compute_rare_population_taxonomies(
             {"age": 30, "_gender": "nonbinary"}
         )
         assert "lgbtq young adult" in tx
@@ -125,21 +125,21 @@ class TestComputeRareTaxonomies:
         Under-16 minors need child-protective resources, not the adult-ish
         "youth" shelter taxonomy which primarily covers 16-24.
         """
-        tx, labels = _compute_rare_population_taxonomies({"age": 15})
+        tx, _labels = _compute_rare_population_taxonomies({"age": 15})
         assert "youth" not in tx
 
     def test_age_25_does_not_trigger_youth(self):
-        tx, labels = _compute_rare_population_taxonomies({"age": 25})
+        tx, _labels = _compute_rare_population_taxonomies({"age": 25})
         assert "youth" not in tx
 
     def test_youth_suppressed_by_family_status(self):
         """Youth shelter doesn't apply when the user is explicitly searching
         for family shelter — they have their own track."""
-        tx, labels = _compute_rare_population_taxonomies({
+        tx, _labels = _compute_rare_population_taxonomies({
             "age": 19, "family_status": "with_children",
         })
         assert "youth" not in tx
-        tx, labels = _compute_rare_population_taxonomies({
+        tx, _labels = _compute_rare_population_taxonomies({
             "age": 19, "family_status": "with_family",
         })
         assert "youth" not in tx
@@ -150,7 +150,7 @@ class TestComputeRareTaxonomies:
         assert "senior" in labels
 
     def test_senior_below_62_does_not_trigger(self):
-        tx, labels = _compute_rare_population_taxonomies({"age": 61})
+        tx, _labels = _compute_rare_population_taxonomies({"age": 61})
         assert "senior" not in tx
 
     def test_veteran_triggers_both_tx(self):
@@ -392,7 +392,7 @@ class TestFallbackIntegration:
             "service_type": "shelter", "location": "soho",
             "age": 35, "_gender": "male",
         }
-        result, calls = _run_execute_with_mock(slots, main, fallback)
+        _result, calls = _run_execute_with_mock(slots, main, fallback)
         assert len(calls) == 1
 
     def test_fallback_runs_even_when_location_unresolvable(self):
@@ -444,9 +444,9 @@ class TestFallbackIntegration:
             "age": 21, "_gender": "lgbtq",
         }
         with patch("app.services.chatbot.execution.query_services", side_effect=fake_query_services), \
-             patch("app.services.chatbot.execution.save_session_slots"), \
-             patch("app.services.chatbot.execution.log_query_execution"):
-            result = _execute_and_respond("s", "msg", dict(slots))
+            patch("app.services.chatbot.execution.save_session_slots"), \
+            patch("app.services.chatbot.execution.log_query_execution"):
+            _result = _execute_and_respond("s", "msg", dict(slots))
         assert len(calls) == 1
 
     # ---- EDGE CASES -----------------------------------------------------
@@ -516,8 +516,8 @@ class TestFallbackIntegration:
             "age": 21, "_gender": "lgbtq",
         }
         with patch("app.services.chatbot.execution.query_services", side_effect=fake_query_services), \
-             patch("app.services.chatbot.execution.save_session_slots"), \
-             patch("app.services.chatbot.execution.log_query_execution"):
+            patch("app.services.chatbot.execution.save_session_slots"), \
+            patch("app.services.chatbot.execution.log_query_execution"):
             result = _execute_and_respond("s", "msg", dict(slots))
         # Main result survives
         assert result["result_count"] == 1

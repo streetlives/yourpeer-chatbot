@@ -141,7 +141,7 @@ class TestFrustrationContextRecovery:
             "service_type": "shelter",
             # No location — not enough to search
         })
-        result = _send("why are you asking me this", sid)
+        _result = _send("why are you asking me this", sid)
         slots = get_session_slots(sid)
         assert slots.get("_pending_confirmation") is not True, \
             "Should NOT offer confirmation without location"
@@ -258,7 +258,7 @@ class TestFrustratedWithServiceIntent:
             "_last_results": [{"service_name": "Old result"}],
             "_displayed_count": 1,
         })
-        result = _send("I need food in Brooklyn", sid)
+        _result = _send("I need food in Brooklyn", sid)
         slots = get_session_slots(sid)
         # Should show confirmation (not immediate search)
         # because the user is NOT frustrated

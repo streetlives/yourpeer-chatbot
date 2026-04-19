@@ -13,7 +13,6 @@ Run: pytest tests/test_post_results_boundary.py -v
 
 import pytest
 import uuid
-from unittest.mock import patch
 from conftest import send, send_multi, MOCK_QUERY_RESULTS
 
 
@@ -104,7 +103,7 @@ class TestNewRequestEscapesPostResults:
     def test_new_location_clears_results(self, sid):
         """Providing a new location should clear _last_results."""
         _get_results(sid)
-        r = send("What about services in Queens?", session_id=sid)
+        _r = send("What about services in Queens?", session_id=sid)
         # The new location "Queens" should signal a new search context
         from app.services.session_store import get_session_slots
         slots = get_session_slots(sid)
@@ -232,7 +231,7 @@ class TestAmbiguousEdgeCases:
     def test_reset_clears_results(self, sid):
         """'Start over' should clear results and reset."""
         _get_results(sid)
-        r = send("Start over", session_id=sid)
+        _r = send("Start over", session_id=sid)
         from app.services.session_store import get_session_slots
         slots = get_session_slots(sid)
         assert slots.get("_last_results") is None
@@ -255,7 +254,7 @@ class TestAmbiguousEdgeCases:
         _get_results(sid)
         r1 = send("I need shelter in Manhattan", session_id=sid)
         assert r1["slots"].get("service_type") == "shelter"
-        r2 = send("yes", session_id=sid)
+        _r2 = send("yes", session_id=sid)
         # Now we have shelter results
         r3 = send("I also need clothing", session_id=sid)
         assert r3["slots"].get("service_type") in ("clothing", "shelter")

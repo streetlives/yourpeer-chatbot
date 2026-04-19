@@ -30,11 +30,10 @@ Multi-service support (PR 4):
 import logging
 import time
 
-logger = logging.getLogger(__name__)
-
 # Use the shared Anthropic client and model constants
 from app.llm.claude_client import get_client, SLOT_EXTRACTION_MODEL, _track_llm_call
 
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # SERVICE TYPE ENUM (shared between tool schema and validation)

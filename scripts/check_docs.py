@@ -810,8 +810,8 @@ def check_cross_doc_contradictions(args):
         if len(distinct_values) <= 1:
             continue
 
-        detail = ", ".join(f"{f}:{l} says {v}"
-                           for f, l, v, _ in sorted(occurrences)[:5])
+        detail = ", ".join(f"{file}:{line} says {value}"
+                           for file, line, value, _ in sorted(occurrences)[:5])
         warn("(multiple)",
              f"contradictory counts for {topic}: values "
              f"{sorted(distinct_values)} — {detail}",

@@ -23,7 +23,6 @@ import pytest
 from app.services.classifier import _classify_action
 from app.services.chatbot import generate_reply
 from app.services.post_results import (
-    classify_post_results_question,
     answer_from_results,
     _service_detail_response,
 )
@@ -323,6 +322,11 @@ class TestSkipLlmPipeline:
         ):
             result = generate_reply("yes I want to die", session_id=sid)
             assert "988" in result["response"]
+            # Verify the long message didn't skip the LLM — the inverse of
+            # test_short_safe_action_skips_crisis_llm
+            assert mock_crisis.called, "detect_crisis should have been called"
+            _, kwargs = mock_crisis.call_args
+            assert kwargs.get("skip_llm") is not True, "Long message should NOT have skip_llm=True"
         clear_session(sid)
 
 
@@ -436,9 +440,9 @@ class TestMultiIntentQueueDeclineReOffer:
         _send("yes", sid)  # get results + offer shelter, clothing remains
 
         # Now the session should still have clothing queued
-        mid_slots = get_session_slots(sid)
+        _mid_slots = get_session_slots(sid)
         # "no thanks" should trigger queue_decline and clear remaining
-        result = _send("no thanks", sid)
+        _result = _send("no thanks", sid)
 
         slots_after = get_session_slots(sid)
         assert "_queued_services" not in slots_after

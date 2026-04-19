@@ -58,6 +58,11 @@ import json
 import time
 import argparse
 import logging
+import anthropic
+
+from app.services.chatbot import generate_reply
+from app.services.session_store import clear_session
+from app.privacy.pii_redactor import redact_pii
 from datetime import datetime
 from unittest.mock import patch
 
@@ -66,11 +71,6 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../..", "backend"))
 # Suppress noisy logs during eval
 logging.basicConfig(level=logging.WARNING)
 
-import anthropic
-
-from app.services.chatbot import generate_reply
-from app.services.session_store import clear_session
-from app.privacy.pii_redactor import redact_pii
 
 
 # ---------------------------------------------------------------------------
@@ -3869,7 +3869,7 @@ def print_report(report: dict):
     failing = summary.get("failing_count", 0)
     perfect = summary.get("perfect_count", 0)
     total = summary["scenarios_evaluated"]
-    pct = (passing / total * 100) if total else 0
+    # pct = (passing / total * 100) if total else 0
 
     overall = summary['overall_average']
     weighted = summary.get('weighted_average', 0)

@@ -105,7 +105,7 @@ class TestConfirmChangeLocationUsesExtracted:
             "service_type": "shelter",
             "location": "manhattan",
         })
-        result = _send("change to Queens", sid)
+        _result = _send("change to Queens", sid)
         slots = get_session_slots(sid)
         assert slots.get("location") == "queens", \
             f"Location should be 'queens', got: {slots.get('location')}"
@@ -253,7 +253,7 @@ class TestDisplayPagination:
         )
         final = results[-1]
         qr_labels = [qr["label"] for qr in final.get("quick_replies", [])]
-        more_labels = [l for l in qr_labels if "more result" in l.lower()]
+        more_labels = [lable for lable in qr_labels if "more result" in lable.lower()]
         assert len(more_labels) == 1, f"Should have one 'show more' button, got: {qr_labels}"
         # Should say "Show 5 more" not "Show 15 more"
         assert "5 more" in more_labels[0], \
@@ -293,7 +293,7 @@ class TestDisplayPagination:
         )
         final = results[-1]
         qr_labels = [qr["label"] for qr in final.get("quick_replies", [])]
-        assert not any("more result" in l.lower() for l in qr_labels), \
+        assert not any("more result" in lable.lower() for lable in qr_labels), \
             "No 'show more' when all results fit on one page"
 
     def test_response_shows_total_vs_displayed(self):
@@ -389,7 +389,7 @@ class TestFilteredResultsPagination:
         })
         result = _send("ones for families", sid)
         qr_labels = [qr["label"] for qr in result.get("quick_replies", [])]
-        more_labels = [l for l in qr_labels if "more result" in l.lower()]
+        more_labels = [lable for lable in qr_labels if "more result" in lable.lower()]
         assert len(more_labels) == 1, f"Expected show-more button, got: {qr_labels}"
         assert "3 more" in more_labels[0], \
             f"Should say '3 more' (8-5=3), got: {more_labels[0]}"
@@ -408,7 +408,7 @@ class TestFilteredResultsPagination:
         })
         result = _send("ones for veterans", sid)
         qr_labels = [qr["label"] for qr in result.get("quick_replies", [])]
-        assert not any("more result" in l.lower() for l in qr_labels), \
+        assert not any("more result" in lable.lower() for lable in qr_labels), \
             f"No show-more when all fit, got: {qr_labels}"
 
     def test_show_more_pages_through_filtered_set(self):

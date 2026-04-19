@@ -9,7 +9,7 @@ import uuid
 import pytest
 from unittest.mock import patch
 
-from app.services.classifier import _classify_action, _classify_tone
+from app.services.classifier import _classify_tone
 from app.services.responses import _ESCALATION_RESPONSE
 from app.services.chatbot import generate_reply
 from app.services.slot_extractor import extract_slots
@@ -244,7 +244,7 @@ class TestFix3CrisisStepDown:
         """Crisis step-down should preserve queued services from
         multi-intent extraction."""
         sid = _fresh_sid()
-        result = send_with_crisis(
+        _result = send_with_crisis(
             "My family kicked me out and I need food and shelter in Brooklyn",
             session_id=sid,
         )
@@ -277,7 +277,7 @@ class TestFix5FrustrationYes:
         # Should show New search + Talk to a person (not welcome menu)
         labels = [qr["label"] for qr in result.get("quick_replies", [])]
         assert "🍽️ Food" not in labels, "Yes after frustration should NOT show welcome menu"
-        assert any("person" in l.lower() or "talk" in l.lower() for l in labels)
+        assert any("person" in lable.lower() or "talk" in lable.lower() for lable in labels)
 
     def test_start_over_after_frustration_still_resets(self):
         """'Start over' button after frustration should still reset.

@@ -167,7 +167,7 @@ class TestTaxonomyNarrowingDefaults:
     def test_shelter_adds_lgbtq_young_adult(self):
         """Shelter always adds 'lgbtq young adult' and 'youth' even without service_detail."""
         p = _query("shelter")
-        default = TEMPLATES["shelter"]["default_params"]["taxonomy_names"]
+        _default = TEMPLATES["shelter"]["default_params"]["taxonomy_names"]
         assert "lgbtq young adult" in p["taxonomy_names"]
         assert "youth" in p["taxonomy_names"]
 

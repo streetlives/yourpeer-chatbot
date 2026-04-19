@@ -5,7 +5,7 @@ External dependencies (Claude LLM, Streetlives DB) are mocked so
 tests run without API keys or a database connection.
 Run: pytest tests/test_chatbot.py
 """
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 from app.services.classifier import _classify_message
 from app.services.confirmation import _no_results_message
 from app.services.phrase_lists import _WELCOME_QUICK_REPLIES
@@ -360,8 +360,8 @@ def test_greeting_has_quick_replies(fresh_session):
     result = send("hi", session_id=fresh_session)
     assert len(result["quick_replies"]) > 0
     labels = [qr["label"] for qr in result["quick_replies"]]
-    assert any("Food" in l for l in labels)
-    assert any("Shelter" in l for l in labels)
+    assert any("Food" in lable for lable in labels)
+    assert any("Shelter" in lable for lable in labels)
 def test_reset_has_quick_replies(fresh_session):
     """Reset response should include quick-reply category buttons."""
     result = send("start over", session_id=fresh_session)
@@ -370,7 +370,7 @@ def test_service_followup_has_quick_replies(fresh_session):
     """When only service type is known, follow-up should show borough buttons."""
     result = send("I need food", session_id=fresh_session)
     labels = [qr["label"] for qr in result.get("quick_replies", [])]
-    assert any("Manhattan" in l or "Brooklyn" in l for l in labels), \
+    assert any("Manhattan" in lable or "Brooklyn" in lable for lable in labels), \
         f"Expected borough buttons, got: {labels}"
 def test_new_input_clears_pending_confirmation(fresh_session):
     """Typing new service input during confirmation should update slots.
@@ -391,7 +391,7 @@ def test_results_have_post_search_quick_replies(fresh_session):
     )
     assert result["result_count"] > 0
     labels = [qr["label"] for qr in result.get("quick_replies", [])]
-    assert any("search" in l.lower() or "new" in l.lower() for l in labels)
+    assert any("search" in lable.lower() or "new" in lable.lower() for lable in labels)
 def test_general_reply_does_not_retrigger_confirmation(fresh_session):
     """A general message like 'no' should NOT re-trigger confirmation from stale slots."""
     *_, result = send_multi(
@@ -682,7 +682,7 @@ def test_yes_after_emotional_routes_to_escalation(fresh_session):
 def test_no_after_emotional_is_gentle(fresh_session):
     """'No' after an emotional response should be gentle, not push services."""
     with patch("app.services.chatbot.detect_crisis", return_value=None):
-        r1 = send("I'm feeling really down", session_id=fresh_session)
+        _r1 = send("I'm feeling really down", session_id=fresh_session)
 
     r2 = send("no", session_id=fresh_session)
     assert "okay" in r2["response"].lower() or "ready" in r2["response"].lower()
@@ -708,7 +708,7 @@ def test_yes_still_confirms_search_normally(fresh_session):
 def test_general_response_no_buttons_after_conversation(fresh_session):
     """After the first turn, general responses should not push service buttons."""
     # First general message — may show buttons (first turn)
-    r1 = send("how's it going?", session_id=fresh_session)
+    _r1 = send("how's it going?", session_id=fresh_session)
 
     # Second general message — should NOT push the full 9-category menu
     r2 = send("just thinking about stuff", session_id=fresh_session)
@@ -1099,7 +1099,7 @@ def test_repeated_frustration_pushes_navigator(fresh_session):
     response = result["response"].lower()
     assert "peer navigator" in response or "real people" in response
     labels = [qr["label"] for qr in result.get("quick_replies", [])]
-    assert any("peer" in l.lower() or "navigator" in l.lower() for l in labels)
+    assert any("peer" in lable.lower() or "navigator" in lable.lower() for lable in labels)
 
 
 def test_repeated_frustration_shorter_response(fresh_session):
@@ -1152,7 +1152,7 @@ def test_family_status_extracted_in_flow(fresh_session):
     """Family status should be extracted during multi-turn shelter search."""
     send("I need shelter", session_id=fresh_session)
     send("Brooklyn", session_id=fresh_session)
-    result = send("I have two kids with me", session_id=fresh_session)
+    _r1 = send("I have two kids with me", session_id=fresh_session)
     from app.services.session_store import get_session_slots
     slots = get_session_slots(fresh_session)
     assert slots.get("family_status") == "with_children"
@@ -1285,7 +1285,7 @@ def test_emotional_plus_service_routes_to_service(fresh_session):
 def test_help_plus_service_routes_to_service(fresh_session):
     """'I need help with immigration in the Bronx' should go to service flow,
     not the help handler."""
-    result = send("I need help with immigration in the Bronx", session_id=fresh_session)
+    _result = send("I need help with immigration in the Bronx", session_id=fresh_session)
     from app.services.session_store import get_session_slots
     slots = get_session_slots(fresh_session)
     assert slots.get("service_type") == "legal"
@@ -1294,7 +1294,7 @@ def test_help_plus_service_routes_to_service(fresh_session):
 def test_escalation_plus_service_routes_to_service(fresh_session):
     """'I'm a peer navigator, my client needs shelter in East Harlem'
     should go to service flow, not escalation."""
-    result = send(
+    _r1 = send(
         "I'm a peer navigator. I have a client who needs shelter in East Harlem.",
         session_id=fresh_session,
     )
@@ -1312,7 +1312,7 @@ def test_pure_emotional_still_works(fresh_session):
     assert "search" not in response or "food" not in response
     qr = result.get("quick_replies", [])
     labels = [q["label"] for q in qr]
-    assert any("peer" in l.lower() or "navigator" in l.lower() for l in labels)
+    assert any("peer" in lable.lower() or "navigator" in lable.lower() for lable in labels)
 
 
 def test_pure_help_still_works(fresh_session):
@@ -1421,7 +1421,7 @@ def test_escalation_without_location_stays_escalation(fresh_session):
 def test_escalation_with_service_and_location_routes_to_service(fresh_session):
     """'Navigator, client needs shelter in East Harlem' (service + location)
     should route to service, not escalation. This is a request on behalf of someone."""
-    result = send(
+    _r1 = send(
         "I'm a peer navigator. My client needs shelter in East Harlem.",
         session_id=fresh_session,
     )
@@ -1464,7 +1464,7 @@ def test_family_status_passed_to_query(fresh_session):
         "family_status": "with_children",
         "_pending_confirmation": True,
     })
-    result = send("yes", session_id=fresh_session)
+    _r1 = send("yes", session_id=fresh_session)
     # The mock query_services was called — check it received family_status
     # We can verify indirectly: the result should have services (from mock)
     # and the session should have family_status
@@ -1517,7 +1517,7 @@ def test_multi_intent_queues_additional_services(fresh_session):
     Housing First priority (Feature B, April 2026): shelter (tier 1)
     wins primary over food (tier 2), food goes on the queue.
     """
-    result = send("I need food and shelter in Brooklyn", session_id=fresh_session)
+    _r1 = send("I need food and shelter in Brooklyn", session_id=fresh_session)
     from app.services.session_store import get_session_slots
     slots = get_session_slots(fresh_session)
     assert slots.get("service_type") == "shelter"
@@ -1551,7 +1551,7 @@ def test_multi_intent_yes_to_queued_service(fresh_session):
         "service_type": "food",
         "location": "Brooklyn",
     })
-    result = send("I need shelter", session_id=fresh_session)
+    _r1 = send("I need shelter", session_id=fresh_session)
     from app.services.session_store import get_session_slots
     slots = get_session_slots(fresh_session)
     assert slots.get("service_type") == "shelter"
@@ -1576,7 +1576,7 @@ def test_multi_intent_no_thanks_clears_queue(fresh_session):
 
 def test_multi_intent_three_services_queued(fresh_session):
     """Three services should queue the second and third."""
-    result = send("I need food, clothing, and legal help in Manhattan", session_id=fresh_session)
+    _r1 = send("I need food, clothing, and legal help in Manhattan", session_id=fresh_session)
     from app.services.session_store import get_session_slots
     slots = get_session_slots(fresh_session)
     assert slots.get("service_type") == "food"
@@ -1594,7 +1594,7 @@ def test_multi_intent_queue_not_overwritten(fresh_session):
         "location": "Brooklyn",
         "_queued_services": [("shelter", None)],
     })
-    result = send("actually make that Queens", session_id=fresh_session)
+    _r1 = send("actually make that Queens", session_id=fresh_session)
     from app.services.session_store import get_session_slots
     slots = get_session_slots(fresh_session)
     assert "_queued_services" in slots
@@ -1608,7 +1608,7 @@ def test_multi_intent_queue_cleared_on_service_change(fresh_session):
         "location": "Brooklyn",
         "_queued_services": [("shelter", None)],
     })
-    result = send("I need medical care", session_id=fresh_session)
+    _r1 = send("I need medical care", session_id=fresh_session)
     from app.services.session_store import get_session_slots
     slots = get_session_slots(fresh_session)
     assert slots.get("service_type") == "medical"
@@ -1623,7 +1623,7 @@ def test_multi_intent_reset_clears_queue(fresh_session):
         "location": "Brooklyn",
         "_queued_services": [("shelter", None)],
     })
-    result = send("start over", session_id=fresh_session)
+    _r1 = send("start over", session_id=fresh_session)
     from app.services.session_store import get_session_slots
     slots = get_session_slots(fresh_session)
     assert "_queued_services" not in slots
@@ -1631,7 +1631,7 @@ def test_multi_intent_reset_clears_queue(fresh_session):
 
 def test_multi_intent_no_queue_when_single_service(fresh_session):
     """Single service message should not create a queue."""
-    result = send("I need food in Brooklyn", session_id=fresh_session)
+    _r1 = send("I need food in Brooklyn", session_id=fresh_session)
     from app.services.session_store import get_session_slots
     slots = get_session_slots(fresh_session)
     assert "_queued_services" not in slots
@@ -1659,7 +1659,7 @@ def test_multi_intent_queue_preserved_through_confirmation(fresh_session):
 
     Housing First: shelter primary, food queued.
     """
-    result = send("I need food and shelter in Brooklyn", session_id=fresh_session)
+    _r1 = send("I need food and shelter in Brooklyn", session_id=fresh_session)
     from app.services.session_store import get_session_slots
     slots = get_session_slots(fresh_session)
     # Should have pending confirmation AND queue
@@ -1830,7 +1830,7 @@ def test_yes_after_emotional_shows_escalation_buttons(fresh_session):
     result = send("yes", session_id=fresh_session)
     labels = [qr["label"] for qr in result.get("quick_replies", [])]
     # Buttons offer to show contact info again or search for services
-    assert any("contact" in l.lower() or "search" in l.lower() for l in labels)
+    assert any("contact" in lable.lower() or "search" in lable.lower() for lable in labels)
 
 
 def test_no_after_escalation_shows_escalation_buttons(fresh_session):
@@ -1838,7 +1838,7 @@ def test_no_after_escalation_shows_escalation_buttons(fresh_session):
     send("I want to talk to someone", session_id=fresh_session)
     result = send("no", session_id=fresh_session)
     labels = [qr["label"] for qr in result.get("quick_replies", [])]
-    assert any("peer" in l.lower() or "navigator" in l.lower() for l in labels)
+    assert any("peer" in lable.lower() or "navigator" in lable.lower() for lable in labels)
 
 
 def test_connect_with_person_routes_to_escalation(fresh_session):
@@ -2021,8 +2021,8 @@ def test_negative_preference_handler(fresh_session):
     assert "understand" in result["response"].lower()
     labels = [qr["label"] for qr in result.get("quick_replies", [])]
     # Should show service menu + navigator
-    assert any("Peer navigator" in l for l in labels)
-    assert any("Food" in l or "Shelter" in l for l in labels)
+    assert any("Peer navigator" in lable for lable in labels)
+    assert any("Food" in lable or "Shelter" in lable for lable in labels)
 
 
 # ---------------------------------------------------------------------------

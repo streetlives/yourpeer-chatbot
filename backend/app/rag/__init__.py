@@ -20,7 +20,6 @@ from app.rag.query_executor import (
     get_borough_city_names,
     get_neighborhood_center,
     is_borough,
-    test_connection,
     DEFAULT_NEIGHBORHOOD_RADIUS_METERS,
 )
 from app.rag.query_templates import TEMPLATES

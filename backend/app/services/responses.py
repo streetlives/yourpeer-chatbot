@@ -12,6 +12,7 @@ Separated from routing so that:
 
 import re
 import logging
+import random
 
 from app.llm.claude_client import claude_reply
 
@@ -537,8 +538,6 @@ def _fallback_response(message: str, slots: dict) -> str:
 # when no emotional/shame/urgent context is detected. They prevent the
 # bot from feeling "functional but flat" on routine requests.
 # Randomized to avoid repetitive phrasing across turns.
-
-import random
 
 _WARMTH_PREFIXES = [
     "Let me see what's available. ",

@@ -12,14 +12,14 @@ Run with: python -m pytest tests/unit/test_results_enhancements.py -v
 
 import uuid
 from datetime import time
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 import pytest
 
 from app.services.post_results import classify_post_results_question, _DAY_NAMES
 from app.services.chatbot import generate_reply
 from app.services.session_store import clear_session, save_session_slots
-from conftest import send, send_multi, MOCK_QUERY_RESULTS
+from conftest import send
 
 
 # -----------------------------------------------------------------------
@@ -102,7 +102,7 @@ class TestSortPatterns:
     """Test sort pattern recognition in the chatbot handler."""
 
     def test_sort_by_recently_verified(self):
-        sid, results = _session_with_results(5)
+        sid, _all = _session_with_results(5)
         with patch("app.services.chatbot.claude_reply", return_value=""), \
              patch("app.services.chatbot.execution.query_services"), \
              patch("app.services.chatbot.detect_crisis", return_value=None):
@@ -116,7 +116,7 @@ class TestSortPatterns:
         clear_session(sid)
 
     def test_sort_by_most_services(self):
-        sid, results = _session_with_results(5)
+        sid, _all = _session_with_results(5)
         with patch("app.services.chatbot.claude_reply", return_value=""), \
              patch("app.services.chatbot.execution.query_services"), \
              patch("app.services.chatbot.detect_crisis", return_value=None):
@@ -131,7 +131,7 @@ class TestSortPatterns:
 
     def test_sort_updates_last_results(self):
         """After sorting, _last_results should be in the new order."""
-        sid, results = _session_with_results(5)
+        sid, _all = _session_with_results(5)
         with patch("app.services.chatbot.claude_reply", return_value=""), \
              patch("app.services.chatbot.execution.query_services"), \
              patch("app.services.chatbot.detect_crisis", return_value=None):
@@ -146,7 +146,7 @@ class TestSortPatterns:
 
     def test_unrecognized_sort_falls_through(self):
         """An unrecognized sort phrase should not match."""
-        sid, results = _session_with_results(3)
+        sid, _all = _session_with_results(3)
         with patch("app.services.chatbot.claude_reply", return_value=""), \
              patch("app.services.chatbot.execution.query_services"), \
              patch("app.services.chatbot.detect_crisis", return_value=None):
@@ -234,7 +234,7 @@ class TestHandleHoursForDay:
     """Test _handle_hours_for_day with mocked DB."""
 
     def test_returns_hours_for_each_service(self):
-        sid, results = _session_with_results(3)
+        sid, _all = _session_with_results(3)
         mock_schedule = {
             "svc-0": [{"opens_at": time(9, 0), "closes_at": time(17, 0)}],
             "svc-1": [{"opens_at": time(10, 0), "closes_at": time(14, 0)}],
@@ -251,7 +251,7 @@ class TestHandleHoursForDay:
         clear_session(sid)
 
     def test_no_schedule_data_message(self):
-        sid, results = _session_with_results(2)
+        sid, _all = _session_with_results(2)
         with patch("app.services.chatbot.claude_reply", return_value=""), \
              patch("app.services.chatbot.execution.query_services"), \
              patch("app.services.chatbot.detect_crisis", return_value=None), \
@@ -263,7 +263,7 @@ class TestHandleHoursForDay:
 
     def test_weekend_fetches_both_days(self):
         """Weekend query should call fetch_schedule_for_day for both Sat and Sun."""
-        sid, results = _session_with_results(2)
+        sid, _all = _session_with_results(2)
         call_args = []
         def mock_fetch(service_ids, weekday):
             call_args.append(weekday)

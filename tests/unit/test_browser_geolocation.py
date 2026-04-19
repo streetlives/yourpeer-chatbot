@@ -12,7 +12,7 @@ from unittest.mock import patch
 
 from app.models.chat_models import ChatRequest
 from app.services.chatbot import generate_reply
-from app.services.session_store import clear_session, get_session_slots
+from app.services.session_store import get_session_slots
 from app.services.slot_extractor import NEAR_ME_SENTINEL
 from app.rag import query_services
 from conftest import MOCK_QUERY_RESULTS, send, send_multi
@@ -183,7 +183,7 @@ def test_coords_persist_across_turns(fresh_session):
     send("I need food", session_id=fresh_session, latitude=BK_LAT, longitude=BK_LNG)
 
     # Second message says "near me" — should use stored coords
-    result = send("near me", session_id=fresh_session, latitude=BK_LAT, longitude=BK_LNG)
+    _result = send("near me", session_id=fresh_session, latitude=BK_LAT, longitude=BK_LNG)
     slots = get_session_slots(fresh_session)
     assert slots.get("_latitude") == BK_LAT
     assert slots.get("_longitude") == BK_LNG
@@ -233,12 +233,12 @@ def test_fallback_borough_button_after_no_coords(fresh_session):
 def test_near_me_without_coords_then_borough(fresh_session):
     """User says 'food near me' without coords, then provides a borough."""
     # Step 1: "food near me" without coords → NEAR_ME_SENTINEL, asks for location
-    r1 = send("food near me", session_id=fresh_session)
+    _r1 = send("food near me", session_id=fresh_session)
     slots = get_session_slots(fresh_session)
     assert slots.get("location") == NEAR_ME_SENTINEL
 
     # Step 2: User provides borough (replacing the sentinel)
-    r2 = send("Queens", session_id=fresh_session)
+    _r2 = send("Queens", session_id=fresh_session)
     slots = get_session_slots(fresh_session)
     assert slots.get("service_type") == "food"
     # Location should be updated from sentinel to Queens
