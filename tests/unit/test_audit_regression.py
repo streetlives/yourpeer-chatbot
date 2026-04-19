@@ -895,8 +895,7 @@ class TestOpenNowSortOnlySemantics:
         the chatbot to exclude-semantics. This test greps the call site to
         ensure the kwarg is absent.
 
-        Note: Phase 3 moved the ``query_services()`` call site from
-        ``chatbot.py`` (monolith) to ``chatbot.execution`` (package
+        Note: Phase 3 moved the ``query_services()`` call to ``chatbot.execution`` (package
         submodule). ``inspect.getsource`` on a package returns only the
         ``__init__`` source, so this test targets the execution submodule
         where the call site now lives.
@@ -923,9 +922,8 @@ class TestOpenNowSortOnlySemantics:
         weekday IS used by _handle_hours_for_day (post-results handler for
         'what are their hours Saturday?'), but NOT by the primary search.
 
-        Note: Phase 3 moved the primary ``query_services()`` call site
-        from ``chatbot.py`` (monolith) to ``chatbot.execution`` (package
-        submodule). See the sibling current_time test for context.
+        Note: Phase 3 moved the primary ``query_services()`` call ``chatbot.execution``
+        (package submodule). See the sibling current_time test for context.
         """
         import re
         import inspect
@@ -1339,8 +1337,7 @@ class TestFilterResponsePagination:
         Without this, the filter-response fix is inert — the handlers
         default to len(services)=25 and the "of 25" bug returns.
 
-        Note: Phase 3 moved the ``answer_from_results()`` call site from
-        ``chatbot.py`` (monolith) to ``chatbot.handlers.post_results``.
+        Note: Phase 3 moved the ``answer_from_results()`` call site to ``chatbot.handlers.post_results``.
         """
         import inspect
         from app.services.chatbot.handlers import post_results

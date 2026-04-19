@@ -116,7 +116,7 @@ The file-reference check (`check_file_references`) matches only **full paths** t
 ```python
 for match in re.finditer(r"`((?:backend|tests|frontend)[\w/.-]+\.(?:py|tsx?))`", content):
 ```
-
+<!-- drift:ignore -->
 Bare-filename references like `` `chatbot.py` `` or `` `classifier.py` `` in prose like *"In `chatbot.py`, when `urgency == 'high'`..."* are never checked. This is exactly the class of reference that allowed `chatbot.py` → `chatbot/` transition drift to survive across docs until the April 2026 audit caught it manually. Recommended fix: add a second pass that matches bare filenames against the full repo's Python inventory — if a `` `foo.py` `` appears in a markdown file and no `foo.py` exists anywhere in `backend/` or `tests/`, warn.
 
 ### Gap 2: test-count globbing is non-recursive
