@@ -132,7 +132,7 @@ Validates the main chatbot routing — message classification (split classifier 
 | Escalation phrase variants | 3 | "connect with a person" routes to escalation, "connect with peer navigator" routes to escalation, peer navigator label standardized |
 | Location change UX | 1 | Location change shows "Use my location" as first option |
 
-### `test_slot_extractor.py` — 111 tests
+### `test_slot_extractor.py` — 113 tests
 
 Validates the regex-based slot extraction pipeline.
 
@@ -188,7 +188,7 @@ Validates location normalization, borough expansion, proximity search, and that 
 | Neighborhood proximity | 15 | All neighborhoods have coordinates within NYC bounds, proximity search integration |
 | DB connection | 1 | `test_connection` returns False without DATABASE_URL |
 
-### `test_query_templates.py` — 105 tests
+### `test_query_templates.py` — 124 tests
 
 Validates query template correctness, SQL structure, service card formatting, schedule computation, result sorting, and shelter taxonomy enrichment.
 
@@ -239,7 +239,7 @@ Validates all 13 public functions in the audit log module.
 | Log conversation turn | 5 | Correct fields, internal slot stripping (`_pending_confirmation`, `transcript`, None values), quick reply label extraction, None slots, conversation registration |
 | Request correlation IDs | 4 | request_id stored in turn events, defaults to None, stored in query execution, stored in crisis events |
 
-### `test_semantic_router.py` — 54 tests
+### `test_semantic_router.py` — 53 tests
 
 Validates the Tier 2 semantic routing module: route definitions, model initialization, classification, threshold behavior, population detection, integration with `extract_slots_smart()`, graceful degradation, and observability. Uses mock embedding models with controlled vectors for deterministic testing — no real model download required.
 
@@ -426,7 +426,7 @@ HTTP-level tests for the FastAPI app configuration (headless API mode).
 | CSRF protection | 6 | Valid origin allowed, evil origin → 403, non-browser (no headers) allowed, Sec-Fetch-Site without origin → 403, valid Referer allowed, evil Referer → 403 |
 | CORS | 3 | Headers present for allowed origin, no headers for unknown origin, preflight OPTIONS |
 
-### `test_phrase_audit.py` — 41 tests
+### `test_phrase_audit.py` — 42 tests
 
 Validates phrase additions from the P0–P3 audit (see PHRASE_LIST_AUDIT.md). Parametrized tests cover C-SSRS suicide ideation phrases, Joiner IPT burdensomeness markers, DV coercive control, youth safety/runaway, shame/stigma emotional phrases, grief with service routing, expanded frustration phrases, and confused/overwhelmed phrases.
 
@@ -434,7 +434,7 @@ Validates phrase additions from the P0–P3 audit (see PHRASE_LIST_AUDIT.md). Pa
 
 Validates `_normalize_contractions()`, `_strip_intensifiers()`, and their integration with `_classify_tone()`. Covers individual contraction expansions, full sentences, multiple contractions, non-contraction preservation, frustration/confused/emotional detection via normalization, help-negator handling ("doesn't help" → frustration not help), intensifier stripping for emotion/frustration/confused classification, and confirms normalization does not affect crisis detection (which uses explicit enumeration).
 
-### `test_crisis_and_flow_regressions.py` — 43 tests
+### `test_crisis_and_flow_regressions.py` — 28 tests
 
 Regression tests for structural fixes across 8 test classes. Covers: PII safety warnings (SSN strong warning, phone light heads-up, combined with service flow), foster youth population (aging out → foster_youth not reentry, confirmation shows youth-friendly), pregnant ≠ with_children (pregnancy sets population tag only), youth_runaway crisis category (Runaway Safeline + Covenant House, distinct from DV), assault_victim crisis category (Safe Horizon Victim Services), safety_concern response de-DV'd (988 + 311, no DV hotlines), confirmation warm reframe ("I'll look for..." format), results personalization ("I found X option(s) for you"), and baseline warmth prefixes (random_warmth_prefix fires on routine service flows, doesn't override emotional/shame/urgent contexts).
 
@@ -468,7 +468,7 @@ Research-sourced crisis detection edge cases from C-SSRS (5 severity levels), HI
 
 Coverage gap tests for 8 high/medium priority areas: zip code full flow (4), crisis step-down + multi-intent (2), LLM contradictory category (2), near-me sentinel safety (3), session_exists (3), get_client_ip (5), _extract_session_id (4), _normalize_url (9), feedback→stats (4).
 
-### `test_format_pipeline_and_admin.py` — 43 tests
+### `test_format_pipeline_and_admin.py` — 41 tests
 
 Comprehensive gap coverage for 9 areas identified during audit: `_compute_freshness` timezone/boundary handling (8), admin `/api/stats` response shape for routing/tone/multi_intent (6), post-results through `generate_reply` end-to-end (4), `skip_llm` through chatbot pipeline (2), `also_available` in post-results detail view (4), `last_validated_at` timezone edge cases (4), multi-intent queue decline with 2-item queue (2), prompt builder function shapes and guardrails (8), `format_service_card` deduplication and filtering (5).
 
@@ -648,7 +648,7 @@ Validates walk-in filter, required documents, and languages spoken on cards.
 | Languages on cards | 4 | Present, absent, filters null, empty list |
 | SQL structure | 3 | required_documents, languages_spoken, no_requirements filter exists |
 
-### `test_results_enhancements.py` — 25 tests
+### `test_results_enhancements.py` — 24 tests
 
 Validates sort options, day-specific hours, and urgent auto-execute.
 

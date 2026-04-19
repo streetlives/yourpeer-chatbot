@@ -257,4 +257,4 @@ Each check should be independent — it should work even if other checks fail or
 
 - [QUERY_PARITY_AUDIT.md](../docs/audits/QUERY_PARITY_AUDIT.md) — full comparison of chatbot vs YourPeer query logic, with every divergence cataloged
 - [FEATURES.md](../docs/FEATURES.md) — chatbot feature reference including taxonomy narrowing and description filtering
-- [test_narrowing.py](../tests/test_narrowing.py) — 166 unit tests for the narrowing system
+- [test_narrowing.py](../tests/unit/test_narrowing.py) — 166 unit tests for the narrowing system
