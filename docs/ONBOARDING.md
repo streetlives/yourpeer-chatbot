@@ -544,7 +544,6 @@ Once you're comfortable with the architecture, these documents cover specific ar
 | Test file index | `tests/README.md` | Maps every source module to its test file(s) |
 | Setup | `docs/SETUP.md` | Local development setup, environment variables, dependencies |
 | Deployment | `docs/DEPLOY.md` | Render deployment — two services (backend is a Private Service, frontend is a Web Service), environment variables, troubleshooting |
-| Documentation drift audit | `docs/audits/DOCS_AUDIT_2026-04.md` | Catalog of stale refs across the other docs, with follow-up priorities |
 
 ---
 
@@ -598,7 +597,7 @@ After Phase 3, "where to add a thing" is more specific than it used to be becaus
 
 ## 14. Asking for Help
 
-If you're stuck, check the docs list in Section 11 first — most design decisions are documented somewhere. The code comments in the `chatbot/` package files, `query_templates.py`, and `responses.py` are especially detailed about the "why" behind decisions. If a doc points you at `chatbot.py` and it doesn't exist, that's Phase 3 drift — the code is now in `services/chatbot/` and `docs/audits/DOCS_AUDIT_2026-04.md` catalogs the known stale pointers with their current homes.
+If you're stuck, check the docs list in Section 11 first — most design decisions are documented somewhere. The code comments in the `chatbot/` package files, `query_templates.py`, and `responses.py` are especially detailed about the "why" behind decisions. If a doc points you at `chatbot.py` and it doesn't exist, that's Phase 3 drift — the code is now in `services/chatbot/`.
 
 If you're making a change and aren't sure if it's safe, look for related tests in `tests/README.md`. The test suite is large specifically because the codebase handles sensitive situations where regressions can cause real harm. Run the full suite with `pytest tests/unit tests/integration -q` before merging — it completes in about 25 seconds.
 

@@ -535,7 +535,7 @@ class TestHttpErrorMessages:
         """429 response should include a detail message with timing info."""
         # Rate limiting is tested separately; this verifies the shape
         # The frontend checks msg.includes("wait") to detect rate limits
-        pass  # Covered by existing test_rate_limit_integration.py
+        pass  # Covered by existing .py
 
     def test_health_503_when_db_down(self):
         """Health endpoint returns 503 when database is unreachable."""

@@ -16,7 +16,7 @@ source backend/venv/bin/activate
 
 ```
 pip install pytest httpx
-pytest tests/ -q --ignore=tests/integration/test_admin_api_routes.py --ignore=tests/integration/test_rate_limit_integration.py --tb=short
+pytest tests/ -q --ignore=tests/integration/test_admin_api_routes.py --ignore=tests/ --tb=short
 ```
 
 **Run unit tests only (fast, no external deps):**
@@ -63,7 +63,7 @@ All backend modules and all public functions are covered. Tests are in `tests/un
 
 | Module | Test file(s) | Tests | Status |
 |---|---|---|---|
-| `chatbot/` package (orchestrator + handlers) | `integration/test_classification_and_routing.py`, `integration/test_targeted_bug_regressions.py`, `integration/test_multi_turn_and_context.py`, `integration/test_narrative_and_eval_scenarios.py`, `integration/test_ambiguity_handling.py`, `unit/test_service_card_display.py`, `unit/test_results_enhancements.py`, `unit/test_audit_regression.py` (housing_assistance retirement guards), `unit/test_frustration_and_crisis.py` (filter-aware cleanup in `handlers/emotional.py`), `unit/test_post_results_extras.py` (filter persistence in `handlers/post_results.py`) | 310+ | Full — tests exercise the whole package via `send()`/`send_multi()` and don't distinguish handler boundaries. Individual handlers (`handlers/emotional.py`, `handlers/confirmation.py`, `handlers/post_results.py`, etc.) inherit their coverage from the integration flow tests |
+| `chatbot/` package (orchestrator + handlers) | `integration/test_classification_and_routing.py`, `integration/test_targeted_bug_regressions.py`, `integration/test_multi_turn_and_context.py`, `integration/test_narrative_and_eval_scenarios.py`, `unit/test_service_card_display.py`, `unit/test_results_enhancements.py`, `unit/test_audit_regression.py` (housing_assistance retirement guards), `unit/test_frustration_and_crisis.py` (filter-aware cleanup in `handlers/emotional.py`), `unit/test_post_results_extras.py` (filter persistence in `handlers/post_results.py`) | 310+ | Full — tests exercise the whole package via `send()`/`send_multi()` and don't distinguish handler boundaries. Individual handlers (`handlers/emotional.py`, `handlers/confirmation.py`, `handlers/post_results.py`, etc.) inherit their coverage from the integration flow tests |
 | `classifier.py` | `unit/test_contraction_normalization.py`, `unit/test_phrase_audit.py`, `integration/test_classification_and_routing.py` | 60+ | Full |
 | `phrase_lists.py` | `unit/test_phrase_audit.py` | 41 | Full |
 | `responses.py` | `integration/test_classification_and_routing.py`, `integration/test_format_pipeline_and_admin.py` | (inline) | Full |
@@ -72,8 +72,8 @@ All backend modules and all public functions are covered. Tests are in `tests/un
 | `rag/__init__.py` | `unit/test_query_templates.py`, `unit/test_populations.py`, `unit/test_org_name_search.py`, `unit/test_walk_in_and_card_extras.py`, `integration/test_browser_geolocation.py`, `integration/test_db_integration.py` | 125+ | Full |
 | `query_templates.py` | `unit/test_query_templates.py`, `unit/test_location_boundaries.py`, `unit/test_service_card_display.py`, `unit/test_walk_in_and_card_extras.py` | 120+ | Full |
 | `query_executor.py` | `unit/test_location_boundaries.py`, `unit/test_edge_cases.py` | 65 | Full |
-| `audit_log.py` | `unit/test_audit_log.py`, `unit/test_location_feedback.py`, `integration/test_targeted_bug_regressions.py`, `integration/test_admin_api_routes.py`, `integration/test_ambiguity_handling.py` | 77+ | Full |
-| `crisis_detector.py` | `unit/test_crisis_detector.py`, `integration/test_targeted_bug_regressions.py`, `integration/test_crisis_safety_edges.py` | 60+ | Full |
+| `audit_log.py` | `unit/test_audit_log.py`, `unit/test_location_feedback.py`, `integration/test_targeted_bug_regressions.py`, `integration/test_admin_api_routes.py` | 77+ | Full |
+| `crisis_detector.py` | `unit/test_crisis_detector.py`, `integration/test_targeted_bug_regressions.py` | 60+ | Full |
 | `llm_slot_extractor.py` | `unit/test_llm_slot_extractor.py`, `unit/test_narrative_extraction.py`, `unit/test_semantic_router.py` | 44+ | Full |
 | `semantic_router.py` | `unit/test_semantic_router.py` | 54 | Full |
 | `semantic_routes.py` | `unit/test_semantic_router.py` | 54 | Full |
@@ -83,7 +83,7 @@ All backend modules and all public functions are covered. Tests are in `tests/un
 | `pii_redactor.py` | `unit/test_pii_redactor.py`, `unit/test_gender_extraction.py`, `unit/test_edge_cases.py` | 38+ | Full |
 | `session_store.py` | `unit/test_session_store.py`, `integration/test_classification_and_routing.py`, `integration/test_http_routes_and_models.py` | 7+ | Full |
 | `session_token.py` | `unit/test_session_token.py`, `integration/test_http_routes_and_models.py` | 17 | Full |
-| `rate_limiter.py` | `unit/test_rate_limiter.py`, `integration/test_rate_limit_integration.py` | 24 | Full |
+| `rate_limiter.py` | `unit/test_rate_limiter.py` | 24 | Full |
 | `chat_models.py` | `integration/test_http_routes_and_models.py`, `integration/test_schema_and_mock_sync.py` | 27+ | Full |
 | `admin.py` (routes) | `integration/test_admin_api_routes.py` | 28 | Full |
 | `chat.py` (route) | `integration/test_http_routes_and_models.py` | 48 | Full |
@@ -393,27 +393,6 @@ Validates the sliding-window rate limiter logic.
 | Bucket management | 3 | Sliding window cleanup, thread safety, clear() |
 | Memory management | 2 | Forced eviction when bucket cap exceeded, no forced eviction under cap |
 
-### `test_rate_limit_integration.py` — 10 tests
-
-HTTP-level tests for rate limiting middleware via FastAPI TestClient.
-
-| Category | Tests | What's covered |
-|---|---|---|
-| 429 responses | 4 | Rate limit exceeded returns 429, crisis resources included |
-| Session tracking | 3 | Session-based vs IP-based limiting |
-| Middleware integration | 3 | Middleware attached to routes, header extraction |
-
-### `test_db_integration.py` — 27 tests
-
-Database integration tests that run against the real Streetlives PostgreSQL database. Automatically skipped when DATABASE_URL is not set.
-
-| Category | Tests | What's covered |
-|---|---|---|
-| Schema validation | 18 | All 11 tables exist, required columns present, PostGIS geometry type, JSONB eligibility, timestamp freshness column, taxonomy names match templates, eligibility parameters exist |
-| Query execution | 21 | All 9 templates strict/relaxed, proximity search, distance ordering, age/gender eligibility, open-now sort, freshness sort, city list ANY(), weekday/open-now filters, all filters combined |
-| Result formatting | 2 | Real rows format to valid service cards, proximity returns multiple results |
-| End-to-end | 5 | Full query_services() pipeline: borough, neighborhood, coords, relaxed fallback, card field completeness |
-
 ### `test_main.py` — 14 tests
 
 HTTP-level tests for the FastAPI app configuration (headless API mode).
@@ -459,10 +438,6 @@ Targeted regression tests for bugs 8–14 identified during PR 19 review. Organi
 ### `test_post_results.py` — 69 tests
 
 Post-results question handler — answers follow-up questions about displayed services using only stored card data (zero LLM). Covers 7 intent classification types, answer builder handlers, chatbot integration flows, safety (crisis after results), skip_llm optimization, call button `href` with `tel:` links, detail view with `also_available`, call QR deduplication, and no-cost variant handling.
-
-### `test_crisis_safety_edges.py` — 25 tests (some with parametrized xfails)
-
-Research-sourced crisis detection edge cases from C-SSRS (5 severity levels), HITS/SAFE DV screening, Polaris trafficking indicators, SAMHSA TIP 55 homeless population patterns, and Covenant House/Ali Forney youth research. Tests are organized into regex coverage (what the instant check catches), LLM-dependent gaps (xfailed with research citations), post-results safety (eval P10), and false positive guards. The 34 xfails serve as a roadmap: promoting a phrase from xfail to the regex list immediately upgrades it to instant detection.
 
 ### `test_utility_and_session_edges.py` — 36 tests
 
@@ -559,18 +534,6 @@ Validates the boundary between post-results follow-up questions and new service 
 | Ambiguous edge cases | 6 | Bare "where?", crisis trumps post-results, reset clears, emotional not intercepted, service keyword escapes, multiple new requests |
 | Classifier unit tests | 2 | 17 parametrized new-request phrases return None, 6 genuine post-results phrases still classified |
 | Name match fallthrough | 2 | Unmatched name returns None, matched name returns response |
-
-### `test_ambiguity_handling.py` — 26 tests
-
-Validates the four industry-recommended ambiguity handling patterns: confidence scoring, disambiguation prompts, correction recovery, and ambiguity logging.
-
-| Category | Tests | What's covered |
-|---|---|---|
-| Confidence scoring | 6 | Regex match=high, reset=high, service keyword=high, correction=low, disambiguation=disambiguated, confidence stored in audit events |
-| Disambiguation prompts | 4 | Unmatched name triggers disambiguation, offers search option, preserves session, matched name skips disambiguation |
-| Correction handler | 11 | 5 phrases classified, clears pending/last_action/last_results, preserves service slots, shows buttons + navigator, context-aware message, no false positives on service requests, crisis trumps correction |
-| "Not what I meant" button | 1 | Correction button on unrecognized service responses |
-| Ambiguity logging | 4 | Correction category logged, disambiguation category logged, confidence field in events, high confidence stored |
 
 ### `test_populations.py` — 88 tests
 
@@ -746,7 +709,6 @@ These are documented behaviors, not bugs:
 | `test_family_status_with_children_prepositional` | `test_slot_extractor.py` | Prepositional family phrases ("for me and my kids", "I have a baby") not matched by current phrase list |
 | `test_smart_uses_llm_for_long_messages` | `test_llm_slot_extractor.py` | Regex override replaces LLM's correct "shelter" with "medical" because "hospital" matches a medical keyword |
 | `test_smart_regex_does_not_override_when_no_regex_match` | `test_llm_slot_extractor.py` | Same regex override issue — "hospital" is contextual, not the user's need |
-| 34 parametrized xfails | `test_crisis_safety_edges.py` | LLM-dependent crisis phrases (C-SSRS indirect ideation, euphemistic language, method-specific plans, perceived burdensomeness) that regex can't catch without context. Each xfail has a research citation. Promoting a phrase to the regex list upgrades it to instant detection |
 
 ## Adding New Tests
 
