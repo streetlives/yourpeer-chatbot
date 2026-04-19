@@ -366,7 +366,7 @@ The package exports `generate_reply()` from its `__init__.py` so existing caller
 | `handlers/meta.py` | Privacy questions, "are you a robot", meta-conversation about the chatbot itself. |
 | `handlers/accessibility.py` | Language preference hints, Spanish bilingual acknowledgment. |
 
-**Where stuff moved from the old `chatbot.py`**: if you're reading older commits or docs that refer to functions in `chatbot.py`, the rough mapping is: `generate_reply` → `orchestrator.py`; `_execute_and_respond` → `execution.py`; emotional branches → `handlers/emotional.py`; pending-confirmation branches → `handlers/confirmation.py`; post-results branches → `handlers/post_results.py`. Most shared helpers moved to `context.py` or `tone.py`. See `docs/audits/DOCS_AUDIT_2026-04.md` for a catalog of stale pointers across the other docs.
+**Where stuff moved from the old `chatbot.py`**: if you're reading older commits or docs that refer to functions in `chatbot.py`, the rough mapping is: `generate_reply` → `orchestrator.py`; `_execute_and_respond` → `execution.py`; emotional branches → `handlers/emotional.py`; pending-confirmation branches → `handlers/confirmation.py`; post-results branches → `handlers/post_results.py`. Most shared helpers moved to `context.py` or `tone.py`.
 
 ### `services/` — other conversation services
 

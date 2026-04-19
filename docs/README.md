@@ -55,7 +55,6 @@ These captured findings at a specific date. Most have been acted on; they're ret
 | [HARDCODED_MESSAGES_REVIEW.md](audits/HARDCODED_MESSAGES_REVIEW.md) | Every user-facing hardcoded message with trigger conditions and source |
 | [MULTI_INTENT_PLAN.md](audits/MULTI_INTENT_PLAN.md) | Shipped — architecture plan for multi-service intent (all 5 PRs done) |
 | [FEATURE_PARITY_TASKS.md](audits/FEATURE_PARITY_TASKS.md) | Shipped — 16 YourPeer parity gaps and their implementation decisions |
-| [UPSTREAM_ISSUE_DRAFT.md](audits/UPSTREAM_ISSUE_DRAFT.md) | Draft issue for `streetlives/streetlives-api` — delete after filing |
 
 ## `ops/` — living operational data
 
