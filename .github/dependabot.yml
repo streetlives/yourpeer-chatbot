@@ -1,0 +1,81 @@
+version: 2
+
+# Automated dependency updates. Dependabot opens PRs when new versions are
+# available. All PRs run the normal CI suite, so regressions surface before
+# merge.
+#
+# Three ecosystems:
+#   - pip     (backend/)
+#   - npm     (frontend-next/)
+#   - github-actions (workflow versions)
+#
+# Schedule: weekly on Monday — low-noise rhythm, gives the team time to
+# triage without feeling flooded. Security updates bypass the schedule
+# and open PRs immediately (Dependabot default).
+
+updates:
+  # ---- Backend Python deps ----
+  - package-ecosystem: pip
+    directory: /backend
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: America/New_York
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps(backend)"
+    labels:
+      - dependencies
+      - backend
+    # Group patch-level updates into a single PR to reduce noise. Minor and
+    # major stay as individual PRs so they can be reviewed independently.
+    groups:
+      backend-patch:
+        update-types:
+          - patch
+
+  # ---- Backend dev / test deps ----
+  # Separate entry so requirements-dev.txt updates are labeled clearly.
+  # Dependabot auto-discovers this file since it's in the same directory.
+
+  # ---- Frontend npm deps ----
+  - package-ecosystem: npm
+    directory: /frontend-next
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: America/New_York
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps(frontend)"
+    labels:
+      - dependencies
+      - frontend
+    groups:
+      frontend-patch:
+        update-types:
+          - patch
+      # Group all Next.js-ecosystem packages together — they're usually
+      # released in lockstep and should be bumped as a set.
+      nextjs:
+        patterns:
+          - "next"
+          - "@next/*"
+          - "eslint-config-next"
+
+  # ---- GitHub Actions workflow versions ----
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: America/New_York
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "ci"
+    labels:
+      - dependencies
+      - ci

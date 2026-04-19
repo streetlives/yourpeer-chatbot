@@ -1,0 +1,84 @@
+name: Docs drift check
+
+# Runs scripts/check_docs.py on every PR and on pushes to main.
+# The checker validates that hardcoded facts in markdown (test counts, model
+# IDs, env vars, category counts, etc.) still match the actual codebase.
+#
+# What happens when it fails:
+#   - Warnings surface inline on the PR via GitHub annotations (--github).
+#   - The job exits nonzero at severity=warning, so failing checks block merge.
+#   - To downgrade a specific false positive, add <!-- drift:ignore --> in the
+#     offending markdown file. See scripts/CHECK_DOCS.md.
+#
+# To run locally:
+#   python scripts/check_docs.py
+#   python scripts/check_docs.py --fix    # auto-fix test counts
+
+on:
+  pull_request:
+    # Only run when something that could affect drift changes. Keeps CI fast
+    # for PRs that don't touch docs or source-of-truth code.
+    paths:
+      - '**/*.md'
+      - 'scripts/check_docs.py'
+      - 'backend/app/services/**/*.py'
+      - 'backend/app/llm/*.py'
+      - 'render.yaml'
+      - 'tests/**/*.py'
+      - '.github/workflows/check-docs.yml'
+  push:
+    branches: [main]
+    paths:
+      - '**/*.md'
+      - 'scripts/check_docs.py'
+      - 'backend/app/services/**/*.py'
+      - 'backend/app/llm/*.py'
+      - 'render.yaml'
+      - 'tests/**/*.py'
+
+# Cancel stale runs when new commits land on the same PR.
+concurrency:
+  group: check-docs-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  drift:
+    name: Check docs drift
+    runs-on: ubuntu-latest
+    # Fast job — checker finishes in ~2 seconds on this repo. 5-min timeout
+    # leaves headroom for rare network hiccups during checkout.
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          # Matches render.yaml PYTHON_VERSION so AST parsing of source files
+          # uses the same language level as production.
+          python-version: '3.12'
+
+      # No pip install — check_docs.py uses only the Python standard library
+      # on purpose. If that changes, add a step here to install requirements.
+
+      - name: Run drift checker
+        run: |
+          python scripts/check_docs.py --github --severity=warning
+        # --github emits ::warning/::error annotations that GitHub surfaces
+        #   inline on the PR diff — reviewers see findings on the exact line.
+        # --severity=warning means the job fails on any warning or error.
+        #   Use --severity=error to allow warnings through if that becomes
+        #   the team's preference.
+
+      # Summary step: if the checker found drift, print a one-liner reminder
+      # for how to fix or suppress it. Runs even when the previous step fails.
+      - name: How to resolve drift
+        if: failure()
+        run: |
+          echo "::notice::Drift detected. Options:"
+          echo "::notice::  1. Fix it:    update the doc to match the code"
+          echo "::notice::  2. Auto-fix:  python scripts/check_docs.py --fix (test counts only)"
+          echo "::notice::  3. Suppress:  add <!-- drift:ignore --> if the reference is intentionally historical"
+          echo "::notice::See scripts/CHECK_DOCS.md for the full reference."

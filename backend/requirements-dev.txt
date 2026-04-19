@@ -1,0 +1,9 @@
+# Test-only dependencies, installed in CI and for local test runs.
+# Production requirements are in requirements.txt.
+#
+# Install: pip install -r requirements.txt -r requirements-dev.txt
+# Run:     pytest tests/unit/            # ~600 fast tests, no secrets
+#          pytest tests/integration/     # ~3100 tests with mocked DB/LLM
+
+pytest>=7.4
+pytest-asyncio>=0.21  # for the one async test in tests/integration/test_utility_and_session_edges.py

@@ -1,0 +1,52 @@
+name: Python lint (ruff)
+
+# Runs ruff on all Python code in the repo. Configuration lives in
+# backend/pyproject.toml — starts with a conservative rule set (E, F, W)
+# and can be expanded over time without touching this workflow.
+#
+# Local usage:
+#   pip install ruff
+#   ruff check backend/ scripts/ tests/
+#   ruff check --fix backend/ scripts/ tests/   # auto-fix safe issues
+
+on:
+  pull_request:
+    paths:
+      - '**/*.py'
+      - 'pyproject.toml'
+      - '.github/workflows/ruff.yml'
+  push:
+    branches: [main]
+    paths:
+      - '**/*.py'
+      - 'pyproject.toml'
+
+concurrency:
+  group: ruff-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: ruff check
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install ruff
+        run: pip install ruff
+        # Pinned to latest — ruff is pre-1.0 but stable; version upgrades
+        # occasionally add new lint rules that aren't in `select`, so
+        # existing PRs don't suddenly fail on a minor version bump.
+
+      - name: Lint Python source
+        run: ruff check backend scripts tests --output-format=github
+        # --output-format=github emits ::error annotations that surface
+        # inline on the PR diff. pyproject.toml at repo root is picked up
+        # automatically.
