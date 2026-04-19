@@ -29,7 +29,6 @@ import sys
 import json
 import logging
 import argparse
-from datetime import datetime
 from typing import Optional
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -45,7 +44,7 @@ def _get_db_connection():
     if not db_url:
         return None
     try:
-        from sqlalchemy import create_engine, text
+        from sqlalchemy import create_engine
         engine = create_engine(db_url)
         return engine.connect()
     except Exception as e:

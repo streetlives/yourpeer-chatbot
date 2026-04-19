@@ -4024,9 +4024,9 @@ def main():
         print("  Pre-warming semantic router...", end="", flush=True)
         _sr_ok = _sr_init()
         if _sr_ok:
-            print(f" ✓ ready")
+            print(" ✓ ready")
         else:
-            print(f" ⚠ not available (sentence-transformers may not be installed)")
+            print(" ⚠ not available (sentence-transformers may not be installed)")
     except Exception as e:
         print(f" ⚠ failed: {e}")
 

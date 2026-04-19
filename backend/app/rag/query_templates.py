@@ -28,7 +28,6 @@ Key gotchas from schema exploration:
     - locations.position is PostGIS USER-DEFINED geometry
 """
 
-from sqlalchemy import text
 
 
 # ---------------------------------------------------------------------------

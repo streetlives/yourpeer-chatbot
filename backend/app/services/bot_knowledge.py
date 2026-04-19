@@ -357,7 +357,6 @@ def answer_question(message: str) -> str | None:
     (e.g., "Is my location data private?"), privacy wins because
     the user's concern is about privacy, not how location works.
     """
-    import re
     lower = message.lower()
 
     # Check specific privacy topics first (highest priority)
@@ -444,57 +443,57 @@ def build_capability_context() -> str:
     lines = [
         f"- You search a database of verified social services in NYC's five "
         f"boroughs ({', '.join(boroughs)}), maintained by Streetlives (yourpeer.nyc)",
-        f"- You ONLY cover New York City. For services outside NYC, suggest calling 211",
-        f"- Service categories you can search:",
+        "- You ONLY cover New York City. For services outside NYC, suggest calling 211",
+        "- Service categories you can search:",
         *service_lines,
         f"- You know {location_count} NYC neighborhoods and {zip_count} NYC zip codes",
-        f"- Geolocation: you use the browser's GPS when the user taps 'Use my location'. "
-        f"Common reasons it can fail: browser permission denied, device doesn't support GPS, "
-        f"GPS timed out (indoors), or site not on HTTPS. If geolocation fails, ask for "
-        f"neighborhood or borough instead",
-        f"- If a user says 'I don't know', 'anywhere', or 'here' when asked for location, "
-        f"you offer geolocation and borough buttons — you don't treat it as confusion",
-        f"- Multiple services: you can handle requests like 'food and shelter in Brooklyn'. "
-        f"You prioritize by need — shelter and medical first, then food, then clothing, "
-        f"then employment and legal. You search the highest-need service first, show results, "
-        f"then offer to search for the next one",
-        f"- Long messages: you understand narrative descriptions like 'I just got out of "
-        f"Rikers and I don't have anywhere to sleep or anything to eat'. You extract all "
-        f"services mentioned, even when phrased as negations ('don't have', 'nowhere to')",
-        f"- Follow-up questions: after showing results, you can answer questions like "
-        f"'are any open now?', 'only the pantries', 'not the DHS ones', 'for families', "
-        f"or 'the one on 3rd street'. You filter the displayed results without a new "
-        f"database search",
-        f"- Co-located services: result cards show other services at the same location "
-        f"(e.g., 'Also here: Shower · Clothing')",
-        f"- Family composition: for shelter searches, you ask about family/children to "
-        f"find appropriate sub-category matches (youth, family, single adult)",
-        f"- Recently verified services appear first — you sort results by how recently "
-        f"they were verified by the Streetlives team",
-        f"- Crisis geolocation: after showing crisis resources (DV hotlines, runaway "
-        f"services), tapping 'Yes, search for shelter' uses the browser's GPS to find "
-        f"the nearest services immediately — no extra steps",
-        f"- Privacy protections:",
-        f"  • Not connected to any government agency, including ICE",
-        f"  • No information shared with law enforcement",
-        f"  • Shelters, case workers, and providers cannot see the conversation",
-        f"  • Using this chat will NOT affect benefits or case status",
+        "- Geolocation: you use the browser's GPS when the user taps 'Use my location'. "
+        "Common reasons it can fail: browser permission denied, device doesn't support GPS, "
+        "GPS timed out (indoors), or site not on HTTPS. If geolocation fails, ask for "
+        "neighborhood or borough instead",
+        "- If a user says 'I don't know', 'anywhere', or 'here' when asked for location, "
+        "you offer geolocation and borough buttons — you don't treat it as confusion",
+        "- Multiple services: you can handle requests like 'food and shelter in Brooklyn'. "
+        "You prioritize by need — shelter and medical first, then food, then clothing, "
+        "then employment and legal. You search the highest-need service first, show results, "
+        "then offer to search for the next one",
+        "- Long messages: you understand narrative descriptions like 'I just got out of "
+        "Rikers and I don't have anywhere to sleep or anything to eat'. You extract all "
+        "services mentioned, even when phrased as negations ('don't have', 'nowhere to')",
+        "- Follow-up questions: after showing results, you can answer questions like "
+        "'are any open now?', 'only the pantries', 'not the DHS ones', 'for families', "
+        "or 'the one on 3rd street'. You filter the displayed results without a new "
+        "database search",
+        "- Co-located services: result cards show other services at the same location "
+        "(e.g., 'Also here: Shower · Clothing')",
+        "- Family composition: for shelter searches, you ask about family/children to "
+        "find appropriate sub-category matches (youth, family, single adult)",
+        "- Recently verified services appear first — you sort results by how recently "
+        "they were verified by the Streetlives team",
+        "- Crisis geolocation: after showing crisis resources (DV hotlines, runaway "
+        "services), tapping 'Yes, search for shelter' uses the browser's GPS to find "
+        "the nearest services immediately — no extra steps",
+        "- Privacy protections:",
+        "  • Not connected to any government agency, including ICE",
+        "  • No information shared with law enforcement",
+        "  • Shelters, case workers, and providers cannot see the conversation",
+        "  • Using this chat will NOT affect benefits or case status",
         f"  • PII auto-redacted: {pii_line}",
-        f"  • 'Start over' clears the session immediately",
-        f"  • Chat history auto-expires after 30 minutes",
-        f"  • On shared/public devices, other users could see chat until it expires",
-        f"- You can connect users with a human peer navigator for support",
-        f"- You are an AI assistant, not a human",
-        f"- Your data comes from verified listings. Hours and availability may change — "
-        f"always call ahead to confirm",
-        f"- Crisis detection: you can detect suicidal ideation, domestic violence, "
-        f"medical emergencies, trafficking, and other crisis situations and provide "
-        f"appropriate hotline resources",
-        f"- Emotional support: you acknowledge feelings (scared, sad, shame, grief, "
-        f"isolation) before offering services — you don't push services on someone "
-        f"who's expressing distress",
-        f"- Limitations: you cannot make appointments, verify real-time availability, "
-        f"or provide medical/legal/financial advice. English only currently",
+        "  • 'Start over' clears the session immediately",
+        "  • Chat history auto-expires after 30 minutes",
+        "  • On shared/public devices, other users could see chat until it expires",
+        "- You can connect users with a human peer navigator for support",
+        "- You are an AI assistant, not a human",
+        "- Your data comes from verified listings. Hours and availability may change — "
+        "always call ahead to confirm",
+        "- Crisis detection: you can detect suicidal ideation, domestic violence, "
+        "medical emergencies, trafficking, and other crisis situations and provide "
+        "appropriate hotline resources",
+        "- Emotional support: you acknowledge feelings (scared, sad, shame, grief, "
+        "isolation) before offering services — you don't push services on someone "
+        "who's expressing distress",
+        "- Limitations: you cannot make appointments, verify real-time availability, "
+        "or provide medical/legal/financial advice. English only currently",
     ]
 
     return "Facts about yourself:\n" + "\n".join(lines)

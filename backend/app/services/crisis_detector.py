@@ -463,7 +463,7 @@ def _detect_crisis_llm(text: str) -> Optional[Tuple[str, str]]:
         parsed = json.loads(raw)
 
         if not parsed.get("crisis"):
-            logger.info(f"LLM crisis check: no crisis detected")
+            logger.info("LLM crisis check: no crisis detected")
             return None
 
         category = parsed.get("category", "safety_concern")

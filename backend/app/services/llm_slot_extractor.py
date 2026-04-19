@@ -27,12 +27,8 @@ Multi-service support (PR 4):
       additional_services, deduplicating by category.
 """
 
-import os
-import json
 import logging
-import re
 import time
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 

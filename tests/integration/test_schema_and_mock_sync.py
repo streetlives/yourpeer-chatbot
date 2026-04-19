@@ -385,7 +385,8 @@ class TestPersistenceFailureIsolation:
 
     def _corrupt_db(self):
         """Set up a SQLite DB then drop all tables."""
-        import tempfile, os
+        import tempfile
+        import os
         from app.services import persistence
 
         db_path = os.path.join(tempfile.mkdtemp(), "corrupt.db")

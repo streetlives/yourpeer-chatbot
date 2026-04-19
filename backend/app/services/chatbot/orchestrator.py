@@ -36,7 +36,6 @@ from app.services.session_store import (
 )
 from app.services.slot_extractor import (
     NEAR_ME_SENTINEL,
-    extract_slots,
     is_enough_to_answer,
     merge_slots,
     next_follow_up_question,

@@ -132,7 +132,7 @@ def _build_shelter_results(n):
             "service_id": str(i + 1),
             "service_name": f"Shelter Program {i + 1}",
             "organization": f"Org {i + 1}",
-            "description": f"Emergency shelter services",
+            "description": "Emergency shelter services",
             "address": f"{i+1} Main St, Manhattan, NY",
             "city": "Manhattan", "phone": f"212-555-{i:04d}",
             "fees": "Free", "is_open": None,
