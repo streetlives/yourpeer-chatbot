@@ -25,6 +25,7 @@ export function AdminAuthGuard({ children }: { children: React.ReactNode }) {
   }, []);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- one-shot auth check on mount; would be overkill to pull in a data-fetching library for this
     checkAuth();
   }, [checkAuth]);
 

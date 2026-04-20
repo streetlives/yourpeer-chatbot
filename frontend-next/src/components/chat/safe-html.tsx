@@ -147,6 +147,7 @@ function stripTags(html: string): string {
  */
 export function SafeHtml({ html, className }: SafeHtmlProps) {
   const [mounted, setMounted] = useState(false);
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- hydration-safe mount marker; runs once, fires no cascading render because the component immediately switches branches
   useEffect(() => setMounted(true), []);
 
   const hasHtml = useMemo(() => containsHtml(html), [html]);

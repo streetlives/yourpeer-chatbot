@@ -22,7 +22,7 @@ export function useSpeechRecognition(): UseSpeechRecognitionReturn {
   const [isListening, setIsListening] = useState(false);
   const [transcript, setTranscript] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const recognitionRef = useRef(null);
+  const recognitionRef = useRef<SpeechRecognition>(null);
   const preExistingRef = useRef("");
 
   useEffect(() => {
@@ -30,6 +30,7 @@ export function useSpeechRecognition(): UseSpeechRecognitionReturn {
       window.SpeechRecognition || (window).webkitSpeechRecognition;
     if (!SR) return;
 
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- window.SpeechRecognition is undefined during SSR; feature-detect then mark as supported
     setIsSupported(true);
 
     const recognition = new SR();
