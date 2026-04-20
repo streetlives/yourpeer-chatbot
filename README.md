@@ -1,5 +1,12 @@
 # YourPeer Chatbot
 
+[![Python](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![Next.js](https://img.shields.io/badge/Next.js-15-000000?logo=next.js&logoColor=white)](https://nextjs.org/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
+[![Claude API](https://img.shields.io/badge/Claude_API-Anthropic-D4A574?logo=anthropic&logoColor=white)](https://www.anthropic.com/)
+[![Render](https://img.shields.io/badge/Render-Deployed-46E3B7?logo=render&logoColor=white)](https://render.com/)
+[![Streetlives](https://img.shields.io/badge/Streetlives-YourPeer-FF6B35)](https://www.streetlives.nyc/)
+
 A conversational interface that helps people experiencing homelessness find free services in New York City — food, shelter, clothing, showers, health care, legal help, and more.
 
 Built by [Streetlives](https://www.streetlives.nyc/) as a front-end to the [YourPeer](https://yourpeer.nyc/) service directory.
