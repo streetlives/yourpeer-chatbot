@@ -185,7 +185,7 @@ skip it.
 
 ### Location in the code
 
-This lives in `_execute_and_respond()` in `backend/app/services/chatbot/execution.py` (post-Phase-3 location; was `chatbot.py` pre-April 2026). It fires AFTER the main query returns results and BEFORE the response is formatted.
+This lives in `_execute_and_respond()` in `backend/app/services/chatbot/execution.py` (post-Phase-3 location; was `chatbot.py` pre-April 2026). It fires AFTER the main query returns results and BEFORE the response is formatted. <!-- drift:ignore: historical chatbot.py reference; package now lives at chatbot/ -->
 
 ### Data flow
 

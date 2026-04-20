@@ -196,7 +196,7 @@ Organized by the categories in `../audits/HARDCODED_MESSAGES_REVIEW.md`:
 - These appear in confirmation messages and quick-reply buttons.
 
 **Quick-reply button labels:**
-- All button labels are generated server-side in the `backend/app/services/chatbot/handlers/*` package (each handler emits its own quick-replies) plus `backend/app/services/responses.py` for shared button-catalog strings. Spanish bilingual acknowledgment specifically fires from `chatbot/handlers/accessibility.py` (post-Phase-3 location; was all in `chatbot.py` pre-April 2026).
+- All button labels are generated server-side in the `backend/app/services/chatbot/handlers/*` package (each handler emits its own quick-replies) plus `backend/app/services/responses.py` for shared button-catalog strings. Spanish bilingual acknowledgment specifically fires from `chatbot/handlers/accessibility.py` (post-Phase-3 location; was all in `chatbot.py` pre-April 2026). <!-- drift:ignore: historical chatbot.py reference; package now lives at chatbot/ -->
 - Category buttons on welcome: "🍽️ Food" → "🍽️ Comida"
 - Borough buttons: "Manhattan", "Brooklyn" etc. — these don't translate.
 - Confirmation buttons: "✅ Yes, search" → "✅ Sí, buscar"

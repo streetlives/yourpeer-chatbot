@@ -339,7 +339,7 @@ backend/app/
 
 ### `services/chatbot/` — the orchestrator package
 
-Before April 2026 this was a single `chatbot.py` file that grew past 3,000 lines. Phase 3 of the ongoing cleanup decomposed it into a package. If you're tracing a bug or adding a handler, this is where you start — but the work is distributed across a handful of small modules instead of one giant file.
+Before April 2026 this was a single `chatbot.py` file that grew past 3,000 lines. Phase 3 of the ongoing cleanup decomposed it into a package. If you're tracing a bug or adding a handler, this is where you start — but the work is distributed across a handful of small modules instead of one giant file. <!-- drift:ignore: historical chatbot.py reference; package now lives at chatbot/ -->
 
 The package exports `generate_reply()` from its `__init__.py` so existing callers (tests, routes, older docs) keep working without import changes.
 
@@ -359,14 +359,14 @@ The package exports `generate_reply()` from its `__init__.py` so existing caller
 
 | Handler module | Catches |
 |---|---|
-| `handlers/emotional.py` | Frustration, shame, sadness, distrust, undeserving. The AVR pattern lives here, plus the crisis dispatcher (`_handle_crisis`) for the 7-category step-down. Filter-aware cleanup at the tail of `_handle_frustration` reconciles "preserve `_last_results` through routing" with "leave a clean session afterward." |
+| `handlers/emotional.py` | Frustration, shame, sadness, distrust, undeserving. The AVR pattern lives here, plus the crisis dispatcher (`_handle_crisis`) for the 4-category step-down (`safety_concern`, `domestic_violence`, `youth_runaway`, `assault_victim` — the categories where crisis resources fire alongside an offer to search). Filter-aware cleanup at the tail of `_handle_frustration` reconciles "preserve `_last_results` through routing" with "leave a clean session afterward." |
 | `handlers/confirmation.py` | The "Food in Brooklyn — sound good?" flow. Contradiction auto-execute logic, optional-slot re-nudge path, and context-aware `confirm_yes` / `confirm_deny` routing during pending confirmations. |
 | `handlers/post_results.py` | Everything after results are shown: "show more" pagination (through `_filtered_results` when filter is active, else `_last_results`), sort variants, questions about specific cards, filter phrase detection, filter-escape on "no thanks", new-search state reset. |
 | `handlers/general.py` | Greetings, resets, help questions, "what can you do", bot-identity questions. |
 | `handlers/meta.py` | Privacy questions, "are you a robot", meta-conversation about the chatbot itself. |
 | `handlers/accessibility.py` | Language preference hints, Spanish bilingual acknowledgment. |
 
-**Where stuff moved from the old `chatbot.py`**: if you're reading older commits or docs that refer to functions in `chatbot.py`, the rough mapping is: `generate_reply` → `orchestrator.py`; `_execute_and_respond` → `execution.py`; emotional branches → `handlers/emotional.py`; pending-confirmation branches → `handlers/confirmation.py`; post-results branches → `handlers/post_results.py`. Most shared helpers moved to `context.py` or `tone.py`.
+**Where stuff moved from the old `chatbot.py`**: if you're reading older commits or docs that refer to functions in `chatbot.py`, the rough mapping is: `generate_reply` → `orchestrator.py`; `_execute_and_respond` → `execution.py`; emotional branches → `handlers/emotional.py`; pending-confirmation branches → `handlers/confirmation.py`; post-results branches → `handlers/post_results.py`. Most shared helpers moved to `context.py` or `tone.py`. <!-- drift:ignore: historical chatbot.py reference; package now lives at chatbot/ -->
 
 ### `services/` — other conversation services
 
@@ -597,7 +597,7 @@ After Phase 3, "where to add a thing" is more specific than it used to be becaus
 
 ## 14. Asking for Help
 
-If you're stuck, check the docs list in Section 11 first — most design decisions are documented somewhere. The code comments in the `chatbot/` package files, `query_templates.py`, and `responses.py` are especially detailed about the "why" behind decisions. If a doc points you at `chatbot.py` and it doesn't exist, that's Phase 3 drift — the code is now in `services/chatbot/`.
+If you're stuck, check the docs list in Section 11 first — most design decisions are documented somewhere. The code comments in the `chatbot/` package files, `query_templates.py`, and `responses.py` are especially detailed about the "why" behind decisions. If a doc points you at `chatbot.py` and it doesn't exist, that's Phase 3 drift — the code is now in `services/chatbot/`. <!-- drift:ignore: historical chatbot.py reference; package now lives at chatbot/ -->
 
 If you're making a change and aren't sure if it's safe, look for related tests in `tests/README.md`. The test suite is large specifically because the codebase handles sensitive situations where regressions can cause real harm. Run the full suite with `pytest tests/unit tests/integration -q` before merging — it completes in about 25 seconds.
 

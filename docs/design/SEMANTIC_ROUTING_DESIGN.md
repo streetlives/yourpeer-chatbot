@@ -115,7 +115,7 @@ Route every message through Claude Haiku or GPT-3.5 for intent extraction. Most 
 
 The semantic router fires at **two points** in the pipeline for maximum coverage:
 
-**1. Hybrid multi-intent extraction in `backend/app/services/chatbot/pipeline.py`** (runs on every message, as part of the unified classification cascade — post-Phase-3 location; was `chatbot.py` pre-April 2026):
+**1. Hybrid multi-intent extraction in `backend/app/services/chatbot/pipeline.py`** (runs on every message, as part of the unified classification cascade — post-Phase-3 location; was `chatbot.py` pre-April 2026): <!-- drift:ignore: historical chatbot.py reference; package now lives at chatbot/ -->
 
 ```python
 # After regex extraction — semantic always runs, even when regex found something
