@@ -420,7 +420,6 @@ class TestHelpEmotionalOverride:
 # Option 3: Emotional enhancement validation
 # =====================================================================
 
-@pytest.mark.xfail(reason="_validate_emotional_enhancement not yet implemented in chatbot.py")
 class TestEmotionalEnhancementValidation:
     """Validate the enhancement filter for Option 3 emotional handling."""
 
@@ -465,7 +464,6 @@ class TestEmotionalEnhancementValidation:
         assert _validate_emotional_enhancement(long) is False
 
 
-@pytest.mark.xfail(reason="_validate_emotional_enhancement not yet implemented in chatbot.py")
 class TestEmotionalResponseScaffold:
     """The emotional handler should ALWAYS include the static response,
     even when LLM is available (but in our test env, LLM is off)."""
@@ -520,7 +518,6 @@ class TestEmotionalResponseScaffold:
         assert any("person" in lable.lower() or "navigator" in lable.lower() for lable in qr_labels)
 
 
-@pytest.mark.xfail(reason="_validate_emotional_enhancement not yet implemented in chatbot.py")
 class TestEmotionalEnhancementBlocklistGaps:
     """Test the blocklist catches vague service-adjacent phrases
     that were identified in gap analysis."""

@@ -713,6 +713,33 @@ _CONTRADICTION_SIGNALS = [
 ]
 
 
+_ADDITIVE_PHRASES = [
+    "i also need", "also need", "also look for", "also search for",
+    "can you also", "could you also",
+    "i need that too",
+    "as well",
+    "and i need", "and i also",
+    "oh and i need",
+]
+
+# Standalone words checked only at word boundaries
+_ADDITIVE_WORDS = {"also", "too"}
+
+
+def _has_additive_intent(text: str) -> bool:
+    """Detect additive intent ('also', 'too', 'as well') without a contradiction signal."""
+    if _find_contradiction_signal(text) >= 0:
+        return False
+    lower = text.lower()
+    if any(phrase in lower for phrase in _ADDITIVE_PHRASES):
+        return True
+    import re as _re
+    for word in _ADDITIVE_WORDS:
+        if _re.search(rf"\b{word}\b", lower):
+            return True
+    return False
+
+
 def _find_contradiction_signal(text: str) -> int:
     """Return the position of an explicit change-of-mind signal, or -1.
 
@@ -1615,6 +1642,7 @@ def extract_slots(message: str) -> dict:
         "org_name": _extract_org_name(message),
         "no_requirements": _extract_no_requirements(message),
         "_contradiction": _find_contradiction_signal(message) >= 0,
+        "_is_additive": _has_additive_intent(message),
     }
 
 
@@ -1635,6 +1663,25 @@ def merge_slots(existing: dict, new_values: dict) -> dict:
     # service_type, this block is a no-op.  It only fires when the
     # old service survived extraction AND additional_services holds
     # the user's real intent.
+    # --- Additive intent: queue new service, keep primary ---
+    _is_additive = new_values.get("_is_additive", False)
+    if (_is_additive
+            and new_values.get("service_type") is not None
+            and existing.get("service_type") is not None
+            and new_values["service_type"] != existing.get("service_type")):
+        queued = list(merged.get("_queued_services", []))
+        queued.append((
+            new_values["service_type"],
+            new_values.get("service_detail"),
+            new_values.get("location"),
+        ))
+        merged["_queued_services"] = queued
+        # Prevent service_type replacement in the merge loop below
+        new_values = dict(new_values)
+        new_values.pop("service_type", None)
+        new_values.pop("service_detail", None)
+
+    # --- Contradiction promotion (defense-in-depth) ---
     _is_contradiction = new_values.get("_contradiction", False)
     if (_is_contradiction
             and new_values.get("service_type") is not None
@@ -1661,6 +1708,10 @@ def merge_slots(existing: dict, new_values: dict) -> dict:
         # _contradiction is a transient extraction flag —
         # never persist it in session state.
         if key == "_contradiction":
+            continue
+        # _is_additive is a transient extraction flag —
+        # never persist it in session state.
+        if key == "_is_additive":
             continue
         # _populations is a list — merge by union, not replace.
         if key == "_populations":

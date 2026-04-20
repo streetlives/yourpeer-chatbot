@@ -520,7 +520,7 @@ def _handle_post_pending_confirmation(session_id, message, redacted_message, exi
     pending_has_new = any(
         v is not None and v != [] and v is not False
         for k, v in pending_extracted.items()
-        if k not in ("additional_services", "_populations", "_contradiction", "no_requirements")
+        if k not in ("additional_services", "_populations", "_contradiction", "_is_additive", "no_requirements")
     )
 
     # Path 1+2: something changed or filled
@@ -533,6 +533,29 @@ def _handle_post_pending_confirmation(session_id, message, redacted_message, exi
             and existing.get(k) is not None
             and pending_extracted[k] != existing[k]
         }
+        # Additive intent: user is adding a service, not changing it.
+        # Queue the new service and re-confirm the current search.
+        _is_additive = pending_extracted.get("_is_additive", False)
+        if (changed
+                and _is_additive
+                and "service_type" in changed):
+            merged_pending = merge_slots(existing, pending_extracted)
+            merged_pending["_pending_confirmation"] = True
+            save_session_slots(session_id, merged_pending)
+            svc_label = _SERVICE_LABELS.get(
+                existing.get("service_type", ""), existing.get("service_type", "services"))
+            new_label = _SERVICE_LABELS.get(changed["service_type"], changed["service_type"])
+            result = _empty_reply(
+                session_id,
+                f"Got it — I've noted {new_label} for after. "
+                f"Let me finish searching for {svc_label} first. Sound good?",
+                merged_pending,
+                quick_replies=_confirmation_quick_replies(merged_pending),
+            )
+            _log_turn(session_id, redacted_message, result, "additive_service",
+                      request_id=request_id, tone=tone)
+            return result
+
         if changed:
             # Path 1: contradiction detected
             merged_pending = merge_slots(existing, pending_extracted)

@@ -13,6 +13,9 @@ Run with: python -m pytest tests/test_main.py -v
 Or just:  python tests/test_main.py
 """
 
+import os
+from unittest.mock import patch
+
 from fastapi.testclient import TestClient
 from app.main import app
 
@@ -74,8 +77,10 @@ def test_chat_route_exists():
     assert r.status_code != 404
 
 
+@patch.dict(os.environ, {}, clear=False)
 def test_admin_api_stats_routed():
     """GET /admin/api/stats should be handled by the admin router."""
+    os.environ.pop("ADMIN_API_KEY", None)
     r = client.get("/admin/api/stats")
     assert r.status_code == 200
 

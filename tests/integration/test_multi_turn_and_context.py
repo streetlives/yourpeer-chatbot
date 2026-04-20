@@ -439,10 +439,31 @@ class TestUnrecognizedServiceEscalation:
 
     def test_sticky_detection_for_nonsense(self, sid):
         """Once flagged as unrecognized, subsequent messages without
-        request verbs should still increment the counter."""
-        send("Can you find me some asdfghjkl", session_id=sid)  # generic turn 1
-        send("I need asdfghjkl please", session_id=sid)  # count=1
-        _r = send("asdfghjkl again", session_id=sid)  # sticky: count=2
+        request verbs should still increment the counter.
+
+        This test exercises the sticky-counter mechanic in
+        handlers/general.py. With an ANTHROPIC_API_KEY set, the LLM
+        slot extractor treats "asdfghjkl" as a potential ``org_name``,
+        which makes ``has_service_intent=True`` and routes the message
+        through the service pipeline — bypassing the general handler
+        where ``_unrecognized_count`` is incremented. That's defensible
+        LLM behavior for this input, but it means the test of the
+        counter mechanic becomes non-deterministic across environments
+        (passes without the env var, fails with it).
+
+        To test the mechanic itself, force the regex-only path by
+        patching ``_USE_LLM`` False at both bind sites that matter
+        (pipeline, orchestrator). Without the LLM, nonsense stays
+        nonsense, stays routed to the general handler, and the
+        counter increments as designed.
+        """
+        with (
+            patch("app.services.chatbot.pipeline._USE_LLM", False),
+            patch("app.services.chatbot.orchestrator._USE_LLM", False),
+        ):
+            send("Can you find me some asdfghjkl", session_id=sid)  # generic turn 1
+            send("I need asdfghjkl please", session_id=sid)  # count=1
+            _r = send("asdfghjkl again", session_id=sid)  # sticky: count=2
         s = get_session_slots(sid)
         assert s.get("_unrecognized_count") == 2
 
@@ -550,11 +571,7 @@ class TestImplicitServiceChange:
         assert "shelter" in r["response"].lower()
 
     # --- Additive intent (ADD, not CHANGE) ---
-    # These test a feature gap: the contradiction detector treats "I also need
-    # shelter" the same as "I changed my mind, I need shelter" — it replaces
-    # the primary service instead of queuing the new one alongside it.
 
-    @pytest.mark.xfail(reason="Additive intent ('also', 'too') not yet distinguished from service change")
     @pytest.mark.parametrize("add_msg", [
         "I also need shelter",
         "And I need shelter too",
@@ -574,7 +591,6 @@ class TestImplicitServiceChange:
         assert "shelter" in queued, \
             f"'{add_msg}' should queue shelter"
 
-    @pytest.mark.xfail(reason="Additive intent not yet distinguished from service change")
     def test_additive_then_confirm_searches_primary(self, sid):
         """After additive, confirming should search the primary service."""
         send("I need food in Brooklyn", session_id=sid)

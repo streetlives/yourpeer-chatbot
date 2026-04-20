@@ -11,6 +11,7 @@ and a service request co-occur.
 """
 
 import logging
+import re
 
 from app.services.audit_log import log_crisis_detected
 from app.services.confirmation import _confirmation_quick_replies
@@ -32,6 +33,57 @@ from ..logging import _log_turn
 
 
 logger = logging.getLogger(__name__)
+
+# --- Maximum word count for emotional enhancements ---
+_ENHANCEMENT_MAX_WORDS = 25
+
+# --- Patterns that indicate service-push language (case-insensitive) ---
+_SERVICE_PUSH_RE = re.compile(
+    r"(?i)"
+    r"(?:help you find|search for|look(?:ing)? for|find (?:a |you )?)"
+    r"|(?:shelter|food|clothing|shower|housing|medical|job|employment|navigator)"
+    r"|(?:(?:services?|resources?) (?:near|for|available))"
+    r"|(?:assist you|connect you|help with finding)"
+    r"|(?:anything practical)"
+    r"|(?:finding something specific)"
+)
+
+# --- Vague service-adjacent phrases that slip past the regex above ---
+_BLOCKLIST_PHRASES = [
+    "options available",
+    "places that might help",
+    "i can look into that",
+    "information that could help",
+    "support out there",
+    "often benefit from",
+    "that's what i'm here for",
+    "point you in the right direction",
+    "figure out what you need",
+]
+
+
+def _validate_emotional_enhancement(text: str) -> bool:
+    """Return True if *text* is a valid emotional-enhancement line.
+
+    Rejects empty / literal-NONE values, service-push language, vague
+    service-adjacent phrases, and anything over ``_ENHANCEMENT_MAX_WORDS``
+    words.
+    """
+    if not text or text.strip().lower() in ("none", ""):
+        return False
+
+    if len(text.split()) > _ENHANCEMENT_MAX_WORDS:
+        return False
+
+    if _SERVICE_PUSH_RE.search(text):
+        return False
+
+    lowered = text.lower()
+    for phrase in _BLOCKLIST_PHRASES:
+        if phrase in lowered:
+            return False
+
+    return True
 
 
 def _handle_emotional(session_id, message, redacted_message, existing,

@@ -418,46 +418,54 @@ _skip_no_api_key = pytest.mark.skipif(
 )
 
 
+def _reset_llm_client():
+    """Ensure live tests use a real client, not a leftover mock."""
+    import app.llm.claude_client as cc
+    cc._client = None
+    cc._init_error = None
+
+
 @_skip_no_api_key
 def test_live_simple_extraction():
     """[LIVE] Simple service + location extraction."""
+    _reset_llm_client()
     result = extract_slots_llm("I need food in Brooklyn")
     assert result["service_type"] == "food"
     assert "brooklyn" in (result["location"] or "").lower()
-    print("  PASS [LIVE]: simple extraction")
 
 
 @_skip_no_api_key
 def test_live_third_person():
     """[LIVE] Third-person extraction."""
+    _reset_llm_client()
     result = extract_slots_llm("my son is 12 and needs a warm coat")
     assert result["service_type"] == "clothing"
     assert result["age"] == 12
-    print("  PASS [LIVE]: third-person extraction")
 
 
 @_skip_no_api_key
 def test_live_contradicting_locations():
     """[LIVE] Intended vs current location."""
+    _reset_llm_client()
     result = extract_slots_llm("I'm in Queens but looking for food in the Bronx")
     assert result["service_type"] == "food"
     assert "bronx" in (result["location"] or "").lower()
-    print("  PASS [LIVE]: contradicting locations")
 
 
 @_skip_no_api_key
 def test_live_implicit_needs():
     """[LIVE] Implicit service type from context."""
+    _reset_llm_client()
     result = extract_slots_llm("somewhere safe for tonight, I'm a woman")
     assert result["service_type"] == "shelter"
     assert result["urgency"] == "high"
-    assert result["gender"] is not None
-    print("  PASS [LIVE]: implicit needs")
+    assert result["_gender"] is not None
 
 
 @_skip_no_api_key
 def test_live_complex_sentence():
     """[LIVE] Complex sentence with multiple slots."""
+    _reset_llm_client()
     result = extract_slots_llm(
         "I'm 22, just got out of Rikers, and I need help finding "
         "a place to stay in the Bronx tonight"
@@ -466,7 +474,6 @@ def test_live_complex_sentence():
     assert result["age"] == 22
     assert "bronx" in (result["location"] or "").lower()
     assert result["urgency"] == "high"
-    print("  PASS [LIVE]: complex sentence")
 
 
 # -----------------------------------------------------------------------

@@ -38,6 +38,7 @@ from .emotional import (
     _handle_emotional,
     _handle_escalation,
     _handle_frustration,
+    _validate_emotional_enhancement,
 )
 from .general import _handle_general_conversation
 from .meta import (
@@ -72,6 +73,7 @@ __all__ = [
     "_handle_emotional",
     "_handle_escalation",
     "_handle_frustration",
+    "_validate_emotional_enhancement",
     # accessibility
     "_handle_demographic_skip",
     "_handle_location_unknown",

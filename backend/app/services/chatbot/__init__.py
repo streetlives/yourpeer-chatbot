@@ -104,6 +104,7 @@ from .handlers import (  # noqa: F401
     _handle_sort_results,
     _handle_spanish_detection,
     _handle_thanks,
+    _validate_emotional_enhancement,
 )
 
 # --- MONKEYPATCH TARGETS -----------------------------------------------------
@@ -198,6 +199,7 @@ __all__ = [
     "_handle_sort_results",
     "_handle_spanish_detection",
     "_handle_thanks",
+    "_validate_emotional_enhancement",
     # Monkeypatch targets
     "claude_reply",
     "detect_crisis",

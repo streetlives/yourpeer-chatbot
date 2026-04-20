@@ -339,7 +339,7 @@ def generate_reply(
         extracted = early_extracted
 
     has_new_slots = any(v is not None and v != [] for k, v in extracted.items()
-                        if k not in ("additional_services", "_populations", "_contradiction"))
+                        if k not in ("additional_services", "_populations", "_contradiction", "_is_additive"))
 
     merged = merge_slots(existing, extracted)
 
@@ -353,12 +353,14 @@ def generate_reply(
 
     # Queue additional services
     additional = extracted.get("additional_services", [])
+    _is_additive = extracted.get("_is_additive", False)
     if additional and "_queued_services" not in merged:
         merged["_queued_services"] = additional
     if (extracted.get("service_type")
             and existing.get("service_type")
             and extracted["service_type"] != existing.get("service_type")
-            and not additional):
+            and not additional
+            and not _is_additive):
         merged.pop("_queued_services", None)
 
     save_session_slots(session_id, merged)
