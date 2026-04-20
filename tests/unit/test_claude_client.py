@@ -340,6 +340,14 @@ def test_classify_handles_whitespace(mock_anthropic):
 
 
 # -----------------------------------------------------------------------
+# MODULE CLEANUP — prevent stale mock client from polluting later tests
+# -----------------------------------------------------------------------
+
+def teardown_module():
+    _reset_globals()
+
+
+# -----------------------------------------------------------------------
 # CLASSIFY_MESSAGE_LLM — FAILURE
 # -----------------------------------------------------------------------
 

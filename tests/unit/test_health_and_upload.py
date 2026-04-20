@@ -268,10 +268,12 @@ class TestPingLlm:
 # 2. ENRICHED HEALTH ENDPOINT
 # =======================================================================
 
+@patch.dict(os.environ, {}, clear=False)
 class TestHealthEndpointEnriched:
     """Tests for the enriched /api/health response."""
 
     def setup_method(self):
+        os.environ.pop("ADMIN_API_KEY", None)
         _reset_ping_cache()
         _reset_client()
 
@@ -395,10 +397,12 @@ class TestSemanticRouterStatus:
 # 4. EVAL UPLOAD ENDPOINT
 # =======================================================================
 
+@patch.dict(os.environ, {}, clear=False)
 class TestEvalUpload:
     """Tests for POST /admin/api/eval/upload."""
 
     def setup_method(self):
+        os.environ.pop("ADMIN_API_KEY", None)
         clear_audit_log()
 
     # -- Happy path --

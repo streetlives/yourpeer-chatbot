@@ -37,6 +37,10 @@ def _reset_client():
     cc._init_error = None
 
 
+def teardown_module():
+    _reset_client()
+
+
 # ---------------------------------------------------------------------------
 # extract_slots_llm — ADDITIONAL SERVICE TYPES
 # ---------------------------------------------------------------------------

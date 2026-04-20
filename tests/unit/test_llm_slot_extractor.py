@@ -451,7 +451,7 @@ def test_live_implicit_needs():
     result = extract_slots_llm("somewhere safe for tonight, I'm a woman")
     assert result["service_type"] == "shelter"
     assert result["urgency"] == "high"
-    assert result["gender"] is not None
+    assert result["_gender"] is not None
     print("  PASS [LIVE]: implicit needs")
 
 
