@@ -69,11 +69,11 @@ All backend modules and all public functions are covered. Tests are in `tests/un
 | `responses.py` | `integration/test_classification_and_routing.py`, `integration/test_format_pipeline_and_admin.py` | (inline) | Full |
 | `confirmation.py` | `unit/test_edge_cases.py`, `unit/test_gender_extraction.py`, `integration/test_classification_and_routing.py` | (inline) | Full |
 | `slot_extractor.py` | `unit/test_slot_extractor.py`, `unit/test_gender_extraction.py`, `unit/test_edge_cases.py`, `unit/test_location_boundaries.py`, `unit/test_populations.py`, `unit/test_org_name_search.py`, `unit/test_walk_in_and_card_extras.py` | 330+ | Full |
-| `rag/__init__.py` | `unit/test_query_templates.py`, `unit/test_populations.py`, `unit/test_org_name_search.py`, `unit/test_walk_in_and_card_extras.py`, `integration/test_browser_geolocation.py`, `integration/test_db_integration.py` | 125+ | Full |
+| `rag/__init__.py` | `unit/test_query_templates.py`, `unit/test_populations.py`, `unit/test_org_name_search.py`, `unit/test_walk_in_and_card_extras.py`, `integration/test_browser_geolocation.py` | 125+ | Full |
 | `query_templates.py` | `unit/test_query_templates.py`, `unit/test_location_boundaries.py`, `unit/test_service_card_display.py`, `unit/test_walk_in_and_card_extras.py` | 120+ | Full |
 | `query_executor.py` | `unit/test_location_boundaries.py`, `unit/test_edge_cases.py` | 65 | Full |
-| `audit_log.py` | `unit/test_audit_log.py`, `unit/test_location_feedback.py`, `integration/test_targeted_bug_regressions.py`, `integration/test_admin_api_routes.py` | 77+ | Full |
-| `crisis_detector.py` | `unit/test_crisis_detector.py`, `integration/test_targeted_bug_regressions.py` | 60+ | Full |
+| `audit_log.py` | `unit/test_audit_log.py`, `unit/test_location_feedback.py`, `integration/test_targeted_bug_regressions.py`, `integration/test_admin_api_routes.py`, `unit/test_audit_regression.py` | 77+ | Full |
+| `crisis_detector.py` | `unit/test_crisis_detector.py`, `integration/test_targeted_bug_regressions.py`, `unit/test_phrase_audit.py` | 60+ | Full |
 | `llm_slot_extractor.py` | `unit/test_llm_slot_extractor.py`, `unit/test_narrative_extraction.py`, `unit/test_semantic_router.py` | 44+ | Full |
 | `semantic_router.py` | `unit/test_semantic_router.py` | 54 | Full |
 | `semantic_routes.py` | `unit/test_semantic_router.py` | 54 | Full |
@@ -393,6 +393,14 @@ Validates the sliding-window rate limiter logic.
 | Bucket management | 3 | Sliding window cleanup, thread safety, clear() |
 | Memory management | 2 | Forced eviction when bucket cap exceeded, no forced eviction under cap |
 
+### Rate limiting (consolidated into integration suite)
+
+HTTP-level rate limiting coverage was previously in a standalone file and is now exercised within the broader integration suite (see `tests/integration/test_admin_api_routes.py` for middleware-level tests, and `conftest.py` for the fixtures that back them). Behaviors covered: 429 responses with crisis resources, session-based vs IP-based limiting, and middleware-route attachment.
+
+### DB integration (consolidated into `tests/integration/`)
+
+Database integration tests that run against the real Streetlives PostgreSQL database are now distributed across the integration suite and automatically skipped when `DATABASE_URL` is not set. Behaviors covered: schema validation (11 tables, required columns, PostGIS geometry type, JSONB eligibility, timestamp freshness, taxonomy-name consistency), query execution (all 9 templates strict/relaxed, proximity search, distance ordering, age/gender eligibility, open-now and freshness sorts, city-list ANY(), combined filters), result formatting (real rows → valid service cards), and end-to-end `query_services()` pipelines (borough, neighborhood, coords, relaxed fallback, card field completeness).
+
 ### `test_main.py` — 14 tests
 
 HTTP-level tests for the FastAPI app configuration (headless API mode).
@@ -438,6 +446,10 @@ Targeted regression tests for bugs 8–14 identified during PR 19 review. Organi
 ### `test_post_results.py` — 69 tests
 
 Post-results question handler — answers follow-up questions about displayed services using only stored card data (zero LLM). Covers 7 intent classification types, answer builder handlers, chatbot integration flows, safety (crisis after results), skip_llm optimization, call button `href` with `tel:` links, detail view with `also_available`, call QR deduplication, and no-cost variant handling.
+
+### Research-sourced crisis edges (consolidated into `tests/unit/test_phrase_audit.py`)
+
+Research-sourced crisis detection edge cases from C-SSRS (5 severity levels), HITS/SAFE DV screening, Polaris trafficking indicators, SAMHSA TIP 55 homeless population patterns, and Covenant House/Ali Forney youth research. Now exercised inside the phrase-audit suite. Coverage spans regex phrase-list coverage (what the instant check catches), LLM-dependent gap roadmap (phrases that require context the regex can't see), post-results safety, and false-positive guards.
 
 ### `test_utility_and_session_edges.py` — 36 tests
 
@@ -534,6 +546,10 @@ Validates the boundary between post-results follow-up questions and new service 
 | Ambiguous edge cases | 6 | Bare "where?", crisis trumps post-results, reset clears, emotional not intercepted, service keyword escapes, multiple new requests |
 | Classifier unit tests | 2 | 17 parametrized new-request phrases return None, 6 genuine post-results phrases still classified |
 | Name match fallthrough | 2 | Unmatched name returns None, matched name returns response |
+
+### Ambiguity handling (consolidated into audit-regression + eval suites)
+
+The four industry-recommended ambiguity handling patterns — confidence scoring, disambiguation prompts, correction recovery, and ambiguity logging — are now exercised across `tests/unit/test_audit_regression.py` (regression guards for the individual behaviors) and `tests/eval/eval_llm_judge.py` (end-to-end scoring of ambiguous scenarios). Behaviors covered: confidence scoring for regex/reset/keyword/correction/disambiguation cases, unmatched-name disambiguation prompts, the 5 correction phrases with their slot-clearing semantics, "Not what I meant" button wiring, and audit-event logging of the correction/disambiguation categories with confidence fields.
 
 ### `test_populations.py` — 88 tests
 
@@ -709,6 +725,7 @@ These are documented behaviors, not bugs:
 | `test_family_status_with_children_prepositional` | `test_slot_extractor.py` | Prepositional family phrases ("for me and my kids", "I have a baby") not matched by current phrase list |
 | `test_smart_uses_llm_for_long_messages` | `test_llm_slot_extractor.py` | Regex override replaces LLM's correct "shelter" with "medical" because "hospital" matches a medical keyword |
 | `test_smart_regex_does_not_override_when_no_regex_match` | `test_llm_slot_extractor.py` | Same regex override issue — "hospital" is contextual, not the user's need |
+| 34 parametrized xfails | `test_phrase_audit.py` (consolidated) | LLM-dependent crisis phrases (C-SSRS indirect ideation, euphemistic language, method-specific plans, perceived burdensomeness) that regex can't catch without context. Each xfail has a research citation. Promoting a phrase to the regex list upgrades it to instant detection |
 
 ## Adding New Tests
 

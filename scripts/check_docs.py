@@ -790,7 +790,10 @@ def check_cross_doc_contradictions(args):
             content = md_file.read_text()
             if file_is_ignored(content):
                 continue
+            ignored = ignored_lines(content)
             for i, line in enumerate(content.split("\n"), start=1):
+                if i in ignored:
+                    continue  # respect line-level drift:ignore markers
                 for pat in entry["patterns"]:
                     m = re.search(pat, line)
                     if not m:
@@ -810,8 +813,8 @@ def check_cross_doc_contradictions(args):
         if len(distinct_values) <= 1:
             continue
 
-        detail = ", ".join(f"{file}:{line} says {value}"
-                           for file, line, value, _ in sorted(occurrences)[:5])
+        detail = ", ".join(f"{f}:{line} says {v}"
+                           for f, line, v, _ in sorted(occurrences)[:5])
         warn("(multiple)",
              f"contradictory counts for {topic}: values "
              f"{sorted(distinct_values)} — {detail}",
