@@ -425,7 +425,7 @@ class TestNeverMindAfterFilter:
             "_last_results": services,
             "_displayed_count": 5,
         })
-        result = _send("no thanks", sid)
+        _result = _send("no thanks", sid)
         slots = get_session_slots(sid)
         assert slots.get("_last_results") is None, \
             "Without filter, _last_results should be cleared"
@@ -504,7 +504,7 @@ class TestNewSearchClearsFilter:
             "_filter_phrase": "families",
             "_displayed_count": 3,
         })
-        result = _send("I need food in Brooklyn", sid)
+        _result = _send("I need food in Brooklyn", sid)
         slots = get_session_slots(sid)
         assert slots.get("_filtered_results") is None
         assert slots.get("_filter_phrase") is None

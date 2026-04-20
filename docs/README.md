@@ -34,7 +34,7 @@ Reference material for people working on a specific feature. Each file describes
 
 | File | What it covers |
 |------|----------------|
-| [CRISIS_DETECTION.md](design/CRISIS_DETECTION.md) | Two-stage crisis pipeline, 7 categories, fail-open policy, phrase lists |
+| [CRISIS_DETECTION.md](design/CRISIS_DETECTION.md) | Two-stage crisis pipeline, 8 categories, fail-open policy, phrase lists |
 | [PII_REDACTION.md](design/PII_REDACTION.md) | Seven detection categories, patterns, known gaps, future work |
 | [SEMANTIC_ROUTING_DESIGN.md](design/SEMANTIC_ROUTING_DESIGN.md) | Tier 2 semantic router — model choice, hybrid multi-intent, route definitions, scaling |
 | [SPANISH_LANGUAGE_DESIGN.md](design/SPANISH_LANGUAGE_DESIGN.md) | Spanish language support design (deferred from pilot) |
@@ -55,7 +55,6 @@ These captured findings at a specific date. Most have been acted on; they're ret
 | [HARDCODED_MESSAGES_REVIEW.md](audits/HARDCODED_MESSAGES_REVIEW.md) | Every user-facing hardcoded message with trigger conditions and source |
 | [MULTI_INTENT_PLAN.md](audits/MULTI_INTENT_PLAN.md) | Shipped — architecture plan for multi-service intent (all 5 PRs done) |
 | [FEATURE_PARITY_TASKS.md](audits/FEATURE_PARITY_TASKS.md) | Shipped — 16 YourPeer parity gaps and their implementation decisions |
-| [UPSTREAM_ISSUE_DRAFT.md](audits/UPSTREAM_ISSUE_DRAFT.md) | Draft issue for `streetlives/streetlives-api` — delete after filing |
 
 ## `ops/` — living operational data
 

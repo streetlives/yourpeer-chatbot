@@ -189,7 +189,7 @@ class TestPIIInNarratives:
             "apartment and I need help finding shelter for me and my "
             "two kids in East New York please"
         )
-        redacted, dets = redact_pii(text)
+        redacted, _dets = redact_pii(text)
         assert "Sarah Johnson" not in redacted
         assert "[NAME]" in redacted
 
@@ -209,7 +209,7 @@ class TestPIIInNarratives:
             "and you can email me at maria@test.com or call 917-555-0199 "
             "I was born on 03/15/1990 and I live at 123 Main Street"
         )
-        redacted, dets = redact_pii(text)
+        _redacted, dets = redact_pii(text)
         pii_types = {d.pii_type for d in dets}
         assert "name" in pii_types
         assert "email" in pii_types
@@ -273,12 +273,12 @@ class TestEvalScenarioApproximations:
             or "understandable" in r["response"].lower()
 
     def test_eval_emotional_feeling_down(self, sid):
-        r = send("I'm feeling really down today", session_id=sid)
+        _r = send("I'm feeling really down today", session_id=sid)
         s = get_session_slots(sid)
         assert s.get("_last_action") == "emotional"
 
     def test_eval_emotional_rough_day(self, sid):
-        r = send("I've been having a really rough day", session_id=sid)
+        _r = send("I've been having a really rough day", session_id=sid)
         s = get_session_slots(sid)
         assert s.get("_last_action") == "emotional"
 
@@ -359,8 +359,8 @@ class TestEvalScenarioApproximations:
             "xyzzy please",
         ], session_id=sid)
         # Responses should escalate, not repeat
-        r1_start = results[0]["response"][:30]
-        r2_start = results[1]["response"][:30]
+        _r1_start = results[0]["response"][:30]
+        _r2_start = results[1]["response"][:30]
         # At least turns 1 and 2 should differ (escalation)
         # (Turn 1 may be generic, Turn 2 triggers unrecognized)
 

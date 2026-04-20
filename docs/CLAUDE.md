@@ -66,31 +66,51 @@ information, preventing hallucination.
 
 | File | Purpose |
 |------|---------|
-| `backend/app/main.py` | FastAPI app entry point, CORS, router registration, semantic router initialization at startup, enhanced `/api/health` endpoint (checks DB, LLM; semantic router status is informational only — does not degrade overall health) |
+| `backend/app/main.py` | FastAPI app entry point, CORS, router registration, semantic router pre-warm at startup. Exposes two health endpoints: `/api/health/live` (tight, no DB/LLM/router — cheap enough for the frontend polling hook) and `/api/health` (deep check — DB with 15s probe timeout, LLM, semantic router status informational only). The backend is a Render Private Service, so Render does not probe either endpoint; both exist for our own callers (frontend health hook, admin dashboards, uptime monitors) |
 | `backend/app/routes/chat.py` | `POST /chat/`, `/chat/feedback`, and `/chat/location-feedback` endpoints |
 | `backend/app/routes/admin.py` | Admin API: conversations, events, stats, eval runner |
-| `backend/app/services/chatbot.py` | Conversation router: `generate_reply()`, query execution, session orchestration |
-| `backend/app/services/classifier.py` | Message classification: `_classify_action()`, `_classify_tone()`, contraction normalization, intensifier stripping |
+| `backend/app/services/chatbot/` | **Package** (was `chatbot.py` monolith until April 2026 Phase 3 decomposition). `__init__.py` re-exports `generate_reply` so older callers keep working unchanged | <!-- drift:ignore: historical chatbot.py reference; package now lives at chatbot/ -->
+| `backend/app/services/chatbot/orchestrator.py` | Top-level dispatch: `generate_reply()`. PII redaction → crisis detection → classification → handler routing → logging |
+| `backend/app/services/chatbot/pipeline.py` | Classification cascade: combines split classifier (action + tone), semantic router fallback, LLM classification gate. PII warning strings live here |
+| `backend/app/services/chatbot/execution.py` | Post-confirmation query execution, Housing-First result ordering, service-card assembly, "I found N option(s) for you — showing the first M" pagination phrasing, co-located multi-service response, population-critical citywide fallback, queue-offer message |
+| `backend/app/services/chatbot/context.py` | Shared helpers: `_DISPLAY_PAGE_SIZE`, `_empty_reply()` factory, `_count_unique_locations()`, `_CITY_TO_BOROUGH`/`_BOROUGH_CENTROIDS` lookup tables, `NEAR_ME_SENTINEL` constant |
+| `backend/app/services/chatbot/tone.py` | `random_warmth_prefix()`, SAMHSA-aligned warmth overlays, shame-normalization prefix logic |
+| `backend/app/services/chatbot/logging.py` | `_log_turn()` — every handler calls this at its exit point |
+| `backend/app/services/chatbot/handlers/emotional.py` | AVR-pattern handlers for frustration (3-tier escalation + filter-aware cleanup), shame, sadness, distrust, undeserving. `_handle_crisis` dispatches the 7-category step-down |
+| `backend/app/services/chatbot/handlers/confirmation.py` | "Food in Brooklyn — sound good?" flow. Contradiction auto-execute, optional-slot re-nudge, context-aware `confirm_yes`/`confirm_deny`, `_deny_contexts` dict |
+| `backend/app/services/chatbot/handlers/post_results.py` | After-results interactions: show-more pagination (routes through `_filtered_results` when filter active), sort, questions about specific cards, filter-phrase dispatch, filter-escape on "no thanks", new-search state reset |
+| `backend/app/services/chatbot/handlers/general.py` | Greetings, resets, help, "what can you do", bot-identity questions |
+| `backend/app/services/chatbot/handlers/meta.py` | Privacy questions, "are you a robot", meta-conversation about the chatbot itself |
+| `backend/app/services/chatbot/handlers/accessibility.py` | Language preference hints, Spanish bilingual acknowledgment |
+| `backend/app/services/classifier.py` | Message classification: `_classify_action()` (includes `_BOROUGH_CHANGE_RE` for "change to Brooklyn" disambiguation), `_classify_tone()`, contraction normalization, intensifier stripping |
 | `backend/app/services/phrase_lists.py` | All keyword/phrase lists, quick-reply definitions, service labels, borough suggestion data |
-| `backend/app/services/responses.py` | Response strings, emotion-specific responses (9 categories), baseline warmth prefixes (`random_warmth_prefix()`), LLM prompt builders, bot-question answers |
-| `backend/app/services/confirmation.py` | Confirmation messages, quick-reply builders, no-results messages, borough suggestions |
+| `backend/app/services/responses.py` | Response strings, emotion-specific responses (9 categories), baseline warmth prefix catalog, LLM prompt builders, bot-question answers |
+| `backend/app/services/confirmation.py` | `_build_confirmation_message()`, no-results fallback via `_build_no_results_message()`, borough-suggestion phrasing. (NOT the same file as `chatbot/handlers/confirmation.py` — this is the top-level confirmation module.) |
 | `backend/app/services/bot_knowledge.py` | Bot self-knowledge: live capability sourcing, topic matching, LLM context generation |
-| `backend/app/services/crisis_detector.py` | Two-stage crisis detection (regex + Sonnet LLM), 7 crisis categories with population-specific resources: suicide_self_harm, medical_emergency, domestic_violence, youth_runaway (Runaway Safeline, Covenant House), assault_victim (Safe Horizon), safety_concern (911, 988, 311 — no DV hotlines), trafficking |
-| `backend/app/services/slot_extractor.py` | Regex-based slot extraction with keyword matching, gender/LGBTQ identity extraction, population context extraction (veteran, disabled, reentry, foster_youth, dv_survivor, pregnant, senior), organization name extraction, walk-in/no-requirements detection, Spanish service keywords (comida, refugio, albergue) |
-| `backend/app/services/semantic_router.py` | Tier 2 semantic routing: `all-MiniLM-L6-v2` sentence embedding model, cosine similarity classification against pre-embedded route utterances, per-route confidence thresholds, population detection, `get_status()` for health checks |
-| `backend/app/services/semantic_routes.py` | Route definitions: 10–20 example utterances per service category (10 routes) and 6–12 per population category (6 routes). No code changes needed to add utterances — just edit and restart |
+| `backend/app/services/crisis_detector.py` | Two-stage crisis detection (regex + Sonnet LLM), 8 crisis categories with population-specific resources: suicide_self_harm, medical_emergency, domestic_violence, youth_runaway (Runaway Safeline, Covenant House), assault_victim (Safe Horizon), safety_concern (911, 988, 311 — no DV hotlines), trafficking, violence (threats to harm others, weapons) |
+| `backend/app/services/slot_extractor.py` | Regex-based slot extraction (9 service categories after April 15 housing_assistance retirement), `SERVICE_KEYWORDS` dict, `_SERVICE_NEED_PRIORITY` tier table for Housing First ordering, negation-phrase shelter keywords (Feature A — "nowhere to sleep"), gender/LGBTQ identity extraction, population context extraction, organization name extraction, walk-in/no-requirements detection, Spanish service keywords |
+| `backend/app/services/post_results.py` | Filter-subcategory engine: `_handle_filter_subcategory()` returns paginated `services` + full `_full_filtered` set for session persistence; `classify_post_results_question()` disambiguates refinement phrases ("ones for families", "more like those", "exclude DHS") via two-phase regex |
+| `backend/app/services/semantic_router.py` | Tier 2 semantic routing: `all-MiniLM-L6-v2` sentence embedding model, cosine similarity against pre-embedded route utterances, per-route confidence thresholds, population detection, `get_status()` for health checks, `SentenceTransformer = None` fallback for mocking |
+| `backend/app/services/semantic_routes.py` | Route definitions: example utterances per service category and population category. No code changes needed to add utterances — just edit and restart |
 | `backend/app/services/llm_slot_extractor.py` | LLM slot extraction via Claude Haiku tool calling, 3-tier cascade integration (regex → semantic → LLM) |
 | `backend/app/services/llm_classifier.py` | Unified LLM classification gate — single Haiku call returning service_type, location, tone, action when regex fails |
 | `backend/app/services/session_store.py` | In-memory session state with 30-min TTL (max 500 sessions) |
+| `backend/app/services/session_token.py` | Anonymous HMAC-signed session token generation/validation (no user identity) |
+| `backend/app/services/persistence.py` | Optional SQLite write-through for session state — set `PILOT_DB_PATH` to enable survival across deploys |
+| `backend/app/services/rate_limiter.py` | Per-session rate limiting with graceful fallback — returns "I need a moment" rather than an HTTP error |
 | `backend/app/services/audit_log.py` | Anonymized event logging (capped ring buffer), P0-P3 metrics aggregation (confidence, recovery rates, session metrics, no-result by service, time-of-day, geographic demand, frustration tiers, session duration, repetition rate, LLM call metrics) |
-| `backend/app/llm/claude_client.py` | Anthropic client (lazy init), model constants, shared helpers |
+| `backend/app/llm/claude_client.py` | Anthropic client (lazy init), model constants, exception classification (auth / rate-limit / overloaded), `ping_llm()` for health checking |
 | `backend/app/rag/__init__.py` | `query_services()` entry point |
-| `backend/app/rag/query_executor.py` | DB execution, location normalization, borough/neighborhood PostGIS logic |
-| `backend/app/rag/query_templates.py` | 11 parameterized SQL templates (food, shelter, clothing, etc. + org_name), dynamic ORDER BY with population boosts, eligibility/review highlight/required docs/languages subqueries |
-| `backend/app/privacy/pii_redactor.py` | PII detection and redaction (phone, SSN, email, DOB, address, names, gender identity) |
-| `backend/app/models/chat_models.py` | Pydantic models: ChatRequest, ChatResponse, ServiceCard, QuickReply |
+| `backend/app/rag/query_executor.py` | DB execution, location normalization, borough/neighborhood PostGIS logic, production-stability package (15s probe `statement_timeout`, TCP keepalives, 5-minute `pool_recycle`), relaxed-query fallback |
+| `backend/app/rag/query_templates.py` | Parameterized SQL templates (food, shelter, clothing, etc. — `housing_assistance` redirects to `other` for legacy-caller safety), dynamic ORDER BY with population boosts, eligibility/review highlight/required docs/languages subqueries |
+| `backend/app/rag/boundaries.py` | NYC borough polygon validation — `data/nyc_boroughs.geojson` is the polygon source. Used to confirm `pa.city` field hasn't drifted |
+| `backend/app/rag/data/nyc_boroughs.geojson` | Polygon shapefile checked into the repo — don't delete |
+| `backend/app/privacy/pii_redactor.py` | PII detection and redaction (phone, SSN, email, DOB, address, names, gender identity); emits user-facing warnings when sensitive PII (SSN strong warning, phone lighter heads-up) is detected |
+| `backend/app/models/__init__.py` | Package init — was silently `.tarignore`'d in a prior release and had to be restored; if you see `ModuleNotFoundError: app.models`, check for this |
+| `backend/app/models/chat_models.py` | Pydantic models: `ChatRequest`, `ChatResponse`, `ServiceCard` (includes `latitude`, `longitude`, `service_taxonomies` for frontend map + filtering), `QuickReply` |
+| `backend/app/utils/` | Small shared helpers — currently minimal, grows as cross-cutting concerns accumulate |
 | `frontend-next/src/components/chat/` | Chat UI components (ChatContainer with three-state health indicator, ServiceCard, QuickReplies, VoiceInputButton) |
-| `frontend-next/src/hooks/use-backend-health.ts` | Backend health polling hook — polls `/api/health` every 30s, derives connected/degraded/unreachable status |
+| `frontend-next/src/hooks/use-backend-health.ts` | Backend health polling hook — polls every 60s, derives connected/degraded/unreachable status. Currently points at `/api/health` (deep check); worth pointing at `/api/health/live` to reduce log noise from slow DB queries |
 | `frontend-next/src/components/admin/system-health.tsx` | Admin system health card — real-time component status (Backend, DB, LLM, Semantic Router) |
 | `frontend-next/src/lib/chat/store.ts` | Zustand chat store with `localStorage` persistence |
 | `frontend-next/src/lib/admin/store.ts` | Zustand admin store with staleness-based caching |
@@ -101,7 +121,7 @@ information, preventing hallucination.
 
 ## What's Working
 
-- **10 service categories**: food, shelter, clothing, personal care, medical, mental health, legal, employment, housing assistance, other
+- **9 service categories**: food, shelter, clothing, personal care, medical, mental health, legal, employment, other. (`housing_assistance` was retired in the April 15 audit — YourPeer had no equivalent. Housing-program keywords now route to `other`; enforcement lives in `tests/unit/test_audit_regression.py::TestHousingAssistanceRemoval`.)
 - **3-tier classification cascade**: regex keyword matching (Tier 1, <1ms) → semantic embedding with `all-MiniLM-L6-v2` (Tier 2, ~2-5ms, handles novel phrasings regex misses) → LLM fallback with Claude Haiku (Tier 3, 1-3s, handles complex multi-intent narratives). Semantic routing eliminates the "missing keyword" class of failures — "I ran out of insulin" routes to medical even though "insulin" shares no keywords with the medical phrase list
 - **Multi-turn slot-filling**: extracts service_type, location, age, urgency, gender across conversation turns
 - **Two-stage classification**: regex for fast deterministic routing, LLM for ambiguous messages
@@ -125,7 +145,7 @@ information, preventing hallucination.
 - **DV crisis → population injection**: when crisis detector fires on `domestic_violence` category, `dv_survivor` is injected into session `_populations` regardless of whether the population extractor caught it. This bridges the 51-phrase gap between crisis detection (54 DV phrases) and population extraction (3 matching phrases). Fires in both step-down (service intent) and crisis-only (no service intent) branches
 - **Accessibility on service cards**: `accessibility_for_disabilities` table is queried and surfaced on cards as informational text. Not used as a filter — negative values ("Not wheelchair accessible") are displayed so users can make informed decisions
 - **Conversational routing**: greeting, thanks, help, reset, escalation, frustration, emotional, negative preference, bot identity, confusion, location-unknown, correction
-- **Emotional handling (static-first)**: 6 emotion-specific static responses (scared, sad, rough_day, shame, grief, alone) selected by `_pick_emotional_response()` — LLM is NOT called. Single "Talk to a person" button, no service menu. Follows AVR pattern from clinical chatbot research
+- **Emotional handling (static-first)**: 9 emotion-specific static responses (scared, sad, rough_day, shame, grief, alone, undeserving, distrust, angry) selected by `_pick_emotional_response()` — LLM is NOT called. Single "Talk to a person" button, no service menu. Follows AVR pattern from clinical chatbot research
 - **Frustration 3-tier escalation**: persistent `_frustration_count` counter with varied responses — 1st: full empathetic, 2nd: shorter/direct, 3rd+: immediate navigator only. Counter survives intermediate messages
 - **Negative preference handling**: detects rejection of all offered options ("none of those", "not what I need" — 19 phrases). Acknowledges rejection explicitly, offers alternative service categories + peer navigator
 - **Conversational awareness guard**: casual chat patterns ("how are you", "just wanted to chat") suppress service category buttons. Prevents first-turn casual greetings from showing the full service menu
@@ -147,7 +167,7 @@ information, preventing hallucination.
 - **Anonymized audit logging**: conversation turns, query executions, crisis events
 - **In-memory sessions**: no persistent conversation storage, 30-min TTL, LRU eviction at 500-session cap
 - **Chat history persistence**: conversation survives page refresh via Zustand `localStorage` sync; auto-resets after 30-min inactivity to match backend TTL
-- **Result sorting & pagination**: open-now first, then recently verified, then name; proximity-first when geolocation available. Users can re-sort by "recently verified" or "most services" after results. Initial query fetches 25, displays first 10 — "📋 Show N more" for the rest
+- **Result sorting & pagination**: open-now first, then recently verified, then name; proximity-first when geolocation available. Users can re-sort by "recently verified" or "most services" after results. Initial query fetches 25, displays first 5 (`_DISPLAY_PAGE_SIZE` in `chatbot/context.py`) — "📋 Show N more" for the rest
 - **Auto-execute for urgent queries**: when urgency is high and slots are sufficient, skips confirmation and executes immediately. Medium urgency still confirms
 - **Day-specific hours**: "are they open Saturday?" queries `holiday_schedules` for the requested weekday and returns per-service hours. Weekend queries fetch both Saturday and Sunday
 - **Error boundaries**: route-level (chat, admin, global) + component-level (ServiceCarousel) + custom 404
@@ -188,7 +208,7 @@ Shared fixtures and helpers live in `tests/conftest.py` (use `send()`, `send_mul
 `assert_classified()`). For live LLM integration tests:
 
 ```bash
-ANTHROPIC_API_KEY=... pytest tests/test_llm_slot_extractor.py -k live
+ANTHROPIC_API_KEY=... pytest tests/unit/test_llm_slot_extractor.py -k live
 ```
 
 ## Code Conventions
@@ -218,9 +238,11 @@ ANTHROPIC_API_KEY=... pytest tests/test_llm_slot_extractor.py -k live
 - Adding new example utterances to semantic routes requires no code changes — just edit
   `semantic_routes.py` and restart. But don't add the same utterance to two different
   routes (cross-route duplicates cause nondeterministic routing).
-- Adding a new phrase list or keyword goes in `phrase_lists.py`, not `chatbot.py`.
-  Classification logic is in `classifier.py`, response strings in `responses.py`,
-  confirmation logic in `confirmation.py`.
+- Adding a new phrase list or keyword goes in `phrase_lists.py`, not the `chatbot/` package.
+  Classification lives in `classifier.py` + `chatbot/pipeline.py`; response strings in
+  `responses.py` and (emotional/handler-specific) in the relevant `chatbot/handlers/*.py`;
+  confirmation logic in `confirmation.py` (top-level) and `chatbot/handlers/confirmation.py`
+  (handler-level context-aware routing).
 - The DB is **read-only** — never add write queries.
 - `conftest.py` defines mock data used across all test files. If you change response
   shapes (e.g. `ChatResponse` fields), update the mocks there too.

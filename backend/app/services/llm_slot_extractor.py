@@ -27,18 +27,13 @@ Multi-service support (PR 4):
       additional_services, deduplicating by category.
 """
 
-import os
-import json
 import logging
-import re
 import time
-from typing import Optional
-
-logger = logging.getLogger(__name__)
 
 # Use the shared Anthropic client and model constants
 from app.llm.claude_client import get_client, SLOT_EXTRACTION_MODEL, _track_llm_call
 
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # SERVICE TYPE ENUM (shared between tool schema and validation)

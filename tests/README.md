@@ -54,14 +54,11 @@ tests/
 ├── integration/             # Multi-component tests — use send(), mock DB/LLM (17 files)
 │   ├── test_classification_and_routing.py  # Core generate_reply routing
 │   ├── test_multi_turn_and_context.py      # Context-aware yes/no after emotions
-│   ├── test_ambiguity_handling.py          # Ambiguous message handling
-│   ├── test_crisis_safety_edges.py         # Crisis → service flow transitions
 │   ├── test_browser_geolocation.py         # Browser geolocation flow
 │   ├── test_http_routes_and_models.py      # HTTP /chat/ endpoint, Pydantic models
 │   ├── test_admin_api_routes.py            # Admin API routes
 │   ├── test_narrative_and_eval_scenarios.py # End-to-end conversation flows
 │   ├── test_service_data_llm_firewall.py   # LLM isolation — 57 tests across 7 layers
-│   ├── test_rate_limit_integration.py      # Rate limiting through HTTP
 │   ├── test_db_integration.py              # Live database queries
 │   │
 │   │  # Regression tests (from bug fixes and coverage audits)
@@ -118,10 +115,9 @@ pytest tests/unit/ --cov=app.services.slot_extractor
 | `responses.py` | `integration/test_service_data_llm_firewall.py` (prompt isolation) |
 | `confirmation.py` | `unit/test_confirmation_flow.py` |
 | `phrase_lists.py` | `unit/test_phrase_audit.py` |
-| `chatbot.py` | `integration/test_classification_and_routing.py`, `integration/test_multi_turn_and_context.py` |
 | `pii_redactor.py` | `unit/test_pii_redactor.py` |
 | `query_templates.py` | `unit/test_query_templates.py` |
-| `crisis_detector.py` | `unit/test_crisis_detector.py`, `integration/test_crisis_safety_edges.py` |
+| `crisis_detector.py` | `unit/test_crisis_detector.py` |
 | `llm_slot_extractor.py` | `unit/test_llm_slot_extractor.py`, `unit/test_narrative_extraction.py` |
 | `llm_classifier.py` | `unit/test_llm_classifier.py` |
 | `post_results.py` | `unit/test_post_results.py`, `unit/test_post_results_boundary.py` |
@@ -168,4 +164,3 @@ See `app/services/` for the full module breakdown:
 - `classifier.py` — action/tone classification
 - `responses.py` — response strings and prompts
 - `confirmation.py` — confirmation messages and quick replies
-- `chatbot.py` — routing only

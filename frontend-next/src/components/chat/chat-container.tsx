@@ -49,6 +49,7 @@ export function ChatContainer() {
   const [hydrated, setHydrated] = useState(false);
   useEffect(() => {
     if (useChatStore.persist.hasHydrated()) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- Zustand persist hydration check; idempotent and runs once
       setHydrated(true);
       return;
     }

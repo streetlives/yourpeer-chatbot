@@ -10,7 +10,7 @@ Run 18 eval analysis and code audit.
 import pytest
 import uuid
 from unittest.mock import patch
-from conftest import send, send_multi
+from conftest import send
 from app.services.session_store import get_session_slots
 from app.services.classifier import _classify_tone, _classify_action
 
@@ -156,7 +156,7 @@ class TestYesAfterContext:
         r = send("yes", session_id=sid)
         labels = [qr["label"] for qr in r.get("quick_replies", [])]
         # Context-aware yes offers search and contact info options
-        assert any("search" in l.lower() or "contact" in l.lower() for l in labels)
+        assert any("search" in lable.lower() or "contact" in lable.lower() for lable in labels)
 
     def test_yes_after_frustration_connects_navigator(self, sid):
         send("I need food in the Bronx", session_id=sid)
@@ -403,7 +403,7 @@ class TestUnrecognizedServiceEscalation:
         send("I need a helicopter ride in Staten Island", session_id=sid)
         r = send("I really need a helicopter", session_id=sid)
         qr_labels = [q["label"].lower() for q in r.get("quick_replies", [])]
-        assert any("navigator" in l or "person" in l for l in qr_labels)
+        assert any("navigator" in lable or "person" in lable for lable in qr_labels)
         s = get_session_slots(sid)
         assert s.get("_unrecognized_count") == 2
 
@@ -418,7 +418,7 @@ class TestUnrecognizedServiceEscalation:
     def test_responses_are_different_across_tiers(self, sid):
         """Each tier should produce a distinct response."""
         send("I need a helicopter ride in Staten Island", session_id=sid)
-        r1 = send("I need a helicopter ride in Staten Island", session_id=sid)
+        _r1 = send("I need a helicopter ride in Staten Island", session_id=sid)
         # r1 is tier 1 (first was turn 1 with count=1, but we sent twice)
         # Actually let me redo this properly
         pass  # covered by individual tier tests
@@ -442,7 +442,7 @@ class TestUnrecognizedServiceEscalation:
         request verbs should still increment the counter."""
         send("Can you find me some asdfghjkl", session_id=sid)  # generic turn 1
         send("I need asdfghjkl please", session_id=sid)  # count=1
-        r = send("asdfghjkl again", session_id=sid)  # sticky: count=2
+        _r = send("asdfghjkl again", session_id=sid)  # sticky: count=2
         s = get_session_slots(sid)
         assert s.get("_unrecognized_count") == 2
 
@@ -454,7 +454,7 @@ class TestUnrecognizedServiceEscalation:
     def test_nonsense_no_location_first_turn(self, sid):
         """Pure nonsense on first turn (no location, no request verb)
         should get generic response, not unrecognized handler."""
-        r = send("blorp blorp blorp", session_id=sid)
+        _r = send("blorp blorp blorp", session_id=sid)
         s = get_session_slots(sid)
         assert s.get("_unrecognized_count", 0) == 0
 
@@ -473,7 +473,7 @@ class TestOtherServiceTypeInterception:
             'location': 'staten island',
         })
         # Send a follow-up that triggers re-evaluation
-        r = send("yes", session_id=sid)
+        _r = send("yes", session_id=sid)
         # The session had 'other' — the interception should have cleared it
         # (This tests the flow through confirm_yes with service_type='other')
 

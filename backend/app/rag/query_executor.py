@@ -519,7 +519,7 @@ def _execute_sql(sql: str, params: dict) -> list[dict]:
         if "querycanceled" in type(e).__name__.lower() or \
            "statement timeout" in error_str or \
            "canceling statement" in error_str:
-            logger.warning(f"Query timed out (statement_timeout exceeded)")
+            logger.warning("Query timed out (statement_timeout exceeded)")
             logger.debug(f"SQL: {sql}")
             logger.debug(f"Params: {params}")
             raise QueryTimeoutError("Query exceeded statement_timeout") from e

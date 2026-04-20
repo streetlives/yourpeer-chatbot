@@ -74,7 +74,7 @@ class TestUnrecognizedServiceTiers:
         ])
         qr = r[2].get("quick_replies", [])
         labels = [q["label"].lower() for q in qr]
-        assert any("navigator" in l for l in labels)
+        assert any("navigator" in lable for lable in labels)
 
 
 # -----------------------------------------------------------------------

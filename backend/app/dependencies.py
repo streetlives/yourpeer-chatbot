@@ -7,6 +7,7 @@ import json
 import logging
 import os
 from urllib.parse import urlparse
+import time as _time
 
 from fastapi import Request, HTTPException
 from fastapi.responses import JSONResponse
@@ -234,8 +235,6 @@ _HONEYPOT_PATHS = {
 # Temporarily banned IPs (IP → expiry timestamp)
 _banned_ips: dict[str, float] = {}
 _BAN_DURATION = 3600  # 1 hour
-
-import time as _time
 
 
 class BotDetectionMiddleware(BaseHTTPMiddleware):

@@ -237,7 +237,7 @@ class TestClassifyAllServices:
         self._setup_routes()
         dim = 16
         # A message very close to medical only
-        med_vec = _make_unit_vec(dim, 2)
+        _med_vec = _make_unit_vec(dim, 2)
         matches = classify_all_services(
             "I need to see a doctor",
             threshold=0.3,
@@ -537,7 +537,7 @@ class TestHybridIntegration:
         original = dict(regex_result)
         semantic_matches = []
 
-        regex_found = {regex_result["service_type"]}
+        _regex_found = {regex_result["service_type"]}
         for sm in semantic_matches:
             pass  # nothing to merge
 

@@ -1,5 +1,7 @@
 import re
 import logging
+import re as _re
+
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -1450,8 +1452,6 @@ _KNOWN_ORG_ABBREVIATIONS = {
     "camba": "CAMBA",
     "dycd": "DYCD",
 }
-
-import re as _re
 
 _ORG_ABBREV_PATTERN = _re.compile(
     r"\b(" + "|".join(_re.escape(k) for k in _KNOWN_ORG_ABBREVIATIONS) + r")\b",

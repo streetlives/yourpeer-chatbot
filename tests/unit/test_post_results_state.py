@@ -33,7 +33,7 @@ class TestConfirmYesAfterResults:
     def test_yes_after_results_offers_new_search(self):
         r = send_multi(["I need food in Brooklyn", "Yes, search", "Yes, search"])
         qr = [q["label"].lower() for q in r[2].get("quick_replies", [])]
-        assert any("new search" in l or "start over" in l for l in qr)
+        assert any("new search" in lable or "start over" in lable for lable in qr)
 
     def test_yes_after_results_no_infinite_loop(self):
         """Multiple 'Yes, search' should never re-execute."""
@@ -153,7 +153,7 @@ class TestQueueOfferDecline:
 
 class TestAutoExecuteReverted:
     """Urgent requests must always go through confirmation.
-    
+
     This guards against re-introducing the Gap 16 auto-execute feature
     without proper safeguards. In Run 25, auto-execute caused 15 scenario
     regressions by skipping confirmation and causing 'Yes, search' to

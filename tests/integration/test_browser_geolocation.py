@@ -183,7 +183,7 @@ def test_coords_persist_across_turns(fresh_session):
     send("I need food", session_id=fresh_session, latitude=BK_LAT, longitude=BK_LNG)
 
     # Second message says "near me" — should use stored coords
-    result = send("near me", session_id=fresh_session, latitude=BK_LAT, longitude=BK_LNG)
+    _result = send("near me", session_id=fresh_session, latitude=BK_LAT, longitude=BK_LNG)
     slots = get_session_slots(fresh_session)
     assert slots.get("_latitude") == BK_LAT
     assert slots.get("_longitude") == BK_LNG

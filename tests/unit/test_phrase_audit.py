@@ -298,7 +298,7 @@ class TestFalsePositiveGuards:
         """'want to disappear' maps to wish-to-be-dead per C-SSRS."""
         # Note: this is in the suicide list, not emotional
         # If it ever moves to emotional, this test should be updated
-        result = detect_crisis("I just want to disappear", skip_llm=True)
+        _result = detect_crisis("I just want to disappear", skip_llm=True)
         # Currently NOT in phrase list — handled by LLM stage
         # This test documents the design decision
         pass
@@ -403,7 +403,7 @@ class TestHelpEmotionalOverride:
         """'I'm embarrassed to ask for help' → emotional, not help menu."""
         import uuid
         sid = f"test-{uuid.uuid4().hex[:8]}"
-        r = send("I'm embarrassed to ask for help", session_id=sid)
+        _r = send("I'm embarrassed to ask for help", session_id=sid)
         from app.services.session_store import get_session_slots
         slots = get_session_slots(sid)
         assert slots.get("_last_action") == "emotional"
@@ -517,7 +517,7 @@ class TestEmotionalResponseScaffold:
             f"Navigator offer missing: {resp[:60]}"
         # Quick reply should also have navigator
         qr_labels = [q["label"] for q in r.get("quick_replies", [])]
-        assert any("person" in l.lower() or "navigator" in l.lower() for l in qr_labels)
+        assert any("person" in lable.lower() or "navigator" in lable.lower() for lable in qr_labels)
 
 
 @pytest.mark.xfail(reason="_validate_emotional_enhancement not yet implemented in chatbot.py")

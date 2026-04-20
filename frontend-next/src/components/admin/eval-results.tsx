@@ -92,8 +92,8 @@ export function EvalRunner({ onComplete }: EvalRunnerProps) {
           setStatus("Lost connection to server.");
         }
       }, 2500);
-    } catch (err: any) {
-      setStatus(err.message);
+    } catch (err) {
+      setStatus(err instanceof Error ? err.message : "Unknown error");
       setRunning(false);
     }
   }
@@ -114,8 +114,8 @@ export function EvalRunner({ onComplete }: EvalRunnerProps) {
       const result = await uploadEvalReport(file);
       setStatus(result.detail || "Upload complete.");
       onComplete();
-    } catch (err: any) {
-      setStatus(`Upload failed: ${err.message}`);
+    } catch (err) {
+      setStatus(`Upload failed: ${err instanceof Error ? err.message : "Unknown error"}`);
     } finally {
       setUploading(false);
     }

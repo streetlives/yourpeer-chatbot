@@ -1,6 +1,40 @@
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-pythonpath = ["backend"]
-python_files = ["test_*.py"]
-python_functions = ["test_*"]
-addopts = "-v --tb=short"
+[tool.ruff]
+# Match the Python version the app is deployed under (render.yaml: 3.12.0).
+target-version = "py312"
+
+# Conventional 100-char limit — tighter than PEP 8's 79 but roomy enough
+# for descriptive type hints and f-string messages.
+line-length = 100
+
+# Files to check. Test code follows the same standards as production code.
+# Generated/vendored paths are excluded via .gitignore rather than here.
+
+[tool.ruff.lint]
+# Conservative initial rule set: real bugs, not style opinions. Rationale:
+# this project had no linter before, so enabling every rule at once would
+# generate thousands of violations across the existing codebase. Start
+# narrow, expand as each new rule family is curated.
+#
+#   E    pycodestyle errors         — real issues (syntax, not just style)
+#   F    pyflakes                   — unused imports, undefined names, etc.
+#   W    pycodestyle warnings       — deprecated syntax, trailing whitespace
+#
+# Easy additions once the codebase is clean under the above:
+#   I    isort                      — import sorting
+#   UP   pyupgrade                  — modernize Python syntax
+#   B    flake8-bugbear             — common bug patterns
+#   C4   flake8-comprehensions      — clearer list/dict/set comprehensions
+#   SIM  flake8-simplify            — simplifiable expressions
+select = ["E", "F", "W"]
+
+# Suppressions that the initial rule set tends to false-positive on.
+# Revisit once more rule families are enabled.
+ignore = [
+    "E501",  # line too long — formatter will handle this later; noise in prose docstrings now
+]
+
+# Per-file relaxations. Tests intentionally shadow names, use bare asserts,
+# and unused fixtures are common — no need to warn on them.
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["F401", "F811"]  # unused imports, redefinition
+"scripts/**/*.py" = ["E402"]         # module-level imports not at top (some scripts set up sys.path first)

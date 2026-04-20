@@ -159,7 +159,7 @@ def test_smart_uses_llm_when_regex_partial(mock_llm):
         "urgency": None,
         "gender": None,
     }
-    result = extract_slots_smart("I need food")
+    _result = extract_slots_smart("I need food")
     mock_llm.assert_called_once()
 
 
@@ -270,7 +270,7 @@ def test_smart_conflicting_keywords_go_to_llm(mock_llm):
         "gender": None,
     }
     # "hospital" (medical) + "shelter" — conflicting keywords
-    result = extract_slots_smart("hospital near Manhattan for shelter")
+    _result = extract_slots_smart("hospital near Manhattan for shelter")
     mock_llm.assert_called_once()
 
 

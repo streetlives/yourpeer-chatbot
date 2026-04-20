@@ -22,7 +22,7 @@ The chatbot has minimal Spanish support today:
 - **Detection:** a regex (`_SPANISH_RE`) matches ~15 Spanish phrases (necesito, ayuda, comida, refugio, etc.)
 - **Acknowledgment:** when Spanish is detected with a service request, the bot prepends a bilingual note ("I can see you may prefer Spanish — lo siento, por ahora solo puedo ayudar en inglés") and processes the search in English.
 - **Spanish-only messages** (no service intent) get a full bilingual response directing the user to a peer navigator who may speak Spanish.
-- **Keywords:** only 5 Spanish service keywords exist (comida, tengo hambre, alimentos, refugio, albergue) across 2 of 10 categories.
+- **Keywords:** only 5 Spanish service keywords exist (comida, tengo hambre, alimentos, refugio, albergue) across 2 of 9 categories.
 - **Eval:** one scenario (`edge_spanish_input`) tests basic Spanish input. Scores 4.5-4.9 because the LLM handles it, not because the system does.
 - **Service data:** all database content (organization names, descriptions, addresses, hours) is in English. The `languages` table tracks which services offer Spanish-speaking staff.
 
@@ -196,7 +196,7 @@ Organized by the categories in `../audits/HARDCODED_MESSAGES_REVIEW.md`:
 - These appear in confirmation messages and quick-reply buttons.
 
 **Quick-reply button labels:**
-- All button labels are generated server-side in `chatbot.py` and `responses.py`.
+- All button labels are generated server-side in the `backend/app/services/chatbot/handlers/*` package (each handler emits its own quick-replies) plus `backend/app/services/responses.py` for shared button-catalog strings. Spanish bilingual acknowledgment specifically fires from `chatbot/handlers/accessibility.py` (post-Phase-3 location; was all in `chatbot.py` pre-April 2026). <!-- drift:ignore: historical chatbot.py reference; package now lives at chatbot/ -->
 - Category buttons on welcome: "🍽️ Food" → "🍽️ Comida"
 - Borough buttons: "Manhattan", "Brooklyn" etc. — these don't translate.
 - Confirmation buttons: "✅ Yes, search" → "✅ Sí, buscar"
@@ -240,8 +240,9 @@ Every category in `SERVICE_KEYWORDS` needs Spanish equivalents. Currently only f
 | mental_health | counseling, therapy, detox | consejería, terapia, desintoxicación, rehabilitación, adicción, salud mental |
 | legal | lawyer, immigration, asylum | abogado, inmigración, asilo, papeles, documentos, corte, deportación |
 | employment | job, work, resume | trabajo, empleo, currículum, entrevista |
-| housing_assistance | rent, eviction | alquiler, renta, desalojo, desahucio, ayuda con vivienda |
-| other | benefits, ID, money | beneficios, identificación, dinero, ayuda financiera, SNAP |
+| other | benefits, ID, money, rent, eviction | beneficios, identificación, dinero, ayuda financiera, SNAP, alquiler, renta, desalojo, desahucio, ayuda con vivienda |
+
+> **Note**: `housing_assistance` was retired in the April 15 audit. Housing-program keywords (rent, eviction, etc.) and their Spanish translations now route to the `other` category.
 
 ### 7.2 Location keywords
 
@@ -399,7 +400,7 @@ Add a new dimension or sub-metric: `Language Consistency` — did the bot respon
 - Spanish quick-reply button labels
 - Spanish service category labels
 - Spanish LLM system prompt
-- Spanish keywords for all 10 service categories in `slot_extractor.py`
+- Spanish keywords for all 9 service categories in `slot_extractor.py`
 - Spanish confirmation/action phrase lists in `classifier.py`
 - 5-10 Spanish utterances per semantic route
 

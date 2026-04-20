@@ -74,7 +74,7 @@ The user types "I need food in Brooklyn" and taps send. The React chat component
 
 The backend's `generate_reply()` function is the main entry point. It does several things in order:
 
-**PII redaction** — before anything else, personal information (phone numbers, SSNs, names, emails) is detected and stripped from the message. The original message is used for processing, but only the redacted version is ever stored.
+**PII redaction** — before anything else, personal information (phone numbers, SSNs, names, emails) is detected and stripped from the message. The original message is used for processing, but only the redacted version is ever stored. When the bot notices the user is about to share sensitive PII like an SSN, it proactively warns them instead of silently storing.
 
 **Crisis detection** — the system checks if the user is in danger (suicidal, fleeing violence, trafficking, medical emergency). This runs on every message, before all other logic. If a crisis is detected, hotline resources are shown immediately.
 
@@ -88,7 +88,8 @@ The backend's `generate_reply()` function is the main entry point. It does sever
 
 **Result rendering** — matching services are formatted as interactive cards with addresses, hours, phone numbers, and action buttons. No LLM involvement in this step — it's pure data formatting.
 
-→ `backend/app/services/chatbot.py` — the main `generate_reply()` function (~2,500 lines, the largest file)
+→ `backend/app/services/chatbot/orchestrator.py` — `generate_reply()` and the top-level dispatch
+→ `backend/app/services/chatbot/` — the package of modules that implement each step (see Section 8)
 → `backend/app/routes/chat.py` — the HTTP endpoint that calls `generate_reply()`
 
 ### Step 3: Frontend renders the response
@@ -132,17 +133,19 @@ This is the most important architectural concept in the backend. When a user say
 
 ### Tier 1: Regex keyword matching
 
-The system scans the message for known keywords. "food" is in a list of food-related keywords. "shelter" is in a shelter list. And so on for 10 service categories. This is fast (under 1 millisecond), free, and handles about 85% of service intents.
+The system scans the message for known keywords. "food" is in a list of food-related keywords. "shelter" is in a shelter list. And so on for **9 service categories** (`housing_assistance` was retired in the April 15 audit and folded into `other`). This is fast (under 1 millisecond), free, and handles about 85% of service intents.
 
 The limitation: it only works when the user uses a word that's literally in the keyword list. "I need food" works. "I'm hungry" doesn't — "hungry" isn't a keyword.
 
-→ `backend/app/services/slot_extractor.py` — keyword lists and extraction logic
+→ `backend/app/services/slot_extractor.py` — keyword lists, extraction logic, and the `_SERVICE_NEED_PRIORITY` tier table (Housing First ordering — see Section 6)
 
 ### Tier 2: Semantic embedding
 
 A small AI model called `all-MiniLM-L6-v2` runs locally on the server (no API call, no cost). This model converts the user's message into a mathematical vector (a list of 384 numbers) that represents its meaning. It then compares this vector against pre-computed vectors for example phrases like "I'm starving", "I ran out of insulin", "felon looking for work". If the user's message is semantically similar to a known phrase, the system identifies the service type.
 
 **What "semantic embedding" means in plain terms:** imagine every possible sentence plotted as a point in space. Sentences with similar meanings end up near each other. "I need food" and "I'm hungry" are far apart in spelling but close in meaning-space. The model converts text to coordinates in this meaning-space, and the system finds which service category's example phrases are closest.
+
+The model is pre-warmed at server startup (in `main.py`) so the first message after a cold start doesn't pay the loading cost.
 
 → `backend/app/services/semantic_router.py` — the embedding and matching logic
 → `backend/app/services/semantic_routes.py` — the example phrases for each category
@@ -152,7 +155,7 @@ A small AI model called `all-MiniLM-L6-v2` runs locally on the server (no API ca
 
 Tiers 1 and 2 both run on every message — they're complementary, not sequential. Regex catches exact keyword matches, while the semantic router catches novel phrasings that regex misses. The results are merged and deduplicated. This is critical for multi-intent extraction: when a user says "I just got out of Rikers and I don't have anywhere to sleep or anything to eat," regex catches "eat" → food, while the semantic router catches "anywhere to sleep" → shelter. Neither tier alone would find both.
 
-The semantic router uses an `exclude` parameter to skip service categories that regex already found, avoiding duplicate work. After merging, services are sorted by need-based priority (shelter before food, medical before clothing), not by which tier found them.
+The semantic router uses an `exclude` parameter to skip service categories that regex already found, avoiding duplicate work. After merging, services are sorted by a **Housing-First need-based priority** (shelter/medical before food/mental_health before clothing/personal_care before legal/employment) — not by which tier found them, and not by mention order. See `_SERVICE_NEED_PRIORITY` in `slot_extractor.py`.
 
 ### Tier 3: LLM classification
 
@@ -162,6 +165,7 @@ This costs money per call and adds 1-3 seconds of latency, which is why it's the
 
 → `backend/app/llm/claude_client.py` — the Anthropic API client
 → `backend/app/services/llm_classifier.py` — the unified LLM classification gate
+→ `backend/app/services/llm_slot_extractor.py` — LLM-based slot extraction via tool calling
 
 ### Why three tiers?
 
@@ -172,7 +176,7 @@ flowchart TD
     A["User message"] --> B["Tier 1: regex keywords<br/>< 1ms · $0 · ~85% of intents"]
     A --> C["Tier 2: semantic embedding<br/>2-5ms · $0 · catches novel phrases"]
 
-    B --> D["Merge results<br/>deduplicate, sort by need priority"]
+    B --> D["Merge results<br/>deduplicate, sort by Housing-First priority"]
     C -->|"exclude what<br/>regex found"| D
 
     D --> E{"Found<br/>anything?"}
@@ -194,29 +198,33 @@ flowchart TD
 
 These terms appear throughout the codebase and documentation. If you're not familiar with them, read this section before diving into code.
 
-**Slot** — a structured piece of information extracted from the user's message. The main slots are `service_type` (what they need), `location` (where they are), `age`, `gender`, `family_status`, and `urgency`. The process of extracting these from natural language is called "slot filling" or "slot extraction." The term comes from conversational AI — think of it like filling in form fields from a conversation.
+**Slot** — a structured piece of information extracted from the user's message. The main slots are `service_type` (what they need), `location` (where they are), `age`, `gender`, `family_status`, and `urgency`. The process of extracting these from natural language is called "slot filling" or "slot extraction."
 
-**Session** — a single conversation between a user and the bot. Sessions are anonymous (no login, no cookies), identified only by a random token. Session state (the extracted slots, conversation context, last action) lives in memory and optionally persists to SQLite. Sessions expire after 30 minutes.
+**Session** — a single conversation between a user and the bot. Sessions are anonymous (no login, no cookies), identified only by a random token. Session state (the extracted slots, conversation context, last action, last results, filter state) lives in memory and optionally persists to SQLite. Sessions expire after 30 minutes.
 
 **Quick replies** — tappable buttons shown below bot messages. When the bot asks "What borough are you in?", it shows buttons for Manhattan, Brooklyn, Queens, Bronx, and Staten Island. Tapping a button sends the button's value as the user's next message. This reduces typing, especially on mobile.
 
-**Service card** — the formatted display of a service result. Each card shows the organization name, address, hours, phone number, and action buttons (Call, Directions, Website). Cards are never generated by the LLM — they're assembled from database fields by `format_service_card()`.
+**Service card** — the formatted display of a service result. Each card shows the organization name, address, hours, phone number, and action buttons (Call, Directions, Website). Cards are never generated by the LLM — they're assembled from database fields by `format_service_card()`. The card schema includes `latitude`/`longitude` for frontend map markers and `service_taxonomies` for sub-category filtering.
 
 **Confirmation step** — before searching the database, the bot always confirms what it understood: "I'll look for food in Brooklyn — does that sound right?" This prevents wasted searches and gives the user a chance to correct mistakes.
 
 **Relaxed query** — when a strict database query returns zero results, the system automatically loosens the filters (drops age/gender requirements, widens the geographic area) and tries again. The user sees "(I broadened the search a bit)" when this happens.
 
-**PII** — personally identifiable information. Phone numbers, Social Security numbers, names, email addresses. The system detects and redacts these from stored transcripts. The user's message is processed with the original text (so "Call me at 212-555-1234" correctly extracts the phone number), but only the redacted version ("[PHONE]") is saved to the audit log.
+**PII** — personally identifiable information. Phone numbers, SSNs, names, emails, addresses, dates of birth, gender-identity terms. The system detects and redacts these from stored transcripts. The user's message is processed with the original text (so "Call me at 212-555-1234" correctly extracts the phone number), but only the redacted version ("[PHONE]") is saved. When sensitive PII like an SSN is detected, the bot warns the user proactively rather than silently storing.
 
 **Crisis step-down** — when the bot detects a crisis (e.g., domestic violence) alongside a service request (e.g., shelter), it shows crisis resources (hotlines) AND offers to search for the service. "Step-down" means transitioning from crisis response back to the normal service flow without losing the user's original request.
 
-**AVR pattern** — Acknowledge, Validate, Redirect. A clinical chatbot design pattern (from Woebot and Wysa research) for handling emotional messages. The bot acknowledges the feeling ("I hear you"), validates it ("that's completely understandable"), then gently offers a path forward ("when you're ready, I can help"). This replaces the instinct to jump straight to solutions.
+**AVR pattern** — Acknowledge, Validate, Redirect. A clinical chatbot design pattern (from Woebot and Wysa research) for handling emotional messages. The bot acknowledges the feeling ("I hear you"), validates it ("that's completely understandable"), then gently offers a path forward ("when you're ready, I can help").
 
 **SAMHSA** — the Substance Abuse and Mental Health Services Administration. Their six principles of trauma-informed care (Safety, Trustworthiness, Peer Support, Collaboration, Empowerment, Cultural Awareness) guide the chatbot's tone and design. You'll see SAMHSA referenced in code comments explaining why certain messages are worded the way they are.
 
 **PostGIS** — an extension for PostgreSQL that adds geographic capabilities. The Streetlives database stores each location's coordinates as a PostGIS `geometry` column. When a user shares their browser GPS location, the system uses PostGIS functions like `ST_DWithin()` to find services within a radius. PostGIS queries can be slow without proper indexing — the codebase uses bounding box pre-filters to keep them fast.
 
-**RAG** — Retrieval-Augmented Generation. A pattern where an AI model retrieves information from a database and then generates a response based on it. Traditional RAG has hallucination risks because the LLM synthesizes the retrieved text. YourPeer uses "Safer, Limited RAG" where the LLM only handles conversation and the database results are displayed as-is, never synthesized.
+**RAG** — Retrieval-Augmented Generation. YourPeer uses "Safer, Limited RAG" where the LLM only handles conversation and the database results are displayed as-is, never synthesized.
+
+**Housing First priority** — a Housing-First-aligned service-need ranking in `_SERVICE_NEED_PRIORITY` that puts shelter and medical (tier 1) ahead of food and mental_health (tier 2), ahead of clothing and personal_care (tier 3), ahead of legal and employment (tier 4), with "other" at tier 5. When a message has multiple service intents, the primary is chosen by this priority — not by which one the user mentioned first. "I need food and shelter" makes shelter primary; food gets queued and offered after the shelter results.
+
+**Filter state (`_filtered_results` / `_filter_phrase` / `_last_results`)** — after a user sees initial results, they can refine with a phrase like "ones for families" or "just the soup kitchens". The matching subset is stored in `_filtered_results` (separate from `_last_results`, which keeps the full unfiltered set for recovery). Subsequent pagination and questions operate on the filtered view. Filter state is cleared on new-search intent, on "no thanks" (which escapes back to the full results), and on frustration — but `_last_results` is preserved whenever the user might still want to recover via "show all."
 
 ---
 
@@ -236,7 +244,7 @@ The key tables are:
 
 **`taxonomies`** (39 rows) — the category tree. "Food" is a taxonomy. "Soup Kitchen" and "Food Pantry" are child taxonomies under "Food." The chatbot maps the user's service type to one or more taxonomy names and filters by them.
 
-**`physical_addresses`** (2,569 rows) — street addresses for locations. Importantly, there is no "borough" column anywhere in the database. The city field (e.g., "Manhattan", "Brooklyn") serves as the borough identifier.
+**`physical_addresses`** (2,569 rows) — street addresses for locations. Importantly, there is no "borough" column anywhere in the database. The city field (e.g., "Manhattan", "Brooklyn") serves as the borough identifier — and it isn't always reliable, which is why the codebase validates GPS against NYC borough polygons (`rag/data/nyc_boroughs.geojson`).
 
 **`eligibility`** (3,646 rows) — eligibility rules stored as JSONB. A service might have an age rule like `{"min": 18, "max": 25}` or a gender rule like `["Female"]`. The chatbot uses these to filter results when the user provides their age or gender.
 
@@ -245,6 +253,8 @@ The key tables are:
 There are several gotchas that have tripped up engineers before: there is no "type" column on services (you must join through the taxonomy tables), the junction table is called `service_at_locations` with an "s" (not `service_at_location`), and eligibility values are JSONB that varies in shape by parameter.
 
 → `backend/app/rag/query_templates.py` — the SQL templates and full schema documentation in the file header
+→ `backend/app/rag/query_executor.py` — DB execution, connection pooling, production-stability tuning, relaxed-query fallback
+→ `backend/app/rag/boundaries.py` + `backend/app/rag/data/nyc_boroughs.geojson` — borough polygon validation
 → `docs/ops/METRICS.md` — database coverage statistics (schedule data, taxonomy distribution)
 
 ```mermaid
@@ -304,51 +314,140 @@ erDiagram
 
 ## 8. The Backend in Detail
 
-The backend is organized into four packages under `backend/app/`:
+The backend is organized into seven packages under `backend/app/`:
 
-### `services/` — the brain
+```
+backend/app/
+├── main.py              # FastAPI entry point; /api/health + /api/health/live
+├── services/            # conversation logic (the "brain")
+│   ├── chatbot/         # orchestrator package (was chatbot.py monolith)
+│   │   ├── orchestrator.py
+│   │   ├── pipeline.py
+│   │   ├── execution.py
+│   │   ├── context.py
+│   │   ├── tone.py
+│   │   ├── logging.py
+│   │   └── handlers/    # one module per message category
+│   └── …                # extractors, classifiers, responses, sessions, etc.
+├── rag/                 # database layer
+├── llm/                 # Anthropic / Claude clients
+├── models/              # Pydantic request/response schemas
+├── privacy/             # PII redaction
+├── routes/              # HTTP endpoints
+└── utils/               # small shared helpers
+```
 
-This is where most of the chatbot logic lives.
+### `services/chatbot/` — the orchestrator package
 
-**`chatbot.py`** is the largest file (~2,500 lines) and the main router. It receives a message, decides what to do with it, and returns a response. If you're tracing a bug, start here — every conversation turn flows through `generate_reply()`. The file is long because each message type (service request, greeting, frustration, crisis, confirmation, post-results question) has its own handler with specific quick replies and context-aware logic.
+Before April 2026 this was a single `chatbot.py` file that grew past 3,000 lines. Phase 3 of the ongoing cleanup decomposed it into a package. If you're tracing a bug or adding a handler, this is where you start — but the work is distributed across a handful of small modules instead of one giant file. <!-- drift:ignore: historical chatbot.py reference; package now lives at chatbot/ -->
 
-**`slot_extractor.py`** handles Tier 1 extraction — the regex keyword matching. It contains the `SERVICE_KEYWORDS` dictionary (10 categories of keywords), location parsing (59 NYC neighborhoods, 5 boroughs, 200+ zip codes), and multi-intent extraction (finding all services in a message, not just the first one).
+The package exports `generate_reply()` from its `__init__.py` so existing callers (tests, routes, older docs) keep working without import changes.
 
-**`semantic_router.py`** handles Tier 2 — the sentence embedding model. It loads `all-MiniLM-L6-v2`, pre-embeds all the example phrases from `semantic_routes.py` at startup, and provides `classify_all_services()` for multi-intent matching.
+**`orchestrator.py`** — the top-level dispatch. `generate_reply()` lives here. It redacts PII, runs crisis detection, classifies the message, and routes to the right handler. When you're tracing a turn end-to-end, read this first.
 
-**`classifier.py`** handles message classification — is this a greeting, a reset, a confirmation, frustration, a bot question? It uses phrase lists from `phrase_lists.py` with contraction normalization and intensifier stripping.
+**`pipeline.py`** — the classification cascade. Implements `classify_unified()` which combines the split classifier (action + tone), the semantic router fallback, and the LLM gate when regex and embeddings both miss.
 
-**`crisis_detector.py`** detects seven categories of crisis (suicide, DV, trafficking, medical emergency, youth runaway, assault, general safety) using regex patterns, with an optional LLM fallback for indirect language.
+**`execution.py`** — what happens after confirmation. Runs the SQL template, assembles service cards, applies the Housing-First result ordering, builds the response message (including the pagination phrasing "I found N options — showing the first M"), handles the co-located multi-service result shape, and the population-critical citywide fallback.
 
-**`responses.py`** contains all hardcoded bot messages (greetings, emotional responses, crisis responses, warmth prefixes) and the LLM prompt builders.
+**`context.py`** — small helpers shared across handlers: `_DISPLAY_PAGE_SIZE`, `_empty_reply()` factory, `_count_unique_locations()`, `_CITY_TO_BOROUGH` and `_BOROUGH_CENTROIDS` lookup tables, the `NEAR_ME_SENTINEL` constant.
 
-**`confirmation.py`** builds the confirmation message ("I'll look for food in Brooklyn") and the no-results fallback message.
+**`tone.py`** — `random_warmth_prefix()` and the SAMHSA-aligned warmth overlays that get added to routine responses for baseline warmth. Also the shame-normalization prefix logic.
 
-**`post_results.py`** handles follow-up questions after results are displayed — "are any open now?", "tell me about the first one", "only the pantries."
+**`logging.py`** — `_log_turn()` and the audit-log adapters. Every handler calls `_log_turn(...)` at its exit point.
 
-**`session_store.py`** manages in-memory session state (extracted slots, conversation context, results).
+**`handlers/`** — one module per message category. Each is a small, focused file.
+
+| Handler module | Catches |
+|---|---|
+| `handlers/emotional.py` | Frustration, shame, sadness, distrust, undeserving. The AVR pattern lives here, plus the crisis dispatcher (`_handle_crisis`) for the 4-category step-down (`safety_concern`, `domestic_violence`, `youth_runaway`, `assault_victim` — the categories where crisis resources fire alongside an offer to search). Filter-aware cleanup at the tail of `_handle_frustration` reconciles "preserve `_last_results` through routing" with "leave a clean session afterward." |
+| `handlers/confirmation.py` | The "Food in Brooklyn — sound good?" flow. Contradiction auto-execute logic, optional-slot re-nudge path, and context-aware `confirm_yes` / `confirm_deny` routing during pending confirmations. |
+| `handlers/post_results.py` | Everything after results are shown: "show more" pagination (through `_filtered_results` when filter is active, else `_last_results`), sort variants, questions about specific cards, filter phrase detection, filter-escape on "no thanks", new-search state reset. |
+| `handlers/general.py` | Greetings, resets, help questions, "what can you do", bot-identity questions. |
+| `handlers/meta.py` | Privacy questions, "are you a robot", meta-conversation about the chatbot itself. |
+| `handlers/accessibility.py` | Language preference hints, Spanish bilingual acknowledgment. |
+
+**Where stuff moved from the old `chatbot.py`**: if you're reading older commits or docs that refer to functions in `chatbot.py`, the rough mapping is: `generate_reply` → `orchestrator.py`; `_execute_and_respond` → `execution.py`; emotional branches → `handlers/emotional.py`; pending-confirmation branches → `handlers/confirmation.py`; post-results branches → `handlers/post_results.py`. Most shared helpers moved to `context.py` or `tone.py`. <!-- drift:ignore: historical chatbot.py reference; package now lives at chatbot/ -->
+
+### `services/` — other conversation services
+
+These modules sit alongside the `chatbot/` package:
+
+**`slot_extractor.py`** — Tier 1 extraction. Contains the `SERVICE_KEYWORDS` dictionary (9 categories after housing_assistance retirement), the `_SERVICE_NEED_PRIORITY` tier table for Housing First ordering, location parsing (59 NYC neighborhoods, 5 boroughs, 200+ zip codes), population detection (veteran, disabled, reentry, foster_youth, dv_survivor, pregnant, senior), and multi-intent extraction.
+
+**`semantic_router.py`** — Tier 2 semantic embedding. Loads `all-MiniLM-L6-v2`, pre-embeds all route utterances at server startup, and provides `classify_all_services()` for multi-intent matching. Has a `SentenceTransformer = None` fallback so tests can mock it when the optional dep isn't installed.
+
+**`semantic_routes.py`** — the example phrases for each service category. Adding a new phrasing here is often the right fix when Tier 1 misses something the LLM handles well but shouldn't have to.
+
+**`classifier.py`** — split message classification: `_classify_action()` (confirm_yes, confirm_change_service, confirm_change_location, etc.), `_classify_tone()` (frustrated, confused, emotional, etc.), contraction normalization ("I'm" → "I am"), and intensifier stripping. Includes `_BOROUGH_CHANGE_RE` for disambiguating "change to Brooklyn" (location change) from "change to shelter" (service change).
+
+**`phrase_lists.py`** — all the keyword and phrase lists used by the classifier, plus the quick-reply catalog, service labels, and borough-suggestion data. Adding a new phrase or quick-reply usually means editing this file, not a handler.
+
+**`crisis_detector.py`** — two-stage crisis detection: regex first (<1ms), then Claude Sonnet as the fallback. Eight crisis categories: suicide_self_harm, medical_emergency, domestic_violence, youth_runaway (Runaway Safeline, Covenant House), assault_victim (Safe Horizon), safety_concern (911/988/311 — no DV hotlines), trafficking, and violence (threats to harm others, weapons). Fail-open: if Sonnet fails, show safety resources anyway.
+
+**`responses.py`** — hardcoded bot messages (greetings, emotional responses, crisis responses, warmth prefixes) and the LLM prompt builders.
+
+**`bot_knowledge.py`** — the bot's self-knowledge: live capability sourcing (so "what can you do" answers accurately reflect the current service categories — important because housing_assistance was retired), topic matching, LLM context generation.
+
+**`confirmation.py`** — builds the confirmation message ("I'll look for food in Brooklyn"), the no-results fallback, and the borough-suggestion nearby-boroughs phrasing.
+
+**`post_results.py`** — the filter-subcategory engine. `_handle_filter_subcategory()` is the big one; it returns both the page-sliced `services` and the `_full_filtered` set for session persistence. Also contains the refinement classifier (`classify_post_results_question`) that disambiguates "more like those" / "ones for families" / "refine the results" / "exclude DHS" from ordinary follow-up questions.
+
+**`llm_classifier.py`** — the unified LLM classification gate. Single Haiku call returning service_type, location, tone, action when the regex and semantic tiers both miss.
+
+**`llm_slot_extractor.py`** — LLM slot extraction via Claude Haiku tool calling, used inside the 3-tier cascade.
+
+**`session_store.py`** — in-memory session state with 30-minute TTL (max 500 sessions).
+
+**`session_token.py`** — anonymous session identifier generation and validation (HMAC-signed tokens — no user identity).
+
+**`persistence.py`** — optional SQLite write-through for session state, enabling survival across backend restarts during the pilot.
+
+**`audit_log.py`** — anonymized event logging (capped ring buffer) and P0-P3 metrics aggregation (confidence, recovery rates, session metrics, no-result by service, geographic demand, frustration tiers, session duration, LLM call metrics). Powers the `/admin` dashboards.
+
+**`rate_limiter.py`** — per-session rate limiting with a graceful fallback (returns a friendly "I need a moment" rather than an error).
 
 ### `rag/` — the database layer
 
-**`query_templates.py`** is the second most important file. It contains every SQL query the system can run, as parameterized templates. Each service category (food, shelter, clothing, etc.) has a template that specifies which taxonomy names to filter by, which optional filters to apply (age, gender, proximity, accessibility), and how to sort results. When the architecture docs say "no LLM-generated SQL," this is what they mean — every query is pre-written here.
+**`query_templates.py`** — the second most important file. Contains every SQL query as parameterized templates. Each service category has a template that specifies which taxonomy names to filter by, which optional filters to apply (age, gender, proximity, accessibility), and how to sort results. When the architecture docs say "no LLM-generated SQL," this is what they mean. Legacy `housing_assistance` callers redirect to the `other` template.
 
-**`query_executor.py`** runs the SQL templates against the database. It handles connection pooling, timeout detection, the relaxed-query fallback, and result formatting.
+**`query_executor.py`** — runs the SQL templates. Handles connection pooling, timeout detection, the relaxed-query fallback, and result formatting. Also contains the **production-stability package**: a looser `statement_timeout` ('15s') for the health probe transaction (vs the 5s business ceiling), TCP keepalives (`keepalives=1, keepalives_idle=30, keepalives_interval=10`) to detect half-open sockets before they surface as SSL-closed errors, and a 5-minute `pool_recycle` tuned to Render's managed-Postgres idle-close behavior.
 
-**`__init__.py`** (the `rag` package init) provides `query_services()`, which is the main entry point from the chatbot. It maps slot values to template parameters and calls the executor.
+**`boundaries.py`** — NYC borough polygon validation against `data/nyc_boroughs.geojson`. Used by the geographic filter to confirm "Manhattan" results aren't bleeding over from the Bronx. See `docs/audits/BOUNDARY_AUDIT.md` for the history.
+
+**`data/nyc_boroughs.geojson`** — the polygon shapefile. Checked into the repo — don't delete.
+
+**`__init__.py`** — the `rag` package init. Provides `query_services()`, the main entry point from the chatbot. Maps slot values to template parameters and calls the executor.
 
 ### `llm/` — the AI models
 
-**`claude_client.py`** manages the Anthropic API client. It defines which Claude model is used for each task (Haiku for conversation and classification, Sonnet for crisis detection), provides `claude_reply()` for conversational responses, `classify_message_llm()` for the unified classification gate, and `ping_llm()` for health checking.
+**`claude_client.py`** — manages the Anthropic API client. Defines which Claude model is used for each task (Haiku for conversation and classification, Sonnet for crisis detection LLM fallback), provides `claude_reply()`, `classify_message_llm()`, and `ping_llm()` for health checking. Exception classification lives here — distinguishing auth errors from rate limits from overloaded errors, with dedicated test coverage in `test_health_and_upload.py::TestPingLlm`.
 
 ### `routes/` — the HTTP endpoints
 
-**`chat.py`** — the `/chat/` endpoint. Validates the request, calls `generate_reply()`, returns the response.
+**`chat.py`** — `POST /chat/`, `/chat/feedback`, and `/chat/location-feedback`. Validates the request, calls `generate_reply()`, returns the response.
 
-**`admin.py`** — all admin API endpoints. Stats, conversations, events, query logs, eval results, eval runner, and eval upload.
+**`admin.py`** — all admin API endpoints. Stats, conversations, events, query logs, eval results, eval runner, and eval upload. Gated by an `X-Admin-API-Key` header that the Next.js proxy injects server-side.
+
+### `models/` — Pydantic schemas
+
+**`chat_models.py`** — `ChatRequest`, `ChatResponse`, `ServiceCard`, `QuickReply`. The `ServiceCard` schema includes `latitude`, `longitude` (for frontend map markers) and `service_taxonomies` (for sub-category filtering). Important: this package was silently stripped by `.tarignore` during a prior release and had to be restored — if you see a `ModuleNotFoundError` for `app.models`, verify the package is present before assuming a missing import is your fault.
 
 ### `privacy/` — PII handling
 
-**`pii_redactor.py`** — regex-based detection and redaction of phone numbers, SSNs, names, emails, and other PII. Applied to every message before it's stored.
+**`pii_redactor.py`** — regex-based detection and redaction of phone numbers, SSNs, names, emails, dates of birth, addresses, and gender-identity terms. Applied to every message before it's stored. Also surfaces user-facing warnings when sensitive PII is detected — SSNs get a strong "please don't share this" message; phone numbers get a lighter heads-up.
+
+### `main.py` — the FastAPI entry point
+
+Defines the app, mounts the routes, configures CORS, pre-warms the semantic router at startup, and exposes two health endpoints:
+
+- **`/api/health/live`** — tight liveness check. No DB, no LLM, no semantic-router calls. Always returns 200 unless the Python process is wedged. This is the cheap endpoint — safe for the frontend's health-polling hook to hit every 60 seconds without touching the database.
+- **`/api/health`** — deep readiness check. Probes DB (with a looser 15s timeout), LLM, and semantic router status. Used for manual debugging and admin dashboards.
+
+**Important**: the backend is deployed as a **Render Private Service**, which means Render itself does not probe any HTTP endpoint — it only restarts the process on crash. The two-endpoint split exists to give our own callers (the frontend's `use-backend-health.ts` polling hook, admin dashboards, uptime monitors) a choice between a cheap poll and a deep diagnostic. Before the split, the frontend's 60-second polling was hitting the DB-probing endpoint and surfacing "QueryCanceled: statement timeout" errors in logs every time the database was momentarily slow.
+
+### `utils/` — shared helpers
+
+Small, package-spanning utilities. Currently minimal — `__init__.py` and whatever grows here as cross-cutting concerns accumulate.
 
 ---
 
@@ -374,7 +473,7 @@ The chat is built from a small set of React components:
 
 React hooks manage side effects and shared state:
 
-**`use-chat.ts`** — the main chat hook. Manages message history, sending messages (with auto-retry), handling geolocation triggers, crisis geolocation flow, error classification, and feedback submission. This is the chat-side equivalent of `chatbot.py` — if something isn't working in the chat UX, start here.
+**`use-chat.ts`** — the main chat hook. Manages message history, sending messages (with auto-retry), handling geolocation triggers, crisis geolocation flow, error classification, and feedback submission. This is the chat-side equivalent of the backend's `chatbot/orchestrator.py` — if something isn't working in the chat UX, start here.
 
 **`use-geolocation.ts`** — wraps the browser's Geolocation API with error handling and permission management.
 
@@ -402,7 +501,7 @@ All admin API calls go through a catch-all proxy route (`app/api/admin/[...slug]
 
 ## 10. Common Design Patterns in the Codebase
 
-**Extract-first architecture** — slots are always extracted from the message before the message is classified. This means service intent is known before routing decisions are made. You'll see `extract_slots(message)` called early in `generate_reply()`, followed by classification logic that uses the extracted slots.
+**Extract-first architecture** — slots are always extracted from the message before the message is classified. This means service intent is known before routing decisions are made. You'll see slot extraction called early in `orchestrator.py::generate_reply()`, followed by classification logic that uses the extracted slots.
 
 **Static-first responses** — the bot prefers hardcoded responses over LLM-generated ones. Emotional responses, crisis responses, greetings, and help messages are all static strings. The LLM is only called when no static handler matches. This keeps responses predictable, fast, and auditable.
 
@@ -411,6 +510,14 @@ All admin API calls go through a catch-all proxy route (`app/api/admin/[...slug]
 **Fail-open for safety** — if the crisis detection LLM call fails, the system shows safety resources anyway rather than falling through to normal conversation. Missing a crisis is more dangerous than a false alarm.
 
 **Fail-closed for data** — if the database query fails, the system shows a specific error message (not an LLM-generated one) and never fabricates service data. The LLM is explicitly blocked from generating responses during database failures because it produces plausible-sounding follow-up questions that trap users in confirmation loops.
+
+**Two-probe health pattern** — a tight liveness check (`/api/health/live`) separate from the deep readiness check (`/api/health`) so the frontend's polling hook (60-second interval) can ask "is the process up?" cheaply without hitting the DB on every tick. The deep `/api/health` is reserved for dashboards, uptime monitors, and manual debugging. The backend is a Private Service, so Render itself doesn't probe either endpoint — both are there for our own callers.
+
+**Two-level result state** — `_last_results` holds the full search output; `_filtered_results` holds a subset after the user narrows with a phrase like "ones for families." Pagination and follow-up questions operate on whichever is active. State transitions (frustration, new search, "no thanks") clear filter state but preserve `_last_results` whenever the user might still want to recover via "show all."
+
+**Filter-aware post-routing cleanup** — handlers that transition out of post-results state (emotional frustration, confirm_deny) read `_last_results` for routing decisions, then clean up at their tail. If a filter was active, they pop filter state only; otherwise they pop `_last_results` + pagination. This reconciles the need to see state during routing with the need to leave a clean session afterward.
+
+**Housing-First priority** — when multiple service intents are detected in one message, the primary is chosen by `_SERVICE_NEED_PRIORITY` (shelter/medical > food/mental_health > clothing/personal_care > legal/employment > other), not by text position. "I need food and shelter" makes shelter primary; food gets queued and offered after the shelter results.
 
 ---
 
@@ -422,18 +529,21 @@ Once you're comfortable with the architecture, these documents cover specific ar
 |---|---|---|
 | Full feature list | `docs/FEATURES.md` | Every feature organized by area — conversation, crisis, search, cards, privacy, accessibility, staff tools |
 | Chatbot behavior | `docs/CHATBOT_BEHAVIOR.md` | Routing pipeline, message categories, emotional handling, crisis step-down, LLM usage, guardrails |
-| Crisis detection | `docs/design/CRISIS_DETECTION.md` | Two-stage architecture, 7 crisis categories, fail-open policy, phrase list design |
+| Crisis detection | `docs/design/CRISIS_DETECTION.md` | Two-stage architecture, 8 crisis categories, fail-open policy, phrase list design |
 | PII handling | `docs/design/PII_REDACTION.md` | Seven detection categories, pattern details, known gaps |
 | Semantic routing | `docs/design/SEMANTIC_ROUTING_DESIGN.md` | Model selection, 3-tier cascade, route definitions, how to add new routes |
 | Multi-intent design | `docs/audits/MULTI_INTENT_PLAN.md` | How multiple services in one message are extracted, prioritized, and queued |
-| Evaluation framework | `docs/ops/EVAL_RESULTS.md` | LLM-as-judge system, 11 scoring dimensions, run history |
+| Population fallback | `docs/design/POPULATION_FALLBACK_SPEC.md` | Citywide fallback for rare populations (LGBTQ YA, youth, senior, veteran) |
+| Borough boundaries | `docs/audits/BOUNDARY_AUDIT.md` | Why `pa.city` isn't fully trustworthy and how the polygon validator mitigates |
+| Query parity | `docs/audits/QUERY_PARITY_AUDIT.md` | Line-by-line comparison of chatbot SQL vs YourPeer's query logic |
+| Evaluation framework | `docs/ops/EVAL_RESULTS.md` | LLM-as-judge system, 11 scoring dimensions, per-run scoring commentary |
 | Regex keyword audit | `docs/audits/REGEX_AUDIT.md` | Collision risk analysis, word boundary decisions |
 | Metrics | `docs/ops/METRICS.md` | 35+ success metrics with definitions, targets, and measurement methods |
 | Hardcoded messages | `docs/audits/HARDCODED_MESSAGES_REVIEW.md` | Every user-facing hardcoded message with trigger conditions and source locations |
-| Test suite | `docs/TESTING.md` | 2,000+ tests across 46 files — how they're organized, how to run them, where to add new ones |
+| Test suite | `docs/TESTING.md` | The full test organization and how to run the suite |
+| Test file index | `tests/README.md` | Maps every source module to its test file(s) |
 | Setup | `docs/SETUP.md` | Local development setup, environment variables, dependencies |
-| Deployment | `docs/DEPLOY.md` | Render deployment, environment variables, build commands |
-| Test file index | `tests/tests/README.md` | Maps every source module to its test file(s) |
+| Deployment | `docs/DEPLOY.md` | Render deployment — two services (backend is a Private Service, frontend is a Web Service), environment variables, troubleshooting |
 
 ---
 
@@ -443,39 +553,52 @@ Here's a suggested order for getting oriented:
 
 **Day 1 — Get it running.** Follow `docs/SETUP.md` to set up the backend and frontend locally. Send a few messages in the chat. Try "I need food in Brooklyn", "shelter in Queens", "start over", and "what can you do?" Watch the terminal logs to see the classification tier, slot extraction, and query execution.
 
-**Day 2 — Read the main flow.** Open `backend/app/services/chatbot.py` and read `generate_reply()` from top to bottom. Don't try to understand every handler — just follow the main path for a simple "I need food in Brooklyn" message. Trace it through slot extraction, confirmation, query execution, and result rendering.
+**Day 2 — Read the orchestrator.** Open `backend/app/services/chatbot/orchestrator.py` and read `generate_reply()` from top to bottom. Don't try to understand every handler — follow the main path for a simple "I need food in Brooklyn" message. Trace the dispatch into `handlers/confirmation.py`, then through `execution.py`, and out via `logging.py::_log_turn`. When a branch jumps to a handler, skim the handler's entry conditions but don't dive in yet.
 
-**Day 3 — Explore the database.** Open `backend/app/rag/query_templates.py` and read the schema documentation at the top. Then look at one template (like the `food` template) to see which tables it joins and which filters it applies. Try the admin console at `/admin` to see query logs and execution times.
+**Day 3 — Read one handler completely.** Pick `handlers/emotional.py` — it's a manageable size and demonstrates the AVR pattern, the filter-aware cleanup, and the 3-counter frustration escalation. Once you've read one handler end-to-end, the others will feel familiar.
 
-**Day 4 — Understand the frontend.** Open the chat in your browser with DevTools Network tab open. Send a message and inspect the request/response. Then open `frontend-next/src/hooks/use-chat.ts` and trace how the response becomes chat messages. Look at `service-card.tsx` to see how service data renders.
+**Day 4 — Explore the database.** Open `backend/app/rag/query_templates.py` and read the schema documentation at the top. Then look at one template (like the `food` template) to see which tables it joins and which filters it applies. Try the admin console at `/admin` to see query logs and execution times.
 
-**Day 5 — Run the tests.** Run `pytest tests/unit/ -v` from the `tests/` directory. Read `tests/tests/README.md` to understand the test organization. Try running a single test file. If you have an Anthropic API key, try running a single eval scenario: `python tests/eval/eval_llm_judge.py --scenarios 1`.
+**Day 5 — Understand the frontend.** Open the chat in your browser with DevTools Network tab open. Send a message and inspect the request/response. Then open `frontend-next/src/hooks/use-chat.ts` and trace how the response becomes chat messages. Look at `service-card.tsx` to see how service data renders.
+
+**Day 6 — Run the tests.** Run `pytest tests/unit tests/integration -q --no-header` from the repo root. Read `tests/README.md` to understand the test organization. Try running a single test file. If you have an Anthropic API key, try running a single eval scenario: `python tests/eval/eval_llm_judge.py --scenarios 1`.
 
 ---
 
 ## 13. Common Tasks — Where to Look
 
+After Phase 3, "where to add a thing" is more specific than it used to be because the monolith is split by responsibility. Use this table as the first hop.
+
 | I want to... | Start here |
 |---|---|
 | Add a new service keyword | `backend/app/services/slot_extractor.py` → `SERVICE_KEYWORDS` dict |
 | Add a new semantic route phrase | `backend/app/services/semantic_routes.py` → `SERVICE_ROUTES` dict |
-| Change a bot response message | `backend/app/services/responses.py` (conversational) or `crisis_detector.py` (crisis) |
+| Change a bot response message | Usually `backend/app/services/responses.py`; crisis ones are in `crisis_detector.py`; handler-specific ones are in that handler |
+| Change a greeting / help / reset response | `backend/app/services/chatbot/handlers/general.py` |
+| Change an emotional / frustration / shame response | `backend/app/services/chatbot/handlers/emotional.py` |
+| Change the confirmation message | `backend/app/services/confirmation.py` → `_build_confirmation_message()` |
+| Change how filter results are paginated | `backend/app/services/chatbot/handlers/post_results.py::_handle_show_more` |
+| Change the refinement classifier ("ones for families" detection) | `backend/app/services/post_results.py::classify_post_results_question` |
+| Change the filter-escape on "no thanks" | `backend/app/services/chatbot/handlers/post_results.py::_handle_post_results_interaction` — the `confirm_deny` branch |
+| Change what gets cleared on frustration | `backend/app/services/chatbot/handlers/emotional.py::_handle_frustration` — the tail cleanup block |
 | Add a new crisis category | `backend/app/services/crisis_detector.py` → `_CRISIS_CATEGORIES` list |
 | Change how results are sorted | `backend/app/rag/query_templates.py` → `_BASE_ORDER_PARTS` list |
 | Add a new database filter | `backend/app/rag/query_templates.py` → add a `FILTER_BY_*` constant |
-| Change the confirmation message | `backend/app/services/confirmation.py` → `_build_confirmation_message()` |
+| Change how service cards look | `frontend-next/src/components/chat/service-card.tsx` (backend: `models/chat_models.py::ServiceCard` for the schema) |
+| Change the Housing-First priority ordering | `backend/app/services/slot_extractor.py` → `_SERVICE_NEED_PRIORITY` dict (mirrored in `tests/unit/test_hybrid_multi_intent.py`) |
+| Add a new quick reply button | The handler that emits it (greetings → `general.py`, confirmations → `confirmation.py`, post-results → `post_results.py`). Update `phrase_lists.py` if the button's *value* is a new phrase the classifier needs to recognize. |
 | Add a new admin metric | `frontend-next/src/lib/admin/metric-definitions.ts` + `backend/app/services/audit_log.py` |
-| Add a new quick reply option | `backend/app/services/chatbot.py` → find the handler that should show it |
 | Change the chat UI layout | `frontend-next/src/components/chat/chat-container.tsx` |
-| Change service card appearance | `frontend-next/src/components/chat/service-card.tsx` |
-| Add a test for a new feature | Check `tests/tests/README.md` for the right file, or create a new one |
+| Add a test for a new feature | Check `tests/README.md` for the right file, or create a new one in `tests/unit/` |
+| Change health endpoint behavior | `backend/app/main.py` — `/api/health/live` is tight (for frequent polling), `/api/health` is deep (for dashboards/diagnostics) |
+| Update pagination wording ("I found N options — showing the first M") | `backend/app/services/chatbot/execution.py` — the response-building block in the main results function |
 
 ---
 
 ## 14. Asking for Help
 
-If you're stuck, check the docs list in Section 11 first — most design decisions are documented somewhere. The code comments in `chatbot.py`, `query_templates.py`, and `responses.py` are especially detailed about the "why" behind decisions.
+If you're stuck, check the docs list in Section 11 first — most design decisions are documented somewhere. The code comments in the `chatbot/` package files, `query_templates.py`, and `responses.py` are especially detailed about the "why" behind decisions. If a doc points you at `chatbot.py` and it doesn't exist, that's Phase 3 drift — the code is now in `services/chatbot/`. <!-- drift:ignore: historical chatbot.py reference; package now lives at chatbot/ -->
 
-If you're making a change and aren't sure if it's safe, look for related tests in `tests/tests/README.md`. The test suite has 2,000+ tests specifically because the codebase handles sensitive situations where regressions can cause real harm.
+If you're making a change and aren't sure if it's safe, look for related tests in `tests/README.md`. The test suite is large specifically because the codebase handles sensitive situations where regressions can cause real harm. Run the full suite with `pytest tests/unit tests/integration -q` before merging — it completes in about 25 seconds.
 
 Welcome to the team.

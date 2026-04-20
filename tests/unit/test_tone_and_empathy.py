@@ -21,11 +21,11 @@ Run with: python -m pytest tests/unit/test_tone_and_empathy.py -v
 """
 
 import pytest
-from app.services.classifier import _classify_tone, _classify_action
+from app.services.classifier import _classify_tone
 from app.services.responses import _pick_emotional_response, _EMOTIONAL_RESPONSES
 from app.services.crisis_detector import detect_crisis
 from app.services.slot_extractor import extract_slots
-from conftest import send, send_multi, MOCK_QUERY_RESULTS
+from conftest import send, send_multi
 
 
 # -----------------------------------------------------------------------
@@ -91,7 +91,7 @@ class TestHelpConfusedEmpathy:
     def test_help_still_shows_service_menu(self):
         r = send_multi(["Can you help me find something?"])
         qr = [q["label"].lower() for q in r[0].get("quick_replies", [])]
-        assert any("food" in l for l in qr)
+        assert any("food" in label for label in qr)
 
 
 # -----------------------------------------------------------------------
@@ -111,8 +111,8 @@ class TestEscalationYesAcknowledgment:
     def test_yes_offers_alternatives(self):
         r = send_multi(["connect with peer navigator", "yes"])
         qr_labels = [q["label"].lower() for q in r[1].get("quick_replies", [])]
-        has_search = any("search" in l for l in qr_labels)
-        has_contact = any("contact" in l for l in qr_labels)
+        has_search = any("search" in label for label in qr_labels)
+        has_contact = any("contact" in label for label in qr_labels)
         assert has_search or has_contact
 
     def test_show_contact_again_re_escalates(self):

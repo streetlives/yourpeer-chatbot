@@ -600,7 +600,7 @@ class TestShelterInvariants:
     ]
 
     @pytest.mark.parametrize("label,kwargs",
-                             [(l, k) for l, k in SAMPLE_INPUTS])
+                             [(lable, k) for lable, k in SAMPLE_INPUTS])
     def test_taxonomy_names_is_list(self, label, kwargs):
         """Invariant: taxonomy_names is always a list (never None, never set)."""
         names = _shelter_tax(**kwargs)
@@ -610,14 +610,14 @@ class TestShelterInvariants:
         )
 
     @pytest.mark.parametrize("label,kwargs",
-                             [(l, k) for l, k in SAMPLE_INPUTS])
+                             [(lable, k) for lable, k in SAMPLE_INPUTS])
     def test_taxonomy_names_nonempty(self, label, kwargs):
         """Invariant: every shelter query produces at least one taxonomy."""
         names = _shelter_tax(**kwargs)
         assert len(names) > 0, f"{label}: empty taxonomy list"
 
     @pytest.mark.parametrize("label,kwargs",
-                             [(l, k) for l, k in SAMPLE_INPUTS])
+                             [(lable, k) for lable, k in SAMPLE_INPUTS])
     def test_taxonomy_names_no_duplicates(self, label, kwargs):
         """Invariant: dedupe must work across all combinations.
 
@@ -631,7 +631,7 @@ class TestShelterInvariants:
         )
 
     @pytest.mark.parametrize("label,kwargs",
-                             [(l, k) for l, k in SAMPLE_INPUTS
+                             [(lable, k) for lable, k in SAMPLE_INPUTS
                               if "family_status" in k])
     def test_narrow_always_preserves_shelter_parent(self, label, kwargs):
         """Invariant: when narrowing fires, parent 'shelter' is always present.
@@ -647,7 +647,7 @@ class TestShelterInvariants:
         )
 
     @pytest.mark.parametrize("label,kwargs",
-                             [(l, k) for l, k in SAMPLE_INPUTS
+                             [(lable, k) for lable, k in SAMPLE_INPUTS
                               if "family_status" in k])
     def test_narrow_always_includes_family_composition_child(self, label, kwargs):
         """Invariant: the family_status sub-filter is always honored.
@@ -667,7 +667,7 @@ class TestShelterInvariants:
             assert "single adult" in names, f"{label}: missing 'single adult'"
 
     @pytest.mark.parametrize("label,kwargs",
-                             [(l, k) for l, k in SAMPLE_INPUTS
+                             [(lable, k) for lable, k in SAMPLE_INPUTS
                               if not k.get("family_status")])
     def test_no_narrow_uses_full_default_list(self, label, kwargs):
         """Invariant: without family_status, the default 18-taxonomy list is used.
@@ -895,8 +895,7 @@ class TestOpenNowSortOnlySemantics:
         the chatbot to exclude-semantics. This test greps the call site to
         ensure the kwarg is absent.
 
-        Note: Phase 3 moved the ``query_services()`` call site from
-        ``chatbot.py`` (monolith) to ``chatbot.execution`` (package
+        Note: Phase 3 moved the ``query_services()`` call to ``chatbot.execution`` (package
         submodule). ``inspect.getsource`` on a package returns only the
         ``__init__`` source, so this test targets the execution submodule
         where the call site now lives.
@@ -908,7 +907,7 @@ class TestOpenNowSortOnlySemantics:
         # Look for the arguments it actually passes.
         # A regression would add 'current_time=' somewhere near the call.
         lines_with_current_time = [
-            l for l in source.splitlines() if "current_time=" in l
+            lable for lable in source.splitlines() if "current_time=" in lable
         ]
         assert not lines_with_current_time, (
             "chatbot.execution passes current_time — this activates "
@@ -923,9 +922,8 @@ class TestOpenNowSortOnlySemantics:
         weekday IS used by _handle_hours_for_day (post-results handler for
         'what are their hours Saturday?'), but NOT by the primary search.
 
-        Note: Phase 3 moved the primary ``query_services()`` call site
-        from ``chatbot.py`` (monolith) to ``chatbot.execution`` (package
-        submodule). See the sibling current_time test for context.
+        Note: Phase 3 moved the primary ``query_services()`` call ``chatbot.execution``
+        (package submodule). See the sibling current_time test for context.
         """
         import re
         import inspect
@@ -1339,8 +1337,7 @@ class TestFilterResponsePagination:
         Without this, the filter-response fix is inert — the handlers
         default to len(services)=25 and the "of 25" bug returns.
 
-        Note: Phase 3 moved the ``answer_from_results()`` call site from
-        ``chatbot.py`` (monolith) to ``chatbot.handlers.post_results``.
+        Note: Phase 3 moved the ``answer_from_results()`` call site to ``chatbot.handlers.post_results``.
         """
         import inspect
         from app.services.chatbot.handlers import post_results
@@ -1451,21 +1448,6 @@ class TestDBVerifiedOrgDiscoverability:
             "discoverable for LGBTQ users even under narrow. "
             f"Got taxonomy list: {names}"
         )
-
-    def test_ali_forney_drop_in_space_not_shelter_tagged(self):
-        """Ali Forney 'Drop-in Space' is tagged {Other service}, NOT
-        {Drop-in Center}. This is a DATA gap in the Streetlives DB —
-        the chatbot cannot fix it via enrichment. Documenting the
-        limitation: this service is only findable via the 'other' template,
-        not shelter queries."""
-        # This test exists purely as documentation — it passes trivially.
-        # If Streetlives re-tags this service as Drop-in Center, this test
-        # should be updated to reflect the new expectation.
-        names = _shelter_tax(gender="lgbtq")
-        # Even with LGBTQ enrichment adding "drop-in center", Ali Forney's
-        # Drop-in Space won't appear because it's tagged "Other service".
-        # This is expected. The test documents the known limitation.
-        assert True  # Documenting: Ali Forney Drop-in Space ≠ Drop-in Center taxonomy
 
     # --- Safe Horizon ---
 

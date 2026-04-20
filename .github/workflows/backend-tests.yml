@@ -1,0 +1,102 @@
+name: Backend tests
+
+# Runs the pytest suite on every PR and on pushes to main.
+# Unit and integration are separate jobs so they run in parallel and failures
+# are attributed cleanly.
+#
+# Unit tests (~600):   no secrets needed, mocked everything, fastest feedback.
+# Integration tests:   use mocked DB/LLM via send()/send_multi() helpers.
+#                      Two files excluded here mirror the local convention in
+#                      docs/TESTING.md — admin routes need auth setup and
+#                      rate-limit tests are timing-dependent.
+
+on:
+  pull_request:
+    paths:
+      - 'backend/**'
+      - 'tests/**'
+      - '.github/workflows/backend-tests.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'backend/**'
+      - 'tests/**'
+
+# Cancel stale runs when new commits land on the same PR.
+concurrency:
+  group: backend-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          # Cache pip between runs — big speedup since sentence-transformers
+          # pulls in several hundred MB of torch.
+          cache: 'pip'
+          cache-dependency-path: |
+            backend/requirements.txt
+            backend/requirements-dev.txt
+
+      - name: Install dependencies
+        working-directory: backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Run unit tests
+        # TEMPORARY: continue-on-error until pre-existing test failures
+        # are addressed in a follow-up PR. CI surfacing these failures is
+        # already valuable — they were invisible before CI existed. Removing
+        # this flag is the last step after the tests are green.
+        # See: docs/audits/TEST_BACKLOG.md (to be written)
+        continue-on-error: true
+        run: |
+          pytest tests/unit/ -v --tb=short
+        # -v: show each test name for easier debugging when something fails
+        # --tb=short: tracebacks without the full stack (noise in CI logs)
+
+  integration:
+    name: Integration tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+          cache-dependency-path: |
+            backend/requirements.txt
+            backend/requirements-dev.txt
+
+      - name: Install dependencies
+        working-directory: backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Run integration tests
+        # TEMPORARY: continue-on-error matches the unit-tests step above.
+        # Remove after the 56 pre-existing failures are addressed in the
+        # follow-up PR.
+        continue-on-error: true
+        run: |
+          pytest tests/integration/ -v --tb=short \
+            --ignore=tests/integration/test_admin_api_routes.py \
+            --ignore=tests/integration/test_rate_limit_integration.py
+        # Exclusions match the local convention documented in docs/TESTING.md.
+        # Re-include them once admin auth setup and timing-safe rate-limit
+        # tests are wired for CI.

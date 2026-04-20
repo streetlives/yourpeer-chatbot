@@ -13,10 +13,10 @@ from unittest.mock import patch, MagicMock, AsyncMock
 
 from app.services.session_store import clear_session, get_session_slots, save_session_slots
 from app.services.chatbot import generate_reply
-from app.services.slot_extractor import NEAR_ME_SENTINEL, extract_slots
+from app.services.slot_extractor import NEAR_ME_SENTINEL
 from app.services.audit_log import (
     clear_audit_log, log_feedback, get_stats,
-    log_conversation_turn, log_query_execution,
+    log_conversation_turn,
 )
 from app.rag.query_templates import _normalize_url
 
@@ -91,7 +91,7 @@ class TestZipCodeFullFlow:
         sid = _fresh_session()
         _send("I need food", sid)
         _send("10035", sid)
-        result = _send("yes", sid)
+        _result = _send("yes", sid)
         # Should have searched with east harlem, not show a stale location
         slots = get_session_slots(sid)
         assert slots.get("location") == "east harlem"
@@ -132,7 +132,7 @@ class TestCrisisStepDownMultiIntent:
     def test_crisis_with_single_service_preserves_service(self):
         """Crisis + service should step down and keep the service slot."""
         sid = _fresh_session()
-        result = _send(
+        _result = _send(
             "my family kicked me out and I need shelter in Brooklyn",
             sid,
             mock_crisis_return=("safety_concern", "If you're in danger, call 911."),
@@ -145,7 +145,7 @@ class TestCrisisStepDownMultiIntent:
     def test_crisis_with_multi_service_preserves_queue(self):
         """Crisis + multiple services should step down and keep the queue."""
         sid = _fresh_session()
-        result = _send(
+        _result = _send(
             "I need food and shelter in Brooklyn, I'm scared",
             sid,
             mock_crisis_return=("safety_concern", "I understand you're scared."),

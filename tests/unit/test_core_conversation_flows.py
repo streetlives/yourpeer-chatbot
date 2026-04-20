@@ -185,7 +185,7 @@ class TestOtherR25Regressions:
 
     def test_emotional_then_yes(self):
         """emotional_then_yes: 5.00 → 4.50 in R25."""
-        r = send_multi([
+        _r = send_multi([
             "I'm really struggling and need help",
             "yes",
         ])

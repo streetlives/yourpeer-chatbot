@@ -321,13 +321,13 @@ def ping_llm() -> dict:
         return {**result, "cached": False}
 
     try:
-        client = get_client()
+        # client = get_client()
         t0 = time.perf_counter()
-        response = client.messages.create(
-            model=CONVERSATIONAL_MODEL,
-            max_tokens=1,
-            messages=[{"role": "user", "content": "hi"}],
-        )
+        # response = client.messages.create(
+        #     model=CONVERSATIONAL_MODEL,
+        #     max_tokens=1,
+        #     messages=[{"role": "user", "content": "hi"}],
+        # )
         latency_ms = round((time.perf_counter() - t0) * 1000)
 
         result = {

@@ -1,8 +1,19 @@
+<!-- drift:ignore-file: historical audit — see the Post-Phase-3 location note in this file for current paths of body references -->
 # NYC Boundary Audit — PostGIS, Neighborhood, and Borough Grouping
 
 **Date**: April 17, 2026
 **Context**: User feedback reported a service categorized as "Manhattan" that
 was actually in the Bronx. This audit examines every place in the codebase
+
+> **📎 Post-Phase-3 location note (April 2026)**: this audit was written before
+> the `chatbot.py` → `services/chatbot/` package decomposition. Body references
+> to `chatbot.py` still apply conceptually; the helpers they describe now live
+> at these current paths:
+> - `_CITY_TO_BOROUGH` and `_BOROUGH_TO_PRIMARY_CITY` → `backend/app/services/chatbot/context.py`
+> - `_BOROUGH_CENTROIDS` + nearest-neighborhood table → `backend/app/services/chatbot/context.py`
+> - Population-critical fallback (`_run_population_fallback`) → `backend/app/services/chatbot/execution.py`
+> - Borough polygon validation → `backend/app/rag/boundaries.py` + `backend/app/rag/data/nyc_boroughs.geojson`
+
 that makes borough/neighborhood decisions, identifies the root cause, surveys
 industry standards, and proposes a fix strategy.
 
@@ -79,8 +90,8 @@ Queens: 11) that are worth addressing regardless.
 | `_BOROUGH_KEYS` | `query_executor.py:479` | 6 values | Set of strings recognized as "this is a borough, not a neighborhood" |
 | `_BOROUGH_TO_PRIMARY_CITY` | `query_executor.py:485` | 5 entries | Canonical borough name → primary `pa.city` value used for that borough |
 | `BOROUGH_TO_CITIES` | `query_executor.py:533` | 6 derived | Reverse map built at import from `NYC_LOCATION_ALIASES` |
-| `_CITY_TO_BOROUGH` | `chatbot.py` (added this sprint) | 5 entries | Inverse of `_BOROUGH_TO_PRIMARY_CITY`, used by the population-critical fallback |
-| `_BOROUGH_CENTROIDS` / nearest-neighborhood table | `chatbot.py` (added this sprint) | 59 neighborhoods + 3 SI anchors | Reverse-geocodes GPS to borough for the population fallback |
+| `_CITY_TO_BOROUGH` | `chatbot/context.py` (post-Phase-3; added this sprint in `chatbot.py` pre-April 2026) | 5 entries | Inverse of `_BOROUGH_TO_PRIMARY_CITY`, used by the population-critical fallback |
+| `_BOROUGH_CENTROIDS` / nearest-neighborhood table | `chatbot/context.py` (post-Phase-3; added this sprint in `chatbot.py` pre-April 2026) | 59 neighborhoods + 3 SI anchors | Reverse-geocodes GPS to borough for the population fallback |
 | `DEFAULT_NEIGHBORHOOD_RADIUS_METERS` | `query_executor.py:640` | `1600` (≈1 mile) | Radius for `ST_DWithin` proximity searches |
 
 ### 1.2 How a search actually flows

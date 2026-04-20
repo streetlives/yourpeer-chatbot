@@ -206,7 +206,7 @@ mental-health, legal-services, employment, other
 
 Each has its own route and entry in `CATEGORY_TO_TAXONOMY_NAME_MAP`. However, three of these (mental-health, legal-services, employment) have **no case in `getTaxonomies()`'s switch statement** — see "YourPeer Bugs/Gaps" section below.
 
-The chatbot has **10 categories** (adding `housing_assistance`, which has no YourPeer equivalent).
+Originally the chatbot had **10 categories** (adding `housing_assistance`, which had no YourPeer equivalent). `housing_assistance` was retired in the April 15, 2026 audit — housing-program keywords (rent, eviction, Section 8) now route to `other`, matching YourPeer's own coverage. The table below reflects the original 10-category state for historical reference; today there are 9 active chatbot categories.
 
 ### Category Mapping
 
@@ -220,7 +220,7 @@ The chatbot has **10 categories** (adding `housing_assistance`, which has no You
 | mental_health | mental-health | Mental Health | ❌ No (works only as health-care sub-filter) |
 | legal | legal-services | Legal Services | ❌ No (works only as other sub-filter) |
 | employment | employment | Employment | ❌ No (works only as other sub-filter) |
-| housing_assistance | *(does not exist)* | *(novel)* | — |
+| ~~housing_assistance~~ | ~~*(does not exist)*~~ | ~~*(novel)*~~ | ~~—~~ *(retired April 15, 2026 — rolled into `other`)* |
 | other | other | Other service | ✅ Yes |
 
 ---

@@ -60,6 +60,7 @@ export function useBackendHealth(): BackendHealth {
 
   useEffect(() => {
     // Initial check on mount
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- initial health check on mount; paired with the interval setup that follows
     check();
 
     intervalRef.current = setInterval(check, POLL_INTERVAL_MS);

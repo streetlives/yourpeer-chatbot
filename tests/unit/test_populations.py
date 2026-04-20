@@ -788,13 +788,13 @@ class TestOrderByDynamicBuilder:
     def test_no_pop_boost_pattern_not_in_sql(self):
         """When pop_boost_pattern is absent, it does NOT appear in SQL."""
         from app.rag.query_templates import build_query
-        sql, params = build_query("food", {})
+        sql, _params = build_query("food", {})
         assert ":pop_boost_pattern" not in sql
 
     def test_lgbtq_and_pop_boost_coexist(self):
         """LGBTQ boost + description boost can appear together."""
         from app.rag.query_templates import build_query
-        sql, params = build_query("food", {
+        sql, _params = build_query("food", {
             "lgbtq_boost": True,
             "pop_boost_pattern": "disabilit",
         })
@@ -804,7 +804,7 @@ class TestOrderByDynamicBuilder:
     def test_veteran_and_pop_boost_coexist(self):
         """Veteran boost + description boost can appear together."""
         from app.rag.query_templates import build_query
-        sql, params = build_query("shelter", {
+        sql, _params = build_query("shelter", {
             "veteran_boost": True,
             "pop_boost_pattern": "disabilit",
         })
@@ -814,7 +814,7 @@ class TestOrderByDynamicBuilder:
     def test_distance_and_pop_boost_coexist(self):
         """Proximity search + description boost can appear together."""
         from app.rag.query_templates import build_query
-        sql, params = build_query("food", {
+        sql, _params = build_query("food", {
             "pop_boost_pattern": "senior",
             "lat": 40.7,
             "lon": -74.0,
@@ -869,7 +869,7 @@ class TestDVCrisisPopulationInjection:
     def test_dv_crisis_with_service_intent_injects_population(self):
         """'he hits me and I need shelter' — crisis fires, step-down
         offers search, and dv_survivor is injected into session."""
-        result, slots, _ = _send_with_crisis(
+        _result, slots, _ = _send_with_crisis(
             "he hits me and I need shelter in Brooklyn",
             "domestic_violence",
         )
@@ -878,7 +878,7 @@ class TestDVCrisisPopulationInjection:
     def test_dv_crisis_without_service_intent_still_injects(self):
         """'he hits me' — crisis fires, no service intent, but
         dv_survivor is still injected for future searches."""
-        result, slots, _ = _send_with_crisis(
+        _result, slots, _ = _send_with_crisis(
             "he hits me",
             "domestic_violence",
         )
@@ -886,7 +886,7 @@ class TestDVCrisisPopulationInjection:
 
     def test_non_dv_crisis_no_injection(self):
         """Safety concern crisis should NOT inject dv_survivor."""
-        result, slots, _ = _send_with_crisis(
+        _result, slots, _ = _send_with_crisis(
             "I don't feel safe here, I need shelter in Brooklyn",
             "safety_concern",
         )
@@ -914,7 +914,7 @@ class TestDVCrisisPopulationInjection:
     def test_dv_crisis_no_duplicate_when_already_extracted(self):
         """If population extractor already caught dv_survivor (from
         'domestic violence' phrase), injection shouldn't duplicate."""
-        result, slots, _ = _send_with_crisis(
+        _result, slots, _ = _send_with_crisis(
             "domestic violence, I need shelter in Brooklyn",
             "domestic_violence",
         )
@@ -977,17 +977,16 @@ class TestDVCrisisPopulationInjection:
 
         # Step 1: DV crisis, no service intent
         with _patch("app.services.chatbot.claude_reply", return_value=""), \
-             _patch("app.services.chatbot.execution.query_services", return_value=_MOCK_RESULTS), \
-             _patch("app.services.chatbot.detect_crisis",
-                    return_value=("domestic_violence", _DV_CRISIS_RESPONSE)):
+            _patch("app.services.chatbot.execution.query_services", return_value=_MOCK_RESULTS), \
+            _patch("app.services.chatbot.detect_crisis",
+                return_value=("domestic_violence", _DV_CRISIS_RESPONSE)):
             generate_reply("he hits me", session_id=session_id)
 
         # Step 2: Follow-up with service intent → should reach confirmation
         with _patch("app.services.chatbot.claude_reply", return_value=""), \
-             _patch("app.services.chatbot.execution.query_services", return_value=_MOCK_RESULTS), \
-             _patch("app.services.chatbot.detect_crisis", return_value=None):
-            result = generate_reply("I need shelter in Brooklyn",
-                                    session_id=session_id)
+            _patch("app.services.chatbot.execution.query_services", return_value=_MOCK_RESULTS), \
+            _patch("app.services.chatbot.detect_crisis", return_value=None):
+            _result = generate_reply("I need shelter in Brooklyn", session_id=session_id)
 
         # Verify dv_survivor is in session for when search executes
         from app.services.session_store import get_session_slots

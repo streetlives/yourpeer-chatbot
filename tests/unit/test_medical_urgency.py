@@ -217,7 +217,7 @@ class TestMedicalUrgencyTonePrefix:
         so the confirmation stays warm instead of resetting to default."""
         sid = f"test-{uuid.uuid4().hex[:8]}"
         clear_session(sid)
-        results = send_multi([
+        _results = send_multi([
             "I'm diabetic and ran out of insulin",
             "East Harlem",
         ], session_id=sid)

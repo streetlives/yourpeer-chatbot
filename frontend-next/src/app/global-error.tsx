@@ -13,6 +13,7 @@ export default function GlobalError({
   error: Error & { digest?: string };
   reset: () => void;
 }) {
+  console.log('Error: ', error)
   return (
     <html lang="en">
       <body>

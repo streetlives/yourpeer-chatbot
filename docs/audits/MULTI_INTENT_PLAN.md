@@ -1,4 +1,11 @@
+<!-- drift:ignore-file: historical audit — see the Post-Phase-3 location note in this file for current paths of body references -->
 # Multi-Service Intent — Architecture Plan
+
+> **📎 Post-Phase-3 location note (April 2026)**: this plan was written before the `chatbot.py` → `services/chatbot/` package decomposition. Body references to `chatbot.py` in code-home attribution tables still apply conceptually; the current paths are:
+> - Queue storage + offer-after-results logic → `backend/app/services/chatbot/execution.py`
+> - Confirmation listing all queued services + queue-clear-on-success → `backend/app/services/chatbot/handlers/confirmation.py`
+> - Co-located multi-service response message → `backend/app/services/chatbot/execution.py`
+> - Top-level confirmation-message builder (unchanged location) → `backend/app/services/confirmation.py`
 
 ## Problem
 

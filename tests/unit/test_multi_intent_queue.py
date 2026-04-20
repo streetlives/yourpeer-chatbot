@@ -11,7 +11,7 @@ Run with: python -m pytest tests/unit/test_multi_intent_queue.py -v
 
 import pytest
 from app.services.slot_extractor import extract_slots
-from conftest import send_multi, MOCK_QUERY_RESULTS
+from conftest import send_multi
 
 
 # -----------------------------------------------------------------------
@@ -81,8 +81,8 @@ class TestCrossBoroughQueueOffer:
         ])
         qr = r[1].get("quick_replies", [])
         labels = [q["label"].lower() for q in qr]
-        has_yes = any("yes" in l for l in labels)
-        has_no = any("no" in l for l in labels)
+        has_yes = any("yes" in lable for lable in labels)
+        has_no = any("no" in lable for lable in labels)
         assert has_yes and has_no
 
     def test_results_still_returned_for_primary(self):

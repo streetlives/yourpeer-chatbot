@@ -22,14 +22,15 @@ export function useSpeechRecognition(): UseSpeechRecognitionReturn {
   const [isListening, setIsListening] = useState(false);
   const [transcript, setTranscript] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const recognitionRef = useRef<any>(null);
+  const recognitionRef = useRef<SpeechRecognition>(null);
   const preExistingRef = useRef("");
 
   useEffect(() => {
     const SR =
-      window.SpeechRecognition || (window as any).webkitSpeechRecognition;
+      window.SpeechRecognition || (window).webkitSpeechRecognition;
     if (!SR) return;
 
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- window.SpeechRecognition is undefined during SSR; feature-detect then mark as supported
     setIsSupported(true);
 
     const recognition = new SR();
@@ -44,16 +45,16 @@ export function useSpeechRecognition(): UseSpeechRecognitionReturn {
       preExistingRef.current = "";
     };
 
-    recognition.onresult = (event: any) => {
+    recognition.onresult = (event: SpeechRecognitionEvent) => {
       let interim = "";
       let final = "";
       for (let i = event.resultIndex; i < event.results.length; i++) {
-        const t = event.results[i][0].transcript;
-        if (event.results[i].isFinal) {
-          final += t;
-        } else {
-          interim += t;
-        }
+      const t = event.results[i][0].transcript;
+      if (event.results[i].isFinal) {
+        final += t;
+      } else {
+        interim += t;
+      }
       }
 
       if (final) {
@@ -66,7 +67,7 @@ export function useSpeechRecognition(): UseSpeechRecognitionReturn {
       }
     };
 
-    recognition.onerror = (event: any) => {
+    recognition.onerror = (event) => {
       setIsListening(false);
       if (event.error === "not-allowed") {
         setError("Microphone access was denied. Please allow mic access and try again.");

@@ -1,0 +1,61 @@
+name: Frontend checks
+
+# Lint, typecheck, and build the Next.js frontend on every PR and on pushes
+# to main that touch frontend code.
+#
+# No frontend tests exist yet — if vitest/playwright is added later, add a
+# test step between typecheck and build.
+
+on:
+  pull_request:
+    paths:
+      - 'frontend-next/**'
+      - '.github/workflows/frontend-checks.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'frontend-next/**'
+
+concurrency:
+  group: frontend-checks-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    name: Lint, typecheck, build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    defaults:
+      run:
+        working-directory: frontend-next
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          # Node 20 LTS — satisfies package.json engines ">=18.18.0" and
+          # matches what most Next.js 15 projects deploy under.
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend-next/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+        # ci (not install) — fails if package-lock.json is out of sync,
+        # which is the correct posture for CI.
+
+      - name: Lint
+        run: npm run lint
+        # Uses the Next.js ESLint config from package.json's "lint" script.
+
+      - name: Type-check
+        run: npx tsc --noEmit
+        # --noEmit: just check types, don't emit .js output.
+
+      - name: Build
+        run: npm run build
+        # Catches build-time errors (broken imports, missing env vars used
+        # in server components) that tsc alone misses.

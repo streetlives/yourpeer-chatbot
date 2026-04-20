@@ -18,6 +18,7 @@ export function useOnlineStatus(): boolean {
 
   useEffect(() => {
     // Set initial state from browser (safe for SSR — defaults to true)
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- navigator is undefined during SSR; one-time bridge from SSR default to real client state
     setIsOnline(navigator.onLine);
 
     const handleOnline = () => setIsOnline(true);

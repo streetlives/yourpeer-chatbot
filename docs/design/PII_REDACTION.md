@@ -153,8 +153,8 @@ Key functions:
 ## Test Coverage
 
 ```bash
-pytest tests/test_pii_redactor.py -v     # 80 tests covering all 8 categories
-pytest tests/test_edge_cases.py -v        # PII + slot interaction tests
+pytest tests/unit/test_pii_redactor.py -v     # 80 tests covering all 8 categories
+pytest tests/unit/test_edge_cases.py -v        # PII + slot interaction tests
 ```
 
 Tests cover:

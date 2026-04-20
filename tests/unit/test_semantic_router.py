@@ -20,7 +20,7 @@ Test categories:
 
 import pytest
 import numpy as np
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 from dataclasses import dataclass
 
 from app.services.semantic_router import (
@@ -260,7 +260,7 @@ class TestInitialization:
 
     def test_classify_returns_none_before_init(self):
         """classify_service() returns None when not initialized."""
-        result = classify_service("I need food")
+        _result = classify_service("I need food")
         # It will try to initialize but fail without real model
         # (since sentence-transformers may not have the model cached)
         # Either it succeeds or returns None — both are acceptable
@@ -738,7 +738,7 @@ class TestIntegration:
             from app.services.llm_slot_extractor import extract_slots_smart
             # >8 words — should still call LLM for additional slots
             message = "I am diabetic and I ran out of my insulin in Manhattan"
-            result = extract_slots_smart(message)
+            _result = extract_slots_smart(message)
 
             # LLM should have been called for the longer message
             mock_llm.assert_called_once()
@@ -978,7 +978,7 @@ class TestEdgeCases:
             {"food": ["I need food"]},
         )
         # Should not raise — may return None or a match depending on encoding
-        result = classify_service("")
+        _result = classify_service("")
         # Key assertion: no crash
 
     def test_whitespace_only_input(self, mock_model):
@@ -987,7 +987,7 @@ class TestEdgeCases:
             mock_model,
             {"food": ["I need food"]},
         )
-        result = classify_service("   ")
+        _result = classify_service("   ")
         # Key assertion: no crash
 
     def test_model_none_while_initialized_returns_none(self):
@@ -1089,7 +1089,7 @@ class TestIntegrationFallthrough:
             }
 
             from app.services.llm_slot_extractor import extract_slots_smart
-            result = extract_slots_smart("some ambiguous message")
+            _result = extract_slots_smart("some ambiguous message")
 
             # Semantic returned None, so LLM should have been called
             mock_classify.assert_called_once()
@@ -1129,7 +1129,7 @@ class TestIntegrationFallthrough:
             }
 
             from app.services.llm_slot_extractor import extract_slots_smart
-            result = extract_slots_smart("some message here")
+            _result = extract_slots_smart("some message here")
 
             # Semantic not available → classify_service not called
             mock_classify.assert_not_called()
@@ -1176,7 +1176,7 @@ class TestIntegrationFallthrough:
                 "fell through and I have nowhere to go and I have been "
                 "sleeping outside for three nights now"
             )
-            result = extract_slots_smart(long_message)
+            _result = extract_slots_smart(long_message)
 
             # Narrative path taken — semantic router never called
             mock_classify.assert_not_called()
