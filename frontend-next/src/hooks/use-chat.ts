@@ -25,8 +25,8 @@ const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 async function withRetry<T>(fn: () => Promise<T>, retryDelayMs = 1500): Promise<T> {
   try {
     return await fn();
-  } catch (err: any) {
-    const msg = err.message || "";
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "Unknown error";
     // Don't retry rate limits or auth errors
     if (msg.includes("429") || msg.includes("403")) throw err;
     await delay(retryDelayMs);
@@ -35,16 +35,17 @@ async function withRetry<T>(fn: () => Promise<T>, retryDelayMs = 1500): Promise<
 }
 
 /** Convert a caught error into a user-friendly message. */
-function userFacingError(err: any): string {
-  const msg = err?.message || "";
+function userFacingError(err: unknown): string {
+  const msg = err instanceof Error ? err.message : "Unknown error";
+  const name = err instanceof Error ? err.name : "Unknown error";
   // Rate-limit messages include "wait" — pass through verbatim
   if (msg.includes("wait")) return msg;
   // API layer errors (503, 500) already have good messages — pass through
   if (msg.includes("temporarily unavailable") || msg.includes("on our end") || msg.includes("Try again")) return msg;
   // Network error — fetch itself failed (no response)
-  if (err?.name === "TypeError" || msg.includes("fetch")) return "Can't reach the server right now. Check your connection and try again.";
+  if (name === "TypeError" || msg.includes("fetch")) return "Can't reach the server right now. Check your connection and try again.";
   // Timeout — AbortSignal.timeout fired
-  if (err?.name === "TimeoutError" || err?.name === "AbortError") return "The search is taking longer than expected. Try again in a moment.";
+  if (name === "TimeoutError" || name === "AbortError") return "The search is taking longer than expected. Try again in a moment.";
   // Fallback
   return "Sorry, something went wrong. Try again in a moment.";
 }
@@ -127,11 +128,11 @@ export function useChat() {
             quick_replies: data.quick_replies,
             showFeedback: (data.services?.length ?? 0) > 0,
           });
-        } catch (err: any) {
+        } catch (err) {
           removeMessage(searchProgressId);
-
+          const msg = err instanceof Error ? err.message : "Unknown error"
           // Stale session token — clear and retry
-          if (err.message?.includes("403") && sessionId) {
+          if (msg.includes("403") && sessionId) {
             try {
               useChatStore.getState().setSessionId(null);
               const data = await sendChatMessage("near me", null, coords);
@@ -205,10 +206,10 @@ export function useChat() {
             quick_replies: data.quick_replies,
             showFeedback: (data.services?.length ?? 0) > 0,
           });
-        } catch (err: any) {
+        } catch (err) {
           removeMessage(searchProgressId);
-
-          if (err.message?.includes("403") && sessionId) {
+          const msg = err instanceof Error ? err.message : "Unknown error";
+          if (msg.includes("403") && sessionId) {
             try {
               useChatStore.getState().setSessionId(null);
               const data = await sendChatMessage("Yes, search", null, coordsToSend);
@@ -261,11 +262,12 @@ export function useChat() {
           quick_replies: data.quick_replies,
           showFeedback: (data.services?.length ?? 0) > 0,
         });
-      } catch (err: any) {
+      } catch (err) {
         // If the backend rejected our session token (e.g. SECRET changed),
         // clear the stale sessionId and retry once with no session so the
         // backend mints a fresh token.
-        if (err.message?.includes("403") && sessionId) {
+        const msg = err instanceof Error ? err.message : "Unknown error";
+        if (msg.includes("403") && sessionId) {
           try {
             useChatStore.getState().setSessionId(null);
             const coords = hasCoords ? { latitude: latitude!, longitude: longitude! } : null;
@@ -356,7 +358,7 @@ export function useChat() {
             quick_replies: data.quick_replies,
             showFeedback: (data.services?.length ?? 0) > 0,
           });
-        } catch (err: any) {
+        } catch (err) {
           removeMessage(searchProgressId);
           const friendlyMsg = userFacingError(err);
           setError(friendlyMsg);
@@ -387,7 +389,7 @@ export function useChat() {
           quick_replies: data.quick_replies,
           showFeedback: (data.services?.length ?? 0) > 0,
         });
-      } catch (err: any) {
+      } catch (err) {
         const friendlyMsg = userFacingError(err);
         setError(friendlyMsg);
         addMessage({

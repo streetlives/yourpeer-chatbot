@@ -140,7 +140,7 @@ export const useChatStore = create<ChatStore>()(
       // The migrate function handles upgrading old data so users don't
       // lose their conversation or hit runtime errors after a deploy.
       version: 1,
-      migrate: (persisted: any, version: number) => {
+      migrate: (persisted, version: number) => {
         if (version === 0) {
           // v0 → v1: no structural changes, just establishing the baseline.
           // Future migrations go here as additional `if` blocks:

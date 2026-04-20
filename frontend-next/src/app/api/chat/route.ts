@@ -48,6 +48,7 @@ export async function POST(req: NextRequest) {
       headers: { "X-Request-ID": requestId },
     });
   } catch (err) {
+    console.log('Error: ', err)
     return NextResponse.json(
       { detail: "Failed to reach chat backend" },
       { status: 502 },
