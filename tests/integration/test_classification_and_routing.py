@@ -203,17 +203,26 @@ def test_service_needs_followup(fresh_session):
 # -----------------------------------------------------------------------
 # GENERAL CONVERSATION
 # -----------------------------------------------------------------------
-@patch("app.services.chatbot._USE_LLM", False)
-@patch("app.services.chatbot.detect_crisis", return_value=None)
+# Patch targets: _USE_LLM is bound at import time in pipeline.py and
+# orchestrator.py via `from .context import _USE_LLM`. Patching the
+# re-export at app.services.chatbot._USE_LLM has no effect on those
+# local bindings. We also patch classify_message_llm as a belt-and-
+# braces — even if _USE_LLM somehow leaks to True, the real LLM call
+# shouldn't run in tests.
+@patch("app.services.chatbot.pipeline._USE_LLM", False)
+@patch("app.services.chatbot.orchestrator._USE_LLM", False)
+@patch("app.llm.claude_client.classify_message_llm", return_value=None)
+@patch("app.services.chatbot.orchestrator.detect_crisis", return_value=None)
 @patch("app.services.chatbot.execution.query_services")
 @patch("app.services.responses.claude_reply", return_value="I understand. How can I help you find what you need?")
-@patch("app.services.chatbot.claude_reply", return_value="I understand. How can I help you find what you need?")
-def test_general_conversation(mock_chatbot_claude, mock_responses_claude, mock_query, mock_crisis, fresh_session):
+def test_general_conversation(mock_responses_claude, mock_query, mock_crisis, mock_llm_classify, *_flags, fresh_session):
     """Unrecognized messages should route to Claude for conversational response.
 
-    _USE_LLM is patched to False so the LLM classifier doesn't intercept
-    the message before it reaches _fallback_response. This test verifies
-    the regex-general → fallback → claude_reply path.
+    _USE_LLM is forced False at both its bind sites (pipeline.py and
+    orchestrator.py) so the LLM classifier doesn't intercept the message
+    before it reaches _fallback_response. This verifies the
+    regex-general → fallback → claude_reply path deterministically,
+    regardless of whether ANTHROPIC_API_KEY is set in the test env.
     """
     result = generate_reply("tell me more about that", session_id=fresh_session)
     mock_query.assert_not_called()

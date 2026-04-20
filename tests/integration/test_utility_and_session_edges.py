@@ -301,19 +301,35 @@ class TestGetClientIp:
         req = self._make_request(headers={"x-forwarded-for": "1.2.3.4"})
         assert get_client_ip(req) == "1.2.3.4"
 
-    def test_multiple_forwarded_ips_takes_first(self):
+    def test_multiple_forwarded_ips_takes_last(self):
+        """With multiple forwarded IPs, the last one wins.
+
+        This pins the security-critical behavior: on a single-layer
+        reverse proxy (Render, Fly, Cloudflare), the trusted proxy
+        APPENDS the real client IP at the end of X-Forwarded-For.
+        Any earlier entries are client-supplied and spoofable.
+
+        Taking the first entry would let an attacker include
+        ``X-Forwarded-For: 1.2.3.4`` in their request to bypass
+        rate limits and bans targeted at their real IP — they'd
+        appear to rotate identities at will. The implementation
+        and this test are intentionally aligned on taking the last.
+        """
         from app.dependencies import get_client_ip
         req = self._make_request(
             headers={"x-forwarded-for": "1.2.3.4, 10.0.0.1, 10.0.0.2"}
         )
-        assert get_client_ip(req) == "1.2.3.4"
+        # 10.0.0.2 is the IP the trusted proxy appended — the real client.
+        assert get_client_ip(req) == "10.0.0.2"
 
     def test_forwarded_with_whitespace(self):
+        """Whitespace around the last entry is trimmed."""
         from app.dependencies import get_client_ip
         req = self._make_request(
-            headers={"x-forwarded-for": "  1.2.3.4  , 10.0.0.1"}
+            headers={"x-forwarded-for": "  1.2.3.4  ,   10.0.0.1   "}
         )
-        assert get_client_ip(req) == "1.2.3.4"
+        # Last entry wins (see test above); whitespace stripped.
+        assert get_client_ip(req) == "10.0.0.1"
 
     def test_no_forwarded_uses_client(self):
         from app.dependencies import get_client_ip

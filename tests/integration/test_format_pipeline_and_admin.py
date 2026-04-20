@@ -225,11 +225,25 @@ class TestAdminStatsResponseShape:
         assert td["turns_without_tone"] == 3
 
     def test_admin_api_stats_includes_new_keys(self):
-        """HTTP-level test that /api/stats returns the new keys."""
+        """HTTP-level test that /api/stats returns the new keys.
+
+        Admin endpoints require ``Authorization: Bearer <ADMIN_API_KEY>``
+        when the env var is set (see app/dependencies.py :: require_admin_key).
+        Without the header, the dependency returns 401 before the route
+        runs, which was masking the actual test. We read the same env
+        var the app reads and send it in the header. If neither is set
+        (dev mode), require_admin_key is a no-op and the header is
+        ignored — test still passes.
+        """
+        import os
         from fastapi.testclient import TestClient
         from app.main import app
         client = TestClient(app)
-        response = client.get("/admin/api/stats")
+        headers = {}
+        admin_key = os.environ.get("ADMIN_API_KEY")
+        if admin_key:
+            headers["Authorization"] = f"Bearer {admin_key}"
+        response = client.get("/admin/api/stats", headers=headers)
         assert response.status_code == 200
         data = response.json()
         assert "routing" in data
@@ -296,11 +310,16 @@ class TestSkipLlmPipeline:
         sid = _fresh()
         _send("food in Manhattan", sid)
         # On the "yes" confirmation, detect_crisis should be called
-        # with skip_llm=True (or not called at all for short actions)
+        # with skip_llm=True (or not called at all for short actions).
+        #
+        # Patch target: orchestrator.detect_crisis. The name is bound
+        # in app/services/chatbot/orchestrator.py at import time, so
+        # patching the re-export at app.services.chatbot.detect_crisis
+        # would not affect the already-bound local name.
         with (
             patch("app.services.chatbot.execution.query_services", return_value=MOCK_QUERY_RESULTS),
             patch("app.services.chatbot.claude_reply", return_value="ok"),
-            patch("app.services.chatbot.detect_crisis", return_value=None) as mock_crisis,
+            patch("app.services.chatbot.orchestrator.detect_crisis", return_value=None) as mock_crisis,
         ):
             generate_reply("yes", session_id=sid)
             # If called, should have skip_llm=True
@@ -317,7 +336,7 @@ class TestSkipLlmPipeline:
         with (
             patch("app.services.chatbot.execution.query_services", return_value=MOCK_QUERY_RESULTS),
             patch("app.services.chatbot.claude_reply", return_value="ok"),
-            patch("app.services.chatbot.detect_crisis",
+            patch("app.services.chatbot.orchestrator.detect_crisis",
                   return_value=("suicide_self_harm", "Call 988.")) as mock_crisis,
         ):
             result = generate_reply("yes I want to die", session_id=sid)
