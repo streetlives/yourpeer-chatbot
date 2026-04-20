@@ -289,11 +289,25 @@ class BodySizeLimitMiddleware(BaseHTTPMiddleware):
     validation. Without this, an attacker could send a 100MB JSON body
     that gets loaded into memory before the 10,000-char message limit
     rejects it. This middleware short-circuits before any parsing.
+
+    Exemptions: endpoints that legitimately accept larger payloads
+    (e.g., admin eval report uploads) are listed in _EXEMPT_PATHS and
+    enforce their own size caps locally. Those endpoints also require
+    admin auth via require_admin_key, so they're not open to abuse.
     """
 
     MAX_BODY_BYTES = 50_000  # 50KB — generous for a chat message
 
+    # Paths whose handlers enforce their own size limits. The middleware
+    # skips the 50KB cap for these but does NOT bypass other checks.
+    _EXEMPT_PATHS = frozenset({
+        "/admin/api/eval/upload",  # enforces 10MB locally; admin-authed
+    })
+
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint):
+        if request.url.path in self._EXEMPT_PATHS:
+            return await call_next(request)
+
         content_length = request.headers.get("content-length")
         if content_length:
             try:

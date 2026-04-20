@@ -483,7 +483,7 @@ class TestPromptBuilders:
 
     def test_fallback_response_handles_exception(self):
         from app.services.responses import _fallback_response
-        with patch("app.services.chatbot.claude_reply", side_effect=Exception("fail")):
+        with patch("app.services.responses.claude_reply", side_effect=Exception("fail")):
             result = _fallback_response("hello", {})
         assert "yourpeer.nyc" in result or "try again" in result
 
