@@ -54,7 +54,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           # Matches render.yaml PYTHON_VERSION so AST parsing of source files
           # uses the same language level as production.
