@@ -72,13 +72,15 @@ def get_client_ip(request: Request) -> str:
     """Extract the real client IP, respecting proxy headers.
 
     Render (and most reverse proxies) set ``X-Forwarded-For``.
-    We take the *first* entry — the original client — and fall back to
-    the direct connection address.
+    We take the *last* entry — the one appended by the trusted proxy —
+    and fall back to the direct connection address.
     """
     forwarded = request.headers.get("x-forwarded-for")
     if forwarded:
-        # "client, proxy1, proxy2" → take the client
-        return forwarded.split(",")[0].strip()
+        # Render (and most single-layer reverse proxies) appends the true
+        # client IP as the last entry.  Taking the first entry is spoofable —
+        # an attacker can prepend a fake IP to evade rate limits and bans.
+        return forwarded.split(",")[-1].strip()
     if request.client:
         return request.client.host
     return "unknown"
@@ -247,8 +249,6 @@ class BotDetectionMiddleware(BaseHTTPMiddleware):
     """
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint):
-        from app.dependencies import get_client_ip
-
         client_ip = get_client_ip(request)
         path = request.url.path.rstrip("/")
         now = _time.monotonic()
@@ -263,16 +263,18 @@ class BotDetectionMiddleware(BaseHTTPMiddleware):
         # 2. Block known scanner User-Agents
         ua = (request.headers.get("user-agent") or "").lower()
         if any(bot in ua for bot in _BLOCKED_USER_AGENTS):
-            logger.info(f"Blocked scanner UA from {client_ip}: {ua[:80]}")
+            logger.info("Blocked scanner UA from %s: %s", client_ip, ua[:80])
             return JSONResponse(status_code=403, content={"detail": "Forbidden"})
 
         # 3. Honeypot — ban IP on probe
-        if path in _HONEYPOT_PATHS or path.lower() in _HONEYPOT_PATHS:
-            logger.warning(f"Honeypot triggered by {client_ip}: {path}")
+        if path.lower() in _HONEYPOT_PATHS:
+            logger.warning("Honeypot triggered by %s: %s", client_ip, path)
             _banned_ips[client_ip] = now + _BAN_DURATION
             # Evict expired bans to prevent memory growth
             if len(_banned_ips) > 1000:
-                _banned_ips.clear()
+                expired = [ip for ip, exp in _banned_ips.items() if now >= exp]
+                for ip in expired:
+                    del _banned_ips[ip]
             return JSONResponse(status_code=404, content={"detail": "Not found"})
 
         return await call_next(request)
@@ -305,7 +307,7 @@ class BodySizeLimitMiddleware(BaseHTTPMiddleware):
     })
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint):
-        if request.url.path in self._EXEMPT_PATHS:
+        if request.url.path.rstrip("/") in self._EXEMPT_PATHS:
             return await call_next(request)
 
         content_length = request.headers.get("content-length")

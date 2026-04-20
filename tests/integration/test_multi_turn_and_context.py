@@ -550,11 +550,7 @@ class TestImplicitServiceChange:
         assert "shelter" in r["response"].lower()
 
     # --- Additive intent (ADD, not CHANGE) ---
-    # These test a feature gap: the contradiction detector treats "I also need
-    # shelter" the same as "I changed my mind, I need shelter" — it replaces
-    # the primary service instead of queuing the new one alongside it.
 
-    @pytest.mark.xfail(reason="Additive intent ('also', 'too') not yet distinguished from service change")
     @pytest.mark.parametrize("add_msg", [
         "I also need shelter",
         "And I need shelter too",
@@ -574,7 +570,6 @@ class TestImplicitServiceChange:
         assert "shelter" in queued, \
             f"'{add_msg}' should queue shelter"
 
-    @pytest.mark.xfail(reason="Additive intent not yet distinguished from service change")
     def test_additive_then_confirm_searches_primary(self, sid):
         """After additive, confirming should search the primary service."""
         send("I need food in Brooklyn", session_id=sid)

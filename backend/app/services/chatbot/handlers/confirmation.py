@@ -538,8 +538,7 @@ def _handle_post_pending_confirmation(session_id, message, redacted_message, exi
         _is_additive = pending_extracted.get("_is_additive", False)
         if (changed
                 and _is_additive
-                and "service_type" in changed
-                and len(changed) == 1):
+                and "service_type" in changed):
             merged_pending = merge_slots(existing, pending_extracted)
             merged_pending["_pending_confirmation"] = True
             save_session_slots(session_id, merged_pending)
