@@ -38,7 +38,7 @@ const nextConfig = {
           { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
           // Prevents third-party iframes from silently accessing geolocation,
           // which matters since the chat collects lat/long from users.
-          { key: "Permissions-Policy", value: "geolocation=(self), camera=(), microphone=()" },
+          { key: "Permissions-Policy", value: "geolocation=(self), camera=(), microphone=(self)" },
           { key: "Strict-Transport-Security", value: "max-age=31536000; includeSubDomains" },
         ],
       },
