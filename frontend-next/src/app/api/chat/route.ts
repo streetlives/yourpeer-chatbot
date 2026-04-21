@@ -48,7 +48,12 @@ export async function POST(req: NextRequest) {
       headers: { "X-Request-ID": requestId },
     });
   } catch (err) {
-    console.log('Error: ', err)
+    // Proxy-level failure: the backend is unreachable or returned
+    // non-JSON. Log so ops can see recurring upstream problems, but
+    // return a 502 with a neutral message — the client-side
+    // sendChatMessage() handles 5xx by showing "something went
+    // wrong on our end."
+    console.error("[api/chat] backend proxy failed:", err);
     return NextResponse.json(
       { detail: "Failed to reach chat backend" },
       { status: 502 },

@@ -274,7 +274,21 @@ export const useChatStore = create<ChatStore>()(
           const elapsed = Date.now() - (state.lastActiveAt || 0);
           if (elapsed > SESSION_TTL_MS) {
             // Defer the reset so it doesn't interfere with rehydration.
-            setTimeout(() => useChatStore.getState().resetChat(), 0);
+            // queueMicrotask runs after the current tick's synchronous
+            // work (so rehydrate can finish) but before any I/O —
+            // faster and more predictable than setTimeout(0).
+            //
+            // Guard against double-fire: onRehydrateStorage can be
+            // invoked twice in a row (Next.js fast refresh, Suspense
+            // retries). Re-check staleness inside the microtask —
+            // if an earlier reset already ran, `lastActiveAt` is now
+            // fresh and we bail out.
+            queueMicrotask(() => {
+              const current = useChatStore.getState();
+              if (Date.now() - (current.lastActiveAt || 0) > SESSION_TTL_MS) {
+                current.resetChat();
+              }
+            });
           } else {
             // Sync the message counter so new IDs don't collide.
             syncMsgCounter(state.messages);

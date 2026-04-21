@@ -6,7 +6,7 @@
 
 "use client";
 
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect } from "react";
 import { useChatStore, nextMsgId } from "@/lib/chat/store";
 import { sendChatMessage, sendFeedback } from "@/lib/chat/api";
 import { useGeolocation } from "./use-geolocation";
@@ -18,9 +18,34 @@ import {
   reapExpired,
 } from "@/lib/chat/send-queue";
 import { cacheLastResults } from "@/lib/chat/offline-cache";
+import { generateRequestId } from "@/lib/chat/request-id";
 
 const GEOLOCATION_TRIGGER = "__use_geolocation__";
 const CRISIS_GEO_TRIGGER = "__crisis_geo_search__";
+
+/**
+ * Module-level coordinator for the offline-queue flush.
+ *
+ * Holds the Promise for the currently-draining flush, or null when
+ * none is running. Used by:
+ *   1. `flushQueue()` — re-entry guard (second call returns the
+ *      in-flight Promise so it's awaitable, not a no-op).
+ *   2. `send()` and `retry()` — serialize new outbound POSTs after
+ *      any ongoing flush. Without this, two concurrent POSTs to the
+ *      stateful chatbot interleave and bot responses come back out
+ *      of order.
+ *
+ * Module-scoped rather than a `useRef` because:
+ *   a) The flush coordinator is singleton per-tab — multiple mounts
+ *      of the hook (e.g. during fast refresh or suspense retries)
+ *      should share the same gate, not each get their own.
+ *   b) React 19's compiler-aware lint rules flag in-callback
+ *      mutations of ref.current as "modifying a hook argument."
+ *      Module scope sidesteps that analysis cleanly.
+ *
+ * NOT a useRef even with the "Ref" suffix — see comment above.
+ */
+let flushInFlight: Promise<void> | null = null;
 
 /** Wait ms milliseconds. */
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -154,6 +179,7 @@ export function useChat() {
     setLoading,
     setError,
     markQuickRepliesUsed,
+    dismissEarlierResults,
   } = useChatStore();
 
   const { latitude, longitude, hasCoords, requestLocation } = useGeolocation();
@@ -226,6 +252,28 @@ export function useChat() {
       const message = text.trim();
       if (!message) return;
 
+      // If a flush is currently draining the offline queue, wait for
+      // it to complete before firing a new request. The chatbot is
+      // stateful per-session — parallel requests interleave on the
+      // backend and the two bot responses can come back out of order
+      // (new message's response arriving before the queued replay's).
+      // The await is a no-op on the hot path (no flush in flight);
+      // it only blocks during the narrow window where a user types
+      // a new message while their offline queue is replaying. The
+      // input itself stays enabled — we just serialize the POSTs.
+      if (flushInFlight) {
+        await flushInFlight;
+      }
+
+      // The "See earlier results" link (driven by lastResultsBeforeReset)
+      // represents a snapshot from a previous session that was offered
+      // but not acted on. As soon as the user sends in the new session,
+      // they've moved on — dismiss the snapshot so the link doesn't
+      // linger next to a fresh conversation. If they actually wanted
+      // their old results, they would have tapped "See earlier results"
+      // before typing.
+      dismissEarlierResults();
+
       // Mark any existing quick replies as used
       markQuickRepliesUsed();
 
@@ -236,7 +284,7 @@ export function useChat() {
         // target the actual chat message, and so a retry from the
         // queue reuses the original key for backend dedupe.
         const userMsgId = nextMsgId();
-        const requestId = crypto.randomUUID();
+        const requestId = generateRequestId();
         addMessage({
           id: userMsgId,
           role: "user",
@@ -368,7 +416,7 @@ export function useChat() {
         // Capture user message ID + stable idempotency key so status
         // transitions and the backend dedupe both work correctly.
         const userMsgId = nextMsgId();
-        const requestId = crypto.randomUUID();
+        const requestId = generateRequestId();
         addMessage({
           id: userMsgId,
           role: "user",
@@ -470,7 +518,7 @@ export function useChat() {
       // Stable idempotency key for this logical user action. Reused on
       // every retry/flush so the server can dedupe. Persisted on the
       // message itself so queue flush can find it.
-      const requestId = crypto.randomUUID();
+      const requestId = generateRequestId();
       addMessage({
         id: userMsgId,
         role: "user",
@@ -555,13 +603,21 @@ export function useChat() {
         setLoading(false);
       }
     },
-    [sessionId, latitude, longitude, hasCoords, addMessage, updateMessage, removeMessage, setSessionId, setLoading, setError, markQuickRepliesUsed, requestLocation, handleNetworkError],
+    [sessionId, latitude, longitude, hasCoords, addMessage, updateMessage, removeMessage, setSessionId, setLoading, setError, markQuickRepliesUsed, dismissEarlierResults, requestLocation, handleNetworkError],
   );
 
   /** Retry a failed message — removes the error and re-sends without
    *  adding a duplicate user message (the original is still in the chat). */
   const retry = useCallback(
     async (errorMsgId: string, originalText: string) => {
+      // Same serialization concern as send() — a retry fires a fresh
+      // POST, and if an offline-queue flush is currently draining,
+      // we wait for it before retrying. Prevents the retry's bot
+      // response from arriving ahead of still-queued earlier ones.
+      if (flushInFlight) {
+        await flushInFlight;
+      }
+
       // Find the user message that corresponds to this error bubble
       // BEFORE we remove the bubble. The user message that failed is
       // the most recent user-role message chronologically preceding
@@ -603,7 +659,7 @@ export function useChat() {
       // backend's cache will return that same response without
       // running the pipeline again. Fall back to a fresh UUID for
       // legacy messages (persisted from before requestId was added).
-      const retryRequestId = originalFailedMsg?.requestId ?? crypto.randomUUID();
+      const retryRequestId = originalFailedMsg?.requestId ?? generateRequestId();
 
       // Geolocation retry — re-run location request + API call
       if (originalText === GEOLOCATION_TRIGGER) {
@@ -797,14 +853,15 @@ export function useChat() {
   // but the user's original message is already in the chat (added
   // when they typed it while offline). We use sendChatMessage
   // directly and addMessage for just the bot response.
-  const flushingRef = useRef(false);
+  //
+  // Flush coordination uses the module-level `flushInFlight` (see
+  // top of file for the rationale). No useRef here.
 
   const flushQueue = useCallback(async () => {
-    if (flushingRef.current) return;
+    if (flushInFlight) return flushInFlight;
     if (!navigator.onLine) return;
-    flushingRef.current = true;
 
-    try {
+    const work = (async () => {
       // Drop expired entries first. If any were reaped, tell the user
       // which ones so they know why nothing happened for them.
       const expired = await reapExpired();
@@ -841,17 +898,19 @@ export function useChat() {
         // Re-check online in case we went offline mid-flush
         if (!navigator.onLine) break;
 
-        // Check whether the user cancelled this message while the
-        // flush was in progress. The loop captured `queue` at the
-        // start — if cancelQueued() ran between iterations, the IDB
-        // queue was dequeued but our local array still has the
-        // entry. Look at the live chat store instead: if the user
-        // message is marked cancelled, skip. Ensure the IDB entry
-        // is gone too (cancel already did this, but belt + braces).
+        // Check whether the message is still a valid flush target.
+        // Two ways it can drop out between iterations:
+        //   1. User cancelled it (message still in chat, status=cancelled).
+        //   2. Session reset fired (message removed from chat entirely).
+        // In either case, the flush shouldn't proceed — sending would
+        // either overwrite a cancellation the user explicitly made, or
+        // drop a bot response into the welcome screen with no matching
+        // user message. Dequeue defensively (cancel/reset already did
+        // this, but the queue IDB write is async — belt + braces).
         {
           const liveMessages = useChatStore.getState().messages;
           const liveMsg = liveMessages.find((m) => m.id === queued.id);
-          if (liveMsg?.status === "cancelled") {
+          if (!liveMsg || liveMsg.status === "cancelled") {
             await dequeueMessage(queued.id);
             continue;
           }
@@ -874,17 +933,18 @@ export function useChat() {
             queued.requestId,
           );
 
-          // A second cancellation check, now that the response has
-          // landed but before we commit the bot reply to the chat.
-          // If the user cancelled while the request was in flight,
-          // honor that — don't overwrite status to "sent" and don't
-          // show the bot response. The server-side work is already
-          // done (and cached in idempotency for 60s), so cost is
-          // sunk; the UX preserves the user's explicit intent.
+          // A second check, now that the response has landed but
+          // before we commit the bot reply to the chat. If the user
+          // cancelled or reset the chat while the request was in
+          // flight, honor that — don't inject a bot response into a
+          // conversation that no longer has the originating user
+          // message. The server-side work is already done (and
+          // cached in idempotency for 60s), so cost is sunk; the
+          // UX preserves the user's explicit intent.
           {
             const liveMessages = useChatStore.getState().messages;
             const liveMsg = liveMessages.find((m) => m.id === queued.id);
-            if (liveMsg?.status === "cancelled") {
+            if (!liveMsg || liveMsg.status === "cancelled") {
               await dequeueMessage(queued.id);
               continue;
             }
@@ -954,8 +1014,19 @@ export function useChat() {
           if (errMessage(err).includes("429")) break;
         }
       }
+    })();
+
+    flushInFlight = work;
+    try {
+      await work;
     } finally {
-      flushingRef.current = false;
+      // Clear only if this is still our flush — a new flush could
+      // theoretically start after the iteration body completes but
+      // before this line runs. Defensive: don't null-out someone
+      // else's promise.
+      if (flushInFlight === work) {
+        flushInFlight = null;
+      }
     }
   }, [addMessage, updateMessage, setSessionId]);
 

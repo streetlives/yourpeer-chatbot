@@ -16,11 +16,10 @@
  * - Queue is stored as a single IndexedDB value (array) under one key.
  *   We always read/write the whole thing. Queue depth is small
  *   (typically 0-3 entries), so this is fine and avoids IDB cursor
- *   complexity. Read-modify-write has a narrow race window when
- *   concurrent writes happen (e.g., enqueue fires while reapExpired
- *   is mid-flight). The last write wins. For a single-user offline
- *   queue this is acceptable; if the write pattern ever becomes
- *   concurrent, migrate to IDBTransaction with a proper object store.
+ *   complexity. Mutations go through idb-keyval's `update()` which
+ *   runs the read-modify-write inside one IDB transaction — so a
+ *   concurrent enqueue() and reapExpired() can't clobber each other
+ *   (previously last-write-wins; now properly serialized).
  * - 1-hour TTL on queued entries. After an hour, a queued "what food
  *   is near me?" is probably no longer the question the user wanted
  *   answered — they've moved, changed context, or given up. Rather
@@ -39,7 +38,7 @@
 
 "use client";
 
-import { get, set } from "idb-keyval";
+import { get, update } from "idb-keyval";
 
 const QUEUE_KEY = "yourpeer:send-queue:v1";
 
@@ -107,27 +106,48 @@ export async function readQueue(): Promise<QueuedMessage[]> {
  * Returns { accepted: true } normally, or { accepted: false, reason }
  * when the queue is full. Callers should surface the rejection to
  * the user rather than silently swallowing it.
+ *
+ * Atomicity: the read-and-write happens inside a single idb-keyval
+ * `update()` transaction, so a concurrent reapExpired() can't drop
+ * this message after we've written it. The cap check and dedupe
+ * happen inside the same transaction too — no window for a stale
+ * read of queue length.
+ *
+ * The result is read out via closure (a mutable `result` variable
+ * set inside the updater) because `update()` returns `Promise<void>`
+ * by design. Safe because the updater runs synchronously within the
+ * IDB transaction.
  */
 export async function enqueue(
   msg: QueuedMessage,
 ): Promise<{ accepted: true } | { accepted: false; reason: "queue_full" }> {
   if (typeof window === "undefined") return { accepted: true };
 
+  let result: { accepted: true } | { accepted: false; reason: "queue_full" } = {
+    accepted: true,
+  };
+  let mutated = false;
+
   try {
-    const current = await readQueue();
-    // If the caller is updating an existing queued message (same id),
-    // let it through regardless of cap — that's not new content.
-    const existing = current.find((m) => m.id === msg.id);
-    if (!existing && current.length >= MAX_QUEUE_DEPTH) {
-      return { accepted: false, reason: "queue_full" };
-    }
-    // Dedupe by ID — prevents double-queueing if send() is called
-    // twice for the same user action (e.g. retry while still queued).
-    const deduped = current.filter((m) => m.id !== msg.id);
-    deduped.push(msg);
-    await set(QUEUE_KEY, deduped);
-    notifyChange();
-    return { accepted: true };
+    await update<QueuedMessage[] | undefined>(QUEUE_KEY, (oldValue) => {
+      const current = Array.isArray(oldValue) ? oldValue : [];
+      const existing = current.find((m) => m.id === msg.id);
+      if (!existing && current.length >= MAX_QUEUE_DEPTH) {
+        result = { accepted: false, reason: "queue_full" };
+        // Return unchanged queue — no write actually happens at the
+        // logical level, but the transaction still commits the
+        // (identical) value. Cheap.
+        return current;
+      }
+      // Dedupe by ID — prevents double-queueing if send() is called
+      // twice for the same user action (e.g. retry while still queued).
+      const deduped = current.filter((m) => m.id !== msg.id);
+      deduped.push(msg);
+      mutated = true;
+      return deduped;
+    });
+    if (mutated) notifyChange();
+    return result;
   } catch (err) {
     console.warn("[send-queue] enqueue failed:", err);
     // IDB write failure is itself a form of "can't accept" — treat
@@ -137,31 +157,40 @@ export async function enqueue(
   }
 }
 
-/** Remove a message from the queue by id. Used after successful flush. */
+/** Remove a message from the queue by id. Used after successful flush.
+ *  Atomic — reads and writes inside a single IDB transaction. */
 export async function dequeue(id: string): Promise<void> {
   if (typeof window === "undefined") return;
 
+  let mutated = false;
   try {
-    const current = await readQueue();
-    const filtered = current.filter((m) => m.id !== id);
-    if (filtered.length !== current.length) {
-      await set(QUEUE_KEY, filtered);
-      notifyChange();
-    }
+    await update<QueuedMessage[] | undefined>(QUEUE_KEY, (oldValue) => {
+      const current = Array.isArray(oldValue) ? oldValue : [];
+      const filtered = current.filter((m) => m.id !== id);
+      if (filtered.length !== current.length) mutated = true;
+      return filtered;
+    });
+    if (mutated) notifyChange();
   } catch (err) {
     console.warn("[send-queue] dequeue failed:", err);
   }
 }
 
-/** Drop all queued messages. Used by "Start over" / session reset. */
+/** Drop all queued messages. Used by "Start over" / session reset.
+ *  Atomic write; safe under concurrent enqueue (queue becomes empty
+ *  regardless of what raced in). */
 export async function clearQueue(): Promise<void> {
   if (typeof window === "undefined") return;
 
+  let mutated = false;
   try {
-    const current = await readQueue();
-    if (current.length === 0) return;
-    await set(QUEUE_KEY, []);
-    notifyChange();
+    await update<QueuedMessage[] | undefined>(QUEUE_KEY, (oldValue) => {
+      const current = Array.isArray(oldValue) ? oldValue : [];
+      if (current.length === 0) return current;
+      mutated = true;
+      return [];
+    });
+    if (mutated) notifyChange();
   } catch (err) {
     console.warn("[send-queue] clear failed:", err);
   }
@@ -171,26 +200,40 @@ export async function clearQueue(): Promise<void> {
  * Remove expired entries. Returns the list of entries that were
  * dropped (so the caller can notify the user which messages timed
  * out). Call this before flushing.
+ *
+ * Atomic: the split happens inside a single `update()` transaction,
+ * so a concurrent enqueue()'s new message can't be dropped as a
+ * side-effect of this reap. The expired list is captured via closure
+ * because `update()` returns Promise<void> — same pattern as enqueue().
  */
 export async function reapExpired(): Promise<QueuedMessage[]> {
   if (typeof window === "undefined") return [];
 
+  const expired: QueuedMessage[] = [];
+  let mutated = false;
+
   try {
-    const current = await readQueue();
-    const now = Date.now();
-    const fresh: QueuedMessage[] = [];
-    const expired: QueuedMessage[] = [];
-    for (const msg of current) {
-      if (now - msg.queuedAt > QUEUE_TTL_MS) {
-        expired.push(msg);
-      } else {
-        fresh.push(msg);
+    await update<QueuedMessage[] | undefined>(QUEUE_KEY, (oldValue) => {
+      const current = Array.isArray(oldValue) ? oldValue : [];
+      const now = Date.now();
+      const fresh: QueuedMessage[] = [];
+      for (const msg of current) {
+        if (now - msg.queuedAt > QUEUE_TTL_MS) {
+          expired.push(msg);
+        } else {
+          fresh.push(msg);
+        }
       }
-    }
-    if (expired.length > 0) {
-      await set(QUEUE_KEY, fresh);
-      notifyChange();
-    }
+      if (expired.length > 0) {
+        mutated = true;
+        return fresh;
+      }
+      // Nothing expired — return the input unchanged so the transaction
+      // commits a no-op write. Simpler than conditionally skipping the
+      // write, and cheap.
+      return current;
+    });
+    if (mutated) notifyChange();
     return expired;
   } catch (err) {
     console.warn("[send-queue] reap failed:", err);

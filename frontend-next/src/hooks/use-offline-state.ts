@@ -25,7 +25,11 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { useOnlineStatus } from "./use-online-status";
-import { readQueue, QUEUE_CHANGE_EVENT } from "@/lib/chat/send-queue";
+import {
+  readQueue,
+  reapExpired,
+  QUEUE_CHANGE_EVENT,
+} from "@/lib/chat/send-queue";
 import {
   readCachedResults,
   cacheAgeMs,
@@ -65,6 +69,14 @@ export function useOfflineState(): OfflineState {
     let cancelled = false;
 
     const readState = async () => {
+      // Reap stale entries before reporting depth. Without this, an
+      // offline user whose first messages have aged past QUEUE_TTL_MS
+      // would see an inflated queue count because expiry currently
+      // runs only at flush start (and flush only runs when online).
+      // reapExpired() fires a change event if it drops anything,
+      // which re-enters this effect — but the second pass is a no-op
+      // (nothing left to reap), so no infinite loop.
+      await reapExpired();
       const q = await readQueue();
       const cache = await readCachedResults();
       if (cancelled) return;

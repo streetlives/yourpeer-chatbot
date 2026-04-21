@@ -37,12 +37,19 @@ const PRECACHE_URLS = [
 
 /** Paths that should NEVER be served from cache. Admin endpoints
  *  should always hit the network, and chat POSTs are handled by the
- *  send queue (not by the SW). */
+ *  send queue (not by the SW).
+ *
+ *  Chat pattern matches both `/api/chat` (bare — the send endpoint)
+ *  and `/api/chat/...` (feedback, location-feedback). Previously only
+ *  the latter matched; `/api/chat` on its own slipped through. In
+ *  practice chat is POST-only and the SW filters non-GETs before
+ *  bypass check — but if a GET handler is ever added to /api/chat,
+ *  the old pattern would silently serve from cache. */
 const BYPASS_PATTERNS = [
   /^\/admin(\/|$)/,
   /^\/api\/admin\//,
-  /^\/api\/chat\//,   // chat is POST; queued client-side, not SW-cached
-  /^\/api\/health/,   // always want fresh health status
+  /^\/api\/chat(\/|$)/,   // chat is POST; queued client-side, not SW-cached
+  /^\/api\/health/,       // always want fresh health status
 ];
 
 self.addEventListener("install", (event) => {

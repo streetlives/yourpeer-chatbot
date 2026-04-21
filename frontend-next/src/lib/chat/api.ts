@@ -14,6 +14,7 @@ import type {
   EvalReport,
   EvalRunStatus,
 } from "./types";
+import { generateRequestId } from "./request-id";
 
 // ---------------------------------------------------------------------------
 // Timeout helper (D4)
@@ -45,7 +46,7 @@ export async function sendChatMessage(
    */
   requestId?: string,
 ): Promise<ChatResponse> {
-  const idempotencyKey = requestId ?? crypto.randomUUID();
+  const idempotencyKey = requestId ?? generateRequestId();
   const res = await fetch("/api/chat", {
     method: "POST",
     headers: {
