@@ -217,6 +217,65 @@ def extract_string_constants(path: Path, suffix: str = "_MODEL") -> dict[str, st
 # source-of-truth at runtime via AST and cross-references each regex capture
 # in every markdown file.
 
+
+def extract_collection_members(path: Path, name: str) -> Optional[list[str]]:
+    """Find `NAME = [...]` / `NAME = {...}` (set or dict) and return the
+    string members or dict keys. Used by enumeration-based freshness
+    checks that need the actual identifier set, not just the count.
+
+    Returns None if the name isn't found or isn't a string-collection;
+    returns [] for an empty collection.
+    """
+    tree = _parse_py(path)
+    if tree is None:
+        return None
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name) and target.id == name:
+                    v = node.value
+                    if isinstance(v, (ast.List, ast.Tuple, ast.Set)):
+                        out = []
+                        for elt in v.elts:
+                            if (isinstance(elt, ast.Constant)
+                                    and isinstance(elt.value, str)):
+                                out.append(elt.value)
+                        return out
+                    if isinstance(v, ast.Dict):
+                        out = []
+                        for k in v.keys:
+                            if (isinstance(k, ast.Constant)
+                                    and isinstance(k.value, str)):
+                                out.append(k.value)
+                        return out
+    return None
+
+
+def extract_int_dict(path: Path, name: str) -> Optional[dict[str, int]]:
+    """Find `NAME = {"key": int, ...}` and return the dict. Used by the
+    service-need-priority tier check to invert {service: tier} into
+    {tier: [services]} for comparison against prose tier descriptions.
+    """
+    tree = _parse_py(path)
+    if tree is None:
+        return None
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name) and target.id == name:
+                    if not isinstance(node.value, ast.Dict):
+                        return None
+                    out = {}
+                    for k, v in zip(node.value.keys, node.value.values):
+                        if (isinstance(k, ast.Constant)
+                                and isinstance(k.value, str)
+                                and isinstance(v, ast.Constant)
+                                and isinstance(v.value, int)):
+                            out[k.value] = v.value
+                    return out
+    return None
+
+
 # Gap 3: numeric constants in prose.
 NUMERIC_CONSTANTS = [
     {
@@ -238,10 +297,21 @@ CATEGORY_COUNTS = [
         "desc": "crisis categories",
         "patterns": [
             r"(\d+) crisis categor(?:y|ies)",
-            r"(Seven|Eight|Nine|seven|eight|nine) crisis categor(?:y|ies)",
+            r"(One|Two|Three|Four|Five|Six|Seven|Eight|Nine|Ten|"
+            r"Eleven|Twelve|Thirteen|Fourteen|Fifteen|"
+            r"one|two|three|four|five|six|seven|eight|nine|ten|"
+            r"eleven|twelve|thirteen|fourteen|fifteen) crisis categor(?:y|ies)",
         ],
-        "word_numbers": {"Seven": 7, "Eight": 8, "Nine": 9,
-                         "seven": 7, "eight": 8, "nine": 9},
+        "word_numbers": {
+            "One": 1, "Two": 2, "Three": 3, "Four": 4, "Five": 5,
+            "Six": 6, "Seven": 7, "Eight": 8, "Nine": 9, "Ten": 10,
+            "Eleven": 11, "Twelve": 12, "Thirteen": 13,
+            "Fourteen": 14, "Fifteen": 15,
+            "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
+            "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
+            "eleven": 11, "twelve": 12, "thirteen": 13,
+            "fourteen": 14, "fifteen": 15,
+        },
     },
     {
         "name": "_EMOTIONAL_RESPONSES",
@@ -773,6 +843,452 @@ def check_category_counts(args):
 
 
 # -----------------------------------------------------------------------
+# 13b. ENUMERATION GUARDS — prose lists vs. live code-owned collections
+# -----------------------------------------------------------------------
+# Where `check_category_counts` (#13) watches for "N crisis categories"
+# count-claims, these checks watch for prose that ENUMERATES members of
+# a code-owned collection. Drift mode: a new member is added to the
+# collection but the prose isn't updated, silently leaving users with a
+# stale mental model of what the system does.
+#
+# Same pattern as `TestBotKnowledgeFreshness` in tests/unit/test_bot_knowledge.py,
+# but applied cross-file (docs → code) instead of module-internal
+# (prose → code in the same module). Fits the docs-linter side of the
+# split articulated in bot-knowledge-refresh/FRESHNESS_PATTERN_DEBRIEF.md.
+
+
+def check_crisis_category_name_refs(args):
+    """Every backticked snake_case identifier appearing in a Crisis
+    section of CHATBOT_BEHAVIOR.md or CRISIS_DETECTION.md that looks
+    like a crisis-category name must be a real `_CRISIS_CATEGORIES` key.
+
+    Catches: typos (`sucide_self_harm`), stale renames (`self_harm` when
+    code uses `suicide_self_harm`), and leftover refs to retired
+    categories. Does NOT catch omissions — a category missing from the
+    prose entirely is a different failure mode; see the count check for
+    "N crisis categories".
+
+    Strategy: scan each target file's Crisis section for backticked
+    identifiers that look crisis-shaped (contain a known suffix like
+    `_concern`, `_violence`, `_harm`, `_emergency`, `_runaway`,
+    `_victim`, or are `trafficking`/`violence`). Flag any that aren't
+    in the live `_CRISIS_CATEGORIES` set.
+    """
+    live = extract_collection_members(
+        BACKEND_DIR / "app/services/crisis_detector.py",
+        "_CRISIS_CATEGORIES")
+    # `_CRISIS_CATEGORIES` is a list of tuples `(name, phrases, response)`,
+    # so the generic string-collection extractor returns an empty list.
+    # Fall back to manually pulling the first element of each tuple.
+    if not live:
+        tree = _parse_py(BACKEND_DIR / "app/services/crisis_detector.py")
+        if tree is None:
+            return
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assign):
+                for target in node.targets:
+                    if (isinstance(target, ast.Name)
+                            and target.id == "_CRISIS_CATEGORIES"):
+                        if isinstance(node.value, (ast.List, ast.Tuple)):
+                            names = []
+                            for elt in node.value.elts:
+                                if (isinstance(elt, ast.Tuple)
+                                        and elt.elts
+                                        and isinstance(elt.elts[0], ast.Constant)
+                                        and isinstance(elt.elts[0].value, str)):
+                                    names.append(elt.elts[0].value)
+                            live = names
+    if not live:
+        return
+    live_set = set(live)
+
+    # Target files that discuss crisis categories in depth.
+    targets = [
+        DOCS_DIR / "CHATBOT_BEHAVIOR.md",
+        DOCS_DIR / "design" / "CRISIS_DETECTION.md",
+    ]
+
+    # Identifiers ending in these suffixes (or matching these exact
+    # names) are treated as "plausibly a crisis category" and checked.
+    # Tight enough to exclude `dv_survivor` (a population), `_populations`
+    # (a code attr), `ORDER BY` (SQL), etc.
+    CRISIS_SHAPED = re.compile(
+        r"^(?:"
+        r"[a-z_]+_(?:concern|violence|harm|emergency|runaway|victim)"
+        r"|trafficking|violence"
+        r")$"
+    )
+    backtick_ident = re.compile(r"`([a-z][a-z0-9_]*)`")
+
+    for path in targets:
+        if not path.exists():
+            continue
+        content = path.read_text()
+        if file_is_ignored(content):
+            continue
+        ignored = ignored_lines(content)
+
+        # Constrain scanning to crisis-related sections. For
+        # CHATBOT_BEHAVIOR.md this means the "### Crisis" block; for
+        # CRISIS_DETECTION.md the whole doc is in-scope.
+        if path.name == "CHATBOT_BEHAVIOR.md":
+            lines = content.split("\n")
+            in_crisis = False
+            scan_lines = {}
+            for i, line in enumerate(lines, start=1):
+                if re.match(r"^### Crisis\b", line):
+                    in_crisis = True
+                    continue
+                if in_crisis and re.match(r"^### ", line):
+                    in_crisis = False
+                    continue
+                if in_crisis and i not in ignored:
+                    scan_lines[i] = line
+        else:
+            scan_lines = {
+                i: line for i, line in enumerate(content.split("\n"), start=1)
+                if i not in ignored
+            }
+
+        seen = set()
+        for i, line in scan_lines.items():
+            for m in backtick_ident.finditer(line):
+                ident = m.group(1)
+                if not CRISIS_SHAPED.match(ident):
+                    continue
+                if ident in live_set:
+                    continue
+                key = (path.name, ident)
+                if key in seen:
+                    continue
+                seen.add(key)
+                warn(rel(path),
+                     f"backticked identifier `{ident}` looks like a "
+                     f"crisis category but is not in "
+                     f"_CRISIS_CATEGORIES. Live categories: "
+                     f"{sorted(live_set)}",
+                     category="crisis-category-ref", line=i,
+                     suggested_fix=(
+                         f"Either use one of {sorted(live_set)} "
+                         f"or add `{ident}` to _CRISIS_CATEGORIES in "
+                         f"crisis_detector.py"
+                     ))
+
+
+def check_service_category_enumeration(args):
+    """FEATURES.md and CHATBOT_BEHAVIOR.md prose that claims to
+    enumerate the service categories ("food, shelter, clothing, ...")
+    must name every key in `SERVICE_KEYWORDS` via its user-facing form.
+
+    Catches: a new service category added to SERVICE_KEYWORDS without
+    the docs being updated to mention it (and vice versa — a doc
+    claiming a category the code doesn't have).
+
+    The docs use friendly phrasings ("health care", "mental health",
+    "personal care") rather than the snake_case code keys ("medical",
+    "mental_health", "personal_care"), so we maintain a mapping here.
+    When a new SERVICE_KEYWORDS key is added, the mapping must be
+    updated too — this check asserts that.
+    """
+    live = extract_collection_members(
+        BACKEND_DIR / "app/services/slot_extractor.py",
+        "SERVICE_KEYWORDS")
+    if not live:
+        return
+    live_set = set(live)
+
+    # Friendly forms that MUST appear in prose for each code key. Lower
+    # case; substring match. Update both the mapping AND the relevant
+    # doc's enumeration when a new service category is added.
+    friendly = {
+        "food": "food",
+        "shelter": "shelter",
+        "clothing": "clothing",
+        "personal_care": "personal care",
+        "medical": "health care",
+        "mental_health": "mental health",
+        "legal": "legal",
+        "employment": "employment",
+        "other": "other services",
+    }
+
+    missing_from_mapping = live_set - set(friendly)
+    if missing_from_mapping:
+        warn(rel(BACKEND_DIR / "app/services/slot_extractor.py"),
+             f"SERVICE_KEYWORDS has key(s) {sorted(missing_from_mapping)} "
+             f"that check_service_category_enumeration's friendly map "
+             f"doesn't know about. Add to both the mapping in "
+             f"scripts/check_docs.py AND any doc enumeration.",
+             category="service-category-enum",
+             severity="error")
+        return
+
+    # Patterns identifying prose that enumerates service categories.
+    # The number (captured) must match len(live_set); the surrounding
+    # sentence must mention every friendly form.
+    # Allow markdown bold (`**`) or italic (`*`, `_`) between the
+    # count-phrase and the separator so bullets like
+    # `- **9 service categories** — food, shelter, ...` match.
+    enum_patterns = [
+        re.compile(
+            r"(\d+)\s+service\s+categor(?:y|ies)"
+            r"(?:\*+|_+)?"               # trailing markdown markers
+            r"\s*[—\-:]"                 # em-dash / hyphen / colon
+        ),
+    ]
+
+    targets = [
+        DOCS_DIR / "FEATURES.md",
+        DOCS_DIR / "CHATBOT_BEHAVIOR.md",
+    ]
+
+    for path in targets:
+        if not path.exists():
+            continue
+        content = path.read_text()
+        if file_is_ignored(content):
+            continue
+        ignored = ignored_lines(content)
+        lines = content.split("\n")
+
+        for i, line in enumerate(lines, start=1):
+            if i in ignored:
+                continue
+            for pat in enum_patterns:
+                m = pat.search(line)
+                if not m:
+                    continue
+                # This is an enumeration line. Check every friendly
+                # name appears — allow it to span up to the next
+                # newline (bullets are single-line in this repo).
+                claimed_count = int(m.group(1))
+                if claimed_count != len(live_set):
+                    # Already caught by check_category_counts if
+                    # SERVICE_KEYWORDS is in CATEGORY_COUNTS; still
+                    # flag to keep this check self-contained.
+                    warn(rel(path),
+                         f"enumerates \"{claimed_count} service "
+                         f"categories\" but SERVICE_KEYWORDS has "
+                         f"{len(live_set)}",
+                         category="service-category-enum", line=i,
+                         suggested_fix=f"Update count to {len(live_set)}")
+                lower = line.lower()
+                missing_in_prose = [
+                    f"{key} ({friendly[key]})"
+                    for key in live
+                    if friendly[key] not in lower
+                ]
+                if missing_in_prose:
+                    warn(rel(path),
+                         f"service-category enumeration omits: "
+                         f"{missing_in_prose}",
+                         category="service-category-enum", line=i,
+                         suggested_fix=(
+                             f"Add missing categories to the line; "
+                             f"live keys are {sorted(live_set)}"
+                         ))
+
+
+def check_service_need_priority_tiers(args):
+    """Prose claims about `_SERVICE_NEED_PRIORITY` tiers must match
+    the live dict. Drift mode: a service gets moved between tiers
+    (e.g., `employment` promoted from 4 to 3 because the Housing-First
+    ordering was revised) but prose descriptions in ONBOARDING.md §6
+    and CHATBOT_BEHAVIOR.md don't get updated.
+
+    The prose pattern is distinctive:
+      "shelter/medical > food/mental_health > clothing/personal_care >
+      legal/employment > other"
+    or the longer form with tier numbers:
+      "tier 1 [shelter, medical] ahead of food and mental_health
+      (tier 2), ahead of ..."
+
+    Strategy: invert the live dict into {tier: frozenset(services)},
+    extract prose groupings separated by `>` or tier-number sentences,
+    assert each claimed group equals one of the live tier sets.
+    """
+    live = extract_int_dict(
+        BACKEND_DIR / "app/services/slot_extractor.py",
+        "_SERVICE_NEED_PRIORITY")
+    if not live:
+        return
+
+    # Invert: {1: {"shelter", "medical"}, 2: {"food", "mental_health"}, ...}
+    by_tier: dict[int, set[str]] = {}
+    for svc, tier in live.items():
+        by_tier.setdefault(tier, set()).add(svc)
+    live_tier_sets = {frozenset(svcs) for svcs in by_tier.values()}
+    service_names = set(live.keys())
+
+    # Four prose styles observed across ONBOARDING.md + CHATBOT_BEHAVIOR.md.
+    # All are verified against the same invariant: every claimed "group of
+    # co-tier services" must equal one of the live tier sets.
+    #
+    #   Style A — arrow chain in parens
+    #     "(shelter/medical > food/mental_health > clothing/personal_care
+    #      > legal/employment > other)"                 ONBOARDING.md:526
+    #
+    #   Style B — prose chain with "before"
+    #     "(shelter/medical before food/mental_health before
+    #      clothing/personal_care before legal/employment)"  ONBOARDING.md:158
+    #
+    #   Style C — tier-numbered groups with explicit "(tier N)" labels
+    #     "shelter and medical (tier 1) ahead of food and mental_health
+    #      (tier 2), ahead of clothing and personal_care (tier 3) ..."
+    #                                                   ONBOARDING.md:225
+    #
+    #   Style D — inline tier-numbered parenthetical groups
+    #     "tier 1 (shelter, medical), tier 2 (food, mental_health),
+    #      tier 3 (clothing, personal_care), tier 4 (legal, employment),
+    #      tier 5 (other)"                            CHATBOT_BEHAVIOR.md:303
+    #
+    # Styles A and B share the same group-extraction: parenthesized chain
+    # split on a separator regex (`>`, `before`, `then`). Styles C and D
+    # share the "(tier N)" annotation and are handled by a second pass.
+
+    chain_pattern = re.compile(
+        r"\(([a-z_ ,/]+(?:\s*(?:>|before|then)\s+[a-z_ ,/]+){2,})\)",
+        re.IGNORECASE,
+    )
+    tier_number_label_pattern = re.compile(
+        # Style C: "X and Y (tier N)" or '"other" at tier N'
+        r"(?:\"([a-z_]+)\"|\b([a-z_][a-z_ ]*?(?:\s+and\s+[a-z_][a-z_ ]*?)+))"
+        r"\s*(?:\(\s*tier\s+(\d+)\s*\)|\s+at\s+tier\s+(\d+))",
+        re.IGNORECASE,
+    )
+    tier_number_parens_pattern = re.compile(
+        # Style D: "tier N (X, Y)"
+        r"tier\s+(\d+)\s*\(\s*([a-z_][a-z_ ,]*?)\s*\)",
+        re.IGNORECASE,
+    )
+
+    def normalize(token: str) -> str:
+        """Map prose tokens to code keys — 'mental health' → 'mental_health'."""
+        return token.strip().strip('"').replace(" ", "_")
+
+    def parse_group(group: str) -> Optional[frozenset[str]]:
+        """Split on /, ',', ' and ' into service-name tokens. Returns
+        frozenset of code keys, or None if any token isn't a real service
+        name (means this chain isn't about _SERVICE_NEED_PRIORITY).
+        """
+        tokens = re.split(r"\s*(?:/|,|\band\b)\s*", group)
+        keys = []
+        for tok in tokens:
+            tok = tok.strip()
+            if not tok:
+                continue
+            norm = normalize(tok)
+            if norm not in service_names:
+                return None
+            keys.append(norm)
+        return frozenset(keys) if keys else None
+
+    def warn_bad_group(path, line_num, group_set, context):
+        """Emit a warning with the full live-tier map so the reader sees
+        what the prose should say."""
+        warn(rel(path),
+             f"tier grouping {sorted(group_set)} in \"{context}\" "
+             f"doesn't match any tier in _SERVICE_NEED_PRIORITY. "
+             f"Live tiers: "
+             f"{ {t: sorted(s) for t, s in by_tier.items()} }",
+             category="service-priority-tier", line=line_num,
+             suggested_fix=(
+                 "Update the grouping to match "
+                 "slot_extractor._SERVICE_NEED_PRIORITY, or update the "
+                 "dict if the prose is the intended new ordering"
+             ))
+
+    def warn_wrong_tier(path, line_num, group_set, claimed_tier, context):
+        """Style C/D variant: tier number is explicit; check that the
+        group AND its claimed tier number both match live data. Silent
+        on correct prose — only warns when the claim is actually wrong.
+        """
+        actual_tier = None
+        for t, s in by_tier.items():
+            if frozenset(s) == group_set:
+                actual_tier = t
+                break
+        if actual_tier is None:
+            # Group is a valid subset of service names but doesn't match
+            # any live tier — it's a malformed grouping.
+            warn_bad_group(path, line_num, group_set, context)
+            return
+        if actual_tier == claimed_tier:
+            # Prose is correct; no drift.
+            return
+        warn(rel(path),
+             f"prose says {sorted(group_set)} is tier {claimed_tier} "
+             f"but _SERVICE_NEED_PRIORITY puts it at tier {actual_tier}",
+             category="service-priority-tier", line=line_num,
+             suggested_fix=(
+                 f"Change \"tier {claimed_tier}\" to "
+                 f"\"tier {actual_tier}\" — or, if the dict is the "
+                 f"stale party, update _SERVICE_NEED_PRIORITY"
+             ))
+
+    targets = [
+        DOCS_DIR / "ONBOARDING.md",
+        DOCS_DIR / "CHATBOT_BEHAVIOR.md",
+    ]
+
+    for path in targets:
+        if not path.exists():
+            continue
+        content = path.read_text()
+        if file_is_ignored(content):
+            continue
+        ignored = ignored_lines(content)
+        lines = content.split("\n")
+
+        for i, line in enumerate(lines, start=1):
+            if i in ignored:
+                continue
+
+            # ---- Styles A+B: parenthesized chains ----
+            for m in chain_pattern.finditer(line):
+                chain = m.group(1).strip()
+                # Split on any of >, before, then.
+                groups = re.split(r"\s*(?:>|\bbefore\b|\bthen\b)\s+",
+                                  chain, flags=re.IGNORECASE)
+                groups = [g.strip() for g in groups if g.strip()]
+                if len(groups) < 2:
+                    continue
+                parsed = [parse_group(g) for g in groups]
+                if any(p is None for p in parsed):
+                    continue
+                for group_set in parsed:
+                    if group_set not in live_tier_sets:
+                        warn_bad_group(path, i, group_set, chain)
+                        break
+
+            # ---- Style C: "X and Y (tier N)" ----
+            for m in tier_number_label_pattern.finditer(line):
+                quoted, phrase, tier_a, tier_b = m.groups()
+                tier_num = int(tier_a or tier_b)
+                if quoted:
+                    group_set = parse_group(quoted)
+                else:
+                    # Strip common connective prefixes that leak into the
+                    # capture due to regex greediness: "ahead of food and X"
+                    # → "food and X", "with food and X" → "food and X", etc.
+                    cleaned = re.sub(
+                        r"^(?:ahead\s+of|with|then|before|then)\s+",
+                        "", phrase.strip(), flags=re.IGNORECASE)
+                    group_set = parse_group(cleaned)
+                if group_set is None:
+                    continue
+                warn_wrong_tier(path, i, group_set, tier_num, m.group(0))
+
+            # ---- Style D: "tier N (X, Y)" ----
+            for m in tier_number_parens_pattern.finditer(line):
+                tier_num = int(m.group(1))
+                group_set = parse_group(m.group(2))
+                if group_set is None:
+                    continue
+                warn_wrong_tier(path, i, group_set, tier_num, m.group(0))
+
+
+# -----------------------------------------------------------------------
 # 14. CROSS-DOC CONTRADICTIONS (new)
 # -----------------------------------------------------------------------
 
@@ -1242,6 +1758,9 @@ CHECKS = [
     ("dep-versions",        check_dependency_refs),
     ("numeric-constants",   check_numeric_constants),
     ("category-counts",     check_category_counts),
+    ("crisis-category-refs", check_crisis_category_name_refs),
+    ("service-category-enum", check_service_category_enumeration),
+    ("service-priority-tiers", check_service_need_priority_tiers),
     ("cross-doc",           check_cross_doc_contradictions),
     ("deprecated-patterns", check_deprecated_patterns),
     ("audit-baseline",      check_audit_baseline),

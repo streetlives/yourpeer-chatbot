@@ -154,7 +154,7 @@ All backend modules and all public functions are covered. Tests are in `tests/un
 | `semantic_router.py` | `unit/test_semantic_router.py` | 54 | Full |
 | `semantic_routes.py` | `unit/test_semantic_router.py` | 54 | Full |
 | `llm_classifier.py` | `unit/test_llm_classifier.py` | 30 | Full |
-| `bot_knowledge.py` | `unit/test_bot_knowledge.py` | 37 | Full |
+| `bot_knowledge.py` | `unit/test_bot_knowledge.py` | 44 | Full |
 | `post_results.py` | `unit/test_post_results.py`, `unit/test_post_results_boundary.py`, `unit/test_results_enhancements.py` | 125 | Full |
 | `pii_redactor.py` | `unit/test_pii_redactor.py`, `unit/test_gender_extraction.py`, `unit/test_edge_cases.py` | 38+ | Full |
 | `session_store.py` | `unit/test_session_store.py`, `integration/test_classification_and_routing.py`, `integration/test_http_routes_and_models.py` | 7+ | Full |
@@ -539,9 +539,9 @@ Comprehensive gap coverage for 9 areas identified during audit: `_compute_freshn
 
 SQLite pilot persistence layer. Tests direct CRUD operations on all 3 tables (events, sessions, eval_data) including ordering, limits, upserts, and clears (12 tests). Disabled mode (PILOT_DB_PATH unset) verifies all operations are safe no-ops (6 tests). Audit log hydration round-trip: write events → clear in-memory → hydrate from SQLite → verify stats (4 tests). Session store hydration: write → clear → hydrate → verify slots (4 tests). Full restart simulation: user interaction → destroy in-memory state → hydrate → verify everything is restored (1 test).
 
-### `test_bot_knowledge.py` — 37 tests
+### `test_bot_knowledge.py` — 44 tests
 
-Validates the bot self-knowledge module: live capability sourcing from actual code, topic matching for 12+ question types, LLM context generation, static handler integration, bot question phrase classification, untested topic coverage, topic collision prevention, false positive guards, and full chatbot routing for privacy/location/services questions.
+Validates the bot self-knowledge module: live capability sourcing from actual code, topic matching for 12+ question types, LLM context generation, static handler integration, bot question phrase classification, untested topic coverage, topic collision prevention, false positive guards, full chatbot routing for privacy/location/services questions, and freshness guards that fail loudly when bot_knowledge claims drift out of sync with live code.
 
 | Category | Tests | What's covered |
 |---|---|---|
@@ -554,6 +554,7 @@ Validates the bot self-knowledge module: live capability sourcing from actual co
 | Topic collisions | 5 | Location/privacy, police/location, ICE/share, delete/privacy, services/coverage collision prevention |
 | False positives | varies | Service and action messages don't match topics |
 | Bot question routing | 3 | Privacy/location/services questions route correctly through chatbot |
+| **Freshness guards (April 2026)** | **7** | **PII-type claims match `_PLACEHOLDERS`, service-category count matches `SERVICE_KEYWORDS`, crisis-category list matches `_CRISIS_CATEGORIES`, friendly-name map covers every live crisis category, no "English only" regression, no stale monolith source refs (from the pre-Phase-3 era before the `chatbot/` package decomposition). Each guard has proven strip-discipline: reintroducing its specific drift produces a targeted failure message naming what to update.** |
 
 ### `test_schema_and_mock_sync.py` — 20 tests
 
