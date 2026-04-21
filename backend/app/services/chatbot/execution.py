@@ -71,6 +71,23 @@ _POPULATION_FALLBACK_LABEL = {
     "veteran": "veteran",
 }
 
+# Priority order (rarest / most-distinguishing first) for picking ONE
+# label per card when a card matches multiple of the user's populations.
+# Consulted only by the per-card attribution loop in
+# _run_population_fallback; does NOT affect the composed note text or
+# the order in which taxonomies are queried.
+#
+# Rarity reflects relative scarcity of NYC shelter services tagged with
+# each population:
+#   - LGBTQ Young Adult: very few dedicated services (Ali Forney et al.)
+#   - Veterans short-term housing: specialized, limited
+#   - Senior: limited specialized shelters
+#   - Youth: DYCD operates many; least rare of the four
+# Adding a new population requires deciding where it slots in. That
+# explicit decision is the point — see comments in
+# _run_population_fallback.
+_POPULATION_RARE_PRIORITY = ("lgbtq", "veteran", "senior", "youth")
+
 # How many fallback cards to append. Kept small so the main (proximity-
 # local) results remain the headline answer.
 _POPULATION_FALLBACK_MAX = 3
@@ -385,17 +402,34 @@ def _run_population_fallback(
     # Mark each card so the frontend can visually distinguish fallback
     # cards from main results (future-proofing — current UI renders them
     # in the same carousel). Per-card `fallback_population` reflects
-    # which specific rare population this particular card matched, not
-    # just the first label — Ali Forney Center shown to a trans
-    # 20-year-old should mark as "lgbtq" (its distinguishing tag), not
-    # "youth" just because youth came first alphabetically.
+    # which specific rare population this particular card matched.
+    #
+    # When a card matches MULTIPLE of the user's population labels (e.g.,
+    # a shelter tagged both "Youth" and "LGBTQ Young Adult" shown to a
+    # trans 20-year-old), we pick the *most distinguishing* label — the
+    # one that sets this card apart from general shelter results. We
+    # walk labels in priority order defined by
+    # `_POPULATION_RARE_PRIORITY` below, rarest first. This is a fixed,
+    # auditable ordering rather than a runtime DB-count because (1) the
+    # relative rarity of these four populations in NYC services data is
+    # stable across deploys, (2) adding a new population requires an
+    # explicit decision about where it slots in, which is the right
+    # forcing function, and (3) it avoids a startup-time DB dependency.
     for card in deduped:
         card["is_population_fallback"] = True
         card_tx_lower = {
             str(t).lower() for t in (card.get("service_taxonomies") or []) if t
         }
+        # Iterate labels in rarity-priority order, restricted to the
+        # labels the CURRENT user matched. The intersection preserves
+        # "we only pick a label the user actually qualifies for" while
+        # the sort gives us "rarest wins" among qualifying labels.
+        user_labels = set(labels)
+        priority_ordered = [
+            lb for lb in _POPULATION_RARE_PRIORITY if lb in user_labels
+        ]
         matched_label = None
-        for label in labels:
+        for label in priority_ordered:
             label_tx_lower = {
                 t.lower() for t in _POPULATION_RARE_TAXONOMIES.get(label, [])
             }
@@ -404,7 +438,9 @@ def _run_population_fallback(
                 break
         # Fall through to the first label only if NOTHING matched — this
         # shouldn't happen (we ran the fallback BECAUSE of these labels)
-        # but is a safe default.
+        # but is a safe default. Use the original `labels` list's first
+        # entry (user's detection order) rather than priority order, to
+        # preserve the prior behavior for this defensive branch.
         card["fallback_population"] = matched_label or labels[0]
 
     # Compose the note. Cap at the first two labels to keep prose readable
@@ -486,6 +522,7 @@ def _build_success_response(
     results: dict,
     colocated_success: bool,
     colocated_types: list | None,
+    session_id: str,
 ) -> tuple[str, list, list, int, int, bool]:
     """Translate a successful query result into the user-facing response
     message + card list + pagination metadata.
@@ -582,10 +619,24 @@ def _build_success_response(
                     services_list = services_list + fb_cards
                     result_count = len(services_list)
                     bot_response = bot_response + fb_note
-                    # Expose fallback cards separately for potential
-                    # post-results queries / admin logging. Not part of
-                    # pagination.
-                    slots["_fallback_results"] = fb_cards
+                    # Admin-visibility log. Fallback cards are supplementary
+                    # (shown once, not paginated) and appear in services_list
+                    # for the current response only — they are intentionally
+                    # not stored in _last_results (see comment above about
+                    # pagination isolation). Emit the IDs and attributed
+                    # labels to the ops feed so a later "is the first one
+                    # open?" or admin audit can correlate what the user saw.
+                    # Replaces the prior slots["_fallback_results"] stash,
+                    # which was written but never read (see
+                    # docs/audits/TEST_QUALITY_PLAN.md §3.1).
+                    logger.info(
+                        "Population fallback cards shown: session=%s "
+                        "count=%d ids=%s labels=%s",
+                        session_id,
+                        len(fb_cards),
+                        [c.get("service_id") for c in fb_cards],
+                        [c.get("fallback_population") for c in fb_cards],
+                    )
 
     return bot_response, services_list, all_services, main_displayed_count, result_count, relaxed
 
@@ -708,7 +759,7 @@ def _execute_and_respond(
         elif results["result_count"] > 0:
             (bot_response, services_list, all_services,
              _main_displayed_count, result_count, relaxed) = _build_success_response(
-                slots, results, colocated_success, colocated_types,
+                slots, results, colocated_success, colocated_types, session_id,
             )
         else:
             bot_response = _no_results_message(slots)

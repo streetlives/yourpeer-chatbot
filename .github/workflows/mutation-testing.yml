@@ -4,9 +4,19 @@ name: Mutation Testing (Weekly)
 # to fully mutate on one worker. Running the full suite nightly on every
 # critical module would cost ~5 hours of compute.
 #
-# This workflow runs ONCE A WEEK on the 5 modules with the highest risk
-# of silent regression: safety (crisis), security (session_token, PII),
-# and core dispatch (orchestrator, classifier).
+# This workflow runs ONCE A WEEK against two tiers of modules:
+#
+#   Tier 1 (5 modules) — safety-critical: crisis, classifier, PII,
+#   orchestrator, session_token. Thresholds 50-85%. Below-threshold
+#   opens an issue.
+#
+#   Tier 2 (5 modules) — high blast-radius: pipeline, execution,
+#   slot_extractor, query_templates, handlers/confirmation. Thresholds
+#   55-60% (lenient initial bar; walk up over quarters).
+#
+# Matrix runs all 10 modules in parallel. Each is capped at 90 min via
+# timeout-minutes. Total wall-clock is limited by the slowest module,
+# not the sum — so weekly cost is roughly one long worker-hour per tier.
 #
 # For per-PR incremental mutation on CHANGED files only (the Google model),
 # see mutation-testing-pr.yml — that workflow runs cosmic-ray against
@@ -41,6 +51,9 @@ jobs:
           # Pairs of (module, focused test subset that exercises it).
           # Narrowing the tests keeps each mutant check under a few
           # seconds instead of running the full 3,700-test suite.
+          #
+          # --- Tier 1: safety-critical (original "critical-5") ---
+          # Highest thresholds. A surviving mutant here is release-blocking.
           - module: backend/app/services/crisis_detector.py
             tests: >-
               tests/unit/test_phrase_audit.py
@@ -68,6 +81,42 @@ jobs:
             tests: >-
               tests/unit/test_session_store.py
               tests/unit/test_main.py
+
+          # --- Tier 2: high blast-radius (added from TEST_QUALITY_PLAN.md §4) ---
+          # High-impact modules that feed the core chat pipeline. Lower
+          # thresholds than Tier 1 — these have more LLM-adjacent branches
+          # that produce "unkillable" mutants where the test suite
+          # reasonably can't distinguish semantically-equivalent behavior.
+          # Walk the thresholds up as the unit suite grows to cover more
+          # of each module's branches.
+          - module: backend/app/services/chatbot/pipeline.py
+            tests: >-
+              tests/integration/test_classification_and_routing.py
+              tests/integration/test_multi_turn_and_context.py
+              tests/integration/test_targeted_bug_regressions.py
+
+          - module: backend/app/services/chatbot/execution.py
+            tests: >-
+              tests/unit/test_population_fallback.py
+              tests/integration/test_classification_and_routing.py
+              tests/integration/test_multi_turn_and_context.py
+
+          - module: backend/app/services/slot_extractor.py
+            tests: >-
+              tests/unit/test_slot_extractor.py
+              tests/unit/test_slot_extraction_keywords.py
+              tests/unit/test_service_keywords.py
+
+          - module: backend/app/rag/query_templates.py
+            tests: >-
+              tests/unit/test_query_templates.py
+              tests/unit/test_location_boundaries.py
+
+          - module: backend/app/services/chatbot/handlers/confirmation.py
+            tests: >-
+              tests/integration/test_classification_and_routing.py
+              tests/unit/test_frustration_and_crisis.py
+              tests/integration/test_multi_turn_and_context.py
 
     env:
       SESSION_SECRET: test-session-secret-for-ci-only
@@ -135,11 +184,21 @@ jobs:
           # Per-module thresholds. Adjust as you strengthen test coverage.
           # Start lenient — these are targets to walk up over quarters.
           THRESHOLDS = {
+              # --- Tier 1: safety-critical ---
               "backend/app/services/crisis_detector.py": 50,  # has LLM-only paths
               "backend/app/services/classifier.py": 70,
               "backend/app/privacy/pii_redactor.py": 85,      # pure logic, high bar
               "backend/app/services/chatbot/orchestrator.py": 70,
               "backend/app/services/session_token.py": 85,    # security; high bar
+              # --- Tier 2: high blast-radius (TEST_QUALITY_PLAN.md §4) ---
+              # Start at 55% — lenient initial bar. Review quarterly and
+              # walk up as the unit suite grows. A below-threshold run
+              # on Tier 2 opens an issue but shouldn't block releases.
+              "backend/app/services/chatbot/pipeline.py": 55,
+              "backend/app/services/chatbot/execution.py": 55,
+              "backend/app/services/slot_extractor.py": 60,   # more pure logic
+              "backend/app/rag/query_templates.py": 60,       # more pure logic
+              "backend/app/services/chatbot/handlers/confirmation.py": 55,
           }
           module = "${{ matrix.module }}"
           threshold = THRESHOLDS.get(module, 70)

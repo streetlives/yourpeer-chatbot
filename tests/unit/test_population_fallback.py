@@ -784,6 +784,81 @@ class TestFallbackPerCardAttribution:
         assert va["fallback_population"] == "veteran"
 
 
+class TestFallbackPriorityOrdering:
+    """Per-card attribution picks the rarest/most-distinguishing label
+    when a card matches MULTIPLE of the user's population labels.
+
+    The bug this guards against: for a trans 20-year-old, labels are
+    built in detection order ('youth' first, then 'lgbtq'). A fallback
+    card tagged with BOTH 'Youth' AND 'LGBTQ Young Adult' would attribute
+    to 'youth' simply because youth came first in the iteration. The fix
+    walks labels in fixed priority order (rarest first): lgbtq > veteran
+    > senior > youth. The user's detection-order `labels` list is
+    preserved unchanged — only the per-card loop uses priority order.
+    """
+
+    def test_multi_tagged_card_picks_lgbtq_over_youth(self):
+        """Ali Forney tagged with BOTH Youth AND LGBTQ Young Adult should
+        attribute to 'lgbtq' for a trans 20yo, not 'youth' — even though
+        youth was detected first in the user's labels list."""
+        main = [_card("g1", ["Shelter", "Single Adult"])]
+        # The key data point: this card carries BOTH rare taxonomies.
+        # Without the priority fix, iteration order (youth first) wins.
+        fallback = [_card("afc", ["Shelter", "Youth", "LGBTQ Young Adult"])]
+        slots = {
+            "service_type": "shelter", "location": "soho",
+            "age": 20, "_gender": "transgender",
+        }
+        result, _ = _run_execute_with_mock(slots, main, fallback)
+        afc = next(s for s in result["services"] if s["service_id"] == "afc")
+        # Rarer tag wins — LGBTQ Young Adult is the distinguishing marker
+        # versus the much more common Youth tag.
+        assert afc["fallback_population"] == "lgbtq"
+
+    def test_multi_tagged_card_picks_veteran_over_senior(self):
+        """Priority ordering covers all pairs, not just lgbtq. A card
+        tagged with BOTH Senior AND Veterans Short-Term Housing shown to
+        a 65-year-old veteran should attribute to 'veteran' (rarer)."""
+        main = [_card("g1", ["Shelter", "Single Adult"])]
+        fallback = [
+            _card("vs", ["Shelter", "Senior", "Veterans Short-Term Housing"]),
+        ]
+        slots = {
+            "service_type": "shelter", "location": "manhattan",
+            "age": 65, "_populations": ["veteran"],
+        }
+        result, _ = _run_execute_with_mock(slots, main, fallback)
+        vs = next(s for s in result["services"] if s["service_id"] == "vs")
+        assert vs["fallback_population"] == "veteran"
+
+    def test_note_text_still_uses_detection_order(self):
+        """The priority fix is scoped to per-card attribution. The
+        composed fallback note ('I also found [labels] services…') must
+        still render in detection order — 'youth-specific and
+        LGBTQ-friendly' for a trans 20yo — so the UX copy is unchanged.
+        """
+        main = [_card("g1", ["Shelter", "Single Adult"])]
+        fallback = [_card("afc", ["Shelter", "Youth", "LGBTQ Young Adult"])]
+        slots = {
+            "service_type": "shelter", "location": "soho",
+            "age": 20, "_gender": "transgender",
+        }
+        result, _ = _run_execute_with_mock(slots, main, fallback)
+        # The confirmation/response text (accessible via the slots after
+        # execute) should include the note composed from labels[:2] in
+        # detection order, unchanged by the priority fix.
+        response = result.get("response", "")
+        assert "youth-specific" in response
+        assert "LGBTQ-friendly" in response
+        # Detection order: youth first, lgbtq second.
+        youth_idx = response.find("youth-specific")
+        lgbtq_idx = response.find("LGBTQ-friendly")
+        assert youth_idx < lgbtq_idx, (
+            "Note text must preserve user-detection order (youth first, "
+            "lgbtq second) even after priority-ordering per-card attribution."
+        )
+
+
 # ===========================================================================
 # Constants — backstop tests
 # ===========================================================================

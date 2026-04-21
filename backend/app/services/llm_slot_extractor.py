@@ -712,18 +712,44 @@ def extract_slots_smart(message: str, conversation_history: list = None) -> dict
                 llm_result[key] = regex_result[key]
 
         # Prefer regex service_type over LLM when regex found an explicit
-        # keyword match. The regex match is deterministic ("dental" is
+        # keyword match AND that match is unambiguous (only one service
+        # type detected). The regex match is deterministic ("dental" is
         # literally in the text) while the LLM can be biased by conversation
         # history — e.g., returning "personal_care" for "What about dental
         # care?" because the prior turns were about showers.
-        if (regex_result.get("service_type") is not None
+        #
+        # But when regex detects MULTIPLE service types (e.g.,
+        # "I just got out of the hospital and need somewhere safe" yields
+        # regex: medical + shelter-as-additional), the primary pick is
+        # ambiguous — "hospital" is often background context, not the
+        # current need. In that case, the LLM's semantic judgement wins.
+        # The regex multi-match is itself a "trust the LLM" signal: if
+        # regex found more than one service, it can't reliably pick which
+        # is primary from keyword matches alone.
+        regex_additional = regex_result.get("additional_services") or []
+        regex_is_unambiguous = (
+            regex_result.get("service_type") is not None
+            and not regex_additional
+        )
+        if (regex_is_unambiguous
                 and llm_result.get("service_type") != regex_result["service_type"]):
             logger.info(
                 f"Regex service_type override: llm='{llm_result.get('service_type')}' "
                 f"→ regex='{regex_result['service_type']}' "
-                f"(explicit keyword match in message)"
+                f"(unambiguous explicit keyword match in message)"
             )
             llm_result["service_type"] = regex_result["service_type"]
+        elif (regex_result.get("service_type") is not None
+                and llm_result.get("service_type") != regex_result["service_type"]
+                and regex_additional):
+            # Ambiguous regex — log the decision to defer to LLM so it's
+            # visible in ops feeds. The regex hit on something but found
+            # alternatives; trust the LLM's primary pick.
+            logger.info(
+                f"Deferring to LLM service_type: llm='{llm_result.get('service_type')}' "
+                f"(regex ambiguous: primary='{regex_result['service_type']}' + "
+                f"{len(regex_additional)} additional)"
+            )
 
         merged = llm_result
     else:

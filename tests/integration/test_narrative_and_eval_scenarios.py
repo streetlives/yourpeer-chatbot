@@ -13,9 +13,11 @@ from app.services.session_store import get_session_slots
 from app.privacy.pii_redactor import redact_pii
 from app.services.chatbot import _USE_LLM
 
-requires_llm = pytest.mark.skipif(
-    not _USE_LLM,
-    reason="Requires ANTHROPIC_API_KEY for LLM narrative extraction",
+requires_llm = pytest.mark.requires_llm(
+    pytest.mark.skipif(
+        not _USE_LLM,
+        reason="Requires ANTHROPIC_API_KEY for LLM narrative extraction",
+    )
 )
 
 
