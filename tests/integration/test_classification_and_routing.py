@@ -392,6 +392,63 @@ def test_new_input_clears_pending_confirmation(fresh_session):
     assert "queens" in result["slots"].get("location", "").lower()
     # Contradiction detection auto-executes — returns results, not re-confirmation
     assert result["result_count"] >= 1 or result["follow_up_needed"] is False
+
+
+def test_service_change_does_not_leak_old_service_into_response(fresh_session):
+    """A.4 regression guard.
+
+    When a user changes service mid-conversation, the response should
+    mention the NEW service only — not the old primary, and not any
+    service queued during the old context. Prior to the merge_slots
+    queue-clear fix, a session that had queue state from the old
+    service's context would leak "and {queued_service}" into the
+    confirmation message (e.g. "I'll look for shelter AND clothing"
+    when the user switched from food+clothing to just shelter).
+    """
+    # Two-service seed establishes queue state around "food": clothing
+    # is queued alongside food as the primary. User then switches the
+    # primary to shelter during confirmation — the queued clothing
+    # should be dropped along with food's context.
+    *_, result = send_multi(
+        [
+            "I need food and clothing in Manhattan",   # food primary, clothing queued
+            "actually, shelter instead",               # service change
+        ],
+        session_id=fresh_session,
+    )
+    response_lower = result["response"].lower()
+    slots = result["slots"]
+
+    # Primary service is now shelter
+    assert slots.get("service_type") == "shelter", (
+        f"Expected service_type=shelter after change, got "
+        f"{slots.get('service_type')}"
+    )
+
+    # Queue state from the old context is gone
+    assert not slots.get("_queued_services"), (
+        f"_queued_services should be cleared, got {slots.get('_queued_services')}"
+    )
+    assert "_queued_services_original" not in slots
+    assert not slots.get("_queue_offer_pending")
+
+    # Response mentions the new service
+    assert "shelter" in response_lower, (
+        f"Response should mention 'shelter': {result['response']}"
+    )
+
+    # Response does NOT leak the old primary or the queued service
+    # from the old context. These are the words that would appear in
+    # a confirmation message like "I'll look for shelter and clothing"
+    # (the bug) — they must not appear after the service change.
+    assert "food" not in response_lower, (
+        f"Response leaked old primary 'food' after change: {result['response']}"
+    )
+    assert "clothing" not in response_lower, (
+        f"Response leaked old queued 'clothing' after change: {result['response']}"
+    )
+
+
 def test_results_have_post_search_quick_replies(fresh_session):
     """After results are shown, should offer new search and peer navigator buttons."""
     _, result = send_multi(

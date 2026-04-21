@@ -1711,6 +1711,32 @@ def merge_slots(existing: dict, new_values: dict) -> dict:
             # Remove the promoted service from additional_services
             new_values["additional_services"] = additional[1:]
 
+    # --- Service change: clear queue state from the old service's context ---
+    # When this merge is replacing service_type with a different value
+    # (contradiction, correction, or mid-confirmation change), any queue
+    # state tied to the old service's context is stale and must be
+    # cleared. Without this, confirmation messages like "I'll look for
+    # food in Manhattan" → "actually, shelter" end up reading:
+    #   "I'll look for shelter AND food..."
+    # because `_queued_services` from the old context persisted across
+    # the merge.
+    #
+    # The `_is_additive` branch above (line ~1679) already removed
+    # service_type from new_values before we get here, so "additive"
+    # cases (explicit "also..." requests) don't trigger this clearing.
+    # Only genuine replacements do.
+    #
+    # Covers both call sites that trip over this bug:
+    # - orchestrator.py:344 (normal turn merge)
+    # - handlers/confirmation.py:561 (mid-confirmation contradiction)
+    # See docs/audits/MULTI_INTENT_PLAN.md A.4 for scenario trace.
+    if (new_values.get("service_type") is not None
+            and existing.get("service_type") is not None
+            and new_values["service_type"] != existing.get("service_type")):
+        merged.pop("_queued_services", None)
+        merged.pop("_queued_services_original", None)
+        merged.pop("_queue_offer_pending", None)
+
     for key, value in new_values.items():
         # additional_services is transient extraction metadata —
         # never persist it in session state.
