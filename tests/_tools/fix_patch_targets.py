@@ -29,7 +29,7 @@ Dry-run first: prints a diff but doesn't write. Pass --apply to write.
 This is not a regex-perfect tool — it does plain string replacement in
 string-literal contexts. It WILL miss dynamic patch calls (getattr or
 f-strings building the target) but those are rare in this codebase.
-After running, re-grep for 'app.services.chatbot\.(claude_reply|'
+After running, re-grep for 'app.services.chatbot.(claude_reply|'
 'detect_crisis|_USE_LLM)' to confirm the rewrite was complete.
 """
 

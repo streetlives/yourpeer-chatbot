@@ -126,7 +126,7 @@ def main() -> int:
         for cat, b, c in improvements:
             print(f"    {cat}: {b} → {c}")
         print()
-        print(f"Consider regenerating the baseline to ratchet the floor:")
+        print("Consider regenerating the baseline to ratchet the floor:")
         print(f"    python3 tests/_tools/audit_tests.py --summary > {args.baseline}")
         print()
 

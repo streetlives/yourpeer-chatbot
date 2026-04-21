@@ -238,7 +238,7 @@ def audit_d3_d4_mock_only(report: Report, test_files: list[Path]) -> None:
             if patches_with_return == 0:
                 continue
             # Does the test ever call assert_called / call_args on a mock?
-            checks_mock = (
+            checks_mock = ( # noqa: F841
                 ".assert_called" in body_src or
                 ".assert_not_called" in body_src or
                 ".assert_any_call" in body_src or
