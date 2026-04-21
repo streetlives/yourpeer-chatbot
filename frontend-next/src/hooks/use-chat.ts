@@ -149,6 +149,7 @@ export function useChat() {
     error,
     setSessionId,
     addMessage,
+    updateMessage,
     removeMessage,
     setLoading,
     setError,
@@ -168,13 +169,23 @@ export function useChat() {
    *
    * Parameters:
    * - err: the caught error
-   * - userMsgId: ID of the user message already in the chat (we'll
-   *   tag the queued entry with this so if the user retries/undoes
-   *   later we can correlate)
+   * - userMsgId: ID of the user message already in the chat. If the
+   *   message is in the chat (normal send path), its status will be
+   *   updated to "pending" (or "failed" on queue rejection). For
+   *   paths where no user message was added (retry, geo, crisis),
+   *   callers should pass a fresh ID — updateMessage no-ops gracefully.
    * - text: the raw text being sent (what the queue will replay)
+   * - requestId: the stable idempotency key for this message. Must
+   *   match what was sent as X-Request-ID on the original attempt
+   *   so the server can dedupe.
    */
   const handleNetworkError = useCallback(
-    async (err: unknown, userMsgId: string, text: string): Promise<boolean> => {
+    async (
+      err: unknown,
+      userMsgId: string,
+      text: string,
+      requestId: string,
+    ): Promise<boolean> => {
       if (!isNetworkError(err)) return false;
 
       const coords = hasCoords ? { latitude: latitude!, longitude: longitude! } : null;
@@ -184,28 +195,30 @@ export function useChat() {
         coords,
         sessionId,
         queuedAt: Date.now(),
+        requestId,
       });
 
       if (result.accepted) {
-        addMessage({
-          id: nextMsgId(),
-          role: "bot",
-          text: "Saved — I'll send this when you're back online.",
-          transient: true,
-        });
+        // Mark the user's own message as pending. Avoids the awkward
+        // "bot reply saying your message will send later" pattern —
+        // the status lives on the message itself (WhatsApp-style).
+        updateMessage(userMsgId, { status: "pending" });
       } else {
-        // Queue is full or IDB write failed. Surface as a retryable
-        // error rather than swallowing silently.
+        // Queue is full or IDB write failed. Soften the message and
+        // mark it transient so it doesn't persist to localStorage
+        // and confuse the user after the queue eventually empties.
+        updateMessage(userMsgId, { status: "failed" });
         addMessage({
           id: nextMsgId(),
           role: "bot",
-          text: "Too many messages waiting — try again once you're back online.",
+          text: "Something went wrong saving your message. Check your connection and try again.",
+          transient: true,
           retryMessage: text,
         });
       }
       return true;
     },
-    [sessionId, latitude, longitude, hasCoords, addMessage],
+    [sessionId, latitude, longitude, hasCoords, addMessage, updateMessage],
   );
 
   const send = useCallback(
@@ -218,7 +231,19 @@ export function useChat() {
 
       // Handle "Use my location" quick reply
       if (message === GEOLOCATION_TRIGGER) {
-        addMessage({ id: nextMsgId(), role: "user", text: "Use my location" });
+        // Capture the user message ID and an idempotency key up front
+        // so status transitions (sending/pending/sent/failed) can
+        // target the actual chat message, and so a retry from the
+        // queue reuses the original key for backend dedupe.
+        const userMsgId = nextMsgId();
+        const requestId = crypto.randomUUID();
+        addMessage({
+          id: userMsgId,
+          role: "user",
+          text: "Use my location",
+          status: "sending",
+          requestId,
+        });
         setLoading(true);
 
         // Show immediate feedback — the browser permission dialog + GPS
@@ -236,7 +261,11 @@ export function useChat() {
         if (!hasCoords) removeMessage(geoProgressId);
 
         if ("error" in coords) {
-          // Permission denied, timeout, or unavailable — show specific reason
+          // Permission denied, timeout, or unavailable — show specific reason.
+          // Geolocation failure isn't a "delivery failed" state for the
+          // user message (the message wasn't even sent) — drop the
+          // status so it doesn't show a misleading tick.
+          updateMessage(userMsgId, { status: undefined });
           setLoading(false);
           addMessage({
             id: nextMsgId(),
@@ -258,9 +287,12 @@ export function useChat() {
         addMessage({ id: searchProgressId, role: "bot", text: "Finding where you are…", transient: true });
 
         try {
-          const data = await withRetry(() => sendChatMessage("near me", sessionId, coords));
+          const data = await withRetry(() =>
+            sendChatMessage("near me", sessionId, coords, requestId),
+          );
           removeMessage(searchProgressId);
           if (data.session_id) setSessionId(data.session_id);
+          updateMessage(userMsgId, { status: "sent" });
 
           const botMsg: ChatMessage = {
             id: nextMsgId(),
@@ -275,12 +307,14 @@ export function useChat() {
         } catch (err: unknown) {
           removeMessage(searchProgressId);
 
-          // Stale session token — clear and retry
+          // Stale session token — clear and retry (reuses requestId so
+          // idempotency cache can dedupe a successful-but-lost response)
           if (errMessage(err).includes("403") && sessionId) {
             try {
               useChatStore.getState().setSessionId(null);
-              const data = await sendChatMessage("near me", null, coords);
+              const data = await sendChatMessage("near me", null, coords, requestId);
               if (data.session_id) setSessionId(data.session_id);
+              updateMessage(userMsgId, { status: "sent" });
               const botMsg: ChatMessage = {
                 id: nextMsgId(),
                 role: "bot",
@@ -298,13 +332,20 @@ export function useChat() {
             }
           }
 
-          // Network error — queue "near me" for flush-on-reconnect.
-          // Note: this path only runs if geolocation itself succeeded
+          // Network error — queue "near me" for flush-on-reconnect
+          // against the ACTUAL user message ID so its status (and the
+          // Cancel affordance) shows up correctly. Reuses requestId so
+          // a successful-but-lost response on the first attempt gets
+          // deduped by the backend idempotency cache on flush.
+          // This path only runs if geolocation itself succeeded
           // (offline coords from cache) but the backend call failed.
-          if (await handleNetworkError(err, nextMsgId(), "near me")) {
+          if (await handleNetworkError(err, userMsgId, "near me", requestId)) {
             setLoading(false);
             return;
           }
+
+          // Non-network error — mark user message failed
+          updateMessage(userMsgId, { status: "failed" });
 
           const friendlyMsg = userFacingError(err);
           setError(friendlyMsg);
@@ -324,7 +365,17 @@ export function useChat() {
       // Request geolocation FIRST, then send "Yes, search" with coords
       // so the backend crisis handler can execute immediately.
       if (message === CRISIS_GEO_TRIGGER) {
-        addMessage({ id: nextMsgId(), role: "user", text: "Yes, search nearby" });
+        // Capture user message ID + stable idempotency key so status
+        // transitions and the backend dedupe both work correctly.
+        const userMsgId = nextMsgId();
+        const requestId = crypto.randomUUID();
+        addMessage({
+          id: userMsgId,
+          role: "user",
+          text: "Yes, search nearby",
+          status: "sending",
+          requestId,
+        });
         setLoading(true);
 
         // Request geolocation — show progress while browser dialog is open
@@ -348,9 +399,12 @@ export function useChat() {
         addMessage({ id: searchProgressId, role: "bot", text: "Searching nearby…", transient: true });
 
         try {
-          const data = await withRetry(() => sendChatMessage("Yes, search", sessionId, coordsToSend));
+          const data = await withRetry(() =>
+            sendChatMessage("Yes, search", sessionId, coordsToSend, requestId),
+          );
           removeMessage(searchProgressId);
           if (data.session_id) setSessionId(data.session_id);
+          updateMessage(userMsgId, { status: "sent" });
 
           const botMsg: ChatMessage = {
             id: nextMsgId(),
@@ -368,8 +422,9 @@ export function useChat() {
           if (errMessage(err).includes("403") && sessionId) {
             try {
               useChatStore.getState().setSessionId(null);
-              const data = await sendChatMessage("Yes, search", null, coordsToSend);
+              const data = await sendChatMessage("Yes, search", null, coordsToSend, requestId);
               if (data.session_id) setSessionId(data.session_id);
+              updateMessage(userMsgId, { status: "sent" });
               const botMsg: ChatMessage = {
                 id: nextMsgId(),
                 role: "bot",
@@ -387,13 +442,15 @@ export function useChat() {
             }
           }
 
-          // Network error — queue for flush-on-reconnect. Crisis
-          // step-down sends "Yes, search" as its API trigger.
-          if (await handleNetworkError(err, nextMsgId(), "Yes, search")) {
-            setLoading(false);
-            return;
-          }
-
+          // Crisis step-down intentionally does NOT queue on network
+          // error. "Yes, search" is a bare API trigger that relies on
+          // the server-side crisis context from earlier in the
+          // conversation. If the session has been reset by the time
+          // the flush runs, the server sees a meaningless "Yes,
+          // search" with no context. Safer to surface the error and
+          // let the user decide whether to retry. Still mark the
+          // user message "failed" so the visual indicator is consistent.
+          updateMessage(userMsgId, { status: "failed" });
           const friendlyMsg = userFacingError(err);
           setError(friendlyMsg);
           addMessage({
@@ -410,15 +467,31 @@ export function useChat() {
 
       // Normal message flow
       const userMsgId = nextMsgId();
-      addMessage({ id: userMsgId, role: "user", text: message });
+      // Stable idempotency key for this logical user action. Reused on
+      // every retry/flush so the server can dedupe. Persisted on the
+      // message itself so queue flush can find it.
+      const requestId = crypto.randomUUID();
+      addMessage({
+        id: userMsgId,
+        role: "user",
+        text: message,
+        status: "sending",
+        requestId,
+      });
 
       setLoading(true);
       try {
         // Attach coords if we have them
         const coords = hasCoords ? { latitude: latitude!, longitude: longitude! } : null;
         // Auto-retry once with 1.5s backoff for transient failures (not 429/403)
-        const data = await withRetry(() => sendChatMessage(message, sessionId, coords));
+        const data = await withRetry(() =>
+          sendChatMessage(message, sessionId, coords, requestId),
+        );
         if (data.session_id) setSessionId(data.session_id);
+
+        // Mark the user's message as delivered. Drives the "two ticks"
+        // visual state.
+        updateMessage(userMsgId, { status: "sent" });
 
         const botMsg: ChatMessage = {
           id: nextMsgId(),
@@ -433,13 +506,14 @@ export function useChat() {
       } catch (err: unknown) {
         // If the backend rejected our session token (e.g. SECRET changed),
         // clear the stale sessionId and retry once with no session so the
-        // backend mints a fresh token.
+        // backend mints a fresh token. Reuses requestId for idempotency.
         if (errMessage(err).includes("403") && sessionId) {
           try {
             useChatStore.getState().setSessionId(null);
             const coords = hasCoords ? { latitude: latitude!, longitude: longitude! } : null;
-            const data = await sendChatMessage(message, null, coords);
+            const data = await sendChatMessage(message, null, coords, requestId);
             if (data.session_id) setSessionId(data.session_id);
+            updateMessage(userMsgId, { status: "sent" });
             const botMsg: ChatMessage = {
               id: nextMsgId(),
               role: "bot",
@@ -458,10 +532,14 @@ export function useChat() {
         }
 
         // Network error (offline, DNS) — enqueue via shared helper.
-        if (await handleNetworkError(err, userMsgId, message)) {
+        if (await handleNetworkError(err, userMsgId, message, requestId)) {
           setLoading(false);
           return;
         }
+
+        // Any non-network error — mark the user's message as failed so
+        // it visually stands out. The error bubble below explains why.
+        updateMessage(userMsgId, { status: "failed" });
 
         const friendlyMsg = userFacingError(err);
         setError(friendlyMsg);
@@ -477,14 +555,55 @@ export function useChat() {
         setLoading(false);
       }
     },
-    [sessionId, latitude, longitude, hasCoords, addMessage, removeMessage, setSessionId, setLoading, setError, markQuickRepliesUsed, requestLocation, handleNetworkError],
+    [sessionId, latitude, longitude, hasCoords, addMessage, updateMessage, removeMessage, setSessionId, setLoading, setError, markQuickRepliesUsed, requestLocation, handleNetworkError],
   );
 
   /** Retry a failed message — removes the error and re-sends without
    *  adding a duplicate user message (the original is still in the chat). */
   const retry = useCallback(
     async (errorMsgId: string, originalText: string) => {
+      // Find the user message that corresponds to this error bubble
+      // BEFORE we remove the bubble. The user message that failed is
+      // the most recent user-role message chronologically preceding
+      // the error bubble. This is exact — not a text-match heuristic —
+      // so it handles every case correctly: duplicate messages, geo
+      // triggers with non-literal text, multiple stacked errors, etc.
+      //
+      // We need the pre-removal message list so the index lookup is
+      // meaningful; after removeMessage fires, the error bubble is
+      // gone and we'd have to guess the insertion point.
+      const originalFailedMsg = (() => {
+        const liveMessages = useChatStore.getState().messages;
+        const errorIdx = liveMessages.findIndex((m) => m.id === errorMsgId);
+        if (errorIdx < 0) return null;
+        for (let i = errorIdx - 1; i >= 0; i--) {
+          const m = liveMessages[i];
+          if (m.role === "user") return m;
+        }
+        return null;
+      })();
+
       removeMessage(errorMsgId);
+
+      // Mark the original message as "sending" again. On success we
+      // bump it to "sent"; on failure we roll back to "failed". This
+      // keeps the visual indicator next to the user's bubble
+      // consistent with the actual delivery outcome, avoiding the
+      // "Not sent" label lingering on a message that eventually did
+      // go through. Note updateMessage itself guards against
+      // cancelled-state overwrites, so if the message is somehow in
+      // a terminal state the patch no-ops safely.
+      if (originalFailedMsg) {
+        updateMessage(originalFailedMsg.id, { status: "sending" });
+      }
+
+      // Idempotency key for the retry. Reuse the original message's
+      // requestId when present: if the first attempt actually
+      // succeeded server-side but the response never reached us, the
+      // backend's cache will return that same response without
+      // running the pipeline again. Fall back to a fresh UUID for
+      // legacy messages (persisted from before requestId was added).
+      const retryRequestId = originalFailedMsg?.requestId ?? crypto.randomUUID();
 
       // Geolocation retry — re-run location request + API call
       if (originalText === GEOLOCATION_TRIGGER) {
@@ -522,9 +641,15 @@ export function useChat() {
         addMessage({ id: searchProgressId, role: "bot", text: "Finding where you are…", transient: true });
 
         try {
-          const data = await withRetry(() => sendChatMessage("near me", sessionId, geoResult));
+          const data = await withRetry(() =>
+            sendChatMessage("near me", sessionId, geoResult, retryRequestId),
+          );
           removeMessage(searchProgressId);
           if (data.session_id) setSessionId(data.session_id);
+          // Retry succeeded — mark the original failed message sent.
+          if (originalFailedMsg) {
+            updateMessage(originalFailedMsg.id, { status: "sent" });
+          }
           const botMsg: ChatMessage = {
             id: nextMsgId(),
             role: "bot",
@@ -537,9 +662,18 @@ export function useChat() {
           cacheIfResults(botMsg, "near me");
         } catch (err: unknown) {
           removeMessage(searchProgressId);
-          if (await handleNetworkError(err, nextMsgId(), "near me")) {
+          // Network error during retry — queue against the original
+          // failed message (if we have one) so its status transitions
+          // to "pending" rather than orphaning the old failed state.
+          const queueId = originalFailedMsg?.id ?? nextMsgId();
+          if (await handleNetworkError(err, queueId, "near me", retryRequestId)) {
             setLoading(false);
             return;
+          }
+          // Retry failed again — roll status back to "failed" so the
+          // warning indicator returns.
+          if (originalFailedMsg) {
+            updateMessage(originalFailedMsg.id, { status: "failed" });
           }
           const friendlyMsg = userFacingError(err);
           setError(friendlyMsg);
@@ -555,12 +689,22 @@ export function useChat() {
         return;
       }
 
-      // Normal retry — API call only, user message is already in chat
+      // Normal retry — API call only, user message is already in chat.
+      // retryRequestId was set at the top of retry(); reusing it
+      // means the server can dedupe if the original actually
+      // succeeded but the response was lost on the way back.
       setLoading(true);
       try {
         const coords = hasCoords ? { latitude: latitude!, longitude: longitude! } : null;
-        const data = await withRetry(() => sendChatMessage(originalText, sessionId, coords));
+        const data = await withRetry(() =>
+          sendChatMessage(originalText, sessionId, coords, retryRequestId),
+        );
         if (data.session_id) setSessionId(data.session_id);
+
+        // Retry succeeded — mark the original failed message sent.
+        if (originalFailedMsg) {
+          updateMessage(originalFailedMsg.id, { status: "sent" });
+        }
 
         const botMsg: ChatMessage = {
           id: nextMsgId(),
@@ -574,12 +718,25 @@ export function useChat() {
         cacheIfResults(botMsg, originalText);
       } catch (err: unknown) {
         // If retrying while offline, queue instead of showing an error.
-        // Generate a fresh ID for the queue entry — the user's original
-        // message is already in the chat, and the queue ID only serves
-        // as a dedupe key.
-        if (await handleNetworkError(err, nextMsgId(), originalText)) {
-          setLoading(false);
-          return;
+        // handleNetworkError will enqueue and transition the status —
+        // but it expects the user-message-ID to patch. Pass the
+        // original failed message's ID so its status goes to
+        // "pending" rather than orphaning the old failed state.
+        if (originalFailedMsg) {
+          if (await handleNetworkError(err, originalFailedMsg.id, originalText, retryRequestId)) {
+            setLoading(false);
+            return;
+          }
+        } else {
+          if (await handleNetworkError(err, nextMsgId(), originalText, retryRequestId)) {
+            setLoading(false);
+            return;
+          }
+        }
+
+        // Retry failed (non-network) — roll status back to "failed".
+        if (originalFailedMsg) {
+          updateMessage(originalFailedMsg.id, { status: "failed" });
         }
 
         const friendlyMsg = userFacingError(err);
@@ -594,7 +751,7 @@ export function useChat() {
         setLoading(false);
       }
     },
-    [sessionId, latitude, longitude, hasCoords, addMessage, removeMessage, setSessionId, setLoading, setError, requestLocation, handleNetworkError],
+    [sessionId, latitude, longitude, hasCoords, addMessage, updateMessage, removeMessage, setSessionId, setLoading, setError, requestLocation, handleNetworkError],
   );
 
   const submitFeedback = useCallback(
@@ -652,6 +809,11 @@ export function useChat() {
       // which ones so they know why nothing happened for them.
       const expired = await reapExpired();
       if (expired.length > 0) {
+        // Mark each expired user message as failed so it shows the
+        // warning state visually. The bot summary below gives context.
+        for (const m of expired) {
+          updateMessage(m.id, { status: "failed" });
+        }
         addMessage({
           id: nextMsgId(),
           role: "bot",
@@ -679,12 +841,55 @@ export function useChat() {
         // Re-check online in case we went offline mid-flush
         if (!navigator.onLine) break;
 
+        // Check whether the user cancelled this message while the
+        // flush was in progress. The loop captured `queue` at the
+        // start — if cancelQueued() ran between iterations, the IDB
+        // queue was dequeued but our local array still has the
+        // entry. Look at the live chat store instead: if the user
+        // message is marked cancelled, skip. Ensure the IDB entry
+        // is gone too (cancel already did this, but belt + braces).
+        {
+          const liveMessages = useChatStore.getState().messages;
+          const liveMsg = liveMessages.find((m) => m.id === queued.id);
+          if (liveMsg?.status === "cancelled") {
+            await dequeueMessage(queued.id);
+            continue;
+          }
+        }
+
+        // Transition the message from "pending" (queued, waiting) to
+        // "sending" (actively being delivered). Gives the user
+        // feedback that their backlog is draining.
+        updateMessage(queued.id, { status: "sending" });
+
         try {
+          // Reuse the stable requestId for idempotent retry. If this
+          // exact request already succeeded on the server (response
+          // lost on the way back), the server returns the cached
+          // response instead of running the chatbot again.
           const data = await sendChatMessage(
             queued.text,
             queued.sessionId,
             queued.coords,
+            queued.requestId,
           );
+
+          // A second cancellation check, now that the response has
+          // landed but before we commit the bot reply to the chat.
+          // If the user cancelled while the request was in flight,
+          // honor that — don't overwrite status to "sent" and don't
+          // show the bot response. The server-side work is already
+          // done (and cached in idempotency for 60s), so cost is
+          // sunk; the UX preserves the user's explicit intent.
+          {
+            const liveMessages = useChatStore.getState().messages;
+            const liveMsg = liveMessages.find((m) => m.id === queued.id);
+            if (liveMsg?.status === "cancelled") {
+              await dequeueMessage(queued.id);
+              continue;
+            }
+          }
+
           if (data.session_id) setSessionId(data.session_id);
 
           // Session probe heuristic: if the queued message had a
@@ -717,16 +922,24 @@ export function useChat() {
           addMessage(botMsg);
           cacheIfResults(botMsg, queued.text);
 
-          // Success — remove from queue
+          // Success — mark the user message as delivered and remove
+          // from the IDB queue so we don't replay.
+          updateMessage(queued.id, { status: "sent" });
           await dequeueMessage(queued.id);
         } catch (err: unknown) {
           // Network error again (e.g., connection dropped mid-flush) —
-          // leave in queue and stop trying. Will retry on next online.
-          if (isNetworkError(err)) break;
+          // roll status back to "pending" so the user sees the message
+          // is still waiting, and stop flushing. Will retry on next
+          // online event.
+          if (isNetworkError(err)) {
+            updateMessage(queued.id, { status: "pending" });
+            break;
+          }
 
           // Server-side error (auth, rate limit, 5xx) — surface to
           // user and dequeue the message so we don't retry forever.
           // The user sees what failed and can try again manually.
+          updateMessage(queued.id, { status: "failed" });
           const friendlyMsg = userFacingError(err);
           addMessage({
             id: nextMsgId(),
@@ -744,7 +957,23 @@ export function useChat() {
     } finally {
       flushingRef.current = false;
     }
-  }, [addMessage, setSessionId]);
+  }, [addMessage, updateMessage, setSessionId]);
+
+  /**
+   * Cancel a pending queued message before it's flushed. Removes it
+   * from the IDB queue and marks the visible chat message as
+   * "cancelled" so the user sees a clear indication their input was
+   * discarded. Safe to call on a message that was already sent or
+   * already cancelled — the queue dequeue is idempotent and the status
+   * transition is a no-op if the message doesn't exist.
+   */
+  const cancelQueued = useCallback(
+    async (msgId: string) => {
+      await dequeueMessage(msgId);
+      updateMessage(msgId, { status: "cancelled" });
+    },
+    [updateMessage],
+  );
 
   // Register the online handler once and also probe on mount (in case
   // we came back online while the component was unmounted).
@@ -760,5 +989,5 @@ export function useChat() {
     return () => window.removeEventListener("online", handler);
   }, [flushQueue]);
 
-  return { messages, isLoading, error, send, retry, submitFeedback };
+  return { messages, isLoading, error, send, retry, submitFeedback, cancelQueued };
 }

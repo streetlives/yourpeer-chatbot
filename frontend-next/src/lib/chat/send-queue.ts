@@ -77,6 +77,15 @@ export interface QueuedMessage {
   sessionId: string | null;
   /** Unix ms when the user hit send (not when flushed). */
   queuedAt: number;
+  /**
+   * Stable idempotency key sent to the server as X-Request-ID. Reused
+   * on every retry/flush of this message so the server can dedupe
+   * successful responses that the client never saw (e.g. network flap
+   * during response). Optional for backward compatibility with
+   * already-queued entries from older builds — flush falls back to a
+   * fresh UUID when missing.
+   */
+  requestId?: string;
 }
 
 /** Read the full queue. Returns [] on error or when nothing queued. */

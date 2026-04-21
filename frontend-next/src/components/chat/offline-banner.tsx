@@ -7,35 +7,30 @@
 /**
  * Offline staleness banner.
  *
- * Shown when the user is offline AND cached results exist. Uses amber
- * (not brand yellow) so it reads as a warning state distinct from the
- * normal UI chrome. See offline-cache.ts for the cache contract.
+ * Shown when the user is offline. Uses amber (not brand yellow) so it
+ * reads as a warning state distinct from the normal UI chrome.
  *
- * When no cached results exist (and the user is just-plain offline),
- * this is replaced by OfflineNoticeBanner below — a gentler message
- * that explains queued-send behavior.
+ * Note on wording: the previous version of this component displayed a
+ * specific cache age ("Last updated 5 minutes ago"). That was
+ * misleading — the chat messages shown on the page come from the
+ * Zustand persist layer (localStorage), not the IDB cache the timer
+ * was reading. The two can disagree substantially. We now just tell
+ * the user their view may be outdated without claiming to know when
+ * it last updated.
  */
 
 "use client";
 
-import { formatCacheAge } from "@/lib/chat/offline-cache";
-
 interface OfflineBannerProps {
-  /** Age of cached results in ms. When non-null, show staleness UX. */
-  cacheAge: number | null;
+  /** Whether the user has previously-returned results visible. When
+   *  true, the banner emphasizes "these may be outdated"; when false,
+   *  it focuses on the queued-send messaging. */
+  hasCachedResults: boolean;
   /** Queue depth — when > 0, tell the user their message is pending. */
   queueDepth: number;
 }
 
-/**
- * Primary offline banner. Handles both cases:
- *   - Cached results exist → amber "these may be outdated" warning
- *   - No cache → gentler "you're offline, messages will send when
- *     you're back" note
- */
-export function OfflineBanner({ cacheAge, queueDepth }: OfflineBannerProps) {
-  // Choose wording based on what the user has available
-  const hasCache = cacheAge !== null;
+export function OfflineBanner({ hasCachedResults, queueDepth }: OfflineBannerProps) {
   const hasQueued = queueDepth > 0;
 
   // Amber color chosen specifically to distinguish from the brand
@@ -48,21 +43,18 @@ export function OfflineBanner({ cacheAge, queueDepth }: OfflineBannerProps) {
   };
 
   let primaryText: string;
-  let secondaryText: string | null = null;
+  let secondaryText: string;
 
-  if (hasCache) {
-    primaryText = "You're offline — these results may be outdated.";
-    secondaryText = `Last updated ${formatCacheAge(cacheAge)}.`;
-    if (hasQueued) {
-      secondaryText += ` ${queueDepth} ${queueDepth === 1 ? "message" : "messages"} waiting to send.`;
-    }
+  if (hasCachedResults) {
+    primaryText = "You're offline — results shown may be outdated.";
+    secondaryText = hasQueued
+      ? `${queueDepth} ${queueDepth === 1 ? "message" : "messages"} will send when you're back online.`
+      : "Messages you send will be delivered when you're back online.";
   } else {
     primaryText = "You're offline.";
-    if (hasQueued) {
-      secondaryText = `${queueDepth} ${queueDepth === 1 ? "message" : "messages"} will send when you're back online.`;
-    } else {
-      secondaryText = "Messages you send will be delivered when you're back online.";
-    }
+    secondaryText = hasQueued
+      ? `${queueDepth} ${queueDepth === 1 ? "message" : "messages"} will send when you're back online.`
+      : "Messages you send will be delivered when you're back online.";
   }
 
   return (

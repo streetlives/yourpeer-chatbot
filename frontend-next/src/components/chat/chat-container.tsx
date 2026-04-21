@@ -18,13 +18,22 @@ import { ChatInput } from "./chat-input";
 import { ChatStatus } from "./chat-status";
 import { FeedbackRow } from "./feedback-row";
 import { OfflineBanner } from "./offline-banner";
+import { EarlierResultsLink } from "./earlier-results-link";
 
 export function ChatContainer() {
-  const { messages, isLoading, error, send, retry, submitFeedback } = useChat();
+  const { messages, isLoading, error, send, retry, submitFeedback, cancelQueued } = useChat();
   const isOnline = useOnlineStatus();
   const { cacheAge, queueDepth } = useOfflineState();
   const { backendStatus, statusDetail } = useBackendHealth();
   const chatRef = useRef<HTMLDivElement>(null);
+
+  // Session-reset snapshot: if the previous conversation had results
+  // and was wiped (by TTL or explicit reset), offer a link to restore
+  // them. Subscribed individually so we don't re-render the whole
+  // chat log on every store change.
+  const lastResultsBeforeReset = useChatStore((s) => s.lastResultsBeforeReset);
+  const restoreEarlierResults = useChatStore((s) => s.restoreEarlierResults);
+  const dismissEarlierResults = useChatStore((s) => s.dismissEarlierResults);
 
   // Combine browser online status with backend health into a single state.
   //   "connected" — browser online AND backend healthy
@@ -104,7 +113,10 @@ export function ChatContainer() {
       {/* Offline state — amber banner covers both cached-results and
           no-cache cases. Replaces the old red "nothing works" banner. */}
       {showOfflineBanner && (
-        <OfflineBanner cacheAge={cacheAge} queueDepth={queueDepth} />
+        <OfflineBanner
+          hasCachedResults={cacheAge !== null}
+          queueDepth={queueDepth}
+        />
       )}
 
       {/* Backend unreachable while online — distinct from offline.
@@ -133,6 +145,17 @@ export function ChatContainer() {
         </div>
       )}
 
+      {/* Session-reset restore link — present when a prior session had
+          results and was wiped by TTL or an explicit reset. Lets the
+          user pull those results back into view without re-searching. */}
+      {lastResultsBeforeReset && (
+        <EarlierResultsLink
+          snapshot={lastResultsBeforeReset}
+          onRestore={restoreEarlierResults}
+          onDismiss={dismissEarlierResults}
+        />
+      )}
+
       {/* Chat area wrapper — relative for floating feedback positioning */}
       <div className="relative flex-1">
         <div
@@ -153,6 +176,7 @@ export function ChatContainer() {
                   message={msg}
                   onQuickReply={send}
                   onRetry={retry}
+                  onCancel={cancelQueued}
                 />
               </ChatMessageBoundary>
             ))

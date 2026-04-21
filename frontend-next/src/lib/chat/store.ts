@@ -20,14 +20,43 @@ interface ChatStore {
   lastActiveAt: number;
   isLoading: boolean;
   error: string | null;
+  /**
+   * Snapshot of the last bot message with service cards, saved
+   * immediately before resetChat wipes the conversation (TTL expiry
+   * or user-triggered reset). When present, the welcome UI offers a
+   * "See your earlier results" link. Cleared after the user taps
+   * the link (or starts typing something new that explicitly
+   * supersedes the old context).
+   */
+  lastResultsBeforeReset: ChatMessage | null;
 
   setSessionId: (id: string | null) => void;
   addMessage: (msg: ChatMessage) => void;
+  /**
+   * Shallow-merge patch into an existing message by id. Silently
+   * no-ops if the id isn't found (e.g. the message was removed by the
+   * user cancelling). Used to transition message.status through its
+   * lifecycle: pending → sending → sent / failed / cancelled.
+   */
+  updateMessage: (id: string, patch: Partial<ChatMessage>) => void;
   removeMessage: (id: string) => void;
   setLoading: (v: boolean) => void;
   setError: (msg: string | null) => void;
   markQuickRepliesUsed: () => void;
   resetChat: () => void;
+  /**
+   * Bring the lastResultsBeforeReset snapshot back into the chat
+   * stream as a fresh bot message with a clarifying prefix. Clears
+   * the snapshot so the link disappears once used. No-op when the
+   * snapshot is empty.
+   */
+  restoreEarlierResults: () => void;
+  /**
+   * Discard the lastResultsBeforeReset snapshot without restoring it.
+   * Called when the user takes an action that makes the old results
+   * clearly irrelevant (e.g. searches for something else).
+   */
+  dismissEarlierResults: () => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -95,12 +124,13 @@ function makeWelcomeMessage(): ChatMessage {
 
 export const useChatStore = create<ChatStore>()(
   persist(
-    (set) => ({
+    (set, get) => ({
       sessionId: null,
       messages: [makeWelcomeMessage()],
       lastActiveAt: Date.now(),
       isLoading: false,
       error: null,
+      lastResultsBeforeReset: null,
 
       setSessionId: (id) => set({ sessionId: id }),
 
@@ -108,6 +138,26 @@ export const useChatStore = create<ChatStore>()(
         set((state) => ({
           messages: [...state.messages, msg],
           lastActiveAt: Date.now(),
+        })),
+
+      updateMessage: (id, patch) =>
+        set((state) => ({
+          messages: state.messages.map((m) => {
+            if (m.id !== id) return m;
+            // Terminal-state guard: once a message is "cancelled"
+            // (the user explicitly pulled it back), do NOT let any
+            // subsequent patch change its status. This closes a
+            // narrow race window in the queue flush loop where a
+            // cancellation could happen between a cancel-check and
+            // a status write. The caller can still patch non-status
+            // fields, but we drop any status change in the patch.
+            if (m.status === "cancelled" && "status" in patch) {
+              const { status: _dropped, ...safePatch } = patch;
+              void _dropped;
+              return { ...m, ...safePatch };
+            }
+            return { ...m, ...patch };
+          }),
         })),
 
       removeMessage: (id) =>
@@ -127,12 +177,22 @@ export const useChatStore = create<ChatStore>()(
         })),
 
       resetChat: () => {
+        // Before wiping, snapshot the most recent bot message that
+        // showed service results. If the user was mid-search when the
+        // session expired, this is the context they likely still care
+        // about — losing it silently is a common UX failure mode.
+        const prevState = get();
+        const lastResults = [...prevState.messages]
+          .reverse()
+          .find((m) => m.role === "bot" && m.services && m.services.length > 0) || null;
+
         set({
           sessionId: null,
           messages: [makeWelcomeMessage()],
           lastActiveAt: Date.now(),
           isLoading: false,
           error: null,
+          lastResultsBeforeReset: lastResults,
         });
         // Also clear offline state — otherwise queued messages from
         // a prior session will flush against the (now-reset) session
@@ -142,6 +202,36 @@ export const useChatStore = create<ChatStore>()(
         void clearQueue();
         void clearCachedResults();
       },
+
+      restoreEarlierResults: () => {
+        const snapshot = get().lastResultsBeforeReset;
+        if (!snapshot) return;
+        // Inject a brief orienting prefix so the restored message
+        // doesn't read like the bot is responding to nothing.
+        const prefix: ChatMessage = {
+          id: nextMsgId(),
+          role: "bot",
+          text: "Here are the services you were looking at before:",
+        };
+        // New ID on the restored results so it doesn't collide with
+        // anything else in the current chat stream.
+        const restored: ChatMessage = {
+          ...snapshot,
+          id: nextMsgId(),
+          // Don't re-show quick replies — they were contextual to the
+          // previous conversation state.
+          quick_replies: undefined,
+          // Don't show feedback affordance again for the same results.
+          showFeedback: false,
+        };
+        set((state) => ({
+          messages: [...state.messages, prefix, restored],
+          lastResultsBeforeReset: null,
+          lastActiveAt: Date.now(),
+        }));
+      },
+
+      dismissEarlierResults: () => set({ lastResultsBeforeReset: null }),
     }),
     {
       name: "yourpeer-chat",
@@ -149,14 +239,23 @@ export const useChatStore = create<ChatStore>()(
       // Schema version — increment when the persisted shape changes.
       // The migrate function handles upgrading old data so users don't
       // lose their conversation or hit runtime errors after a deploy.
-      version: 1,
+      // v2: added lastResultsBeforeReset (null-default is safe on legacy reads).
+      version: 2,
       migrate: (persisted, version: number) => {
-        if (version === 0) {
+        const p = persisted as Record<string, unknown> | null | undefined;
+        if (!p) return p;
+        if (version < 1) {
           // v0 → v1: no structural changes, just establishing the baseline.
-          // Future migrations go here as additional `if` blocks:
-          //   if (version < 2) { /* v1 → v2 migration */ }
         }
-        return persisted;
+        if (version < 2) {
+          // v1 → v2: introduce lastResultsBeforeReset. Missing field
+          // defaults to null — legacy users lose no data, they just
+          // don't get a "your earlier results" link on first rehydrate
+          // after upgrade. Acceptable: the feature is only meaningful
+          // after a reset anyway.
+          p.lastResultsBeforeReset = null;
+        }
+        return p;
       },
 
       // Only persist conversation state — not transient UI flags.
@@ -166,6 +265,7 @@ export const useChatStore = create<ChatStore>()(
         sessionId: state.sessionId,
         messages: state.messages.filter((m) => !m.transient),
         lastActiveAt: state.lastActiveAt,
+        lastResultsBeforeReset: state.lastResultsBeforeReset,
       }),
 
       onRehydrateStorage: () => (state) => {
