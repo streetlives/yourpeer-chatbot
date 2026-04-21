@@ -64,6 +64,28 @@ def _get_borough_list() -> list:
     return ["Manhattan", "Brooklyn", "Queens", "Bronx", "Staten Island"]
 
 
+def _get_crisis_categories() -> list:
+    """Crisis categories from crisis_detector (live, not hardcoded).
+
+    Returns the list of category names that `detect_crisis` can emit.
+    Used by `build_capability_context` so the LLM prompt stays in sync
+    when categories are added (e.g., the April 2026 addition of
+    youth_runaway, assault_victim, safety_concern).
+    """
+    try:
+        from app.services.crisis_detector import _CRISIS_CATEGORIES
+        # Shape: list of (name, phrases, response) tuples — extract just names
+        names = []
+        for entry in _CRISIS_CATEGORIES:
+            if isinstance(entry, tuple) and entry:
+                names.append(entry[0])
+            elif isinstance(entry, str):
+                names.append(entry)
+        return names
+    except ImportError:
+        return []
+
+
 # ---------------------------------------------------------------------------
 # CAPABILITY TOPICS
 # ---------------------------------------------------------------------------
@@ -104,7 +126,7 @@ TOPICS = {
             "just tell me your neighborhood, borough, or zip code."
         ),
         "summary": "Uses browser geolocation or user-stated neighborhood/borough/zip code",
-        "source": "chatbot.py → geolocation handling",
+        "source": "chatbot/pipeline.py → _apply_session_geo",
     },
 
     "location_fail": {
@@ -123,7 +145,7 @@ TOPICS = {
             "tell me your neighborhood, borough, or zip code instead."
         ),
         "summary": "Geolocation can fail (permission denied, GPS timeout, indoor signal)",
-        "source": "chatbot.py → _build_bot_question_prompt",
+        "source": "responses.py → _build_bot_question_prompt",
     },
 
     "coverage": {
@@ -138,7 +160,7 @@ TOPICS = {
             "connects people to local resources anywhere in the US."
         ),
         "summary": "NYC only — suggests 211 for outside coverage",
-        "source": "chatbot.py → _build_bot_question_prompt",
+        "source": "responses.py → _build_bot_question_prompt",
     },
 
     "privacy_general": {
@@ -153,11 +175,12 @@ TOPICS = {
             "personal information or link conversations to any identity. "
             "I'm not connected to any government agency or service provider. "
             "If you share personal info by accident (phone number, name, "
-            "SSN, email, address, date of birth, credit card, or URLs), "
-            "it's automatically detected and redacted before anything is saved. "
-            "You can say 'start over' at any time to clear your session."
+            "SSN, email, address, date of birth, credit card, URL, or "
+            "gender-identity terms), it's automatically detected and "
+            "redacted before anything is saved. You can say 'start over' "
+            "at any time to clear your session."
         ),
-        "summary": "Anonymous, no PII stored, automatic redaction of 8 PII types",
+        "summary": "Anonymous, no PII stored, automatic redaction of 9 PII types",
         "source": "pii_redactor.py → _PLACEHOLDERS",
     },
 
@@ -173,7 +196,7 @@ TOPICS = {
             "anonymous and is not shared with anyone."
         ),
         "summary": "Not connected to ICE or any government agency",
-        "source": "chatbot.py → _static_bot_answer (ICE section)",
+        "source": "chatbot/handlers/meta.py → _static_bot_answer (ICE section)",
     },
 
     "privacy_police": {
@@ -187,7 +210,7 @@ TOPICS = {
             "share crisis hotline numbers, but that's your choice to call."
         ),
         "summary": "No information shared with law enforcement",
-        "source": "chatbot.py → _static_bot_answer (police section)",
+        "source": "chatbot/handlers/meta.py → _static_bot_answer (police section)",
     },
 
     "privacy_benefits": {
@@ -204,7 +227,7 @@ TOPICS = {
             "report anything to anyone."
         ),
         "summary": "No impact on benefits/case status, providers can't see chat",
-        "source": "chatbot.py → _static_bot_answer (benefits section)",
+        "source": "chatbot/handlers/meta.py → _static_bot_answer (benefits section)",
     },
 
     "privacy_visibility": {
@@ -222,7 +245,7 @@ TOPICS = {
             "clear the chat history."
         ),
         "summary": "No recording, no sharing, session clearable",
-        "source": "chatbot.py → _static_bot_answer (visibility section)",
+        "source": "chatbot/handlers/meta.py → _static_bot_answer (visibility section)",
     },
 
     "privacy_delete": {
@@ -235,7 +258,7 @@ TOPICS = {
             "browser and auto-expires after 30 minutes of inactivity."
         ),
         "summary": "'Start over' clears session, auto-expires after 30 min",
-        "source": "chatbot.py → _static_bot_answer (delete section)",
+        "source": "chatbot/handlers/meta.py → _static_bot_answer (delete section)",
     },
 
     "privacy_identity": {
@@ -265,7 +288,7 @@ TOPICS = {
             "by community members and staff."
         ),
         "summary": "Searches Streetlives database of verified NYC services",
-        "source": "chatbot.py → generate_reply",
+        "source": "chatbot/orchestrator.py → generate_reply",
     },
 
     "crisis_support": {
@@ -300,7 +323,7 @@ TOPICS = {
             "or I can connect you right now. Just say 'talk to a person'."
         ),
         "summary": "Peer navigators available via yourpeer.nyc",
-        "source": "chatbot.py → _ESCALATION_RESPONSE",
+        "source": "responses.py → _ESCALATION_RESPONSE",
     },
 
     "limitations": {
@@ -318,21 +341,27 @@ TOPICS = {
             "For complex needs, a peer navigator can help you directly."
         ),
         "summary": "AI limitations: no appointments, no real-time availability, no advice",
-        "source": "chatbot.py",
+        "source": "chatbot/ package",
     },
 
     "language": {
         "keywords": [
             "language", "spanish", "espanol", "español", "translate",
             "other language", "chinese", "french", "arabic",
+            "hablas", "habla", "do you speak",
         ],
         "answer": (
-            "I primarily work in English right now. Multi-language support "
-            "is planned. If you need help in another language, a peer "
-            "navigator may be able to assist — just say 'talk to a person'."
+            "I work primarily in English, with partial Spanish support: "
+            "I recognize Spanish service requests (comida, refugio, albergue, "
+            "tengo hambre) and respond with a bilingual acknowledgment, "
+            "though the rest of the conversation — confirmations, results, "
+            "buttons — is in English. For full Spanish support or other "
+            "languages, a peer navigator may be able to assist — just say "
+            "'talk to a person'. Service cards show which languages each "
+            "provider speaks, so you can pick one that matches your needs."
         ),
-        "summary": "English only currently, multi-language planned",
-        "source": "chatbot.py",
+        "summary": "English primary + partial Spanish detection/acknowledgment; other languages via peer navigator",
+        "source": "chatbot/handlers/accessibility.py → _handle_spanish_detection",
     },
 }
 
@@ -486,14 +515,49 @@ def build_capability_context() -> str:
         "- You are an AI assistant, not a human",
         "- Your data comes from verified listings. Hours and availability may change — "
         "always call ahead to confirm",
-        "- Crisis detection: you can detect suicidal ideation, domestic violence, "
-        "medical emergencies, trafficking, and other crisis situations and provide "
-        "appropriate hotline resources",
+        "- Crisis detection: you can detect " + _format_crisis_categories() + " "
+        "and provide appropriate hotline resources. Specific hotline numbers "
+        "(988 Lifeline, Crisis Text Line, domestic-violence lines, "
+        "runaway-youth lines, trafficking lines, etc.) are shown to users "
+        "via the crisis-response path — you do not recite them from this "
+        "prompt",
         "- Emotional support: you acknowledge feelings (scared, sad, shame, grief, "
         "isolation) before offering services — you don't push services on someone "
         "who's expressing distress",
         "- Limitations: you cannot make appointments, verify real-time availability, "
-        "or provide medical/legal/financial advice. English only currently",
+        "or provide medical/legal/financial advice. You work primarily in English "
+        "with partial Spanish support (bilingual acknowledgment + Spanish service "
+        "keywords); other languages via peer navigator",
     ]
 
     return "Facts about yourself:\n" + "\n".join(lines)
+
+
+def _format_crisis_categories() -> str:
+    """Format the live crisis-category list as a human-readable phrase.
+
+    Used by `build_capability_context` to keep the LLM prompt's crisis
+    description in sync with `_CRISIS_CATEGORIES`. Maps internal category
+    names (e.g. "suicide_self_harm") to user-facing phrasings.
+    """
+    # Friendly names for user-facing text. Keys MUST match
+    # _CRISIS_CATEGORIES names in crisis_detector.py. When a new category
+    # is added there, add its label here — `test_bot_knowledge_freshness`
+    # asserts every live category has an entry in this mapping.
+    _FRIENDLY = {
+        "suicide_self_harm": "suicidal ideation",
+        "domestic_violence": "domestic violence",
+        "safety_concern": "unsafe situations",
+        "trafficking": "trafficking",
+        "medical_emergency": "medical emergencies",
+        "violence": "threats of violence",
+        "youth_runaway": "youth runaway / kicked out",
+        "assault_victim": "assault / being attacked",
+    }
+    names = _get_crisis_categories()
+    friendly = [_FRIENDLY.get(n, n.replace("_", " ")) for n in names]
+    if not friendly:
+        return "crisis situations"
+    if len(friendly) == 1:
+        return friendly[0]
+    return ", ".join(friendly[:-1]) + ", and " + friendly[-1]

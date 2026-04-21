@@ -133,6 +133,46 @@ A single module typically takes 15-60 minutes. Cosmic-ray stores state in `cr-<m
 
 The April 2026 audit also revealed that `ping_llm()` in `backend/app/llm/claude_client.py` had its real API call commented out and was returning a fabricated `status="up"`. The `/api/health` endpoint reported the LLM as healthy whether or not the API key was valid. Fix: uncommented the real call. Now properly tested by `test_health_and_upload.py::TestPingLlm`.
 
+### Drift guards — hand-maintained mappings vs live code
+
+A recurring bug class surfaced four times in a single week in April 2026: a hand-maintained mapping (a count in prose, an enumeration in a topic answer, a workflow-YAML pair of module-to-test-files) drifted out of sync with the live code it was describing. Each time, no automated check existed to catch the drift, and the staleness persisted for weeks or months until someone noticed.
+
+Cases fixed so far:
+
+| Case | What was stale | Guard that now prevents recurrence |
+|---|---|---|
+| `bot_knowledge.py` topic answers | "8 PII types" vs 9 live; "English only" vs partial Spanish shipped; 10 source refs to a file that no longer exists | pytest (`tests/unit/test_bot_knowledge.py::TestBotKnowledgeFreshness`) |
+| `CHATBOT_BEHAVIOR.md` crisis section | "six crisis categories" vs 8 live; acute/step-down lists using stale category names | `scripts/check_docs.py::check_crisis_category_name_refs` | <!-- drift:ignore: documenting the historical stale claim as a worked example; the real CHATBOT_BEHAVIOR.md was fixed in the same PR -->
+| `FEATURES.md` count claims | "18 negative-preference phrases" vs 35 live; "Six crisis categories" vs 8 | `scripts/check_docs.py::check_category_counts` (widened `word_numbers` vocabulary) + `check_service_category_enumeration` | <!-- drift:ignore: documenting the historical stale claim as a worked example; the real FEATURES.md was fixed in the same PR -->
+| Mutation workflow pairings | test files paired with modules they don't exercise (produces 0% mutation scores); unpaired files that do exercise the module (depresses scores below what existing tests could achieve) | pytest (`tests/unit/test_mutation_workflow_pairings.py`) |
+
+Same shape every time: a mapping between names/counts/references in artifact A and ground truth in artifact B, with no automated check enforcing consistency. Same fix pattern every time: **live-source the ground truth, parse the hand-maintained claim, fail loudly with a targeted message when they disagree.**
+
+#### Which guard to reach for when adding a new mapping
+
+| Signal | Guard location | Example |
+|---|---|---|
+| Prose in one Python module describes live data in the same module | pytest test in `tests/unit/test_<module>.py` | `TestBotKnowledgeFreshness` |
+| Prose in a markdown doc describes live code elsewhere | check function in `scripts/check_docs.py` | `check_service_category_enumeration` |
+| Numbers-as-words in docs about code-owned counts | extend the relevant `CATEGORY_COUNTS` entry's `word_numbers` dict in `scripts/check_docs.py` | widened "Seven/Eight/Nine" → full 1-15 |
+| Prose enumerates code-owned list members by name | new check function in `scripts/check_docs.py` following the enumeration-guard pattern | `check_crisis_category_name_refs` |
+| Prose makes structured claims (tier N contains X) | new check function following the tier-structure pattern | `check_service_need_priority_tiers` |
+| Workflow YAML pairs named entities with files/modules | pytest test that parses the YAML + validates the pairing | `test_mutation_workflow_pairings.py` |
+| A specific past regression you want to lock down | single-purpose `test_no_<X>_in_module`-style assertion | `test_no_english_only_claim_in_module` |
+
+Every guard's failure message should name three things: **what** is wrong, **where** to find it (file + line), and **how** to fix it (with both "update the prose to match code" and "update the code if the prose is the intended new state" stated as options). The message IS the contract documentation — a future engineer who breaks the mapping should get enough information from the failure to fix it without reading the guard source.
+
+#### Adding a new guard — checklist
+
+1. Identify the hand-maintained claim and its ground-truth source.
+2. Live-source the ground truth (AST parsing for Python collections, `yaml.safe_load` for workflows, regex for specific patterns).
+3. Parse the claim (regex on prose, grep on imports, etc.).
+4. Write the assertion with a failure message that names the offending text, the live value, and the remediation path.
+5. **Strip-discipline proof**: revert the fix that motivated the guard, confirm the guard fires with the targeted message, restore. This is the evidence the guard will catch the class of bug it was built for.
+6. Add the guard to the appropriate registry (`CHECKS` list in `check_docs.py`, new test class in a pytest file, etc.).
+
+The split between linter checks and pytest guards is intentional: **`check_docs.py` handles cross-file drift** (test counts in TESTING.md vs actual test functions, YAML workflows vs code), **pytest guards handle module-internal prose-vs-live-code drift** (answer strings vs their underlying data, friendly-name maps vs live enum keys). If a drift case could reasonably go in either, prefer pytest — it runs faster and fails with richer error context.
+
 ## Test Coverage Map
 
 All backend modules and all public functions are covered. Tests are in `tests/unit/` (no external deps) and `tests/integration/` (mocked DB/LLM):
@@ -154,7 +194,7 @@ All backend modules and all public functions are covered. Tests are in `tests/un
 | `semantic_router.py` | `unit/test_semantic_router.py` | 54 | Full |
 | `semantic_routes.py` | `unit/test_semantic_router.py` | 54 | Full |
 | `llm_classifier.py` | `unit/test_llm_classifier.py` | 30 | Full |
-| `bot_knowledge.py` | `unit/test_bot_knowledge.py` | 37 | Full |
+| `bot_knowledge.py` | `unit/test_bot_knowledge.py` | 44 | Full |
 | `post_results.py` | `unit/test_post_results.py`, `unit/test_post_results_boundary.py`, `unit/test_results_enhancements.py` | 125 | Full |
 | `pii_redactor.py` | `unit/test_pii_redactor.py`, `unit/test_gender_extraction.py`, `unit/test_edge_cases.py` | 38+ | Full |
 | `session_store.py` | `unit/test_session_store.py`, `integration/test_classification_and_routing.py`, `integration/test_http_routes_and_models.py` | 7+ | Full |
@@ -539,9 +579,9 @@ Comprehensive gap coverage for 9 areas identified during audit: `_compute_freshn
 
 SQLite pilot persistence layer. Tests direct CRUD operations on all 3 tables (events, sessions, eval_data) including ordering, limits, upserts, and clears (12 tests). Disabled mode (PILOT_DB_PATH unset) verifies all operations are safe no-ops (6 tests). Audit log hydration round-trip: write events → clear in-memory → hydrate from SQLite → verify stats (4 tests). Session store hydration: write → clear → hydrate → verify slots (4 tests). Full restart simulation: user interaction → destroy in-memory state → hydrate → verify everything is restored (1 test).
 
-### `test_bot_knowledge.py` — 37 tests
+### `test_bot_knowledge.py` — 44 tests
 
-Validates the bot self-knowledge module: live capability sourcing from actual code, topic matching for 12+ question types, LLM context generation, static handler integration, bot question phrase classification, untested topic coverage, topic collision prevention, false positive guards, and full chatbot routing for privacy/location/services questions.
+Validates the bot self-knowledge module: live capability sourcing from actual code, topic matching for 12+ question types, LLM context generation, static handler integration, bot question phrase classification, untested topic coverage, topic collision prevention, false positive guards, full chatbot routing for privacy/location/services questions, and freshness guards that fail loudly when bot_knowledge claims drift out of sync with live code.
 
 | Category | Tests | What's covered |
 |---|---|---|
@@ -554,6 +594,7 @@ Validates the bot self-knowledge module: live capability sourcing from actual co
 | Topic collisions | 5 | Location/privacy, police/location, ICE/share, delete/privacy, services/coverage collision prevention |
 | False positives | varies | Service and action messages don't match topics |
 | Bot question routing | 3 | Privacy/location/services questions route correctly through chatbot |
+| **Freshness guards (April 2026)** | **7** | **PII-type claims match `_PLACEHOLDERS`, service-category count matches `SERVICE_KEYWORDS`, crisis-category list matches `_CRISIS_CATEGORIES`, friendly-name map covers every live crisis category, no "English only" regression, no stale monolith source refs (from the pre-Phase-3 era before the `chatbot/` package decomposition). Each guard has proven strip-discipline: reintroducing its specific drift produces a targeted failure message naming what to update.** |
 
 ### `test_schema_and_mock_sync.py` — 20 tests
 

@@ -227,6 +227,27 @@ ANTHROPIC_API_KEY=... pytest tests/unit/test_llm_slot_extractor.py -k live
 - **Model constants** are centralized in `claude_client.py` — don't hardcode model IDs
   elsewhere.
 
+## Drift Guards
+
+This repo has a recurring bug class: a hand-maintained mapping (a count in prose, an enumeration in an answer, a workflow-YAML pair of module-to-test-files) drifts out of sync with the live code it was describing. Four cases were fixed in a single week in April 2026; each had gone undetected for months. The recurring pattern motivated a standard guard convention.
+
+**If you're adding a hand-maintained claim about live code** — e.g., a new count in docs, a new enumeration in a topic answer, a new workflow pairing — **add a guard that locks the claim to the code at PR-edit time.** Don't let the next person discover the drift a month from now.
+
+Guard locations by drift shape:
+
+- **Module-internal prose-vs-code** (answer strings, friendly-name maps, summaries in the same module): pytest test class. Example: `tests/unit/test_bot_knowledge.py::TestBotKnowledgeFreshness` (7 guards covering PII-type enumeration, crisis-category naming, "no stale 'English only' claim", etc.).
+- **Cross-file prose-vs-code** (markdown describing Python, Python describing YAML): check function in `scripts/check_docs.py`. Example: `check_service_category_enumeration` asserts every `SERVICE_KEYWORDS` key appears in the `FEATURES.md` enumeration bullet.
+- **Workflow YAML vs code** (module-to-test pairings, env vars, etc.): pytest test parsing the YAML. Example: `tests/unit/test_mutation_workflow_pairings.py` asserts every mutation-tested module is paired with test files that actually exercise it.
+
+Every guard's failure message should name **what** is wrong, **where** it is, and **how** to fix it — with both "update the prose to match code" and "update the code if the prose is the intended new state" stated as options. The message is the contract documentation.
+
+See `docs/TESTING.md` → Drift Guards for the full catalog, decision table, and checklist for adding new guards.
+
+**Common trigger points for adding a guard:**
+- New count claim in a doc ("N crisis categories", "N service types") → check it against the live collection's length
+- New enumeration in a user-facing answer or LLM prompt → check every live member appears
+- New mapping in a workflow YAML (module → tests, env → config) → check every listed entry exercises its target
+
 ## Common Pitfalls
 
 - Editing slot extraction logic without updating both `slot_extractor.py` (regex) **and**
