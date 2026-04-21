@@ -22,6 +22,13 @@
  *   accessible from workers.
  * - All reads are safe to call during SSR (they return null on the
  *   server because idb-keyval throws without IndexedDB).
+ * - CACHE_KEY carries a version suffix (":v1"). Bumping to ":v2"
+ *   when the CachedResults shape changes gives a clean cutover —
+ *   old v1 data becomes invisible and won't corrupt v2 reads.
+ *   Orphaned old-version entries aren't actively purged; IDB's
+ *   storage quota handles them eventually, and "Clear site data"
+ *   in DevTools is always available. If active cleanup becomes
+ *   necessary, do it in a once-on-mount effect during the migration.
  */
 
 "use client";
@@ -33,6 +40,18 @@ const CACHE_KEY = "yourpeer:last-results:v1";
 
 /** Results older than this are not served — user sees empty cached state. */
 export const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+/** Event dispatched on window when the cache is mutated. Mirrors the
+ *  QUEUE_CHANGE_EVENT pattern in send-queue.ts — UI hooks subscribe
+ *  instead of polling. */
+export const CACHE_CHANGE_EVENT = "yourpeer:cache-change";
+
+function notifyChange(): void {
+  if (typeof window === "undefined") return;
+  queueMicrotask(() => {
+    window.dispatchEvent(new CustomEvent(CACHE_CHANGE_EVENT));
+  });
+}
 
 interface CachedResults {
   /** The bot message that contained the service cards. */
@@ -67,6 +86,7 @@ export async function cacheLastResults(
       queryText,
     };
     await set(CACHE_KEY, entry);
+    notifyChange();
   } catch (err) {
     // IndexedDB can fail in private browsing, low disk, etc.
     // Log and continue — don't break the online flow.
@@ -91,6 +111,7 @@ export async function readCachedResults(): Promise<CachedResults | null> {
     if (age > CACHE_TTL_MS) {
       // Stale — drop it so we don't keep returning dead data.
       await del(CACHE_KEY).catch(() => {});
+      notifyChange();
       return null;
     }
 
@@ -106,6 +127,7 @@ export async function clearCachedResults(): Promise<void> {
   if (typeof window === "undefined") return;
   try {
     await del(CACHE_KEY);
+    notifyChange();
   } catch (err) {
     console.warn("[offline-cache] clear failed:", err);
   }

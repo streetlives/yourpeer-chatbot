@@ -12,6 +12,11 @@
  * - send queue depth (from the IndexedDB queue)
  * - cache age (for the staleness banner)
  *
+ * State refreshes happen via event subscription, not polling — the
+ * underlying send-queue and offline-cache modules dispatch custom
+ * events on every mutation, and this hook listens. A slow interval
+ * (30s) also ticks the cache age so "5 minutes ago" stays accurate.
+ *
  * Components should prefer this over useOnlineStatus directly when
  * they need to know about queued messages or cached results.
  */
@@ -20,8 +25,12 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { useOnlineStatus } from "./use-online-status";
-import { readQueue } from "@/lib/chat/send-queue";
-import { readCachedResults, cacheAgeMs } from "@/lib/chat/offline-cache";
+import { readQueue, QUEUE_CHANGE_EVENT } from "@/lib/chat/send-queue";
+import {
+  readCachedResults,
+  cacheAgeMs,
+  CACHE_CHANGE_EVENT,
+} from "@/lib/chat/offline-cache";
 
 export interface OfflineState {
   /** Browser reports online. */
@@ -33,7 +42,8 @@ export interface OfflineState {
   /** True when cached results exist and browser is offline — the
    *  staleness banner should render in this state. */
   showStalenessBanner: boolean;
-  /** Force a re-read of queue + cache (e.g., after an enqueue). */
+  /** Force a re-read of queue + cache. Normally unnecessary — events
+   *  handle this automatically — but exposed for edge cases. */
   refresh: () => void;
 }
 
@@ -45,21 +55,36 @@ export function useOfflineState(): OfflineState {
 
   const refresh = useCallback(() => setTick((t) => t + 1), []);
 
-  // Re-read queue and cache on online status change, manual refresh,
-  // and on a slow interval (for cache age display).
+  // Re-read queue and cache on:
+  // - online status change (we want a fresh read when connection returns)
+  // - manual refresh() call (escape hatch)
+  // - queue/cache change events (primary driver — fires immediately
+  //   after enqueue, dequeue, cache write, etc.)
+  // - slow interval (keeps "N minutes ago" display accurate)
   useEffect(() => {
     let cancelled = false;
 
-    void (async () => {
+    const readState = async () => {
       const q = await readQueue();
       const cache = await readCachedResults();
       if (cancelled) return;
       setQueueDepth(q.length);
       setCacheAge(cacheAgeMs(cache));
-    })();
+    };
+
+    void readState();
+
+    // Subscribe to change events so UI reflects mutations immediately.
+    const onChange = () => {
+      void readState();
+    };
+    window.addEventListener(QUEUE_CHANGE_EVENT, onChange);
+    window.addEventListener(CACHE_CHANGE_EVENT, onChange);
 
     return () => {
       cancelled = true;
+      window.removeEventListener(QUEUE_CHANGE_EVENT, onChange);
+      window.removeEventListener(CACHE_CHANGE_EVENT, onChange);
     };
   }, [isOnline, tick]);
 

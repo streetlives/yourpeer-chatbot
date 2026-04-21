@@ -16,7 +16,11 @@
  * - Queue is stored as a single IndexedDB value (array) under one key.
  *   We always read/write the whole thing. Queue depth is small
  *   (typically 0-3 entries), so this is fine and avoids IDB cursor
- *   complexity.
+ *   complexity. Read-modify-write has a narrow race window when
+ *   concurrent writes happen (e.g., enqueue fires while reapExpired
+ *   is mid-flight). The last write wins. For a single-user offline
+ *   queue this is acceptable; if the write pattern ever becomes
+ *   concurrent, migrate to IDBTransaction with a proper object store.
  * - 1-hour TTL on queued entries. After an hour, a queued "what food
  *   is near me?" is probably no longer the question the user wanted
  *   answered — they've moved, changed context, or given up. Rather
@@ -25,6 +29,12 @@
  *   If the user typed "food near me" in Brooklyn at 10am, queued, and
  *   is flushed while walking in Queens at 11am, "near me" should mean
  *   where they were when they asked. Otherwise results look wrong.
+ * - Queue is capped at MAX_QUEUE_DEPTH entries to protect against
+ *   pathological cases (user spams send while offline for 59 minutes).
+ *   New sends past the cap are silently rejected and the caller is
+ *   told via the enqueue return value.
+ * - Subscribe to QUEUE_CHANGE_EVENT to know when the queue mutates,
+ *   so UI state can refresh without polling.
  */
 
 "use client";
@@ -35,6 +45,24 @@ const QUEUE_KEY = "yourpeer:send-queue:v1";
 
 /** Queued messages expire after this long and are dropped on flush. */
 export const QUEUE_TTL_MS = 60 * 60 * 1000; // 1 hour
+
+/** Maximum number of messages the queue will accept. Past this, new
+ *  sends are rejected so the queue can't grow without bound during
+ *  a long offline spell with rapid typing. */
+export const MAX_QUEUE_DEPTH = 50;
+
+/** Event dispatched on window when the queue is mutated. UI hooks
+ *  listen to this to refresh their state immediately rather than
+ *  waiting on a polling interval. */
+export const QUEUE_CHANGE_EVENT = "yourpeer:queue-change";
+
+function notifyChange(): void {
+  if (typeof window === "undefined") return;
+  // Use a microtask to batch multiple mutations in the same tick.
+  queueMicrotask(() => {
+    window.dispatchEvent(new CustomEvent(QUEUE_CHANGE_EVENT));
+  });
+}
 
 export interface QueuedMessage {
   /** Unique ID — matches the chat message ID in the UI so we can
@@ -64,19 +92,39 @@ export async function readQueue(): Promise<QueuedMessage[]> {
   }
 }
 
-/** Append a message to the queue. Idempotent on id collisions. */
-export async function enqueue(msg: QueuedMessage): Promise<void> {
-  if (typeof window === "undefined") return;
+/**
+ * Append a message to the queue. Idempotent on id collisions.
+ *
+ * Returns { accepted: true } normally, or { accepted: false, reason }
+ * when the queue is full. Callers should surface the rejection to
+ * the user rather than silently swallowing it.
+ */
+export async function enqueue(
+  msg: QueuedMessage,
+): Promise<{ accepted: true } | { accepted: false; reason: "queue_full" }> {
+  if (typeof window === "undefined") return { accepted: true };
 
   try {
     const current = await readQueue();
+    // If the caller is updating an existing queued message (same id),
+    // let it through regardless of cap — that's not new content.
+    const existing = current.find((m) => m.id === msg.id);
+    if (!existing && current.length >= MAX_QUEUE_DEPTH) {
+      return { accepted: false, reason: "queue_full" };
+    }
     // Dedupe by ID — prevents double-queueing if send() is called
     // twice for the same user action (e.g. retry while still queued).
     const deduped = current.filter((m) => m.id !== msg.id);
     deduped.push(msg);
     await set(QUEUE_KEY, deduped);
+    notifyChange();
+    return { accepted: true };
   } catch (err) {
     console.warn("[send-queue] enqueue failed:", err);
+    // IDB write failure is itself a form of "can't accept" — treat
+    // as full so the caller shows an error to the user rather than
+    // silently losing the message.
+    return { accepted: false, reason: "queue_full" };
   }
 }
 
@@ -87,7 +135,10 @@ export async function dequeue(id: string): Promise<void> {
   try {
     const current = await readQueue();
     const filtered = current.filter((m) => m.id !== id);
-    await set(QUEUE_KEY, filtered);
+    if (filtered.length !== current.length) {
+      await set(QUEUE_KEY, filtered);
+      notifyChange();
+    }
   } catch (err) {
     console.warn("[send-queue] dequeue failed:", err);
   }
@@ -98,7 +149,10 @@ export async function clearQueue(): Promise<void> {
   if (typeof window === "undefined") return;
 
   try {
+    const current = await readQueue();
+    if (current.length === 0) return;
     await set(QUEUE_KEY, []);
+    notifyChange();
   } catch (err) {
     console.warn("[send-queue] clear failed:", err);
   }
@@ -126,6 +180,7 @@ export async function reapExpired(): Promise<QueuedMessage[]> {
     }
     if (expired.length > 0) {
       await set(QUEUE_KEY, fresh);
+      notifyChange();
     }
     return expired;
   } catch (err) {

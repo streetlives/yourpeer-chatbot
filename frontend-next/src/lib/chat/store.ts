@@ -7,6 +7,8 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import type { ChatMessage, QuickReply } from "./types";
+import { clearQueue } from "./send-queue";
+import { clearCachedResults } from "./offline-cache";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -124,14 +126,22 @@ export const useChatStore = create<ChatStore>()(
           ),
         })),
 
-      resetChat: () =>
+      resetChat: () => {
         set({
           sessionId: null,
           messages: [makeWelcomeMessage()],
           lastActiveAt: Date.now(),
           isLoading: false,
           error: null,
-        }),
+        });
+        // Also clear offline state — otherwise queued messages from
+        // a prior session will flush against the (now-reset) session
+        // and show up as bot responses with no corresponding user
+        // messages in the chat. Fire-and-forget — failures here don't
+        // block the reset.
+        void clearQueue();
+        void clearCachedResults();
+      },
     }),
     {
       name: "yourpeer-chat",

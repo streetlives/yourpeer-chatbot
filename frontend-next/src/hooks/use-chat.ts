@@ -16,7 +16,6 @@ import {
   dequeue as dequeueMessage,
   readQueue,
   reapExpired,
-  type QueuedMessage,
 } from "@/lib/chat/send-queue";
 import { cacheLastResults } from "@/lib/chat/offline-cache";
 
@@ -81,21 +80,40 @@ function userFacingError(err: unknown): string {
 
 /**
  * True when an error looks like a network failure (offline, DNS, etc.),
- * as opposed to a server-returned error (4xx/5xx). Used to decide
- * whether to enqueue the message for later flush or surface the error
- * to the user immediately.
+ * as opposed to a server-returned error (4xx/5xx) or a request timeout.
+ * Used to decide whether to enqueue the message for later flush or
+ * surface the error to the user immediately.
  *
  * Rate limits (429), auth (403), bad request (400), server errors
  * (5xx) are NOT network errors — they mean we reached the server and
- * it answered. Only retry via queue when there's genuinely no connection.
+ * it answered.
+ *
+ * Timeouts (AbortSignal.timeout firing) are also NOT treated as
+ * network errors, even though they produce no response: a timeout
+ * means the server was slow, not that the user was offline. Queuing
+ * on timeout would show the user "I'll send this when you're back
+ * online" while they're clearly online, which is confusing. Let those
+ * flow to the normal error path where userFacingError() says "taking
+ * longer than expected — try again."
+ *
+ * As a final guard we also check navigator.onLine. Even if fetch
+ * raised TypeError, if the browser thinks it's online the user
+ * probably sees a degraded state (e.g. captive portal, VPN issue)
+ * better served by an error message than silent queuing.
  */
 function isNetworkError(err: unknown): boolean {
+  // Browser is sure we're online → not a queue-worthy network failure
+  if (typeof navigator !== "undefined" && navigator.onLine === false) {
+    // Offline for sure — anything that failed is a network error
+    return true;
+  }
   const msg = errMessage(err);
   const name = errName(err);
+  // Timeouts are slow-server, not no-network — don't queue
+  if (name === "TimeoutError") return false;
+  if (name === "AbortError") return false;
   if (name === "TypeError") return true;          // fetch itself failed
-  if (name === "TimeoutError") return true;
-  if (name === "AbortError") return true;
-  if (msg.includes("fetch")) return true;
+  if (msg.includes("Failed to fetch")) return true;
   if (msg.includes("NetworkError")) return true;
   // HTTP status codes in the message mean we got a response
   if (/\b[45]\d\d\b/.test(msg)) return false;
@@ -106,12 +124,20 @@ function isNetworkError(err: unknown): boolean {
  * Write a bot response that includes service cards to the offline
  * cache. Fire-and-forget — caching failures never block the UI.
  *
- * Called from all three success paths (geo flow, crisis flow, normal
- * send). Kept as a standalone helper so if any success path is added
- * later, we don't forget to cache there too.
+ * Called from every success path (geo flow, crisis flow, normal
+ * send, retries, queue flush). Kept as a standalone helper so if
+ * any success path is added later, we don't forget to cache there
+ * too.
+ *
+ * Guards:
+ * - Requires at least one service in the response. Without services
+ *   there's nothing useful to show offline.
+ * - Requires no retryMessage. If the response also carries a retry
+ *   prompt it's an error message, not results — don't cache.
  */
 function cacheIfResults(botMessage: ChatMessage, userQuery: string): void {
   if (!botMessage.services || botMessage.services.length === 0) return;
+  if (botMessage.retryMessage) return;
   void cacheLastResults(botMessage, userQuery);
 }
 
@@ -130,6 +156,57 @@ export function useChat() {
   } = useChatStore();
 
   const { latitude, longitude, hasCoords, requestLocation } = useGeolocation();
+
+  /**
+   * Shared helper used by every catch block that might see a network
+   * error. If the error is a genuine network failure (see
+   * isNetworkError for the definition), enqueue the user's message
+   * for flush-on-reconnect and return true — the caller should bail
+   * out of its error-handling flow. Otherwise return false and let
+   * the caller handle it as a regular error (show message, retry
+   * button, etc.).
+   *
+   * Parameters:
+   * - err: the caught error
+   * - userMsgId: ID of the user message already in the chat (we'll
+   *   tag the queued entry with this so if the user retries/undoes
+   *   later we can correlate)
+   * - text: the raw text being sent (what the queue will replay)
+   */
+  const handleNetworkError = useCallback(
+    async (err: unknown, userMsgId: string, text: string): Promise<boolean> => {
+      if (!isNetworkError(err)) return false;
+
+      const coords = hasCoords ? { latitude: latitude!, longitude: longitude! } : null;
+      const result = await enqueueMessage({
+        id: userMsgId,
+        text,
+        coords,
+        sessionId,
+        queuedAt: Date.now(),
+      });
+
+      if (result.accepted) {
+        addMessage({
+          id: nextMsgId(),
+          role: "bot",
+          text: "Saved — I'll send this when you're back online.",
+          transient: true,
+        });
+      } else {
+        // Queue is full or IDB write failed. Surface as a retryable
+        // error rather than swallowing silently.
+        addMessage({
+          id: nextMsgId(),
+          role: "bot",
+          text: "Too many messages waiting — try again once you're back online.",
+          retryMessage: text,
+        });
+      }
+      return true;
+    },
+    [sessionId, latitude, longitude, hasCoords, addMessage],
+  );
 
   const send = useCallback(
     async (text: string) => {
@@ -221,6 +298,14 @@ export function useChat() {
             }
           }
 
+          // Network error — queue "near me" for flush-on-reconnect.
+          // Note: this path only runs if geolocation itself succeeded
+          // (offline coords from cache) but the backend call failed.
+          if (await handleNetworkError(err, nextMsgId(), "near me")) {
+            setLoading(false);
+            return;
+          }
+
           const friendlyMsg = userFacingError(err);
           setError(friendlyMsg);
           addMessage({
@@ -302,6 +387,13 @@ export function useChat() {
             }
           }
 
+          // Network error — queue for flush-on-reconnect. Crisis
+          // step-down sends "Yes, search" as its API trigger.
+          if (await handleNetworkError(err, nextMsgId(), "Yes, search")) {
+            setLoading(false);
+            return;
+          }
+
           const friendlyMsg = userFacingError(err);
           setError(friendlyMsg);
           addMessage({
@@ -365,26 +457,8 @@ export function useChat() {
           }
         }
 
-        // Network error (offline, DNS, timeout) — enqueue the message
-        // for later flush instead of surfacing an error. The user's
-        // message stays in the chat so they can see what they sent.
-        // A subtle "waiting to send" bot message signals queue state.
-        if (isNetworkError(err)) {
-          const coords = hasCoords ? { latitude: latitude!, longitude: longitude! } : null;
-          const queuedMsg: QueuedMessage = {
-            id: userMsgId,
-            text: message,
-            coords,
-            sessionId,
-            queuedAt: Date.now(),
-          };
-          await enqueueMessage(queuedMsg);
-          addMessage({
-            id: nextMsgId(),
-            role: "bot",
-            text: "Saved — I'll send this when you're back online.",
-            transient: true,
-          });
+        // Network error (offline, DNS) — enqueue via shared helper.
+        if (await handleNetworkError(err, userMsgId, message)) {
           setLoading(false);
           return;
         }
@@ -403,7 +477,7 @@ export function useChat() {
         setLoading(false);
       }
     },
-    [sessionId, latitude, longitude, hasCoords, addMessage, removeMessage, setSessionId, setLoading, setError, markQuickRepliesUsed, requestLocation],
+    [sessionId, latitude, longitude, hasCoords, addMessage, removeMessage, setSessionId, setLoading, setError, markQuickRepliesUsed, requestLocation, handleNetworkError],
   );
 
   /** Retry a failed message — removes the error and re-sends without
@@ -463,6 +537,10 @@ export function useChat() {
           cacheIfResults(botMsg, "near me");
         } catch (err: unknown) {
           removeMessage(searchProgressId);
+          if (await handleNetworkError(err, nextMsgId(), "near me")) {
+            setLoading(false);
+            return;
+          }
           const friendlyMsg = userFacingError(err);
           setError(friendlyMsg);
           addMessage({
@@ -495,6 +573,15 @@ export function useChat() {
         addMessage(botMsg);
         cacheIfResults(botMsg, originalText);
       } catch (err: unknown) {
+        // If retrying while offline, queue instead of showing an error.
+        // Generate a fresh ID for the queue entry — the user's original
+        // message is already in the chat, and the queue ID only serves
+        // as a dedupe key.
+        if (await handleNetworkError(err, nextMsgId(), originalText)) {
+          setLoading(false);
+          return;
+        }
+
         const friendlyMsg = userFacingError(err);
         setError(friendlyMsg);
         addMessage({
@@ -507,7 +594,7 @@ export function useChat() {
         setLoading(false);
       }
     },
-    [sessionId, latitude, longitude, hasCoords, addMessage, removeMessage, setSessionId, setLoading, setError, requestLocation],
+    [sessionId, latitude, longitude, hasCoords, addMessage, removeMessage, setSessionId, setLoading, setError, requestLocation, handleNetworkError],
   );
 
   const submitFeedback = useCallback(
