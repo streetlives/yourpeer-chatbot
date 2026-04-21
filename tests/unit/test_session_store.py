@@ -10,6 +10,7 @@ Or just:  python tests/test_session_store.py
 """
 
 import time
+import pytest
 import threading
 
 
@@ -68,7 +69,10 @@ def test_clear_session():
 def test_clear_nonexistent():
     """Clearing a nonexistent session should not raise."""
     _clear_all()
-    clear_session("nonexistent")  # should not raise
+    try:
+        clear_session("nonexistent")
+    except Exception as e:
+        pytest.fail(f"clear_session on nonexistent id raised: {type(e).__name__}: {e}")
 
 
 def test_overwrite():

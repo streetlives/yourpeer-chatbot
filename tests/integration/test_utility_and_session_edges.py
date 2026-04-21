@@ -60,10 +60,10 @@ def _send(message, session_id, mock_crisis_return=None):
     """
     crisis_val = mock_crisis_return
     with (
-        patch("app.services.chatbot._USE_LLM", False),
+        patch("app.services.chatbot.orchestrator._USE_LLM", False),
         patch("app.services.chatbot.execution.query_services", return_value=MOCK_QUERY_RESULTS),
-        patch("app.services.chatbot.claude_reply", return_value="How can I help?"),
-        patch("app.services.chatbot.detect_crisis", return_value=crisis_val),
+        patch("app.services.chatbot.handlers.meta.claude_reply", return_value="How can I help?"),
+        patch("app.services.chatbot.orchestrator.detect_crisis", return_value=crisis_val),
     ):
         return generate_reply(message, session_id=session_id)
 
@@ -164,9 +164,9 @@ class TestLLMContradictoryCategory:
     """When the LLM classifier returns a category that conflicts with
     other detectors, the chatbot should not crash or loop."""
 
-    @patch("app.services.chatbot.detect_crisis", return_value=None)
+    @patch("app.services.chatbot.orchestrator.detect_crisis", return_value=None)
     @patch("app.services.chatbot.execution.query_services", return_value=MOCK_QUERY_RESULTS)
-    @patch("app.services.chatbot.claude_reply", return_value="I can help with that.")
+    @patch("app.services.chatbot.handlers.meta.claude_reply", return_value="I can help with that.")
     @patch("app.llm.claude_client.classify_message_llm", return_value="crisis")
     def test_llm_says_crisis_but_detector_says_no(
         self, mock_llm_cls, mock_claude, mock_query, mock_crisis
@@ -183,9 +183,9 @@ class TestLLMContradictoryCategory:
         assert len(result["response"]) > 0
         clear_session(sid)
 
-    @patch("app.services.chatbot.detect_crisis", return_value=None)
+    @patch("app.services.chatbot.orchestrator.detect_crisis", return_value=None)
     @patch("app.services.chatbot.execution.query_services", return_value=MOCK_QUERY_RESULTS)
-    @patch("app.services.chatbot.claude_reply", return_value="Let me help.")
+    @patch("app.services.chatbot.handlers.meta.claude_reply", return_value="Let me help.")
     @patch("app.llm.claude_client.classify_message_llm", return_value=None)
     def test_llm_returns_none(self, mock_llm_cls, mock_claude, mock_query, mock_crisis):
         """LLM classifier returns None — should fall back to general."""
@@ -216,8 +216,8 @@ class TestNearMeSentinelSafety:
         # Confirming should trigger _execute_and_respond
         with (
             patch("app.services.chatbot.execution.query_services") as mock_qs,
-            patch("app.services.chatbot.claude_reply", return_value="fallback"),
-            patch("app.services.chatbot.detect_crisis", return_value=None),
+            patch("app.services.chatbot.handlers.meta.claude_reply", return_value="fallback"),
+            patch("app.services.chatbot.orchestrator.detect_crisis", return_value=None),
         ):
             mock_qs.return_value = {
                 "services": [], "result_count": 0,
@@ -238,8 +238,8 @@ class TestNearMeSentinelSafety:
         })
         # The confirmation message should not show "__near_me__"
         with (
-            patch("app.services.chatbot.claude_reply", return_value="fallback"),
-            patch("app.services.chatbot.detect_crisis", return_value=None),
+            patch("app.services.chatbot.handlers.meta.claude_reply", return_value="fallback"),
+            patch("app.services.chatbot.orchestrator.detect_crisis", return_value=None),
         ):
             result = generate_reply("food", session_id=sid)
             assert "__near_me__" not in result["response"]

@@ -157,13 +157,31 @@ class TestPersistenceDisabled:
         assert not persistence.is_enabled()
 
     def test_persist_event_noop(self):
-        persistence.persist_event({"type": "test"})  # should not raise
+        """persist_event is a no-op when persistence is disabled.
+
+        Contract: does not raise and does not alter load_all_events()
+        output. Verifies both explicitly — a bare "should not raise"
+        comment wouldn't survive a future refactor that accidentally
+        makes this a real side effect.
+        """
+        before = persistence.load_all_events()
+        persistence.persist_event({"type": "test"})
+        after = persistence.load_all_events()
+        assert after == before, "persist_event altered state in noop mode"
 
     def test_load_events_empty(self):
         assert persistence.load_all_events() == []
 
     def test_persist_session_noop(self):
-        persistence.persist_session("s1", {}, 0)  # should not raise
+        """persist_session is a no-op when persistence is disabled.
+
+        Same contract as persist_event_noop: does not raise, does not
+        alter load_all_sessions() output.
+        """
+        before = persistence.load_all_sessions()
+        persistence.persist_session("s1", {}, 0)
+        after = persistence.load_all_sessions()
+        assert after == before, "persist_session altered state in noop mode"
 
     def test_load_sessions_empty(self):
         assert persistence.load_all_sessions() == {}

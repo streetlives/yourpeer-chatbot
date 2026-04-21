@@ -103,6 +103,21 @@ findings against `tests/_tools/audit_baseline.txt`. The build fails if
 any category's count INCREASES. Decreases are allowed silently but
 should prompt a baseline regenerate.
 
+**Current baseline (post April 2026 audit cleanup):**
+
+| Category | Count | Notes |
+|---|---|---|
+| D1 Dead patch targets | 0 | Enforced by codemod + D7 gate |
+| D2 No-assertion tests | 0 | All assertionless stubs replaced |
+| D3 Mock-only assertions | 19 | Advisory, not in CI gate (high false-positive rate) |
+| D4 Unverified mock return_value | 0 | Clean |
+| D5 Env-dependent | 8 | Deliberate (tests that exercise env-var handling) |
+| D6 Admin without auth | 0 | All admin tests carry `Authorization` header |
+| D7 Package-level re-export patches | 0 | Codemod applied, 130 rewrites across 21 files |
+| D8 Real-time comparisons | 1 | `test_ping_cache_expires` — legitimate |
+| D9 `time.sleep()` | 1 | `test_audit_log` — flaky risk, accepted |
+| **TOTAL** | **29** | Down from 203 pre-cleanup |
+
 If you genuinely need to introduce a new D5 (for example), update the
 baseline deliberately:
 
@@ -181,16 +196,24 @@ See [How to interpret a mutation score](#how-to-interpret-a-mutation-score) belo
 
 ## The codemod for patch targets
 
-`tests/_tools/fix_patch_targets.py` rewrites the three known dead
-patch targets to their live equivalents:
+`tests/_tools/fix_patch_targets.py` rewrites the three function names
+whose package-level patches are silent no-ops to their live bind
+sites:
 
 - `app.services.chatbot.claude_reply` → `app.services.chatbot.handlers.meta.claude_reply`
 - `app.services.chatbot.detect_crisis` → `app.services.chatbot.orchestrator.detect_crisis`
 - `app.services.chatbot._USE_LLM` → `app.services.chatbot.orchestrator._USE_LLM`
 
-This has been applied once already (fixed 130 occurrences). If a new
-test is added with the old target pattern, the D7 audit check will
-catch it. If you want to rewrite those mechanically:
+Note that `detect_crisis` has a second live bind site at
+`app.services.classifier.detect_crisis` (reached via `_classify_tone`).
+The codemod rewrites to the orchestrator target; tests that need
+classifier-path coverage add a second patch manually. The
+`conftest.py` helpers already do this for you.
+
+This has been applied (130 rewrites across 21 test files; zero D7
+findings remain). The codemod is idempotent — safe to re-run on a
+clean tree. If a new test is added with an old target, the D7 audit
+check catches it before merge.
 
 ```bash
 # Dry run:

@@ -108,9 +108,9 @@ def test_confirmation_message_says_near_your_location(fresh_session):
 
 def test_near_me_with_coords_full_flow(fresh_session):
     """Full flow: food near me + coords → confirmation → search → results."""
-    with patch("app.services.chatbot.claude_reply", return_value="How can I help?"), \
+    with patch("app.services.chatbot.handlers.meta.claude_reply", return_value="How can I help?"), \
          patch("app.services.chatbot.execution.query_services", return_value=MOCK_QUERY_RESULTS) as mock_qs, \
-         patch("app.services.chatbot.detect_crisis", return_value=None):
+         patch("app.services.chatbot.orchestrator.detect_crisis", return_value=None):
 
         # Step 1: "food near me" with coords → should go to confirmation
         r1 = generate_reply(

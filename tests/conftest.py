@@ -219,14 +219,25 @@ def send(message, session_id=None, mock_query_return=None, latitude=None, longit
         clear_session(session_id)
 
     # Phase 3: patch paths target the specific submodule that holds the
-    # binding (not the top-level package). `handlers.meta.claude_reply` is
-    # where the bot-capability handler does the LLM call;
-    # `execution.query_services` is the primary DB call site inside
-    # `_execute_and_respond`; `orchestrator.detect_crisis` is the single
-    # caller of the crisis detector in the dispatch flow.
+    # binding (not the top-level package). Each submodule that did
+    # `from X import Y` at load time gets its own binding, and
+    # patch.object on the source module doesn't propagate. So we patch
+    # every bind site that's reachable from the dispatch path:
+    #   * handlers.meta.claude_reply — primary LLM call in service flow
+    #   * execution.query_services   — primary DB call in _execute_and_respond
+    #   * orchestrator.detect_crisis — the dispatcher's crisis check
+    #   * classifier.detect_crisis   — the classifier's crisis check
+    #                                  (reachable via _classify_tone when
+    #                                  orchestrator passes crisis_result=
+    #                                  _CRISIS_NOT_CHECKED, or when tests
+    #                                  call _classify_message directly)
+    # Without the classifier patch, tests with a non-working
+    # ANTHROPIC_API_KEY get the real LLM crisis detector, which fails-
+    # open to a crisis result and hijacks the classification outcome.
     with patch("app.services.chatbot.handlers.meta.claude_reply", return_value="How can I help?"), \
          patch("app.services.chatbot.execution.query_services", return_value=mock_query_return), \
-         patch("app.services.chatbot.orchestrator.detect_crisis", return_value=mock_crisis_return):
+         patch("app.services.chatbot.orchestrator.detect_crisis", return_value=mock_crisis_return), \
+         patch("app.services.classifier.detect_crisis", return_value=mock_crisis_return):
         return generate_reply(message, session_id=session_id, latitude=latitude, longitude=longitude)
 
 
@@ -262,9 +273,11 @@ def send_multi(messages, session_id=None, mock_query_return=None, latitude=None,
         clear_session(session_id)
 
     results = []
+    # Same bind-site strategy as send(). See comment there for rationale.
     with patch("app.services.chatbot.handlers.meta.claude_reply", return_value="How can I help?"), \
          patch("app.services.chatbot.execution.query_services", return_value=mock_query_return), \
-         patch("app.services.chatbot.orchestrator.detect_crisis", return_value=mock_crisis_return):
+         patch("app.services.chatbot.orchestrator.detect_crisis", return_value=mock_crisis_return), \
+         patch("app.services.classifier.detect_crisis", return_value=mock_crisis_return):
         for msg in messages:
             results.append(generate_reply(msg, session_id=session_id, latitude=latitude, longitude=longitude))
     return results
@@ -278,8 +291,16 @@ def assert_classified(message, expected_category):
         assert_classified("start over", "reset")
         assert_classified("hi", "greeting")
     """
+    from unittest.mock import patch
     from app.services.classifier import _classify_message
-    actual = _classify_message(message)
+    # _classify_message → _classify_tone → classifier.detect_crisis.
+    # If a non-working ANTHROPIC_API_KEY is set, the real detector's
+    # LLM fallback fires, 401s, and fails open to a crisis result —
+    # which hijacks classification and makes "I need food" classify
+    # as "crisis". Patch the binding so tests assert the REGEX
+    # classifier's behavior, not the LLM detector's fallback.
+    with patch("app.services.classifier.detect_crisis", return_value=None):
+        actual = _classify_message(message)
     assert actual == expected_category, \
         f"Expected '{message}' → '{expected_category}', got '{actual}'"
 

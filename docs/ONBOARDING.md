@@ -585,18 +585,20 @@ When Python runs `from crisis_detector import detect_crisis` at the top of `clas
 
 The fix: **patch the name in the module that uses it, not the module that defines it.**
 
-Three specific patch targets in this codebase have this problem. Always use the right-hand column:
+Three specific function names have this problem in this codebase. Always use the right-hand column:
 
-| ❌ Wrong (silently no-ops) | ✅ Right |
-|---|---|
-| `app.services.chatbot.claude_reply` | `app.services.chatbot.handlers.meta.claude_reply` |
-| `app.services.chatbot.detect_crisis` | `app.services.chatbot.orchestrator.detect_crisis` (and also `app.services.classifier.detect_crisis` if you're testing `_classify_tone`) |
-| `app.services.chatbot._USE_LLM` | `app.services.chatbot.orchestrator._USE_LLM` |
+| ❌ Wrong (silently no-ops)             | ✅ Right                                                                 |
+|----------------------------------------|--------------------------------------------------------------------------|
+| `app.services.chatbot.claude_reply`    | `app.services.chatbot.handlers.meta.claude_reply`                        |
+| `app.services.chatbot.detect_crisis`   | `app.services.chatbot.orchestrator.detect_crisis` **AND** `app.services.classifier.detect_crisis` (see below) |
+| `app.services.chatbot._USE_LLM`        | `app.services.chatbot.orchestrator._USE_LLM`                             |
 
-**Prefer the `conftest.py` helpers** — `send()`, `send_multi()`, and `assert_classified()` already patch the right targets. Use them instead of hand-rolling `@patch` decorators whenever possible. The audit tool's D7 check will catch the wrong form if you do introduce one.
+**`detect_crisis` has two bind sites.** `orchestrator.py` and `classifier.py` each import it independently at module load, creating two separate local bindings. The orchestrator calls it from the dispatch flow; the classifier calls it inside `_classify_tone`. Patching only one leaves the other path running the real function — which, if `ANTHROPIC_API_KEY` is set but invalid, 401s and fail-opens to a crisis result, hijacking classification. This is the precise bug the `send()`/`send_multi()`/`assert_classified()` helpers in `conftest.py` are written to avoid — they patch both.
+
+**Prefer the `conftest.py` helpers** — `send()`, `send_multi()`, and `assert_classified()` already patch the right targets, including both bind sites of `detect_crisis`. Use them instead of hand-rolling `@patch` decorators whenever possible. The audit tool's D7 check will catch the wrong form if you do introduce one.
 
 → `tests/conftest.py` — the helper functions
-→ `tests/README.md` — "Patch where imported, not where defined" section with more detail
+→ `tests/README.md` — "Patch where imported, not where defined" and "Determinism across environments"
 
 ### Mutation testing (the sharp edge)
 

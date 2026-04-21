@@ -23,7 +23,7 @@ from app.services.crisis_detector import detect_crisis
 # PII SAFETY WARNINGS
 # -----------------------------------------------------------------------
 
-@patch("app.services.chatbot.detect_crisis", return_value=None)
+@patch("app.services.chatbot.orchestrator.detect_crisis", return_value=None)
 class TestPIIWarnings:
     """PII detection should warn users about sensitive info.
     Crisis detection is mocked — these tests verify PII handling,

@@ -236,8 +236,8 @@ class TestDisplayPagination:
         results = []
         with patch("app.services.chatbot.execution.query_services",
                    return_value=_build_shelter_results(15)), \
-             patch("app.services.chatbot.claude_reply", return_value=""), \
-             patch("app.services.chatbot.detect_crisis", return_value=None):
+             patch("app.services.chatbot.handlers.meta.claude_reply", return_value=""), \
+             patch("app.services.chatbot.orchestrator.detect_crisis", return_value=None):
             for msg in ["I need shelter", "Manhattan", "Yes, search"]:
                 results.append(generate_reply(msg, session_id=sid))
 
@@ -274,8 +274,8 @@ class TestDisplayPagination:
         sid = _fresh()
         with patch("app.services.chatbot.execution.query_services",
                    return_value=_build_shelter_results(12)), \
-             patch("app.services.chatbot.claude_reply", return_value=""), \
-             patch("app.services.chatbot.detect_crisis", return_value=None):
+             patch("app.services.chatbot.handlers.meta.claude_reply", return_value=""), \
+             patch("app.services.chatbot.orchestrator.detect_crisis", return_value=None):
             generate_reply("I need shelter", session_id=sid)
             generate_reply("Manhattan", session_id=sid)
             p1 = generate_reply("Yes, search", session_id=sid)

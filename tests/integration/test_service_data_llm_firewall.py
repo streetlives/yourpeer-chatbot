@@ -226,9 +226,9 @@ class TestLLMCallSiteCapture:
 
     def test_bot_question_prompt_captured(self, sid_with_slots):
         """Bot question handler should not pass service slots to Claude."""
-        with patch("app.services.chatbot.claude_reply",
+        with patch("app.services.chatbot.handlers.meta.claude_reply",
                    return_value="I help find services.") as mock_llm, \
-             patch("app.services.chatbot.detect_crisis", return_value=None), \
+             patch("app.services.chatbot.orchestrator.detect_crisis", return_value=None), \
              patch("app.services.bot_knowledge.answer_question", return_value=None):
             generate_reply("how does this thing work?", session_id=sid_with_slots)
             if mock_llm.called:
@@ -239,7 +239,7 @@ class TestLLMCallSiteCapture:
         """General fallback should not pass service slots to Claude."""
         with patch("app.services.responses.claude_reply",
                    return_value="I'm here to help!") as mock_llm, \
-             patch("app.services.chatbot.detect_crisis", return_value=None):
+             patch("app.services.chatbot.orchestrator.detect_crisis", return_value=None):
             generate_reply("you know what I mean", session_id=sid_with_slots)
             if mock_llm.called:
                 prompt = mock_llm.call_args[0][0]
@@ -254,8 +254,8 @@ class TestLLMCallSiteCapture:
             return "I understand."
 
         with patch("app.services.responses.claude_reply", side_effect=capturing_claude), \
-             patch("app.services.chatbot.claude_reply", side_effect=capturing_claude), \
-             patch("app.services.chatbot.detect_crisis", return_value=None), \
+             patch("app.services.chatbot.handlers.meta.claude_reply", side_effect=capturing_claude), \
+             patch("app.services.chatbot.orchestrator.detect_crisis", return_value=None), \
              patch("app.services.chatbot.execution.query_services", return_value=MOCK_QUERY_RESULTS):
             # Build up service state
             generate_reply("I need shelter in Brooklyn", session_id=sid)
@@ -276,8 +276,8 @@ class TestLLMCallSiteCapture:
             return "I hear you."
 
         with patch("app.services.responses.claude_reply", side_effect=capturing_claude), \
-             patch("app.services.chatbot.claude_reply", side_effect=capturing_claude), \
-             patch("app.services.chatbot.detect_crisis", return_value=None), \
+             patch("app.services.chatbot.handlers.meta.claude_reply", side_effect=capturing_claude), \
+             patch("app.services.chatbot.orchestrator.detect_crisis", return_value=None), \
              patch("app.services.chatbot.execution.query_services", return_value=MOCK_QUERY_RESULTS):
             generate_reply("I need food in Manhattan", session_id=sid)
             generate_reply("Yes, search", session_id=sid)
@@ -298,7 +298,7 @@ class TestSearchExecutionFirewall:
 
     def test_db_exception_uses_static_message(self, sid):
         """DB exception should return static text, not call Claude."""
-        with patch("app.services.chatbot.detect_crisis", return_value=None), \
+        with patch("app.services.chatbot.orchestrator.detect_crisis", return_value=None), \
              patch("app.services.chatbot.execution.query_services",
                    side_effect=Exception("connection refused")), \
              patch("app.services.responses.claude_reply") as mock_llm:
@@ -310,7 +310,7 @@ class TestSearchExecutionFirewall:
     def test_query_error_uses_static_message(self, sid):
         """Query error result should return static text, not call Claude."""
         error_results = {**MOCK_QUERY_RESULTS, "error": "timeout", "result_count": 0, "services": []}
-        with patch("app.services.chatbot.detect_crisis", return_value=None), \
+        with patch("app.services.chatbot.orchestrator.detect_crisis", return_value=None), \
              patch("app.services.chatbot.execution.query_services", return_value=error_results), \
              patch("app.services.responses.claude_reply") as mock_llm:
             generate_reply("I need shelter in Queens", session_id=sid)
@@ -326,7 +326,7 @@ class TestSearchExecutionFirewall:
             "template_used": "T", "params_applied": {},
             "relaxed": False, "execution_ms": 1,
         }
-        with patch("app.services.chatbot.detect_crisis", return_value=None), \
+        with patch("app.services.chatbot.orchestrator.detect_crisis", return_value=None), \
              patch("app.services.chatbot.execution.query_services", return_value=empty_no_error), \
              patch("app.services.responses.claude_reply") as mock_llm:
             generate_reply("I need food in Brooklyn", session_id=sid)
@@ -336,7 +336,7 @@ class TestSearchExecutionFirewall:
 
     def test_consecutive_db_failures_escalate_message(self, sid):
         """Repeated failures should give stronger message, never call LLM."""
-        with patch("app.services.chatbot.detect_crisis", return_value=None), \
+        with patch("app.services.chatbot.orchestrator.detect_crisis", return_value=None), \
              patch("app.services.chatbot.execution.query_services",
                    side_effect=Exception("DB down")), \
              patch("app.services.responses.claude_reply") as mock_llm:
@@ -350,11 +350,11 @@ class TestSearchExecutionFirewall:
 
     def test_successful_search_never_calls_llm(self, sid):
         """A successful search should return DB results, never call Claude."""
-        with patch("app.services.chatbot.detect_crisis", return_value=None), \
+        with patch("app.services.chatbot.orchestrator.detect_crisis", return_value=None), \
              patch("app.services.chatbot.execution.query_services",
                    return_value=MOCK_QUERY_RESULTS), \
              patch("app.services.responses.claude_reply") as mock_resp_llm, \
-             patch("app.services.chatbot.claude_reply") as mock_chat_llm:
+             patch("app.services.chatbot.handlers.meta.claude_reply") as mock_chat_llm:
             generate_reply("I need food in Brooklyn", session_id=sid)
             result = generate_reply("Yes, search", session_id=sid)
             mock_resp_llm.assert_not_called()
@@ -363,7 +363,7 @@ class TestSearchExecutionFirewall:
 
     def test_no_results_never_calls_llm(self, sid):
         """Zero results should show a static 'no results' message, not LLM."""
-        with patch("app.services.chatbot.detect_crisis", return_value=None), \
+        with patch("app.services.chatbot.orchestrator.detect_crisis", return_value=None), \
              patch("app.services.chatbot.execution.query_services",
                    return_value=MOCK_EMPTY_RESULTS), \
              patch("app.services.responses.claude_reply") as mock_llm:
@@ -476,8 +476,8 @@ class TestEndToEndIsolation:
             return "I understand, I'm here for you."
 
         with patch("app.services.responses.claude_reply", side_effect=capture), \
-             patch("app.services.chatbot.claude_reply", side_effect=capture), \
-             patch("app.services.chatbot.detect_crisis", return_value=None), \
+             patch("app.services.chatbot.handlers.meta.claude_reply", side_effect=capture), \
+             patch("app.services.chatbot.orchestrator.detect_crisis", return_value=None), \
              patch("app.services.chatbot.execution.query_services", return_value=MOCK_QUERY_RESULTS):
             for msg in messages:
                 generate_reply(msg, session_id=sid)
@@ -601,7 +601,7 @@ class TestRegressionGuards:
         sent slots to Claude. Claude generated 'To help narrow things down,
         are you looking for clothes to wear?' — mimicking the intake flow
         and trapping the user in a confirmation loop. (Tester feedback 2025-04-13)"""
-        with patch("app.services.chatbot.detect_crisis", return_value=None), \
+        with patch("app.services.chatbot.orchestrator.detect_crisis", return_value=None), \
              patch("app.services.chatbot.execution.query_services",
                    side_effect=Exception("DB down")):
             generate_reply("I need clothing in Brooklyn", session_id=sid)

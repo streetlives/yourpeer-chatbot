@@ -287,7 +287,7 @@ class TestEmotionalServiceTransitions:
 
     def test_emotional_adjective_forms(self):
         """Situational adjectives should trigger emotional handler."""
-        with patch('app.services.chatbot.detect_crisis', return_value=None):
+        with patch('app.services.chatbot.orchestrator.detect_crisis', return_value=None):
             assert _classify_tone("this is really depressing", crisis_result=None) == "emotional"
             assert _classify_tone("that's overwhelming", crisis_result=None) == "emotional"
             assert _classify_tone("this is terrifying", crisis_result=None) == "emotional"
@@ -415,14 +415,6 @@ class TestUnrecognizedServiceEscalation:
         labels = [q["label"] for q in r.get("quick_replies", [])]
         assert len(labels) <= 3  # just navigator + start over
 
-    def test_responses_are_different_across_tiers(self, sid):
-        """Each tier should produce a distinct response."""
-        send("I need a helicopter ride in Staten Island", session_id=sid)
-        _r1 = send("I need a helicopter ride in Staten Island", session_id=sid)
-        # r1 is tier 1 (first was turn 1 with count=1, but we sent twice)
-        # Actually let me redo this properly
-        pass  # covered by individual tier tests
-
     def test_recovery_after_unrecognized(self, sid):
         """User can recover by choosing a real service type."""
         send("I need a helicopter ride in Staten Island", session_id=sid)
@@ -494,9 +486,22 @@ class TestOtherServiceTypeInterception:
             'location': 'staten island',
         })
         # Send a follow-up that triggers re-evaluation
-        _r = send("yes", session_id=sid)
+        r = send("yes", session_id=sid)
         # The session had 'other' — the interception should have cleared it
-        # (This tests the flow through confirm_yes with service_type='other')
+        # and redirected the user. We verify:
+        # 1. No services were returned (not a real search result)
+        # 2. The redirect message cues the user toward navigator or known
+        #    service types — matches the unrecognized-service handler's
+        #    vocabulary in handlers/general.py.
+        assert r["services"] == [], \
+            "service_type='other' without detail should NOT produce services"
+        response_lower = r["response"].lower()
+        assert (
+            "navigator" in response_lower
+            or "help with that" in response_lower
+            or "staten island" in response_lower  # redirect names the location
+            or r["slots"].get("service_type") != "other"  # cleared the stale slot
+        ), f"Expected redirect/unrecognized response, got: {r['response'][:200]}"
 
     def test_other_with_detail_is_legitimate(self, sid):
         """service_type='other' WITH detail should proceed normally."""

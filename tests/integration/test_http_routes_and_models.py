@@ -5,6 +5,7 @@ Run: pytest tests/integration/test_http_routes_and_models.py
 """
 
 import uuid
+import pytest
 from unittest.mock import patch
 
 from pydantic import ValidationError
@@ -50,14 +51,14 @@ def test_chat_request_missing_message():
 
 
 def test_chat_request_wrong_type():
-    """ChatRequest should reject non-string message."""
-    try:
+    """ChatRequest rejects non-string ``message`` with ValidationError.
+
+    Pins Pydantic's strict-string behavior for this model. If the
+    model is changed to permit coercion (e.g., ``strict=False`` or a
+    Union type), flip this test to assert coercion instead.
+    """
+    with pytest.raises(ValidationError):
         ChatRequest(message=123)
-        # Pydantic v2 coerces int to str in strict=False mode
-        # This is expected behavior — not a bug
-        print("  PASS: ChatRequest coerces int to str (Pydantic v2 behavior)")
-    except ValidationError:
-        print("  PASS: ChatRequest rejects int message")
 
 
 def test_chat_request_empty_string_accepted():
@@ -328,7 +329,7 @@ def test_chat_response_serialization_round_trip():
 # -----------------------------------------------------------------------
 
 @patch("app.services.chatbot.execution.query_services", return_value=_MOCK_EMPTY_RESULTS)
-@patch("app.services.chatbot.claude_reply", return_value="How can I help?")
+@patch("app.services.chatbot.handlers.meta.claude_reply", return_value="How can I help?")
 def test_chat_route_valid_request(mock_claude, mock_query):
     """POST /chat/ with a valid message should return 200."""
     response = client.post("/chat/", json={"message": "hello"})
@@ -342,7 +343,7 @@ def test_chat_route_valid_request(mock_claude, mock_query):
 
 
 @patch("app.services.chatbot.execution.query_services", return_value=_MOCK_EMPTY_RESULTS)
-@patch("app.services.chatbot.claude_reply", return_value="test")
+@patch("app.services.chatbot.handlers.meta.claude_reply", return_value="test")
 def test_chat_route_generates_session_id(mock_claude, mock_query):
     """POST /chat/ without session_id should generate one."""
     response = client.post("/chat/", json={"message": "hi"})
@@ -352,7 +353,7 @@ def test_chat_route_generates_session_id(mock_claude, mock_query):
 
 
 @patch("app.services.chatbot.execution.query_services", return_value=_MOCK_EMPTY_RESULTS)
-@patch("app.services.chatbot.claude_reply", return_value="test")
+@patch("app.services.chatbot.handlers.meta.claude_reply", return_value="test")
 def test_chat_route_preserves_session_id(mock_claude, mock_query):
     """POST /chat/ with a valid session_id should preserve it."""
     sid = generate_session_id()
@@ -385,7 +386,7 @@ def test_chat_route_no_body():
 
 
 @patch("app.services.chatbot.execution.query_services", return_value=_MOCK_EMPTY_RESULTS)
-@patch("app.services.chatbot.claude_reply", return_value="test")
+@patch("app.services.chatbot.handlers.meta.claude_reply", return_value="test")
 def test_chat_route_empty_message(mock_claude, mock_query):
     """POST /chat/ with empty message should return 200 with welcome prompt.
 
@@ -397,7 +398,7 @@ def test_chat_route_empty_message(mock_claude, mock_query):
 
 
 @patch("app.services.chatbot.execution.query_services", return_value=_MOCK_EMPTY_RESULTS)
-@patch("app.services.chatbot.claude_reply", return_value="test")
+@patch("app.services.chatbot.handlers.meta.claude_reply", return_value="test")
 def test_chat_route_response_schema(mock_claude, mock_query):
     """Response should match ChatResponse schema exactly."""
     response = client.post("/chat/", json={"message": "I need food"})
@@ -430,10 +431,18 @@ def test_chat_route_response_schema(mock_claude, mock_query):
 # HTTP ROUTE — Multi-turn conversation
 # -----------------------------------------------------------------------
 
+@patch("app.services.classifier.detect_crisis", return_value=None)
+@patch("app.services.chatbot.orchestrator.detect_crisis", return_value=None)
 @patch("app.services.chatbot.execution.query_services", return_value=_MOCK_QUERY_RESULTS)
-@patch("app.services.chatbot.claude_reply", return_value="test")
-def test_chat_route_multi_turn_with_services(mock_claude, mock_query):
-    """A full multi-turn conversation should return service cards."""
+@patch("app.services.chatbot.handlers.meta.claude_reply", return_value="test")
+def test_chat_route_multi_turn_with_services(mock_claude, mock_query, _mock_orch_crisis, _mock_cls_crisis):
+    """A full multi-turn conversation should return service cards.
+
+    Patches BOTH detect_crisis bind sites. The HTTP route reaches
+    classifier.detect_crisis via _classify_tone independently of
+    orchestrator.detect_crisis; patching only one leaves the real
+    LLM fallback exposed when ANTHROPIC_API_KEY is set.
+    """
     sid = generate_session_id()
     clear_session(sid)
 
@@ -460,10 +469,16 @@ def test_chat_route_multi_turn_with_services(mock_claude, mock_query):
     assert card["yourpeer_url"] is not None
 
 
+@patch("app.services.classifier.detect_crisis", return_value=None)
+@patch("app.services.chatbot.orchestrator.detect_crisis", return_value=None)
 @patch("app.services.chatbot.execution.query_services", return_value=_MOCK_EMPTY_RESULTS)
-@patch("app.services.chatbot.claude_reply", return_value="test")
-def test_chat_route_session_continuity(mock_claude, mock_query):
-    """Slots should accumulate across turns within the same session."""
+@patch("app.services.chatbot.handlers.meta.claude_reply", return_value="test")
+def test_chat_route_session_continuity(mock_claude, mock_query, _mock_orch_crisis, _mock_cls_crisis):
+    """Slots should accumulate across turns within the same session.
+
+    See test_chat_route_multi_turn_with_services for why both
+    detect_crisis bind sites need patching.
+    """
     sid = generate_session_id()
     clear_session(sid)
 
@@ -481,7 +496,7 @@ def test_chat_route_session_continuity(mock_claude, mock_query):
 
 
 @patch("app.services.chatbot.execution.query_services", return_value=_MOCK_EMPTY_RESULTS)
-@patch("app.services.chatbot.claude_reply", return_value="test")
+@patch("app.services.chatbot.handlers.meta.claude_reply", return_value="test")
 def test_chat_route_reset_clears_session(mock_claude, mock_query):
     """Saying 'start over' should clear the session slots."""
     sid = generate_session_id()
@@ -498,7 +513,7 @@ def test_chat_route_reset_clears_session(mock_claude, mock_query):
 
 
 @patch("app.services.chatbot.execution.query_services", return_value=_MOCK_EMPTY_RESULTS)
-@patch("app.services.chatbot.claude_reply", return_value="test")
+@patch("app.services.chatbot.handlers.meta.claude_reply", return_value="test")
 def test_chat_route_quick_replies_structure(mock_claude, mock_query):
     """Quick replies should have label and value fields."""
     r = client.post("/chat/", json={"message": "hello"})
@@ -517,7 +532,7 @@ def test_chat_route_quick_replies_structure(mock_claude, mock_query):
 # -----------------------------------------------------------------------
 
 @patch("app.services.chatbot.execution.query_services", return_value=_MOCK_EMPTY_RESULTS)
-@patch("app.services.chatbot.claude_reply", return_value="test")
+@patch("app.services.chatbot.handlers.meta.claude_reply", return_value="test")
 def test_chat_route_crisis_returns_resources(mock_claude, mock_query):
     """Crisis messages should return crisis resources, not service results."""
     r = client.post("/chat/", json={"message": "I want to kill myself"})
@@ -591,7 +606,7 @@ _TEST_SECRET = b"test-secret-for-route-tests"
 
 
 @patch("app.services.chatbot.execution.query_services", return_value=_MOCK_EMPTY_RESULTS)
-@patch("app.services.chatbot.claude_reply", return_value="test")
+@patch("app.services.chatbot.handlers.meta.claude_reply", return_value="test")
 @patch("app.services.session_token._SECRET", _TEST_SECRET)
 def test_chat_rejects_forged_session_id(mock_claude, mock_query):
     """POST /chat/ with a forged session_id should return 403."""
@@ -604,7 +619,7 @@ def test_chat_rejects_forged_session_id(mock_claude, mock_query):
 
 
 @patch("app.services.chatbot.execution.query_services", return_value=_MOCK_EMPTY_RESULTS)
-@patch("app.services.chatbot.claude_reply", return_value="test")
+@patch("app.services.chatbot.handlers.meta.claude_reply", return_value="test")
 @patch("app.services.session_token._SECRET", _TEST_SECRET)
 def test_chat_rejects_tampered_session_id(mock_claude, mock_query):
     """POST /chat/ with a tampered signature should return 403."""
@@ -616,7 +631,7 @@ def test_chat_rejects_tampered_session_id(mock_claude, mock_query):
 
 
 @patch("app.services.chatbot.execution.query_services", return_value=_MOCK_EMPTY_RESULTS)
-@patch("app.services.chatbot.claude_reply", return_value="test")
+@patch("app.services.chatbot.handlers.meta.claude_reply", return_value="test")
 @patch("app.services.session_token._SECRET", _TEST_SECRET)
 def test_chat_accepts_valid_signed_session(mock_claude, mock_query):
     """POST /chat/ with a properly signed session_id should succeed."""
@@ -631,7 +646,7 @@ def test_chat_accepts_valid_signed_session(mock_claude, mock_query):
 
 
 @patch("app.services.chatbot.execution.query_services", return_value=_MOCK_EMPTY_RESULTS)
-@patch("app.services.chatbot.claude_reply", return_value="test")
+@patch("app.services.chatbot.handlers.meta.claude_reply", return_value="test")
 @patch("app.services.session_token._SECRET", _TEST_SECRET)
 def test_chat_mints_signed_token_on_first_message(mock_claude, mock_query):
     """POST /chat/ without session_id should mint a signed token."""

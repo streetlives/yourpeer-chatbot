@@ -259,12 +259,17 @@ class TestInitialization:
         assert not is_available()
 
     def test_classify_returns_none_before_init(self):
-        """classify_service() returns None when not initialized."""
-        _result = classify_service("I need food")
-        # It will try to initialize but fail without real model
-        # (since sentence-transformers may not have the model cached)
-        # Either it succeeds or returns None — both are acceptable
-        # The key test is that it doesn't crash.
+        """classify_service() either succeeds or returns None — must not raise.
+
+        Without a cached sentence-transformers model, initialization
+        may fail and classify_service falls through to None. Either
+        outcome is acceptable; the contract this test guards is
+        "does not raise."
+        """
+        try:
+            classify_service("I need food")
+        except Exception as e:
+            pytest.fail(f"classify_service raised unexpectedly: {type(e).__name__}: {e}")
 
     def test_reset_clears_state(self, mock_model):
         """reset() clears all module state."""
@@ -977,9 +982,12 @@ class TestEdgeCases:
             mock_model,
             {"food": ["I need food"]},
         )
-        # Should not raise — may return None or a match depending on encoding
-        _result = classify_service("")
-        # Key assertion: no crash
+        # May return None or a match depending on encoding;
+        # the contract this test guards is "does not raise".
+        try:
+            classify_service("")
+        except Exception as e:
+            pytest.fail(f"classify_service('') raised: {type(e).__name__}: {e}")
 
     def test_whitespace_only_input(self, mock_model):
         """Whitespace-only string does not crash classify_service."""
@@ -987,8 +995,10 @@ class TestEdgeCases:
             mock_model,
             {"food": ["I need food"]},
         )
-        _result = classify_service("   ")
-        # Key assertion: no crash
+        try:
+            classify_service("   ")
+        except Exception as e:
+            pytest.fail(f"classify_service('   ') raised: {type(e).__name__}: {e}")
 
     def test_model_none_while_initialized_returns_none(self):
         """If _model is None but _initialized is True, returns None."""

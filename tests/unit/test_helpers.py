@@ -28,9 +28,9 @@ def _send(msg, sid, mock_crisis=None, mock_query=None, latitude=None, longitude=
     with (
         patch("app.services.chatbot.execution.query_services",
               return_value=mock_query or MOCK_QUERY_RESULTS),
-        patch("app.services.chatbot.claude_reply",
+        patch("app.services.chatbot.handlers.meta.claude_reply",
               return_value="How can I help?"),
-        patch("app.services.chatbot.detect_crisis",
+        patch("app.services.chatbot.orchestrator.detect_crisis",
               return_value=mock_crisis),
     ):
         return generate_reply(msg, session_id=sid,

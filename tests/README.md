@@ -155,23 +155,35 @@ A test-quality audit in April 2026 found 187 patches across 23 files that were s
 
 The rule: **patch the name in the module that *uses* it, not the module that *defines* it.** When `module_a.py` does `from module_b import foo`, patching `module_b.foo` does not affect `module_a.foo` — Python pre-binds names at import time. You must patch `module_a.foo`.
 
-The three patch targets that are wrong in this codebase:
+The three function names whose package-level patch is wrong — and the bind sites to patch instead:
 
-| ❌ Wrong (silent no-op) | ✅ Right |
-|---|---|
-| `app.services.chatbot.claude_reply` | `app.services.chatbot.handlers.meta.claude_reply` |
-| `app.services.chatbot.detect_crisis` | `app.services.chatbot.orchestrator.detect_crisis` (and `app.services.classifier.detect_crisis` for `_classify_tone`) |
-| `app.services.chatbot._USE_LLM` | `app.services.chatbot.orchestrator._USE_LLM` |
+| ❌ Wrong (silent no-op)              | ✅ Right                                                                 |
+|--------------------------------------|--------------------------------------------------------------------------|
+| `app.services.chatbot.claude_reply`  | `app.services.chatbot.handlers.meta.claude_reply`                        |
+| `app.services.chatbot.detect_crisis` | `app.services.chatbot.orchestrator.detect_crisis` **AND** `app.services.classifier.detect_crisis` (two separate bind sites — see below) |
+| `app.services.chatbot._USE_LLM`      | `app.services.chatbot.orchestrator._USE_LLM`                             |
+
+**`detect_crisis` has two bind sites.** Both `orchestrator.py` and `classifier.py` do `from app.services.crisis_detector import detect_crisis` at module load, creating two independent local bindings. The orchestrator calls it in the dispatch flow; the classifier calls it inside `_classify_tone`. If you patch only one binding, the other path runs the real function — and if `ANTHROPIC_API_KEY` is set but invalid, the real function's LLM fallback fires, 401s, fail-opens to a crisis result, and hijacks classification. This is the specific reason `send()`, `send_multi()`, and `assert_classified()` patch both.
 
 The `send()`, `send_multi()`, and `assert_classified()` helpers in `conftest.py` patch all of these correctly — prefer them over hand-rolled `@patch` decorators when possible.
+
+### Determinism across environments
+
+The suite is designed to produce identical results whether `ANTHROPIC_API_KEY` is unset, set to a placeholder (e.g., `sk-ant-test-xxx`), or set to a real working key. This property is enforced by:
+
+1. **`conftest.py` patches both bind sites of `detect_crisis`** (orchestrator + classifier) so a nonworking key can't cause fail-open-to-crisis from the LLM fallback.
+2. **Live LLM tests are gated** behind `@_skip_no_api_key`, which uses `_api_key_looks_real()` to detect placeholder keys and skip cleanly rather than 401-and-report-fail.
+3. **The `assert_classified()` helper** wraps `_classify_message` in a local `patch("app.services.classifier.detect_crisis", return_value=None)` for the same reason.
+
+If a test fails only when an env var is set (or only when it isn't), that's a D5 finding — the audit tool will catch it and `check_audit_baseline.py` will fail CI.
 
 ### Test-quality tooling
 
 Three tools live in `tests/_tools/`:
 
-- **`audit_tests.py`** — static scanner for known anti-patterns (dead mocks, assertionless tests, env-leaky tests, unauthenticated admin calls). Run with `make audit` or `python3 tests/_tools/audit_tests.py`.
+- **`audit_tests.py`** — static scanner for known anti-patterns (dead mocks, assertionless tests, env-leaky tests, unauthenticated admin calls). Run with `make audit` or `python3 tests/_tools/audit_tests.py`. Current baseline: **29 findings total** (D3=19 advisory, D5=8 mostly deliberate env tests, D8=1, D9=1; D2/D6/D7 all at 0 and gated).
 - **`check_audit_baseline.py`** — CI gate that compares current findings against `tests/_tools/audit_baseline.txt`. The build fails if any category's count rises above the baseline.
-- **`fix_patch_targets.py`** — codemod that rewrites the dead patch targets above to their live equivalents. Already applied once (130 rewrites across 21 files); re-run with `--apply` if needed.
+- **`fix_patch_targets.py`** — codemod that rewrites the dead patch targets above to their live equivalents. Already applied (130 rewrites across 21 files; 0 D7 findings remain). Safe to re-run with `--apply` at any time — it's idempotent and exits cleanly on a clean tree.
 
 See `TEST_INFRASTRUCTURE.md` at the repo root for the full operator's guide, including mutation testing on safety-critical modules.
 

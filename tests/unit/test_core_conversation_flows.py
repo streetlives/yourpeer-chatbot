@@ -184,12 +184,23 @@ class TestOtherR25Regressions:
         assert "brooklyn" in r[0]["response"].lower()
 
     def test_emotional_then_yes(self):
-        """emotional_then_yes: 5.00 → 4.50 in R25."""
-        _r = send_multi([
+        """emotional_then_yes: 5.00 → 4.50 in R25.
+
+        A "yes" after an emotional message should not crash, and should
+        not re-execute the emotional-triage path (which would produce
+        the same response twice). The turn-2 response should differ
+        meaningfully from turn 1.
+        """
+        r = send_multi([
             "I'm really struggling and need help",
             "yes",
         ])
-        # Should not crash or re-execute
+        assert len(r) == 2, "Expected both turns to complete without crash"
+        # Re-execution would produce the same response for turn 2 as turn 1.
+        assert r[0]["response"] != r[1]["response"], (
+            "Turn 2 re-emitted the emotional-triage response; emotional "
+            "branch is being re-entered on 'yes' (bug)."
+        )
 
     def test_wa_rough_sleeper_urgent(self):
         """wa_rough_sleeper_urgent: 4.50 → 4.00 in R25."""

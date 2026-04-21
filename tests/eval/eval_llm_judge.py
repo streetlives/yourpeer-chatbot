@@ -3281,7 +3281,7 @@ def simulate_conversation(
             "app.services.chatbot.execution.query_services",
             return_value=MOCK_QUERY_RESULTS,
         ), patch(
-            "app.services.chatbot.claude_reply",
+            "app.services.chatbot.handlers.meta.claude_reply",
             return_value="I can help you find services in NYC. What do you need?",
         ):
             result = generate_reply(user_msg, session_id=session_id)

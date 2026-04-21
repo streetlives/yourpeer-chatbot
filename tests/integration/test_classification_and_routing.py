@@ -147,7 +147,7 @@ def test_service_no_results(fresh_session):
     )
     assert results[-1]["result_count"] == 0
     assert "wasn't able to find" in results[-1]["response"] or "try" in results[-1]["response"].lower()
-@patch("app.services.chatbot.detect_crisis", return_value=None)
+@patch("app.services.chatbot.orchestrator.detect_crisis", return_value=None)
 @patch("app.services.chatbot.execution.query_services", side_effect=Exception("DB connection failed"))
 def test_db_failure_uses_static_fallback(mock_query, mock_crisis, fresh_session):
     """If DB query throws after confirmation, should return a static error
@@ -160,7 +160,7 @@ def test_db_failure_uses_static_fallback(mock_query, mock_crisis, fresh_session)
     assert result["services"] == []
     # Should contain a clear error message directing user to yourpeer.nyc
     assert "yourpeer.nyc" in result["response"]
-@patch("app.services.chatbot.detect_crisis", return_value=None)
+@patch("app.services.chatbot.orchestrator.detect_crisis", return_value=None)
 @patch("app.services.chatbot.execution.query_services", side_effect=Exception("DB down"))
 def test_both_db_and_claude_fail(mock_query, mock_crisis, fresh_session):
     """If DB query fails, static fallback should still work (no Claude needed)."""
@@ -169,7 +169,7 @@ def test_both_db_and_claude_fail(mock_query, mock_crisis, fresh_session):
     # Should return a safe fallback, not crash
     assert len(result["response"]) > 0
     assert result["services"] == []
-@patch("app.services.chatbot.detect_crisis", return_value=None)
+@patch("app.services.chatbot.orchestrator.detect_crisis", return_value=None)
 @patch("app.services.chatbot.execution.query_services", return_value=MOCK_ERROR_RESULTS)
 def test_query_error_uses_static_fallback(mock_query, mock_crisis, fresh_session):
     """If query_services returns an error key, should return a static error
@@ -180,7 +180,7 @@ def test_query_error_uses_static_fallback(mock_query, mock_crisis, fresh_session
     assert result["services"] == []
     # Should contain a clear error message
     assert "try again" in result["response"].lower() or "yourpeer" in result["response"]
-@patch("app.services.chatbot.detect_crisis", return_value=None)
+@patch("app.services.chatbot.orchestrator.detect_crisis", return_value=None)
 @patch("app.services.chatbot.execution.query_services", side_effect=Exception("DB down"))
 def test_repeated_db_failure_escalates_message(mock_query, mock_crisis, fresh_session):
     """Second consecutive DB failure should show a stronger 'still having trouble' message."""
@@ -309,9 +309,9 @@ def test_response_has_all_required_keys(fresh_session):
         result = send(msg, session_id=fresh_session)
         for key in required_keys:
             assert key in result, f"Missing key '{key}' in response for: {msg}"
-@patch("app.services.chatbot.detect_crisis", return_value=None)
+@patch("app.services.chatbot.orchestrator.detect_crisis", return_value=None)
 @patch("app.services.chatbot.execution.query_services", return_value=MOCK_QUERY_RESULTS)
-@patch("app.services.chatbot.claude_reply")
+@patch("app.services.chatbot.handlers.meta.claude_reply")
 def test_relaxed_search_flag(mock_claude, mock_query, mock_crisis, fresh_session):
     """relaxed_search should reflect whether the query was relaxed."""
     generate_reply("I need food in Brooklyn", session_id=fresh_session)
@@ -483,7 +483,7 @@ def test_whitespace_message_guard(fresh_session):
 def test_confused_classification():
     """Confusion phrases should classify as 'confused', not 'general'."""
     # Mock detect_crisis so LLM fail-open doesn't misclassify as crisis
-    with patch("app.services.chatbot.detect_crisis", return_value=None):
+    with patch("app.services.chatbot.orchestrator.detect_crisis", return_value=None):
         for phrase in ["I don't know what to do", "I dont know what to do",
                        "idk what to do", "I don't know", "I'm confused",
                        "I'm lost", "I'm overwhelmed", "I'm not sure what I need",
@@ -493,7 +493,7 @@ def test_confused_classification():
     assert_classified("hello", "greeting")
 def test_confused_does_not_trigger_llm(fresh_session):
     """'I don't know what to do' should NOT reach the LLM or extract slots."""
-    with patch("app.services.chatbot.detect_crisis", return_value=None):
+    with patch("app.services.chatbot.orchestrator.detect_crisis", return_value=None):
         result = send("I don't know what to do", session_id=fresh_session)
     assert "figure it out" in result["response"].lower() or "okay" in result["response"].lower()
     assert len(result["quick_replies"]) >= 9
@@ -507,7 +507,7 @@ def test_confused_does_not_trigger_llm(fresh_session):
 
 def test_emotional_classification():
     """Emotional phrases should classify as 'emotional', not 'confused' or 'general'."""
-    with patch("app.services.chatbot.detect_crisis", return_value=None):
+    with patch("app.services.chatbot.orchestrator.detect_crisis", return_value=None):
         for phrase in [
             "I'm feeling really down",
             "I'm feeling sad",
@@ -533,7 +533,7 @@ def test_emotional_does_not_catch_service_messages():
     # "feeling hungry" has no emotional phrase match — goes to slots
     assert_classified("I'm feeling hungry", "service")
     # Regression: emotional phrase + service intent → service, not emotional
-    with patch("app.services.chatbot.detect_crisis", return_value=None):
+    with patch("app.services.chatbot.orchestrator.detect_crisis", return_value=None):
         assert_classified(
             "I'm struggling with addiction and need a treatment program in Manhattan",
             "service",
@@ -547,7 +547,7 @@ def test_emotional_does_not_catch_service_messages():
 def test_emotional_distinct_from_confused():
     """'I'm feeling lost' should be 'emotional', not 'confused'.
     'I don't know what to do' should still be 'confused'."""
-    with patch("app.services.chatbot.detect_crisis", return_value=None):
+    with patch("app.services.chatbot.orchestrator.detect_crisis", return_value=None):
         assert_classified("I'm feeling lost", "emotional")
         assert_classified("I feel stuck", "emotional")
         assert_classified("I don't know what to do", "confused")
@@ -556,7 +556,7 @@ def test_emotional_distinct_from_confused():
 
 def test_emotional_response_has_peer_navigator(fresh_session):
     """Emotional messages should get a warm response with a peer navigator option."""
-    with patch("app.services.chatbot.detect_crisis", return_value=None):
+    with patch("app.services.chatbot.orchestrator.detect_crisis", return_value=None):
         result = send("I'm feeling really down", session_id=fresh_session)
     # Should acknowledge feeling
     assert "service" not in result["response"].lower() or "peer" in result["response"].lower()
@@ -571,7 +571,7 @@ def test_emotional_response_has_peer_navigator(fresh_session):
 
 def test_emotional_does_not_set_confirmation(fresh_session):
     """Emotional messages should never trigger the confirmation flow."""
-    with patch("app.services.chatbot.detect_crisis", return_value=None):
+    with patch("app.services.chatbot.orchestrator.detect_crisis", return_value=None):
         result = send("I'm having a really rough day", session_id=fresh_session)
     assert result["slots"].get("_pending_confirmation") is None
     assert result["follow_up_needed"] is False
@@ -579,8 +579,8 @@ def test_emotional_does_not_set_confirmation(fresh_session):
 
 def test_emotional_static_fallback_without_llm(fresh_session):
     """Without LLM, emotional messages should use the static response."""
-    with patch("app.services.chatbot.detect_crisis", return_value=None), \
-         patch("app.services.chatbot._USE_LLM", False):
+    with patch("app.services.chatbot.orchestrator.detect_crisis", return_value=None), \
+         patch("app.services.chatbot.orchestrator._USE_LLM", False):
         result = send("I'm feeling really down", session_id=fresh_session)
     assert "sorry" in result["response"].lower() or "courage" in result["response"].lower()
     assert "peer navigator" in result["response"].lower()
@@ -627,9 +627,9 @@ def test_crisis_clears_pending_confirmation(fresh_session):
     # Trigger crisis — call generate_reply directly because send()
     # always mocks detect_crisis to None, overriding our mock.
     from app.services.chatbot import generate_reply
-    with patch("app.services.chatbot.detect_crisis",
+    with patch("app.services.chatbot.orchestrator.detect_crisis",
                return_value=("suicide_self_harm", "Crisis response")), \
-         patch("app.services.chatbot.claude_reply", return_value=""), \
+         patch("app.services.chatbot.handlers.meta.claude_reply", return_value=""), \
          patch("app.services.chatbot.execution.query_services"):
         generate_reply("I want to hurt myself", session_id=fresh_session)
 
@@ -677,7 +677,7 @@ def test_yes_after_escalation_shows_peer_navigator(fresh_session):
 
 def test_yes_after_emotional_routes_to_escalation(fresh_session):
     """'Yes' after an emotional response should connect to peer navigator."""
-    with patch("app.services.chatbot.detect_crisis", return_value=None):
+    with patch("app.services.chatbot.orchestrator.detect_crisis", return_value=None):
         r1 = send("I'm feeling really down", session_id=fresh_session)
     # The emotional response offers a peer navigator
     assert any("person" in qr["label"].lower() or "peer" in qr["value"].lower()
@@ -690,7 +690,7 @@ def test_yes_after_emotional_routes_to_escalation(fresh_session):
 
 def test_no_after_emotional_is_gentle(fresh_session):
     """'No' after an emotional response should be gentle, not push services."""
-    with patch("app.services.chatbot.detect_crisis", return_value=None):
+    with patch("app.services.chatbot.orchestrator.detect_crisis", return_value=None):
         _r1 = send("I'm feeling really down", session_id=fresh_session)
 
     r2 = send("no", session_id=fresh_session)
@@ -796,9 +796,9 @@ def test_text_location_overrides_stored_coords(fresh_session):
     from app.services.chatbot import generate_reply
     from conftest import MOCK_QUERY_RESULTS
 
-    with patch("app.services.chatbot.claude_reply", return_value="How can I help?"), \
+    with patch("app.services.chatbot.handlers.meta.claude_reply", return_value="How can I help?"), \
          patch("app.services.chatbot.execution.query_services", return_value=MOCK_QUERY_RESULTS) as mock_query, \
-         patch("app.services.chatbot.detect_crisis", return_value=None):
+         patch("app.services.chatbot.orchestrator.detect_crisis", return_value=None):
 
         # Step 1: User says "food near me" with browser coordinates (Harlem)
         generate_reply("food near me", session_id=fresh_session, latitude=40.8116, longitude=-73.9465)
@@ -2004,7 +2004,7 @@ def test_pick_emotional_response_alone():
 def test_emotional_no_llm_call(fresh_session):
     """Emotional handler should NOT call the LLM — static response only."""
     import unittest.mock as mock
-    with mock.patch("app.services.chatbot.claude_reply") as mock_llm:
+    with mock.patch("app.services.chatbot.handlers.meta.claude_reply") as mock_llm:
         send("I'm feeling really scared right now", session_id=fresh_session)
         # claude_reply should NOT have been called for emotional category
         for call in mock_llm.call_args_list:

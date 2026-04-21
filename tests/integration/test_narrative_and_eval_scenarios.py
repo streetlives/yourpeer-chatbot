@@ -383,16 +383,25 @@ class TestEvalScenarioApproximations:
             r["slots"].get("service_type") != "helicopter"
 
     def test_eval_nonsense_service(self, sid):
+        """Repeated nonsense requests should produce escalating responses,
+        not identical repeats (see sticky-counter in handlers/general.py).
+
+        Turn 1 may be a generic response; turn 2 should trigger the
+        unrecognized-service path with a visibly different reply. If
+        responses are byte-identical, the escalation didn't fire.
+        """
         results = send_multi([
             "Can you find me some xyzzy in the Bronx",
             "I still need xyzzy",
             "xyzzy please",
         ], session_id=sid)
-        # Responses should escalate, not repeat
-        _r1_start = results[0]["response"][:30]
-        _r2_start = results[1]["response"][:30]
-        # At least turns 1 and 2 should differ (escalation)
-        # (Turn 1 may be generic, Turn 2 triggers unrecognized)
+        r1_start = results[0]["response"][:30]
+        r2_start = results[1]["response"][:30]
+        # At least turns 1 and 2 should differ (escalation).
+        assert r1_start != r2_start, (
+            f"Nonsense requests should escalate between turns, but turn 1 "
+            f"and turn 2 start identically: {r1_start!r}"
+        )
 
     # --- Shame (1 scenario — partially fixed) ---
 
