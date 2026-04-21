@@ -81,6 +81,26 @@ export interface ChatResponse {
   result_count?: number;
 }
 
+/**
+ * Delivery status of a user message. Drives per-message visual state
+ * (the "ticks" next to the bubble):
+ *
+ *  - sending: request in flight. Single faint tick or spinner.
+ *  - sent: the server acknowledged. Two ticks.
+ *  - pending: queued while offline. Clock icon; user can cancel.
+ *  - failed: delivery gave up (e.g. queue expired). Warning icon.
+ *  - cancelled: user cancelled before delivery. Message styled
+ *      faded / struck-through.
+ *
+ * Bot messages have no status (they only appear after they exist).
+ */
+export type MessageStatus =
+  | "sending"
+  | "sent"
+  | "pending"
+  | "failed"
+  | "cancelled";
+
 export interface ChatMessage {
   id: string;
   role: "user" | "bot";
@@ -94,6 +114,14 @@ export interface ChatMessage {
    *  to localStorage. They're stripped during rehydration so they don't
    *  survive page refreshes. */
   transient?: boolean;
+  /** Per-message delivery status. Only meaningful for user-role messages. */
+  status?: MessageStatus;
+  /**
+   * Stable idempotency key for the underlying backend request. Attached
+   * to user messages so the same key can be reused on retry/flush, and
+   * the backend can dedupe. Omitted on bot messages.
+   */
+  requestId?: string;
 }
 
 export type FeedbackRating = "up" | "down";

@@ -1,0 +1,12 @@
+{
+  "summary": {
+    "overall_average": 4.54,
+    "scenarios_evaluated": 167,
+    "critical_failure_count": 3,
+    "scenarios_with_errors": 0,
+    "dimension_averages": {},
+    "category_averages": {}
+  },
+  "scenarios": [],
+  "critical_failures": []
+}

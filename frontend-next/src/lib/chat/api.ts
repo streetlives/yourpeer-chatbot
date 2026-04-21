@@ -14,6 +14,7 @@ import type {
   EvalReport,
   EvalRunStatus,
 } from "./types";
+import { generateRequestId } from "./request-id";
 
 // ---------------------------------------------------------------------------
 // Timeout helper (D4)
@@ -38,13 +39,19 @@ export async function sendChatMessage(
   message: string,
   sessionId: string | null,
   coords?: { latitude: number; longitude: number } | null,
+  /**
+   * Idempotency key for this logical user action. Defaults to a fresh
+   * UUID. Pass a stable ID when replaying a queued message — the backend
+   * dedupes retries on this key within a 60-second window.
+   */
+  requestId?: string,
 ): Promise<ChatResponse> {
-  const requestId = crypto.randomUUID();
+  const idempotencyKey = requestId ?? generateRequestId();
   const res = await fetch("/api/chat", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "X-Request-ID": requestId,
+      "X-Request-ID": idempotencyKey,
     },
     body: JSON.stringify({
       message,

@@ -61,7 +61,11 @@ from typing import Iterable
 
 ROOT = Path(__file__).resolve().parents[2]  # repo root from tests/_tools/
 TESTS = ROOT / "tests"
-BACKEND = ROOT / "backend"
+# Walk the app package only, not all of backend/. Scanning backend/
+# would descend into backend/venv/ and parse every third-party library
+# — slow, and some packages (joblib, chardet) have test fixtures with
+# intentionally-malformed encodings that crash ast.parse().
+BACKEND = ROOT / "backend" / "app"
 
 
 @dataclass
@@ -108,9 +112,19 @@ def _build_backend_symbol_map() -> dict[str, set[str]]:
     for py in BACKEND.rglob("*.py"):
         if "__pycache__" in py.parts:
             continue
+        # Skip macOS AppleDouble files (`._foo.py`) — these are resource-fork
+        # metadata that gets created when a tarball is extracted on macOS.
+        # They look like Python files to rglob but contain binary data that
+        # ast.parse() can't handle. Harmless to skip.
+        if py.name.startswith("._"):
+            continue
         try:
             tree = ast.parse(py.read_text(), filename=str(py))
-        except SyntaxError:
+        except (SyntaxError, UnicodeDecodeError):
+            # UnicodeDecodeError covers any other non-UTF-8 files that slip
+            # through (editor backups, etc.). SyntaxError covers legitimate
+            # Python files that happen to be broken — we don't want to fail
+            # the whole audit because of one unrelated syntax error.
             continue
         names: set[str] = set()
         for node in ast.walk(tree):
@@ -128,9 +142,12 @@ def _build_backend_symbol_map() -> dict[str, set[str]]:
             elif isinstance(node, ast.Import):
                 for alias in node.names:
                     names.add((alias.asname or alias.name).split(".")[0])
-        # Derive module dotted path from file location under backend/
+        # Derive module dotted path from file location under backend/app/.
+        # BACKEND points at backend/app (not backend/) so we prepend 'app'
+        # to keep the dotted paths in `app.services.X.Y` form — matching
+        # what test code actually writes as patch("app.services.X.Y").
         rel = py.relative_to(BACKEND)
-        parts = list(rel.parts)
+        parts = ["app"] + list(rel.parts)
         if parts[-1] == "__init__.py":
             parts = parts[:-1]
         else:

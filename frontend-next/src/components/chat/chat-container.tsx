@@ -9,6 +9,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useChat } from "@/hooks/use-chat";
 import { useOnlineStatus } from "@/hooks/use-online-status";
+import { useOfflineState } from "@/hooks/use-offline-state";
 import { useBackendHealth } from "@/hooks/use-backend-health";
 import { useChatStore } from "@/lib/chat/store";
 import { ChatMessage } from "./chat-message";
@@ -16,12 +17,23 @@ import { ChatMessageBoundary } from "./chat-message-boundary";
 import { ChatInput } from "./chat-input";
 import { ChatStatus } from "./chat-status";
 import { FeedbackRow } from "./feedback-row";
+import { OfflineBanner } from "./offline-banner";
+import { EarlierResultsLink } from "./earlier-results-link";
 
 export function ChatContainer() {
-  const { messages, isLoading, error, send, retry, submitFeedback } = useChat();
+  const { messages, isLoading, error, send, retry, submitFeedback, cancelQueued } = useChat();
   const isOnline = useOnlineStatus();
+  const { cacheAge, queueDepth } = useOfflineState();
   const { backendStatus, statusDetail } = useBackendHealth();
   const chatRef = useRef<HTMLDivElement>(null);
+
+  // Session-reset snapshot: if the previous conversation had results
+  // and was wiped (by TTL or explicit reset), offer a link to restore
+  // them. Subscribed individually so we don't re-render the whole
+  // chat log on every store change.
+  const lastResultsBeforeReset = useChatStore((s) => s.lastResultsBeforeReset);
+  const restoreEarlierResults = useChatStore((s) => s.restoreEarlierResults);
+  const dismissEarlierResults = useChatStore((s) => s.dismissEarlierResults);
 
   // Combine browser online status with backend health into a single state.
   //   "connected" — browser online AND backend healthy
@@ -33,6 +45,19 @@ export function ChatContainer() {
       ? "offline"
       : backendStatus;
 
+  // When the user is offline (browser-level), we show the OfflineBanner
+  // which handles both the cached-results and no-cache cases. The old
+  // red banner was subtractive — it told users "you're offline, nothing
+  // works" — but with queued sends + cached results, that messaging is
+  // wrong. See PWA PR for design rationale.
+  //
+  // The amber "backend unreachable" banner (below chat) is still shown
+  // when the browser is online but the server can't be reached, since
+  // that's a different condition and the existing wording is accurate.
+  const showOfflineBanner = !isOnline;
+  const showBackendUnreachableBanner =
+    isOnline && backendStatus === "unreachable";
+
   const dotColor = {
     connected: "bg-green-500 animate-glow-pulse",
     degraded: "bg-amber-400 animate-pulse",
@@ -42,7 +67,11 @@ export function ChatContainer() {
   const dotLabel = {
     connected: "Connected",
     degraded: statusDetail,
-    offline: !isOnline ? "Offline" : statusDetail,
+    offline: !isOnline
+      ? queueDepth > 0
+        ? `Offline — ${queueDepth} message${queueDepth === 1 ? "" : "s"} pending`
+        : "Offline"
+      : statusDetail,
   }[connectionState];
 
   // Wait for Zustand persist to finish rehydrating from localStorage.
@@ -82,14 +111,29 @@ export function ChatContainer() {
         </span>
       </div>
 
-      {/* Connection status banner — only shown when degraded or offline */}
-      {connectionState === "offline" && (
-        <div role="alert" className="mx-1 mb-2 px-3 py-2 rounded-lg bg-red-50 border border-red-200 text-sm text-red-700">
-          {!isOnline
-            ? "You're offline. Check your connection to search for services."
-            : "Can't reach the server right now. Service search is unavailable."}
+      {/* Offline state — amber banner covers both cached-results and
+          no-cache cases. Replaces the old red "nothing works" banner. */}
+      {showOfflineBanner && (
+        <OfflineBanner
+          hasCachedResults={cacheAge !== null}
+          queueDepth={queueDepth}
+        />
+      )}
+
+      {/* Backend unreachable while online — distinct from offline.
+          Users can see cached data but can't send new messages;
+          queue will hold them until the backend is back. */}
+      {showBackendUnreachableBanner && (
+        <div
+          role="alert"
+          className="mx-1 mb-2 px-3 py-2 rounded-lg bg-red-50 border border-red-200 text-sm text-red-700"
+        >
+          Can&apos;t reach the server right now. Service search is unavailable;
+          your messages will send when we&apos;re back up.
         </div>
       )}
+
+      {/* Backend degraded — AI features limited but service search works */}
       {connectionState === "degraded" && (
         <div role="status" className="mx-1 mb-2 px-3 py-2 rounded-lg bg-amber-50 border border-amber-200 text-sm text-amber-700">
           {statusDetail.includes("API key")
@@ -100,6 +144,17 @@ export function ChatContainer() {
                 ? "AI features temporarily limited — service search still works."
                 : "Some features may be limited — service search still works."}
         </div>
+      )}
+
+      {/* Session-reset restore link — present when a prior session had
+          results and was wiped by TTL or an explicit reset. Lets the
+          user pull those results back into view without re-searching. */}
+      {lastResultsBeforeReset && (
+        <EarlierResultsLink
+          snapshot={lastResultsBeforeReset}
+          onRestore={restoreEarlierResults}
+          onDismiss={dismissEarlierResults}
+        />
       )}
 
       {/* Chat area wrapper — relative for floating feedback positioning */}
@@ -122,6 +177,7 @@ export function ChatContainer() {
                   message={msg}
                   onQuickReply={send}
                   onRetry={retry}
+                  onCancel={cancelQueued}
                 />
               </ChatMessageBoundary>
             ))
@@ -145,17 +201,6 @@ export function ChatContainer() {
         })()}
       </div>
 
-      {connectionState === "offline" && (
-        <div
-          role="alert"
-          className="mx-1 my-2 px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-800"
-        >
-          {!isOnline
-            ? "You appear to be offline. Messages will fail until your connection is restored."
-            : "The chat service is temporarily unavailable. Please try again in a moment."}
-        </div>
-      )}
-
       {connectionState === "degraded" && (
         <div
           role="status"
@@ -167,7 +212,10 @@ export function ChatContainer() {
 
       <ChatStatus isLoading={isLoading} error={error} />
 
-      <ChatInput onSend={send} disabled={isLoading || connectionState === "offline"} />
+      {/* ChatInput: stay enabled when offline so messages can queue.
+          Only disable during active send (isLoading) to prevent
+          double-submit. Queue flushing happens in use-chat.ts. */}
+      <ChatInput onSend={send} disabled={isLoading} />
     </div>
   );
 }

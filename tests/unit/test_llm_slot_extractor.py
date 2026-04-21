@@ -128,23 +128,33 @@ def test_smart_uses_regex_for_simple_messages(mock_llm):
     assert "brooklyn" in result["location"].lower()
 
 
-@pytest.mark.xfail(reason="Regex override: 'hospital' matches medical keyword, overriding LLM's correct 'shelter'. The override prefers regex when both disagree — correct for 'dental' vs 'personal_care' but wrong here.")
-@patch("app.services.llm_slot_extractor.extract_slots_llm")
-def test_smart_uses_llm_for_long_messages(mock_llm):
-    """Long messages should always go to LLM even if regex finds slots."""
-    mock_llm.return_value = {
+@patch("app.services.llm_slot_extractor.extract_slots_narrative")
+def test_smart_uses_llm_for_long_messages(mock_narrative):
+    """Long messages (≥20 words) should route through extract_slots_narrative
+    — NOT extract_slots_llm. The narrative path is authoritative for long
+    inputs where keyword-based extraction produces misleading primaries
+    (e.g., 'hospital' when the user's actual need is shelter)."""
+    mock_narrative.return_value = {
         "service_type": "shelter",
-        "location": "East New York",
+        "service_detail": None,
+        "additional_services": [],
+        "location": "east new york",
         "age": None,
         "urgency": "high",
-        "gender": None,
+        "family_status": None,
+        "_gender": None,
+        "_populations": [],
+        "org_name": None,
+        "no_requirements": False,
+        "_contradiction": False,
+        "_is_additive": False,
     }
     msg = (
         "I just got out of the hospital and I have been staying with friends "
         "in East New York but they can not keep me anymore"
     )
     result = extract_slots_smart(msg)
-    mock_llm.assert_called_once()
+    mock_narrative.assert_called_once()
     assert result["service_type"] == "shelter"  # LLM gets this right
     assert "east new york" in result["location"].lower()
 
@@ -221,7 +231,6 @@ def test_smart_regex_overrides_biased_llm_service_type(mock_llm):
     mock_llm.assert_called_once()
 
 
-@pytest.mark.xfail(reason="Regex override: 'hospital' matches medical keyword even though the user's need is shelter. Test description says 'no regex match' but regex does find 'hospital' → medical.")
 @patch("app.services.llm_slot_extractor.extract_slots_llm")
 def test_smart_regex_does_not_override_when_no_regex_match(mock_llm):
     """When regex finds no service_type but LLM does, LLM result is used."""

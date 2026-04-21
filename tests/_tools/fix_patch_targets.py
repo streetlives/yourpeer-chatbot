@@ -105,6 +105,11 @@ def main() -> int:
         parts = set(path.parts)
         if "__pycache__" in parts or "_tools" in parts:
             continue
+        # Skip macOS AppleDouble files (`._foo.py`) — resource-fork metadata
+        # created when a tarball is extracted on macOS. Look like Python
+        # files to rglob but contain binary data that chokes read_text().
+        if path.name.startswith("._"):
+            continue
         n = apply_to_file(path, args.apply)
         if n > 0:
             files += 1

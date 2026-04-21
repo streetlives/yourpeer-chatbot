@@ -60,13 +60,19 @@ import argparse
 import logging
 import anthropic
 
+# MUST come before any `from app.*` import below. The `app` package lives
+# under backend/, not at the repo root, so we prepend that to sys.path
+# before Python tries to resolve `app.services.chatbot`. When run under
+# pytest this is handled by tests/conftest.py; when run directly (e.g.
+# `python tests/eval/eval_llm_judge.py`), this block does it.
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../..", "backend"))
+
+
 from app.services.chatbot import generate_reply
 from app.services.session_store import clear_session
 from app.privacy.pii_redactor import redact_pii
 from datetime import datetime
 from unittest.mock import patch
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../..", "backend"))
 
 # Suppress noisy logs during eval
 logging.basicConfig(level=logging.WARNING)
