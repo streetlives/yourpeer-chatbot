@@ -93,7 +93,7 @@ limitation" rather than asserting expected behavior:
 - `tests/unit/test_audit_regression.py:1491` — DV enrichment adds generic taxonomies
 
 **Disposition:** these are legitimate — the tests document the boundary.
-Track them in a single `docs/audits/KNOWN_LIMITATIONS.md` doc so product
+Track them in a single known limitations doc so product
 can prioritize. P2.
 
 ---
@@ -115,7 +115,7 @@ for the user; silent data loss for admin observability.
 **Fix options:**
 - **(a) Merge** — append fallback cards to `_last_results` at search
   time (existing behavior actually does `services_list = services_list
-  + fb_cards` on line 569, so they ARE in the cards the user sees). The
+  + fb_cards` on line:569, so they ARE in the cards the user sees). The
   stash is dead data. If nothing else reads it, just delete the stash.
 - **(b) Wire** — have `_resolve_card_from_reference()` in `post_results.py`
   also consult `_fallback_results` if `_last_results` misses. Keeps
@@ -124,7 +124,7 @@ for the user; silent data loss for admin observability.
   queries). Rename to `_fallback_ids_logged`.
 
 **Recommendation: (a) + audit logging.** The cards are already in
-`_last_results` via the concat on line 569. The separate stash adds a
+`_last_results` via the concat on line:569. The separate stash adds a
 consumer-less field. Delete the stash, emit an audit event with the
 fallback card IDs for admin visibility. P1.
 
