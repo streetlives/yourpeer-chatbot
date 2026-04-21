@@ -230,7 +230,7 @@ stacked errors, and non-literal trigger text correctly.
     └───┬──────┬────┘                          │
         │      │                               │
         ▼      ▼                               ▼
-┌───────────┐ ┌────────────────┐     ┌────────────────┐
+┌──────────-─┐ ┌────────────────┐     ┌────────────────┐
 │useChatStore│ │   send-queue   │     │ offline-cache  │
 │(Zustand +  │ │ (IDB + events) │     │ (IDB + events) │
 │ persist)   │ │ - enqueue/deq  │     │ - last results │
@@ -399,17 +399,7 @@ place before this document was written:
 
 ## 6. Known limitations
 
-### 6.1 Icons are placeholders
-
-`public/icons/` contains a README with the asset spec but no
-actual PNG files. "Add to Home Screen" will show a broken-image
-placeholder until the designer ships the three icons (192×192,
-512×512, 512×512 maskable). The PWA is otherwise functional.
-
-**Recommendation:** hide the install prompt in the browser UI until
-icons ship.
-
-### 6.2 No unit tests
+### 6.1 No unit tests
 
 The frontend doesn't have a test framework set up. `offline-cache.ts`,
 `send-queue.ts`, `idempotency.py`, and the `updateMessage` terminal-
@@ -419,7 +409,7 @@ coverage.
 **Recommendation:** separate PR to set up vitest (frontend) and add
 targeted tests.
 
-### 6.3 iOS Safari caveats
+### 6.2 iOS Safari caveats
 
 - IndexedDB can be wiped by the OS under low-storage pressure. A user
   who backgrounds the app for weeks, then comes back, might find
@@ -433,7 +423,7 @@ targeted tests.
 declaring iOS-ready. Add a note in user-facing copy that the app
 "works best with the page open."
 
-### 6.4 No idempotency cache persistence across restarts
+### 6.3 No idempotency cache persistence across restarts
 
 The idempotency cache is in-memory. If the backend restarts within
 60 seconds of a client flushing a queued message, the retry will
@@ -447,7 +437,7 @@ than maintaining Redis for this one cache.
 (Redis becomes necessary for sessions/rate-limiting anyway, at
 which point idempotency cache tags along).
 
-### 6.5 `lastResultsBeforeReset` persists until explicitly dismissed
+### 6.4 `lastResultsBeforeReset` persists until explicitly dismissed
 
 If the user resets, doesn't click either "See earlier results" or
 "Dismiss," and returns days later without triggering another reset
@@ -461,7 +451,7 @@ add complexity without a clear winning threshold.
 **Recommendation:** consider a 24-hour snapshot TTL if usability
 testing surfaces confusion.
 
-### 6.6 Request ID persistence in localStorage
+### 6.5 Request ID persistence in localStorage
 
 User messages persist their `requestId` to localStorage (via Zustand
 persist). A user with a very long-open session could have a 60s-old
@@ -469,7 +459,7 @@ request ID sitting in their chat history when they click Retry. The
 server-side idempotency entry has expired by then, so the retry
 runs fresh anyway. No bug, but worth noting the coupling.
 
-### 6.7 Cancel does not interrupt in-flight server work
+### 6.6 Cancel does not interrupt in-flight server work
 
 If the user cancels during the `sending` state (server is actively
 processing), we honor the cancel client-side (don't show the bot
@@ -480,7 +470,7 @@ cached in idempotency for 60 seconds but nothing reads it.
 cooperation (WebSocket or similar). Sunk cost is acceptable;
 client-side semantics match the user's intent.
 
-### 6.8 No indicator that the queue is actively flushing
+### 6.7 No indicator that the queue is actively flushing
 
 When connection returns and the queue has, say, 5 messages, the
 user sees status transitions pending → sending → sent for each one,
@@ -494,7 +484,7 @@ sent ones understands what's happening.
 **Recommendation:** if usability testing shows confusion, add a
 "sending 3 queued messages..." header bar during a flush.
 
-### 6.9 Single pre-existing lint error unfixed
+### 6.8 Single pre-existing lint error unfixed
 
 `chat-container.tsx:81` — React 19's `react-hooks/set-state-in-effect`
 rule flags the Zustand hydration pattern that existed before this PR.
