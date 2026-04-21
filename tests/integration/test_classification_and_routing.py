@@ -44,13 +44,17 @@ def test_classify_thanks():
         assert_classified(phrase, "thanks")
 def test_classify_help():
     """Help phrases should classify as 'help'."""
-    for phrase in ["help", "what is this", "who are you",
-                   "list services", "show services"]:
+    for phrase in ["help", "what is this", "list services", "show services"]:
         assert_classified(phrase, "help")
-    # Capability questions now route to bot_question (more specific answers)
-    for phrase in ["how does this work", "what can you do",
-                   "why weren't you able to get my location"]:
+    # Capability questions route to bot_question (more specific answers)
+    for phrase in ["how does this work", "what can you do", "why weren't you able to get my location"]:
         assert_classified(phrase, "bot_question")
+    # C.1 (April 2026) intentional reclassification: "who are you" /
+    # "what are you" are identity questions, not help requests. They
+    # now route to bot_identity where the handler introduces the bot
+    # rather than to the help handler which lists services.
+    for phrase in ["who are you", "what are you", "what's your name", "introduce yourself"]:
+        assert_classified(phrase, "bot_identity")
 def test_classify_service():
     """Messages with service keywords should classify as 'service'."""
     for phrase in ["I need food", "shelter in Brooklyn",
@@ -2319,3 +2323,135 @@ def test_frustration_third_tier(fresh_session):
     assert "🤝 Peer navigator" in labels
     # Should NOT have New search on 3rd tier
     assert "🔍 New search" not in labels
+
+
+# ---------------------------------------------------------------------------
+# C.1 — bot_identity / bot_question phrase expansion
+# ---------------------------------------------------------------------------
+# Added April 2026. Before C.1, "what's your name?" and similar direct
+# identity questions fell through to the `general` category and — during
+# a pending confirmation — produced a surreal re-nudge of the prior
+# search. C.1 adds these phrases to the classifier so they correctly
+# route to bot_identity / bot_question.
+
+def test_c1_whats_your_name_routes_to_bot_identity():
+    """'what's your name?' must classify as bot_identity, not general."""
+    from app.services.classifier import _classify_action
+    assert _classify_action("what's your name?") == "bot_identity"
+    assert _classify_action("whats your name") == "bot_identity"
+    assert _classify_action("what is your name") == "bot_identity"
+
+
+def test_c1_who_are_you_routes_to_bot_identity():
+    """'who are you?' must classify as bot_identity."""
+    from app.services.classifier import _classify_action
+    assert _classify_action("who are you") == "bot_identity"
+    assert _classify_action("who are you?") == "bot_identity"
+
+
+def test_c1_introduce_yourself_routes_to_bot_identity():
+    """Introduction prompts classify as bot_identity."""
+    from app.services.classifier import _classify_action
+    assert _classify_action("tell me about yourself") == "bot_identity"
+    assert _classify_action("introduce yourself") == "bot_identity"
+
+
+def test_c1_who_made_you_routes_to_bot_question():
+    """Attribution questions route to bot_question (LLM has factual context)."""
+    from app.services.classifier import _classify_action
+    assert _classify_action("who made you") == "bot_question"
+    assert _classify_action("who built you") == "bot_question"
+    assert _classify_action("who created you") == "bot_question"
+
+
+def test_c1_regression_guard_whats_your_name_during_pending_confirmation(fresh_session):
+    """Regression guard for the original surreal-non-sequitur bug.
+
+    Pre-C.1 sequence: user says "I need food in Brooklyn" (pending
+    confirmation set) → user asks "what's your name?" → bot replies
+    with a re-nudge of the food search, silently dropping the question.
+
+    Post-C.1: the identity classifier catches the question first, so
+    the bot_identity handler answers it. Pending confirmation can
+    still be preserved for a follow-up "yes" if the bot_identity
+    handler chooses (currently it returns service buttons, not the
+    old confirm prompt — that behavior is correct; the user re-asserts
+    their intent afresh).
+    """
+    r1, r2 = send_multi(
+        ["I need food in Brooklyn", "what's your name?"],
+        session_id=fresh_session,
+    )
+    # r1: confirmation for food-in-Brooklyn
+    assert r1["slots"].get("_pending_confirmation") is True
+    # r2: must be a bot_identity response, NOT a re-nudge
+    response_lower = r2["response"].lower()
+    # Bot-identity responses mention AI / assistant / YourPeer nature;
+    # re-nudge responses say "Just to make sure" and name the search.
+    assert "just to make sure" not in response_lower, (
+        "'what's your name?' was silently re-nudged — C.1 classifier "
+        "didn't catch it. Expected bot_identity response."
+    )
+    # Should contain some identity marker
+    assert any(term in response_lower for term in
+               ("ai", "assistant", "yourpeer", "chatbot")), (
+        "Expected bot_identity response to identify the bot. Got: "
+        f"{r2['response'][:200]}"
+    )
+
+# ---------------------------------------------------------------------------
+# C.2 — Topic-shift disambiguation during pending confirmation
+# ---------------------------------------------------------------------------
+# Added April 2026. Catches novel off-topic questions that slip past
+# the bot_identity / bot_question / help classifiers. Previously these
+# fell into `_handle_post_pending_confirmation` Path 3 (silent re-nudge);
+# now they produce a disambiguation prompt.
+
+def test_c2_novel_off_topic_question_during_pending_gets_disambiguation(fresh_session):
+    """Novel question phrasing (not in any classifier phrase list) during
+    pending confirmation should produce a disambiguation prompt, not a
+    silent re-nudge of the prior search.
+
+    'can you speak spanish' isn't in _BOT_QUESTION_PHRASES or
+    _BOT_IDENTITY_PHRASES, so it survives through to
+    _handle_post_pending_confirmation. Before C.2, it got a silent
+    re-nudge. After C.2, it gets the topic-shift disambiguation prompt.
+    """
+    r1, r2 = send_multi(
+        ["I need food in Brooklyn", "can you speak spanish?"],
+        session_id=fresh_session,
+    )
+    assert r1["slots"].get("_pending_confirmation") is True
+    response_lower = r2["response"].lower()
+    # Disambiguation marker: asks whether the user was asking
+    # something else OR wants to proceed.
+    assert "asking something" in response_lower or "something different" in response_lower, (
+        "Expected topic-shift disambiguation response. Got: "
+        f"{r2['response'][:200]}"
+    )
+    # Pending confirmation is still preserved so "yes" still works.
+    assert r2["slots"].get("_pending_confirmation") is True
+    # Quick replies should include the "something else" escape.
+    labels = [qr["label"] for qr in r2.get("quick_replies", [])]
+    assert any("something else" in lbl.lower() for lbl in labels), (
+        f"Expected 'I was asking something else' quick reply. "
+        f"Got labels: {labels}"
+    )
+
+
+def test_c2_regression_guard_plain_confirmation_still_renudges(fresh_session):
+    """Sanity check: a short confirmation-shaped message during pending
+    confirmation should still trigger the re-nudge path (not the
+    disambiguation branch). The disambiguation heuristic is
+    intentionally conservative so it doesn't swallow legitimate
+    confirmation-follow-ups.
+    """
+    r1, r2 = send_multi(
+        ["I need food in Brooklyn", "um maybe"],
+        session_id=fresh_session,
+    )
+    assert r1["slots"].get("_pending_confirmation") is True
+    response_lower = r2["response"].lower()
+    # Should be the normal re-nudge, NOT disambiguation
+    assert "asking something" not in response_lower
+    assert "just to make sure" in response_lower or "let me just confirm" in response_lower

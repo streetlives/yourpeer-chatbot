@@ -21,6 +21,7 @@ The chatbot originally assumed one service type per message. Classification gate
 | PR 4 | ✅ Done | LLM extractor — update schema for multi-service |
 | PR 5 | ✅ Done | Co-located queries — prioritize locations with all requested services |
 | PR 6 (Apr 2026) | ✅ Done | Close multi-intent & frustration coverage gaps — A.4 queue-clearing on service change, B.1 negative-preference phrase expansion, B.2 compound-intent override, A.1.b immigration acknowledgment, A.1.a/A.2/A.3 eval expectation updates. See "Completed: PR 6" section below. |
+| PR 7 (Apr 2026) | ✅ Done | Close bot-identity phrase gap + topic-shift disambiguation — C.1 phrase expansion (`what's your name`, `who made you`, etc.), C.2 disambiguation prompt in `_handle_post_pending_confirmation` Path 3. Defense-in-depth against surreal non-sequiturs during pending confirmations. See "Completed: PR 7" section below. |
 
 ---
 
@@ -457,3 +458,30 @@ Post-implementation cross-fix analysis (seven interaction probes) surfaced INT-3
 - **B.1 Part 2 — identical-response detector** (orchestrator-level text-similarity check as defense-in-depth against future phrase-list misses).
 - **Extend semantic router to `INTENT_ROUTES`.** Current asymmetry: router covers only `SERVICE_ROUTES` and `POPULATION_ROUTES`, so intents (`negative_preference`, `frustration`, `reset`, `bot_question`) have only Tier 1 regex and Tier 3 LLM — no Tier 2 middle ground for durable coverage against novel phrasings.
 - **Add `edge_compound_rejection_with_new_service_intent` scenario** to `eval_llm_judge.py` to lock B.2's behavior at eval-measurement level.
+
+---
+
+## Completed: PR 7 — Bot identity phrase gap + topic-shift disambiguation (April 2026)
+
+Follow-on to PR 6, addressing two related pre-existing issues surfaced by reviewing the same failure mode (surreal non-sequitur on `"what's your name?"` during pending confirmation). Two atomic fixes:
+
+### Production code changes
+
+**C.1 — bot_identity / bot_question phrase expansion.** 17 phrases added across two lists (8 to `_BOT_IDENTITY_PHRASES`, 9 to `_BOT_QUESTION_PHRASES`); see `docs/audits/PHRASE_LIST_AUDIT.md` Audit Trail for the full enumeration. Intentional reclassification: `"who are you"` moved from `help` to `bot_identity`. Target bug: direct identity questions (`"what's your name?"`, `"who are you?"`) during pending confirmations silently re-nudged the prior search instead of identifying the bot. One pre-existing test updated to match.
+
+**C.2 — Topic-shift disambiguation in `_handle_post_pending_confirmation` Path 3.** New helper `_looks_like_topic_shift_question(message)` + new branch before the re-nudge. When a pending confirmation exists and the user sends a substantive question (≥3 words, wh-word or auxiliary-verb opener, OR ≥4 words ending in `?`), the bot emits a disambiguation prompt and adds a `"💬 I was asking something else"` quick reply — rather than re-nudging blindly. Target bug: novel question phrasings that slip past classifier phrase lists produced the same surreal-non-sequitur UX. Conservative heuristic by design — 2-word questions, fragments, and confirmation-shaped utterances still fall through to the re-nudge path.
+
+### Why both fixes (defense-in-depth)
+
+C.1 closes the common case at Tier 1 (classifier-level). C.2 closes the novel-phrasing case at Tier 3 (fallback-level). Either alone would leave a gap: C.1 only covers phrases we've anticipated, and phrase lists are by definition incomplete. C.2 only fires at the fallback layer, which is a worse user experience than a clean bot_identity response. Together they form a layered guarantee that pending-confirmation state is never silently re-asserted against a clear topic shift.
+
+### Verification
+
+- Full suite: 3845 passed, 17 skipped, 3 xfailed (was 3829 pre-C; net +16 tests).
+- Regression-guard discipline proven: stripping C.1 phrases causes `test_c1_regression_guard_whats_your_name_during_pending_confirmation` to fail (falls through to C.2, which catches it with the disambiguation prompt instead of a bot_identity response — exactly the defense-in-depth behavior). Stripping the C.2 branch causes `test_c2_novel_off_topic_question_during_pending_gets_disambiguation` to fail with the expected evidence: `"Got: Just to make sure — I'll look for food in Brooklyn — sound good? Tap 'Yes, search' to go, or you can change the details."` — the literal surreal non-sequitur.
+
+### Paired follow-ups also deferred
+
+- **Add semantic router coverage for bot_identity / bot_question.** Same asymmetry issue as mentioned above for negative_preference — the three-tier cascade skips Tier 2 for intent routes.
+- **Add `edge_off_topic_question_during_pending_confirmation` eval scenario.** LLM-judge coverage for C.2's disambiguation behavior. Current test coverage is at the integration layer only.
+- **Audit `_handle_post_pending_confirmation` Path 3 for other silent-retention bugs.** This same pattern (retain pending state, nudge with the stale intent) might be wrong in other contexts too — for instance, if the user sent an emotional message during pending, the current code relies on the `response_tone == "emotional"` nudge-prefix branch to soften the re-nudge, but the re-nudge itself may still be the wrong move.

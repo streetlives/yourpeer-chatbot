@@ -467,6 +467,106 @@ class TestCrisisStepDownGeolocation:
             "found" in result["response"].lower(), \
             f"Youth runaway + coords should search immediately: {result['response']}"
 
+# ---------------------------------------------------------------------------
+# C.2 — Topic-shift question detection heuristic
+# ---------------------------------------------------------------------------
+# Unit tests for _looks_like_topic_shift_question, the conservative
+# heuristic that distinguishes off-topic questions from confirmation-
+# shaped utterances during a pending confirmation.
+
+
+class TestLooksLikeTopicShiftQuestion:
+    """Unit coverage for the C.2 disambiguation heuristic.
+
+    Per the helper's docstring, it should fire on clear off-topic
+    questions but not on fragments, short confirmations, or unclear
+    utterances. Conservative by design — ambiguous cases fall through
+    to the re-nudge path (safer default).
+    """
+
+    def test_question_mark_with_wh_word_fires(self):
+        from app.services.chatbot.handlers.confirmation import (
+            _looks_like_topic_shift_question,
+        )
+        assert _looks_like_topic_shift_question("what's your name?") is True
+        assert _looks_like_topic_shift_question("who are you?") is True
+        assert _looks_like_topic_shift_question("how does this work?") is True
+
+    def test_wh_word_start_three_words_fires(self):
+        from app.services.chatbot.handlers.confirmation import (
+            _looks_like_topic_shift_question,
+        )
+        assert _looks_like_topic_shift_question("who are you really") is True
+        assert _looks_like_topic_shift_question("where does this data go") is True
+
+    def test_auxiliary_verb_opener_fires(self):
+        from app.services.chatbot.handlers.confirmation import (
+            _looks_like_topic_shift_question,
+        )
+        assert _looks_like_topic_shift_question("can you speak spanish?") is True
+        assert _looks_like_topic_shift_question("do you remember me") is True
+        assert _looks_like_topic_shift_question("is this conversation private") is True
+
+    def test_question_mark_four_words_fires(self):
+        """Question mark + substantive content but no wh-word opener
+        still counts as a topic shift."""
+        from app.services.chatbot.handlers.confirmation import (
+            _looks_like_topic_shift_question,
+        )
+        assert _looks_like_topic_shift_question(
+            "my friend mentioned something else?"
+        ) is True
+
+    def test_single_word_does_not_fire(self):
+        from app.services.chatbot.handlers.confirmation import (
+            _looks_like_topic_shift_question,
+        )
+        assert _looks_like_topic_shift_question("what") is False
+        assert _looks_like_topic_shift_question("why") is False
+        assert _looks_like_topic_shift_question("?") is False
+
+    def test_short_confirmation_fragments_do_not_fire(self):
+        """Confirmation-shaped utterances must not be misclassified as
+        topic shifts — otherwise C.2 would steal legitimate re-nudge
+        cases."""
+        from app.services.chatbot.handlers.confirmation import (
+            _looks_like_topic_shift_question,
+        )
+        for msg in ("yes", "no", "ok", "yeah ok", "sounds good",
+                    "maybe", "i dunno", "idk", "change it"):
+            assert _looks_like_topic_shift_question(msg) is False, (
+                f"Heuristic falsely fired on confirmation fragment: {msg!r}"
+            )
+
+    def test_empty_and_whitespace_do_not_fire(self):
+        from app.services.chatbot.handlers.confirmation import (
+            _looks_like_topic_shift_question,
+        )
+        assert _looks_like_topic_shift_question("") is False
+        assert _looks_like_topic_shift_question("   ") is False
+        assert _looks_like_topic_shift_question("\n\t") is False
+
+    def test_service_request_without_question_does_not_fire(self):
+        """A service request like 'food in brooklyn' must not trigger
+        the heuristic. Service intents are handled by slot extraction
+        upstream of C.2 and should never reach Path 3."""
+        from app.services.chatbot.handlers.confirmation import (
+            _looks_like_topic_shift_question,
+        )
+        assert _looks_like_topic_shift_question("food in brooklyn") is False
+        assert _looks_like_topic_shift_question("actually shelter") is False
+
+    def test_heuristic_is_conservative_with_ambiguous_short_questions(self):
+        """'what now?' is ambiguous — could be confused (Path: confused
+        handler) or genuine topic shift. The heuristic declines to
+        fire and defers to the earlier confused/help classifiers.
+        Two-word questions don't trip the heuristic."""
+        from app.services.chatbot.handlers.confirmation import (
+            _looks_like_topic_shift_question,
+        )
+        assert _looks_like_topic_shift_question("what now?") is False
+        assert _looks_like_topic_shift_question("why not?") is False
+
 
 # =======================================================================
 # PAGINATION: _DISPLAY_PAGE_SIZE = 5

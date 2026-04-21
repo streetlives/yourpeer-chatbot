@@ -22,15 +22,39 @@
 | Negative preference | classifier.py | 35 | Rejection of offered options → alternative service categories. **Expanded from 19 to 35 in B.1 (2026-04-21)** — added 16 phrases covering "already tried" and "this isn't helpful" variants. See B.1 entry under Audit Trail below |
 | Escalation | phrase_lists.py | 13 | Human handoff requests |
 | Help | phrase_lists.py | 15 | Capability questions |
-| Bot question | phrase_lists.py | 65 | Privacy/capability meta-questions (includes 12 provider data-sharing phrases) |
-| Bot identity | phrase_lists.py | 15 | "Am I talking to a robot?" |
+| Bot question | phrase_lists.py | 74 | Privacy/capability/attribution meta-questions. **Expanded from 65 to 74 in C.1 (2026-04-21)** — added 9 attribution/origin phrases ("who made you", "who built you", "who created you", etc.) routing to the LLM-answered bot_question handler. See C.1 entry under Audit Trail |
+| Bot identity | phrase_lists.py | 23 | "Am I talking to a robot?" + direct identity questions. **Expanded from 15 to 23 in C.1 (2026-04-21)** — added 8 phrases ("what's your name" variants, "who are you", "tell me about yourself", etc.) to catch identity questions that would otherwise fall through to the re-nudge path during pending confirmations. See C.1 entry under Audit Trail |
 | Service keywords | slot_extractor.py | 220 | Service type extraction (9 categories) |
 | Word-boundary keywords | slot_extractor.py | 6 | Collision-prone service keywords |
-| **Total** | | **~775** | |
+| **Total** | | **~792** | |
 
 ---
 
 ## Audit Trail
+
+### C.1 — bot_identity / bot_question phrase expansion (2026-04-21)
+
+Traced back from two user-reported failure modes:
+
+1. **Surreal non-sequitur during pending confirmation.** Session transcript: user `"I need food in Brooklyn"` → bot confirms → user `"what's your name?"` → bot `"Just to make sure — I'll look for food in Brooklyn. Tap 'Yes, search' to go…"`. Root cause: `"what's your name?"` wasn't in any classifier phrase list, so `_classify_action` returned None, the orchestrator hit `_handle_post_pending_confirmation` Path 3, and the re-nudge fallback fired silently. Adding identity phrases catches the question at Tier 1.
+2. **Pre-existing classifier gap on attribution/origin questions.** `"who made you"` / `"who built you"` / `"who created you"` fell through the phrase list and reached the LLM classifier with low confidence. The LLM sometimes returned `bot_question`, sometimes `general`, inconsistently.
+
+**8 phrases added to `_BOT_IDENTITY_PHRASES`:**
+- `"what's your name"`, `"whats your name"`, `"what is your name"`
+- `"do you have a name"`
+- `"who are you"`, `"what are you"`
+- `"tell me about yourself"`, `"introduce yourself"`
+
+**9 phrases added to `_BOT_QUESTION_PHRASES`:**
+- `"who made you"`, `"who built you"`, `"who created you"`, `"who developed you"`, `"who designed you"`
+- `"where do you come from"`, `"where did you come from"`
+- `"what company made"`, `"what organization made"`
+
+**Intentional reclassification.** `"who are you"` previously lived in `_HELP_PHRASES` and routed to the help handler (which listed service categories). It's semantically an identity question, not a help request; moved to `_BOT_IDENTITY_PHRASES` where the handler introduces the bot. One pre-existing test (`test_classify_help`) had its input phrases split: identity prompts now assert `bot_identity`, and the bot's capability phrases already asserted `bot_question` separately.
+
+**Rejected as too broad.** The bare phrase `"your name"` was considered and rejected — it's a substring of too many unrelated messages (e.g., `"I'd rather not share your name with the shelter"` which is about privacy, not identity).
+
+**Paired with C.2 (topic-shift disambiguation).** C.1 alone closes the common case but novel phrasings (`"can you speak Spanish?"`, `"do you remember me?"`) still slip through. C.2 catches them at `_handle_post_pending_confirmation` Path 3 with a disambiguation prompt. Defense-in-depth: C.1 at Tier 1 (classifier), C.2 at Tier 3 (fallback). See `CHATBOT_BEHAVIOR.md` § Confirmation Actions for the C.2 heuristic.
 
 ### B.1 — Negative preference expansion (2026-04-21)
 
