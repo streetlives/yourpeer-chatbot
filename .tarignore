@@ -9,7 +9,7 @@
 .env.local
 .env.production
 .env.development
-
+ 
 # ─────────────────────────────────────────────────
 # RUNTIME DATA & STATE
 # ─────────────────────────────────────────────────
@@ -18,21 +18,40 @@
 *.sqlite
 *.sqlite3
 *.db
-pilot_data/
-data/
-
+# Directory exclusions below use the `yourpeer-chatbot/<name>` prefix
+# because the build command packages the directory from its parent:
+#   tar czf out.tar.gz --exclude-from=yourpeer-chatbot/.tarignore yourpeer-chatbot/
+# Under this invocation, an unanchored pattern like `data/` silently
+# does nothing on GNU tar and matches by basename on BSD tar
+# (macOS default) — which on BSD tar would silently exclude
+# backend/app/rag/data/ (the NYC boroughs GeoJSON loaded at runtime
+# by boundaries.py). The prefixed form is the only portable way to
+# mean "only the top-level data/ directory."
+#
+# This bit us once — see docs/CLAUDE.md about app.models being
+# silently `.tarignore`'d in a prior release.
+#
+# If the directory is ever renamed, update these prefixes.
+yourpeer-chatbot/pilot_data
+yourpeer-chatbot/data
+ 
 # Session transcripts — may contain redacted but
 # still sensitive conversation content.
 transcripts/
 *transcript*
 *session_data*
 *conversation_log*
-
+ 
 # Eval result files — contain scenario transcripts
 # that may reference real service locations.
 eval_results/
 *eval_run*
-
+# The loose eval_report.json at the repo root (written by the
+# admin panel's "Run Evals" button) also contains full scenario
+# transcripts and should never ship in a tarball.
+eval_report.json
+eval_report*.json
+ 
 # ─────────────────────────────────────────────────
 # KEYS & CERTIFICATES
 # ─────────────────────────────────────────────────
@@ -43,7 +62,7 @@ eval_results/
 *.p12
 *.pfx
 *.jks
-
+ 
 # ─────────────────────────────────────────────────
 # PYTHON ARTIFACTS
 # ─────────────────────────────────────────────────
@@ -60,14 +79,14 @@ build/
 htmlcov/
 .coverage
 *.cover
-
+ 
 # ─────────────────────────────────────────────────
 # MACOS ARTIFACTS
 # ─────────────────────────────────────────────────
 .DS_Store
 __MACOSX/
 ._*
-
+ 
 # ─────────────────────────────────────────────────
 # EDITOR & IDE
 # ─────────────────────────────────────────────────
@@ -78,28 +97,39 @@ __MACOSX/
 *~
 .project
 .settings/
-
+ 
 # ─────────────────────────────────────────────────
 # VERSION CONTROL
 # ─────────────────────────────────────────────────
 .git/
 .gitignore
-
+ 
 # ─────────────────────────────────────────────────
 # DEPENDENCIES (reinstallable)
 # ─────────────────────────────────────────────────
+# node_modules/ is left unprefixed on purpose — npm legitimately
+# nests it (e.g., backend/node_modules/, frontend-next/node_modules/)
+# and we want them all excluded. A trailing-slash unanchored pattern
+# matches by basename under BSD tar, which is the behavior we want
+# here.
+#
+# venv directories use the `yourpeer-chatbot/` prefix (see RUNTIME
+# DATA section for rationale). Listed at the two conventional
+# locations used by this project.
 node_modules/
 .npm/
-venv/
-.venv/
-env/
-
+yourpeer-chatbot/venv
+yourpeer-chatbot/.venv
+yourpeer-chatbot/env
+yourpeer-chatbot/backend/venv
+yourpeer-chatbot/backend/.venv
+ 
 # ─────────────────────────────────────────────────
 # LOGS
 # ─────────────────────────────────────────────────
 *.log
 logs/
-
+ 
 # ─────────────────────────────────────────────────
 # MODEL ARTIFACTS (large, downloadable)
 # ─────────────────────────────────────────────────
@@ -109,5 +139,34 @@ logs/
 *.bin
 *.pt
 *.safetensors
-sentence-transformers/
-models/
+# Prefixed form — see RUNTIME DATA section above for why.
+# Without the `yourpeer-chatbot/` prefix, BSD tar treats `models/` as
+# "match any directory named models" and silently excludes
+# backend/app/models/ — which is the Pydantic schema package the app
+# imports at startup, NOT a model artifacts directory.
+yourpeer-chatbot/sentence-transformers
+yourpeer-chatbot/models
+ 
+# ─────────────────────────────────────────────────
+# MUTATION TESTING ARTIFACTS
+# ─────────────────────────────────────────────────
+# cosmic-ray stores session state in SQLite files. `make mutation`
+# creates one per module (cr-backend-app-services-classifier.sqlite
+# etc.). These can be 100KB+ each and contain copies of the mutated
+# source along with per-mutant test output — useful locally, no value
+# in a shipped tarball.
+cr.sqlite
+cr-*.sqlite
+ 
+# cosmic-ray.toml is generated fresh by `make mutation-module` from
+# the per-module template in the Makefile, so there's nothing to ship
+# — the Makefile is the source of truth.
+cosmic-ray.toml
+ 
+# mutmut v3 copies the source tree into mutants/ when a run starts
+# and stashes a SQLite stats cache in .mutmut-cache. We use cosmic-ray
+# now, but someone running mutmut against this codebase would create
+# both. Neither should ship.
+mutants/
+.mutmut-cache
+.mutmut-cache/
