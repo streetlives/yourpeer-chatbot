@@ -20,7 +20,6 @@ To run with print:   pytest -s
 
 import sys
 import os
-
 import pytest
 
 # ---------------------------------------------------------------------------

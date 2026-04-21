@@ -57,6 +57,67 @@ ANTHROPIC_API_KEY=sk-ant-... pytest tests/unit/test_llm_slot_extractor.py -v
 
 Without `ANTHROPIC_API_KEY`, the 5 live LLM tests are automatically skipped.
 
+## Test Quality Infrastructure
+
+The test suite is gated by three CI workflows that enforce quality beyond simple pass/fail. See `TEST_INFRASTRUCTURE.md` at the repo root for the full operator's guide.
+
+### Coverage gate
+
+`.github/workflows/test-quality.yml` runs the full suite with line and branch coverage on every PR. The build fails if line coverage drops below 85% (currently 88%).
+
+```
+make coverage          # line coverage with terminal report
+make coverage-branch   # + branch coverage, HTML report at htmlcov/
+```
+
+### Static audit gate
+
+`tests/_tools/audit_tests.py` scans every test file for known anti-patterns. Categories include dead mocks (D7), assertionless tests (D2), unauthenticated admin calls (D6), env-leaky tests (D5), and `time.sleep()` in CI (D9). The full category list is in `TEST_INFRASTRUCTURE.md`.
+
+```
+make audit                                          # full report
+python3 tests/_tools/audit_tests.py --summary       # counts only
+python3 tests/_tools/audit_tests.py --category D2   # one category
+```
+
+The CI gate (`tests/_tools/check_audit_baseline.py`) compares the current findings against `tests/_tools/audit_baseline.txt`. The build fails if any category's count rises above the baseline. To deliberately accept new findings, regenerate the baseline:
+
+```
+make audit-baseline   # writes tests/_tools/audit_baseline.txt
+```
+
+This audit was prompted by an April 2026 cleanup that found 187 patches across 23 test files were silent no-ops — they patched `app.services.chatbot.X` at the package level when the runtime binding lives on a submodule. See "Patch where imported, not where defined" in `tests/README.md`.
+
+### Mutation testing on safety-critical modules
+
+Coverage measures execution; mutation testing measures whether tests would catch a regression. Five safety-critical modules are mutation-tested:
+
+| Module | Why | Threshold |
+|---|---|---|
+| `backend/app/services/crisis_detector.py` | Safety-critical | 50% (raw); has untestable LLM-API path |
+| `backend/app/services/classifier.py` | Routes everything; misroute is silent | 70% |
+| `backend/app/privacy/pii_redactor.py` | Privacy-critical | 85% |
+| `backend/app/services/chatbot/orchestrator.py` | Main dispatch | 70% |
+| `backend/app/services/session_token.py` | Security-adjacent | 85% |
+
+Two workflows use cosmic-ray for mutation testing (mutmut v3 fights the `backend/` layout + conftest's `sys.path` manipulation; cosmic-ray patches in-place which works without modification):
+
+- `.github/workflows/mutation-testing.yml` — runs weekly Sunday 03:00 UTC across all 5 modules in a parallel matrix. Files a tracking issue with label `test-quality` if any module drops below threshold.
+- `.github/workflows/mutation-testing-pr.yml` — runs per-PR but only when the PR touches a critical module. Mutates only the changed file (the Google model from Petrović & Ivanković, TSE 2021). Skipped entirely on PRs that don't touch any critical module.
+
+Locally:
+
+```
+make mutation-module MODULE=backend/app/services/classifier.py   # one module
+make mutation-report                                              # summarize
+```
+
+A single module typically takes 15-60 minutes. Cosmic-ray stores state in `cr-<module>.sqlite`; interrupted runs resume from where they left off.
+
+### Production fix surfaced by the audit
+
+The April 2026 audit also revealed that `ping_llm()` in `backend/app/llm/claude_client.py` had its real API call commented out and was returning a fabricated `status="up"`. The `/api/health` endpoint reported the LLM as healthy whether or not the API key was valid. Fix: uncommented the real call. Now properly tested by `test_health_and_upload.py::TestPingLlm`.
+
 ## Test Coverage Map
 
 All backend modules and all public functions are covered. Tests are in `tests/unit/` (no external deps) and `tests/integration/` (mocked DB/LLM):

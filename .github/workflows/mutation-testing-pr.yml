@@ -1,0 +1,154 @@
+name: Mutation Testing (PR)
+
+# Per-PR incremental mutation testing. Runs cosmic-ray ONLY on the files
+# the PR touches, cross-referenced against the critical-module allowlist.
+#
+# This is the "Google model" described in Petrović & Ivanković (TSE 2021):
+# don't mutate the whole codebase — mutate only what changed. Fast enough
+# to run on every PR for PRs that touch safety-critical code.
+#
+# If a PR doesn't touch any critical module, this workflow skips entirely.
+
+on:
+  pull_request:
+    paths:
+      # Only fires when a PR touches one of the critical modules.
+      # Edit this list as priorities change. Keep it small — mutation
+      # testing on a PR should be a last-line quality check for
+      # high-stakes code, not a routine gate.
+      - "backend/app/services/crisis_detector.py"
+      - "backend/app/services/classifier.py"
+      - "backend/app/privacy/pii_redactor.py"
+      - "backend/app/services/chatbot/orchestrator.py"
+      - "backend/app/services/session_token.py"
+
+jobs:
+  pr-mutation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    env:
+      SESSION_SECRET: test-session-secret-for-ci-only
+      ADMIN_API_KEY: test-admin-key-for-ci-only
+      DATABASE_URL: postgresql://test:test@localhost/test_ci
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Need full history to diff against the base branch.
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install -r backend/requirements.txt
+          pip install pytest pytest-cov pytest-mock pytest-asyncio cosmic-ray
+
+      - name: Identify changed critical modules
+        id: changed
+        run: |
+          # Diff against the PR base branch, filter to critical modules.
+          CRITICAL_MODULES=(
+            "backend/app/services/crisis_detector.py"
+            "backend/app/services/classifier.py"
+            "backend/app/privacy/pii_redactor.py"
+            "backend/app/services/chatbot/orchestrator.py"
+            "backend/app/services/session_token.py"
+          )
+          changed=$(git diff --name-only origin/${{ github.base_ref }}...HEAD)
+          targets=""
+          for mod in "${CRITICAL_MODULES[@]}"; do
+            if echo "$changed" | grep -qxF "$mod"; then
+              targets="$targets $mod"
+            fi
+          done
+          targets=$(echo "$targets" | xargs)  # trim
+          echo "targets=$targets" >> $GITHUB_OUTPUT
+          echo "Changed critical modules: $targets"
+
+          if [ -z "$targets" ]; then
+            echo "No critical modules changed — skipping mutation run."
+            echo "skip=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Run mutation testing per changed module
+        if: steps.changed.outputs.skip != 'true'
+        # For each changed critical module, run a focused mutation pass
+        # using the per-module test map defined in the weekly workflow.
+        run: |
+          # Map of module → focused test subset. Keep in sync with
+          # .github/workflows/mutation-testing.yml.
+          declare -A TESTS_FOR_MODULE
+          TESTS_FOR_MODULE["backend/app/services/crisis_detector.py"]="tests/unit/test_phrase_audit.py tests/unit/test_contraction_normalization.py tests/unit/test_frustration_and_crisis.py"
+          TESTS_FOR_MODULE["backend/app/services/classifier.py"]="tests/integration/test_classification_and_routing.py tests/unit/test_contraction_normalization.py"
+          TESTS_FOR_MODULE["backend/app/privacy/pii_redactor.py"]="tests/unit/test_pii_redactor.py"
+          TESTS_FOR_MODULE["backend/app/services/chatbot/orchestrator.py"]="tests/integration/test_classification_and_routing.py tests/integration/test_multi_turn_and_context.py"
+          TESTS_FOR_MODULE["backend/app/services/session_token.py"]="tests/unit/test_session_store.py tests/unit/test_main.py"
+
+          failed=0
+          for module in ${{ steps.changed.outputs.targets }}; do
+            tests="${TESTS_FOR_MODULE[$module]}"
+            safe_name=$(echo "$module" | tr '/' '-')
+
+            echo "::group::Mutating $module"
+            cat > cosmic-ray.toml <<EOF
+          [cosmic-ray]
+          module-path = "$module"
+          timeout = 60
+          excluded-modules = []
+          test-command = "python -m pytest $tests -x --tb=no -q"
+          [cosmic-ray.distributor]
+          name = "local"
+          [cosmic-ray.interceptors]
+          enabled = ["spor", "pragma_no_mutate", "operators-filter"]
+          EOF
+
+            rm -f cr-$safe_name.sqlite
+            cosmic-ray init cosmic-ray.toml cr-$safe_name.sqlite
+            cosmic-ray --verbosity WARNING baseline cosmic-ray.toml
+            cosmic-ray exec cosmic-ray.toml cr-$safe_name.sqlite
+            cr-report cr-$safe_name.sqlite | tail -20
+            echo "::endgroup::"
+
+            # Same threshold logic as the weekly workflow.
+            python3 <<PY || failed=1
+          import sqlite3, sys
+          THRESHOLDS = {
+              "backend/app/services/crisis_detector.py": 50,
+              "backend/app/services/classifier.py": 70,
+              "backend/app/privacy/pii_redactor.py": 85,
+              "backend/app/services/chatbot/orchestrator.py": 70,
+              "backend/app/services/session_token.py": 85,
+          }
+          module = "$module"
+          threshold = THRESHOLDS.get(module, 70)
+
+          con = sqlite3.connect("cr-$safe_name.sqlite")
+          cur = con.cursor()
+          killed = cur.execute("SELECT COUNT(*) FROM work_results WHERE test_outcome='KILLED'").fetchone()[0]
+          survived = cur.execute("SELECT COUNT(*) FROM work_results WHERE test_outcome='SURVIVED'").fetchone()[0]
+          total = killed + survived
+          if total == 0:
+              print(f"WARN: no mutants ran for {module}")
+              sys.exit(0)
+          score = 100 * killed / total
+          print(f"{module}: {score:.1f}% ({killed}/{total}) threshold={threshold}%")
+          if score < threshold:
+              print(f"::error file={module}::Mutation score {score:.1f}% below threshold {threshold}%")
+              sys.exit(1)
+          PY
+          done
+
+          exit $failed
+
+      - name: Upload mutation reports
+        if: always() && steps.changed.outputs.skip != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr-mutation-reports
+          path: cr-*.sqlite
+          retention-days: 14

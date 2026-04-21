@@ -31,7 +31,69 @@ from app.services.audit_log import (
     clear_audit_log,
 )
 
+# Unauthenticated client — used by the auth-specific tests that
+# verify 401 responses. DO NOT use for tests that expect 200 from an
+# admin route; those need admin_client below.
 client = TestClient(app)
+
+# Authenticated client — attaches `Authorization: Bearer $ADMIN_API_KEY`
+# to every request. Route handlers protected by `require_admin_key`
+# require this header when the env var is set.
+#
+# IMPORTANT: the header must be read from `os.environ` on every
+# request, not cached at import time. A previous version cached the
+# header in a module-level TestClient, which broke under cross-file
+# test ordering (pytest-randomly) — if any earlier test temporarily
+# mutated ADMIN_API_KEY (even inside a `with patch.dict(...)` context
+# that restored it correctly), `admin_client`'s frozen header could
+# end up different from the current env at request time. The client
+# sent a Bearer key that matched the env at *import* time; the
+# server checked against the env at *request* time; they sometimes
+# disagreed, producing 401s that were not reproducible when running
+# the admin test file in isolation.
+#
+# This wrapper pattern avoids the bug by having no cached state —
+# every call re-reads the env and builds the header. If the env var
+# is unset (local dev), no header is added and behavior matches the
+# plain client. The auth-testing tests still use `client` (no header)
+# so their 401 expectations hold.
+
+class _AdminClient:
+    """TestClient wrapper that injects a fresh Authorization header on
+    every request, built from the current value of ADMIN_API_KEY."""
+
+    def __init__(self, app_):
+        self._client = TestClient(app_)
+
+    def _headers(self, extra: dict | None = None) -> dict:
+        key = os.environ.get("ADMIN_API_KEY")
+        hdrs = {"Authorization": f"Bearer {key}"} if key else {}
+        if extra:
+            hdrs.update(extra)
+        return hdrs
+
+    def get(self, url, **kwargs):
+        kwargs["headers"] = self._headers(kwargs.get("headers"))
+        return self._client.get(url, **kwargs)
+
+    def post(self, url, **kwargs):
+        kwargs["headers"] = self._headers(kwargs.get("headers"))
+        return self._client.post(url, **kwargs)
+
+    def put(self, url, **kwargs):
+        kwargs["headers"] = self._headers(kwargs.get("headers"))
+        return self._client.put(url, **kwargs)
+
+    def delete(self, url, **kwargs):
+        kwargs["headers"] = self._headers(kwargs.get("headers"))
+        return self._client.delete(url, **kwargs)
+
+    def patch(self, url, **kwargs):
+        kwargs["headers"] = self._headers(kwargs.get("headers"))
+        return self._client.patch(url, **kwargs)
+
+
+admin_client = _AdminClient(app)
 
 
 # -----------------------------------------------------------------------
@@ -143,7 +205,7 @@ def test_admin_auth_protects_eval_run():
 def test_stats_empty():
     """Stats on empty log should return zeros."""
     clear_audit_log()
-    response = client.get("/admin/api/stats")
+    response = admin_client.get("/admin/api/stats")
     assert response.status_code == 200
 
     data = response.json()
@@ -159,7 +221,7 @@ def test_stats_empty():
 def test_stats_with_data():
     """Stats should reflect seeded data correctly."""
     _seed_data()
-    response = client.get("/admin/api/stats")
+    response = admin_client.get("/admin/api/stats")
     assert response.status_code == 200
 
     data = response.json()
@@ -179,7 +241,7 @@ def test_stats_with_data():
 def test_conversations_list():
     """Should return conversation summaries."""
     _seed_data()
-    response = client.get("/admin/api/conversations")
+    response = admin_client.get("/admin/api/conversations")
     assert response.status_code == 200
 
     data = response.json()
@@ -196,17 +258,17 @@ def test_conversations_list():
 def test_conversations_limit():
     """Limit parameter should cap results."""
     _seed_data()
-    response = client.get("/admin/api/conversations?limit=1")
+    response = admin_client.get("/admin/api/conversations?limit=1")
     assert response.status_code == 200
     assert len(response.json()) == 1
 
 
 def test_conversations_limit_validation():
     """Limit below 1 or above 200 should be rejected."""
-    response = client.get("/admin/api/conversations?limit=0")
+    response = admin_client.get("/admin/api/conversations?limit=0")
     assert response.status_code == 422  # validation error
 
-    response = client.get("/admin/api/conversations?limit=999")
+    response = admin_client.get("/admin/api/conversations?limit=999")
     assert response.status_code == 422
 
 
@@ -217,7 +279,7 @@ def test_conversations_limit_validation():
 def test_conversation_detail():
     """Should return all events for a specific session."""
     _seed_data()
-    response = client.get("/admin/api/conversations/sess-abc")
+    response = admin_client.get("/admin/api/conversations/sess-abc")
     assert response.status_code == 200
 
     data = response.json()
@@ -229,7 +291,7 @@ def test_conversation_detail():
 def test_conversation_detail_not_found():
     """Should return 404 for unknown session ID."""
     _seed_data()
-    response = client.get("/admin/api/conversations/nonexistent-session")
+    response = admin_client.get("/admin/api/conversations/nonexistent-session")
     assert response.status_code == 404
     assert "No conversation found" in response.json()["detail"]
 
@@ -237,7 +299,7 @@ def test_conversation_detail_not_found():
 def test_conversation_detail_crisis_session():
     """Crisis session should include both turn and crisis events."""
     _seed_data()
-    response = client.get("/admin/api/conversations/sess-xyz")
+    response = admin_client.get("/admin/api/conversations/sess-xyz")
     assert response.status_code == 200
 
     data = response.json()
@@ -253,7 +315,7 @@ def test_conversation_detail_crisis_session():
 def test_events_all():
     """Should return all events with default parameters."""
     _seed_data()
-    response = client.get("/admin/api/events")
+    response = admin_client.get("/admin/api/events")
     assert response.status_code == 200
 
     data = response.json()
@@ -265,13 +327,13 @@ def test_events_filter_by_type():
     """Should filter events by type."""
     _seed_data()
 
-    response = client.get("/admin/api/events?event_type=crisis_detected")
+    response = admin_client.get("/admin/api/events?event_type=crisis_detected")
     assert response.status_code == 200
     data = response.json()
     assert len(data) == 1
     assert data[0]["type"] == "crisis_detected"
 
-    response = client.get("/admin/api/events?event_type=session_reset")
+    response = admin_client.get("/admin/api/events?event_type=session_reset")
     data = response.json()
     assert len(data) == 1
     assert data[0]["type"] == "session_reset"
@@ -279,24 +341,24 @@ def test_events_filter_by_type():
 
 def test_events_invalid_type_rejected():
     """Invalid event_type should be rejected by the regex validator."""
-    response = client.get("/admin/api/events?event_type=invalid_type")
+    response = admin_client.get("/admin/api/events?event_type=invalid_type")
     assert response.status_code == 422
 
 
 def test_events_limit():
     """Limit parameter should cap results."""
     _seed_data()
-    response = client.get("/admin/api/events?limit=2")
+    response = admin_client.get("/admin/api/events?limit=2")
     assert response.status_code == 200
     assert len(response.json()) == 2
 
 
 def test_events_limit_validation():
     """Limit below 1 or above 500 should be rejected."""
-    response = client.get("/admin/api/events?limit=0")
+    response = admin_client.get("/admin/api/events?limit=0")
     assert response.status_code == 422
 
-    response = client.get("/admin/api/events?limit=999")
+    response = admin_client.get("/admin/api/events?limit=999")
     assert response.status_code == 422
 
 
@@ -307,7 +369,7 @@ def test_events_limit_validation():
 def test_queries_list():
     """Should return query execution log."""
     _seed_data()
-    response = client.get("/admin/api/queries")
+    response = admin_client.get("/admin/api/queries")
     assert response.status_code == 200
 
     data = response.json()
@@ -324,7 +386,7 @@ def test_queries_limit():
     for i in range(10):
         log_query_execution("s1", f"Q{i}", {}, i, False, 10)
 
-    response = client.get("/admin/api/queries?limit=3")
+    response = admin_client.get("/admin/api/queries?limit=3")
     assert response.status_code == 200
     assert len(response.json()) == 3
 
@@ -340,7 +402,7 @@ def test_eval_no_results():
     clear_audit_log()
     # Patch TESTS_DIR to a non-existent path so eval_report.json isn't loaded
     with patch("app.routes.admin.TESTS_DIR", Path("/nonexistent")):
-        response = client.get("/admin/api/eval")
+        response = admin_client.get("/admin/api/eval")
     assert response.status_code == 200
     data = response.json()
     assert data["results"] is None
@@ -358,7 +420,7 @@ def test_eval_with_results():
     }
     set_eval_results(eval_data)
 
-    response = client.get("/admin/api/eval")
+    response = admin_client.get("/admin/api/eval")
     assert response.status_code == 200
 
     data = response.json()
@@ -374,7 +436,7 @@ def test_eval_run_rejects_when_no_api_key():
     """Eval run should return 500 when ANTHROPIC_API_KEY is not set."""
     with patch.dict(os.environ, {}, clear=False):
         os.environ.pop("ANTHROPIC_API_KEY", None)
-        response = client.post("/admin/api/eval/run")
+        response = admin_client.post("/admin/api/eval/run")
         assert response.status_code == 500
         assert "ANTHROPIC_API_KEY" in response.json()["detail"]
 
@@ -386,7 +448,7 @@ def test_eval_run_rejects_when_already_running():
         admin_mod._eval_running = True
     try:
         with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"}):
-            response = client.post("/admin/api/eval/run")
+            response = admin_client.post("/admin/api/eval/run")
             assert response.status_code == 409
             assert "already in progress" in response.json()["detail"]
     finally:
@@ -404,10 +466,10 @@ def test_admin_rate_limit_blocks_after_threshold():
     # Patch to a low limit so the test doesn't need 120+ requests
     with patch("app.dependencies.ADMIN_IP_LIMITS", [(60, 5), (3600, 50)]):
         for i in range(5):
-            r = client.get("/admin/api/stats")
+            r = admin_client.get("/admin/api/stats")
             assert r.status_code == 200, f"Request {i+1} should succeed"
 
-        r = client.get("/admin/api/stats")
+        r = admin_client.get("/admin/api/stats")
         assert r.status_code == 429
 
 
@@ -421,11 +483,11 @@ def test_admin_eval_run_has_stricter_limit():
     try:
         with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"}):
             for i in range(5):
-                r = client.post("/admin/api/eval/run")
+                r = admin_client.post("/admin/api/eval/run")
                 assert r.status_code == 409, f"Request {i+1} should get 409 (already running)"
 
             # 6th request should hit the eval rate limit
-            r = client.post("/admin/api/eval/run")
+            r = admin_client.post("/admin/api/eval/run")
             assert r.status_code == 429
     finally:
         with admin_mod._eval_lock:
@@ -444,7 +506,7 @@ def test_health_endpoint():
     /api/health endpoint is for dashboards and intentionally returns
     503 when the DB is unreachable — not the signal we want here.
     """
-    response = client.get("/api/health/live")
+    response = admin_client.get("/api/health/live")
     assert response.status_code == 200
     body = response.json()
     assert body["status"] == "alive"
@@ -465,7 +527,7 @@ def test_events_filter_by_feedback():
     from app.services.audit_log import log_feedback
     log_feedback(session_id="s1", rating="up", comment="great")
 
-    response = client.get("/admin/api/events?event_type=feedback")
+    response = admin_client.get("/admin/api/events?event_type=feedback")
     assert response.status_code == 200
     events = response.json()
     assert len(events) == 1

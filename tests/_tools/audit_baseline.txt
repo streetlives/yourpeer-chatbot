@@ -1,0 +1,12 @@
+========================================================================
+TEST AUDIT — 69 files scanned
+========================================================================
+  D2: 16 findings
+  D3: 19 findings
+  D5: 7 findings
+  D6: 30 findings
+  D7: 129 findings
+  D8: 1 findings
+  D9: 1 findings
+  TOTAL: 203 findings
+

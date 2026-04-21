@@ -521,7 +521,126 @@ All admin API calls go through a catch-all proxy route (`app/api/admin/[...slug]
 
 ---
 
-## 11. How to Dig Deeper
+## 11. How We Keep the Tests Honest
+
+The test suite is large (3,700+ tests, 88% line coverage), but raw pass/fail and raw coverage don't actually tell you whether the tests *work*. A test can execute every line of a function and still not notice if the function is broken. In April 2026 a cleanup audit found 187 patches across 23 test files that were silent no-ops — tests that "passed" without actually exercising the code they claimed to test. After we fixed those, we built three layers of quality gates to catch the same class of problem before it accumulates again. This section explains all three so you can read a failing CI message and know what it means.
+
+### The three gates, briefly
+
+| Gate | Catches | Runs | When it fires |
+|---|---|---|---|
+| **Coverage** | Untested code paths | Every PR | Line coverage drops below 85% |
+| **Static audit** | Tests that look wrong from the code shape alone | Every PR | Known anti-pattern count rises above baseline |
+| **Mutation testing** | Tests that execute code without actually checking behavior | Weekly + per-PR on safety-critical files | Mutation score on a critical module drops below its threshold |
+
+Coverage measures whether the code ran. The audit measures whether the test code itself follows our rules. Mutation testing measures whether the tests would actually catch a regression. A healthy PR passes all three.
+
+### Coverage (the floor)
+
+On every PR, CI runs the full suite with `pytest --cov=backend/app --cov-branch --cov-fail-under=85`. The coverage report is uploaded as an artifact you can download from the Actions tab. Locally:
+
+```bash
+make coverage          # line coverage, terminal report
+make coverage-branch   # + branch coverage, HTML report at htmlcov/index.html
+```
+
+Coverage is necessary but not sufficient. It's the first line of defense — if a whole function has zero coverage, nothing else is going to save you. But a 100%-covered function can still be wrong if the tests don't assert on the right things.
+
+→ `.github/workflows/test-quality.yml` — the CI configuration
+
+### The static audit (the first "are the tests sensible" check)
+
+`tests/_tools/audit_tests.py` scans every test file for known anti-patterns and writes findings to stdout. It doesn't run the tests — it walks the AST of each `test_*` function and looks for specific shapes. Categories include:
+
+- **D1** — `@patch("...")` strings that don't exist as attributes of the named module. Dead patches.
+- **D2** — test functions with no `assert` statement anywhere. These pass unconditionally.
+- **D4** — tests that configure a mock with `return_value=` or `side_effect=` and never verify the mock was called.
+- **D5** — tests that read `os.environ` without `monkeypatch.setenv`. Pass on one machine, fail on another.
+- **D6** — HTTP tests hitting `/admin/*` routes without an `Authorization` header.
+- **D7** — patching a module-level attribute without patching the submodule-level binding (the "patch where it's defined, not where it's looked up" footgun).
+- **D8** — time-dependent assertions without `freeze_time`.
+- **D9** — `time.sleep()` in test bodies.
+
+The full list is in the module docstring at the top of `audit_tests.py`.
+
+The CI gate (`tests/_tools/check_audit_baseline.py`) compares the current findings against `tests/_tools/audit_baseline.txt`. The build fails if any category's count **rises** above the baseline (a new anti-pattern was introduced). Counts **falling** below the baseline are allowed silently — that's an improvement. The baseline file documents which findings are deliberate and why.
+
+```bash
+make audit                          # run the audit, see findings
+make audit-baseline                 # regenerate baseline (after fixing things)
+python3 tests/_tools/audit_tests.py --category D7   # one category only
+```
+
+When CI says "new audit findings beyond the baseline," the error message names the category. Run `make audit --category D<n>` to see the actual findings, fix them, and re-push. If the findings are legitimately new and acceptable (rare), regenerate the baseline and commit the updated `audit_baseline.txt` with an explanation in the commit message.
+
+→ `tests/_tools/audit_tests.py` — the scanner
+→ `tests/_tools/audit_baseline.txt` — the accepted-findings floor
+→ `TEST_INFRASTRUCTURE.md` — operator's guide for the whole test-quality system
+
+### "Patch where imported, not where defined" (D7 explained)
+
+This is the footgun D7 catches, and it's the one that caused the 187-dead-patches incident. It trips up everyone the first time they write a test in this codebase.
+
+When Python runs `from crisis_detector import detect_crisis` at the top of `classifier.py`, it creates a new name `detect_crisis` inside `classifier`'s namespace pointing at the original function object. From that point on, `classifier.detect_crisis` and `crisis_detector.detect_crisis` are two different names that happen to refer to the same object. Now suppose you write `@patch("app.services.crisis_detector.detect_crisis", ...)`. Your patch rebinds the name inside `crisis_detector` — but `classifier.detect_crisis` is an entirely separate reference that still points at the original, unpatched function. Your test "passes" because the mock was set up, but the real code path was never touched. This is a silent no-op.
+
+The fix: **patch the name in the module that uses it, not the module that defines it.**
+
+Three specific patch targets in this codebase have this problem. Always use the right-hand column:
+
+| ❌ Wrong (silently no-ops) | ✅ Right |
+|---|---|
+| `app.services.chatbot.claude_reply` | `app.services.chatbot.handlers.meta.claude_reply` |
+| `app.services.chatbot.detect_crisis` | `app.services.chatbot.orchestrator.detect_crisis` (and also `app.services.classifier.detect_crisis` if you're testing `_classify_tone`) |
+| `app.services.chatbot._USE_LLM` | `app.services.chatbot.orchestrator._USE_LLM` |
+
+**Prefer the `conftest.py` helpers** — `send()`, `send_multi()`, and `assert_classified()` already patch the right targets. Use them instead of hand-rolling `@patch` decorators whenever possible. The audit tool's D7 check will catch the wrong form if you do introduce one.
+
+→ `tests/conftest.py` — the helper functions
+→ `tests/README.md` — "Patch where imported, not where defined" section with more detail
+
+### Mutation testing (the sharp edge)
+
+Mutation testing asks the question coverage can't: *if I introduce a small bug in the code, would any test fail?* A mutation-testing tool automatically creates tiny "mutants" — changes like flipping `==` to `!=`, or changing `True` to `False`, or replacing `return x` with `return not x` — then runs the test suite against each mutant. A mutant is **killed** if at least one test fails; **survived** if every test still passes. A test suite that kills most mutants is actually verifying behavior. One that lets mutants survive is measuring execution but not correctness.
+
+We use `cosmic-ray` (not `mutmut`, which fights our `backend/` layout). Mutation testing is expensive — tens of minutes per module — so we only run it on five safety-critical modules where silent bugs cause real harm:
+
+| Module | Why | Threshold |
+|---|---|---|
+| `crisis_detector.py` | Missed crisis detection = user doesn't get a hotline | 50% (raw — has untestable LLM-API paths) |
+| `classifier.py` | Misclassification silently sends users down the wrong path | 70% |
+| `pii_redactor.py` | PII leak = privacy violation for vulnerable users | 85% |
+| `chatbot/orchestrator.py` | Main dispatch; routing bugs are subtle | 70% |
+| `session_token.py` | Security-adjacent; bugs affect identity | 85% |
+
+Two CI workflows run this:
+
+- **`mutation-testing.yml`** — every Sunday at 03:00 UTC, full matrix across all five modules. If any drops below threshold, an issue is auto-filed with label `test-quality`.
+- **`mutation-testing-pr.yml`** — runs on PRs but *only* if the PR changes one of the five critical files. Mutates only the changed file. (This is the "Google model" from Petrović & Ivanković, TSE 2021 — incremental mutation on the changed code, not the whole codebase.)
+
+Locally:
+
+```bash
+make mutation-module MODULE=backend/app/services/crisis_detector.py
+make mutation-report   # summarize the latest run
+```
+
+When the CI says "mutation score below threshold," you're seeing a test that executes the code without actually verifying its behavior. The fix is usually a one-line assertion. The operator's guide (`TEST_INFRASTRUCTURE.md`) has a full worked example and explains when to use `# pragma: no mutate` for lines that genuinely can't be mutation-tested (like code that makes real API calls).
+
+→ `.github/workflows/mutation-testing.yml` and `mutation-testing-pr.yml`
+→ `TEST_INFRASTRUCTURE.md` — full mutation-testing section, including interpretation guide
+
+### The `ping_llm` bug — why all this exists
+
+The audit caught a real production bug. In `backend/app/llm/claude_client.py`, the `ping_llm()` function is what the `/api/health` endpoint calls to report LLM health. At some point a developer commented out the actual API call and left a hardcoded `status="up"` in its place — probably to speed up local development — then committed it. The unit tests for `ping_llm` patched the Anthropic client and checked the function's return value; they passed. Line coverage on the function was 100%. But the patches were dead (pattern D7), and the hardcoded return value meant the health endpoint would report the LLM as healthy regardless of whether the API key was valid.
+
+Nothing in pass/fail, nothing in coverage, nothing in code review caught this. The audit caught it by noticing the patches didn't point at real attributes. Mutation testing would have caught it by noticing that mutating the return value didn't break any test. This is the prototypical example of why we have these gates — and why pass/fail alone isn't enough on a system where bugs affect people at their most vulnerable.
+
+→ `backend/app/llm/claude_client.py::ping_llm` — the restored version
+→ `tests/unit/test_health_and_upload.py::TestPingLlm` — the proper tests
+
+---
+
+## 12. How to Dig Deeper
 
 Once you're comfortable with the architecture, these documents cover specific areas in depth.
 
@@ -542,12 +661,13 @@ Once you're comfortable with the architecture, these documents cover specific ar
 | Hardcoded messages | `docs/audits/HARDCODED_MESSAGES_REVIEW.md` | Every user-facing hardcoded message with trigger conditions and source locations |
 | Test suite | `docs/TESTING.md` | The full test organization and how to run the suite |
 | Test file index | `tests/README.md` | Maps every source module to its test file(s) |
+| Test quality infrastructure | `TEST_INFRASTRUCTURE.md` (repo root) | Coverage gate, static audit, mutation testing on safety-critical modules, the `# pragma: no mutate` escape hatch, how to regenerate the audit baseline |
 | Setup | `docs/SETUP.md` | Local development setup, environment variables, dependencies |
 | Deployment | `docs/DEPLOY.md` | Render deployment — two services (backend is a Private Service, frontend is a Web Service), environment variables, troubleshooting |
 
 ---
 
-## 12. Your First Week Checklist
+## 13. Your First Week Checklist
 
 Here's a suggested order for getting oriented:
 
@@ -561,11 +681,11 @@ Here's a suggested order for getting oriented:
 
 **Day 5 — Understand the frontend.** Open the chat in your browser with DevTools Network tab open. Send a message and inspect the request/response. Then open `frontend-next/src/hooks/use-chat.ts` and trace how the response becomes chat messages. Look at `service-card.tsx` to see how service data renders.
 
-**Day 6 — Run the tests.** Run `pytest tests/unit tests/integration -q --no-header` from the repo root. Read `tests/README.md` to understand the test organization. Try running a single test file. If you have an Anthropic API key, try running a single eval scenario: `python tests/eval/eval_llm_judge.py --scenarios 1`.
+**Day 6 — Run the tests and read about quality gates.** Run `pytest tests/unit tests/integration -q --no-header` from the repo root. It should report 3,700+ passing. Then run `make coverage` and `make audit` to see the other two gates in action. Read Section 11 ("How We Keep the Tests Honest") end-to-end — especially the "Patch where imported, not where defined" subsection, because it's the single thing most likely to confuse you the first time you write a test. Read `tests/README.md` for the test-file layout. If you have an Anthropic API key, try running a single eval scenario: `python tests/eval/eval_llm_judge.py --scenarios 1`.
 
 ---
 
-## 13. Common Tasks — Where to Look
+## 14. Common Tasks — Where to Look
 
 After Phase 3, "where to add a thing" is more specific than it used to be because the monolith is split by responsibility. Use this table as the first hop.
 
@@ -590,12 +710,14 @@ After Phase 3, "where to add a thing" is more specific than it used to be becaus
 | Add a new admin metric | `frontend-next/src/lib/admin/metric-definitions.ts` + `backend/app/services/audit_log.py` |
 | Change the chat UI layout | `frontend-next/src/components/chat/chat-container.tsx` |
 | Add a test for a new feature | Check `tests/README.md` for the right file, or create a new one in `tests/unit/` |
+| Write a test and it passes but clearly isn't doing what you want | Almost certainly a D7 dead patch — see Section 11 "Patch where imported, not where defined." Run `make audit --category D7` to confirm. Prefer the `conftest.py` helpers (`send`, `send_multi`) over hand-rolled `@patch` decorators. |
+| Fix a mutation-testing failure | The CI error message names the module. Run `make mutation-module MODULE=<path>` locally to reproduce. Read the surviving mutants in `TEST_INFRASTRUCTURE.md` → "How to interpret a mutation score" for the fix patterns (usually a one-line assertion). |
 | Change health endpoint behavior | `backend/app/main.py` — `/api/health/live` is tight (for frequent polling), `/api/health` is deep (for dashboards/diagnostics) |
 | Update pagination wording ("I found N options — showing the first M") | `backend/app/services/chatbot/execution.py` — the response-building block in the main results function |
 
 ---
 
-## 14. Asking for Help
+## 15. Asking for Help
 
 If you're stuck, check the docs list in Section 11 first — most design decisions are documented somewhere. The code comments in the `chatbot/` package files, `query_templates.py`, and `responses.py` are especially detailed about the "why" behind decisions. If a doc points you at `chatbot.py` and it doesn't exist, that's Phase 3 drift — the code is now in `services/chatbot/`. <!-- drift:ignore: historical chatbot.py reference; package now lives at chatbot/ -->
 

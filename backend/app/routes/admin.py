@@ -49,9 +49,9 @@ router = APIRouter(
 
 # Path to the eval/test directory. Configurable via EVAL_DIR env var;
 # falls back to inferring from the file's location in the repo tree.
-# admin.py is at app/app/routes/admin.py → .parent×4 = repo root → tests/tests/
+# admin.py is at app/app/routes/admin.py → .parent×4 = repo root → tests/
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
-_DEFAULT_TESTS_DIR = _REPO_ROOT / "tests" / "tests"
+_DEFAULT_TESTS_DIR = _REPO_ROOT / "tests"
 # On Render, the backend runs from a subdirectory — EVAL_DIR lets you
 # point to the correct absolute path (e.g. /opt/render/project/src/tests/tests)
 TESTS_DIR = Path(os.getenv("EVAL_DIR", str(_DEFAULT_TESTS_DIR)))

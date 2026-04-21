@@ -1,0 +1,208 @@
+name: Mutation Testing (Weekly)
+
+# Mutation testing is expensive — a single module can take 30-60 minutes
+# to fully mutate on one worker. Running the full suite nightly on every
+# critical module would cost ~5 hours of compute.
+#
+# This workflow runs ONCE A WEEK on the 5 modules with the highest risk
+# of silent regression: safety (crisis), security (session_token, PII),
+# and core dispatch (orchestrator, classifier).
+#
+# For per-PR incremental mutation on CHANGED files only (the Google model),
+# see mutation-testing-pr.yml — that workflow runs cosmic-ray against
+# only the files the PR touches, and is fast enough for the commit-gate.
+
+on:
+  schedule:
+    # 03:00 UTC Sunday — low-traffic window. Avoids weekday CI contention.
+    - cron: "0 3 * * 0"
+  workflow_dispatch:
+    # Allow manual "run it now" for debugging regressions.
+    inputs:
+      modules:
+        description: "Space-separated module paths (defaults to the critical-5)"
+        required: false
+        default: ""
+
+concurrency:
+  group: mutation-testing
+  cancel-in-progress: false  # Let a weekly run finish before starting another.
+
+jobs:
+  mutation-test:
+    name: Mutate ${{ matrix.module }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    strategy:
+      fail-fast: false  # One module's failure shouldn't cancel the others.
+      matrix:
+        include:
+          # Pairs of (module, focused test subset that exercises it).
+          # Narrowing the tests keeps each mutant check under a few
+          # seconds instead of running the full 3,700-test suite.
+          - module: backend/app/services/crisis_detector.py
+            tests: >-
+              tests/unit/test_phrase_audit.py
+              tests/unit/test_contraction_normalization.py
+              tests/unit/test_frustration_and_crisis.py
+            # Crisis-path tests expect fail-open behavior; we pass a
+            # benign user message expectation rather than mocking
+            # the LLM call for mutation purposes.
+
+          - module: backend/app/services/classifier.py
+            tests: >-
+              tests/integration/test_classification_and_routing.py
+              tests/unit/test_contraction_normalization.py
+
+          - module: backend/app/privacy/pii_redactor.py
+            tests: >-
+              tests/unit/test_pii_redactor.py
+
+          - module: backend/app/services/chatbot/orchestrator.py
+            tests: >-
+              tests/integration/test_classification_and_routing.py
+              tests/integration/test_multi_turn_and_context.py
+
+          - module: backend/app/services/session_token.py
+            tests: >-
+              tests/unit/test_session_store.py
+              tests/unit/test_main.py
+
+    env:
+      SESSION_SECRET: test-session-secret-for-ci-only
+      ADMIN_API_KEY: test-admin-key-for-ci-only
+      DATABASE_URL: postgresql://test:test@localhost/test_ci
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install -r backend/requirements.txt
+          pip install pytest pytest-cov pytest-mock pytest-asyncio cosmic-ray
+
+      - name: Generate mutation config for this module
+        # cosmic-ray reads its config from a TOML file. We template one
+        # per matrix row so the test command uses only the focused
+        # subset — not the full suite.
+        run: |
+          cat > cosmic-ray.toml <<EOF
+          [cosmic-ray]
+          module-path = "${{ matrix.module }}"
+          timeout = 60
+          excluded-modules = []
+          test-command = "python -m pytest ${{ matrix.tests }} -x --tb=no -q"
+
+          [cosmic-ray.distributor]
+          name = "local"
+
+          [cosmic-ray.interceptors]
+          enabled = ["spor", "pragma_no_mutate", "operators-filter"]
+          EOF
+
+      - name: Initialize mutation session
+        run: cosmic-ray init cosmic-ray.toml cr.sqlite
+
+      - name: Baseline — confirm tests pass unmutated
+        # If the baseline doesn't pass, there's no point running mutants;
+        # everything would "survive" because the unmutated tests already fail.
+        run: cosmic-ray --verbosity WARNING baseline cosmic-ray.toml
+
+      - name: Execute mutation run
+        # This is the long step. The timeout-minutes: 90 on the job
+        # caps total runtime; cosmic-ray resumes from cr.sqlite if
+        # interrupted, so a retry picks up where we left off.
+        run: cosmic-ray exec cosmic-ray.toml cr.sqlite
+
+      - name: Generate report
+        # cr-report prints to stdout. We also save it for the artifact.
+        run: |
+          cr-report cr.sqlite | tee mutation-report.txt
+
+      - name: Compute mutation score + check threshold
+        # The threshold is per-module. Set lower for modules with
+        # untestable LLM paths, higher for pure-logic modules.
+        run: |
+          python3 <<'PY'
+          import sqlite3, os, sys
+
+          # Per-module thresholds. Adjust as you strengthen test coverage.
+          # Start lenient — these are targets to walk up over quarters.
+          THRESHOLDS = {
+              "backend/app/services/crisis_detector.py": 50,  # has LLM-only paths
+              "backend/app/services/classifier.py": 70,
+              "backend/app/privacy/pii_redactor.py": 85,      # pure logic, high bar
+              "backend/app/services/chatbot/orchestrator.py": 70,
+              "backend/app/services/session_token.py": 85,    # security; high bar
+          }
+          module = "${{ matrix.module }}"
+          threshold = THRESHOLDS.get(module, 70)
+
+          con = sqlite3.connect("cr.sqlite")
+          cur = con.cursor()
+          killed = cur.execute(
+              "SELECT COUNT(*) FROM work_results WHERE test_outcome='KILLED'"
+          ).fetchone()[0]
+          survived = cur.execute(
+              "SELECT COUNT(*) FROM work_results WHERE test_outcome='SURVIVED'"
+          ).fetchone()[0]
+          total = killed + survived
+
+          if total == 0:
+              print(f"::warning::No mutants ran for {module} — check test selection")
+              sys.exit(0)
+
+          score = 100 * killed / total
+          print(f"## Mutation score for {module}: {score:.1f}%")
+          print(f"   killed={killed} survived={survived} total={total}")
+          print(f"   threshold={threshold}%")
+
+          # Write to the GitHub job summary so it shows up in the UI.
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as f:
+              f.write(f"### {module}\n")
+              f.write(f"- Mutation score: **{score:.1f}%** ({killed}/{total} killed)\n")
+              f.write(f"- Threshold: {threshold}%\n")
+              f.write(f"- Status: {'✅ PASS' if score >= threshold else '❌ BELOW THRESHOLD'}\n\n")
+
+          if score < threshold:
+              print(f"::error::Mutation score {score:.1f}% below threshold {threshold}%")
+              sys.exit(1)
+          PY
+
+      - name: Upload mutation report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          # Replace slashes in module name with dashes so artifact name is valid.
+          name: mutation-report-${{ strategy.job-index }}
+          path: |
+            mutation-report.txt
+            cr.sqlite
+          retention-days: 30
+
+  notify-on-regression:
+    # If any matrix row failed its threshold, open an issue so the team
+    # sees it — a single weekly email or Slack ping is easy to miss.
+    name: File issue on regression
+    needs: mutation-test
+    if: failure()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create tracking issue
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const run_url = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `Weekly mutation testing: threshold regression on ${new Date().toISOString().split('T')[0]}`,
+              body: `One or more safety-critical modules dropped below their mutation-score threshold this week.\n\nSee the run: ${run_url}\n\nInvestigate the surviving mutants in the per-module artifacts and either (a) strengthen the assertions to kill them, or (b) document why they're acceptable via # pragma: no mutate.`,
+              labels: ["test-quality", "tech-debt"],
+            });

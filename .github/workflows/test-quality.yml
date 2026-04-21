@@ -1,0 +1,106 @@
+name: Test Quality Gates
+
+# Runs on every PR and push to main. Fast checks only — under 5 minutes.
+# The expensive mutation-testing workflow lives in mutation-testing.yml
+# and runs on a schedule rather than per-commit.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  # Cancel in-flight runs on force-pushes to the same ref.
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test-and-coverage:
+    name: Tests + coverage + audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    env:
+      # Required by the app at import time; these are fake values that work
+      # because the test suite mocks anything that would actually hit the
+      # real services. DO NOT use real credentials here.
+      SESSION_SECRET: test-session-secret-for-ci-only
+      ADMIN_API_KEY: test-admin-key-for-ci-only
+      DATABASE_URL: postgresql://test:test@localhost/test_ci
+      # Explicitly leave ANTHROPIC_API_KEY unset so live-LLM tests skip
+      # rather than 401-fail. If we ever want the live-tests job, add it
+      # as a separate workflow with a secret.
+      # ANTHROPIC_API_KEY: (intentionally unset)
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          pip install -r backend/requirements.txt
+          pip install pytest pytest-cov pytest-mock pytest-asyncio pytest-randomly
+
+      - name: Run audit (static test-quality checks)
+        # Fails if any NEW anti-pattern is introduced beyond the accepted
+        # baseline. Cheap (seconds); runs first for fast feedback.
+        run: |
+          python3 tests/_tools/audit_tests.py --summary > /tmp/audit-current.txt
+          cat /tmp/audit-current.txt
+          python3 tests/_tools/check_audit_baseline.py \
+            --baseline tests/_tools/audit_baseline.txt \
+            --current /tmp/audit-current.txt
+      - name: Run docs drift checker
+        # Runs check_docs.py across all 16 checks, including the new
+        # audit-baseline check which validates that:
+        #   - audit_baseline.txt counts match a live audit run
+        #   - audit_tests.py docstring matches the categories it emits
+        #   - TEST_INFRASTRUCTURE.md and tests/README.md only mention
+        #     categories that actually exist in the code
+        #
+        # --github emits GitHub Actions annotations, so findings show
+        # up inline on the PR's "Files changed" tab next to the specific
+        # file and line. --severity=warning (the default) means warnings
+        # fail the build — tighten to --severity=error here if the
+        # warning floor turns out to be noisy in practice.
+        #
+        # No CI gate existed for docs drift before this — the script
+        # existed but was run manually. Adding it here closes that loop.
+        run: python3 scripts/check_docs.py --github --severity=error
+      - name: Run tests with coverage
+        # --cov-branch enables branch coverage (was missing before).
+        # --cov-fail-under=85 is a CI gate; raise to 88, 90 as we fix
+        # the under-covered modules (main, admin, idempotency).
+        # -p no:cacheprovider: pytest-cov interacts poorly with xdist-style
+        # pytest caches in CI containers; disabling avoids flaky coverage.
+        # pytest-randomly randomizes test order to catch hidden dependencies.
+        run: |
+          python3 -m pytest tests/ \
+            --cov=backend/app \
+            --cov-branch \
+            --cov-report=xml \
+            --cov-report=term-missing:skip-covered \
+            --cov-fail-under=85 \
+            -p no:cacheprovider \
+            --tb=short
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        if: always()  # Upload even on failure so you can debug locally
+        with:
+          name: coverage-report
+          path: coverage.xml
+          retention-days: 14
+
+      - name: Print coverage summary to PR
+        if: github.event_name == 'pull_request'
+        run: |
+          echo "## Coverage Summary" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          python3 -m coverage report --skip-covered | head -30 >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY

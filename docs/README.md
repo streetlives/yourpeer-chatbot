@@ -11,7 +11,7 @@ Read these in order. They're all at the top level of `docs/`:
 3. **[architecture.md](architecture.md)** — one-page high-level architecture overview.
 4. **[FEATURES.md](FEATURES.md)** — full feature reference by area (conversation, crisis, search, cards, privacy, accessibility, staff tools). Living document; update when shipping a feature.
 5. **[CHATBOT_BEHAVIOR.md](CHATBOT_BEHAVIOR.md)** — routing pipeline, message categories, emotional handling, crisis step-down, guardrails, how to extend. Living document.
-6. **[TESTING.md](TESTING.md)** — how the test suite is organized, how to run it, where to add new tests.
+6. **[TESTING.md](TESTING.md)** — how the test suite is organized, how to run it, where to add new tests. Also documents the test-quality infrastructure (coverage gate, static audit, mutation testing on safety-critical modules); for the full operator's guide see `../TEST_INFRASTRUCTURE.md`.
 
 For deployment details, see **[DEPLOY.md](DEPLOY.md)**. For Claude Code / AI-assisted development context, see **[CLAUDE.md](CLAUDE.md)**.
 
@@ -68,6 +68,7 @@ These grow over time and are updated on every eval run or metric recompute.
 ## Related docs elsewhere in the repo
 
 - **[`../README.md`](../README.md)** — top-level project README (what the product is, quick start)
+- **[`../TEST_INFRASTRUCTURE.md`](../TEST_INFRASTRUCTURE.md)** — operator's guide for the test-quality tooling: coverage gates, the static audit, mutation testing on safety-critical modules, when to use `# pragma: no mutate`, regenerating the audit baseline
 - **[`../scripts/DB_AUDIT.md`](../scripts/DB_AUDIT.md)** — database audit script purpose and usage
 - **[`../scripts/CHECK_DOCS.md`](../scripts/CHECK_DOCS.md)** — the drift checker (what it validates and why)
 - **[`../scripts/DRIFT_DETECTION.md`](../scripts/DRIFT_DETECTION.md)** — detecting upstream changes in `yourpeer.nyc`

@@ -6,7 +6,7 @@
 tests/
 ├── conftest.py              # Shared fixtures, helpers (send, send_multi, assert_classified)
 │
-├── unit/                    # Fast, isolated tests — no DB, no LLM, no network (42 files)
+├── unit/                    # Fast, isolated tests — no DB, no LLM, no network (57 files)
 │   ├── test_slot_extractor.py          # Slot extraction (service, location, age, family)
 │   ├── test_slot_extraction_keywords.py # Keyword-specific slot extraction
 │   ├── test_service_keywords.py        # Service keyword coverage and alignment
@@ -51,7 +51,7 @@ tests/
 │   ├── test_medical_urgency.py         # Medical urgency detection (43 tests)
 │   └── test_parser_collision_guards.py # Parser collision guards
 │
-├── integration/             # Multi-component tests — use send(), mock DB/LLM (17 files)
+├── integration/             # Multi-component tests — use send(), mock DB/LLM (12 files)
 │   ├── test_classification_and_routing.py  # Core generate_reply routing
 │   ├── test_multi_turn_and_context.py      # Context-aware yes/no after emotions
 │   ├── test_browser_geolocation.py         # Browser geolocation flow
@@ -135,8 +135,11 @@ tone = _classify_tone("I'm embarrassed to ask", crisis_result=None)
 # Crisis detection — regex only, no LLM fallback
 result = detect_crisis("I ran away from home", skip_llm=True)
 
-# Full chatbot flow — prevent LLM classifier from intercepting
-@patch("app.services.chatbot._USE_LLM", False)
+# Full chatbot flow — prevent LLM classifier from intercepting.
+# Patch on the orchestrator module (where the name is used at call
+# time), NOT on the chatbot package — see "Patch where imported, not
+# where defined" below.
+@patch("app.services.chatbot.orchestrator._USE_LLM", False)
 def test_something(fresh_session):
     result = generate_reply("tell me more", session_id=fresh_session)
 ```
@@ -145,6 +148,32 @@ Three tests intentionally verify LLM integration and are left unprotected:
 - `test_llm_called_when_regex_misses` — verifies Sonnet fires for ambiguous messages
 - `test_skip_llm_false_default` — verifies `skip_llm` defaults to False
 - `test_classify_tone_calls_detect_when_not_provided` — verifies `_classify_tone` calls `detect_crisis` when no pre-computed result
+
+### Patch where imported, not where defined
+
+A test-quality audit in April 2026 found 187 patches across 23 files that were silently no-ops because they patched the wrong target. The pattern looked correct but the patches never took effect — tests "passed" because the real (unpatched) functions returned benign defaults.
+
+The rule: **patch the name in the module that *uses* it, not the module that *defines* it.** When `module_a.py` does `from module_b import foo`, patching `module_b.foo` does not affect `module_a.foo` — Python pre-binds names at import time. You must patch `module_a.foo`.
+
+The three patch targets that are wrong in this codebase:
+
+| ❌ Wrong (silent no-op) | ✅ Right |
+|---|---|
+| `app.services.chatbot.claude_reply` | `app.services.chatbot.handlers.meta.claude_reply` |
+| `app.services.chatbot.detect_crisis` | `app.services.chatbot.orchestrator.detect_crisis` (and `app.services.classifier.detect_crisis` for `_classify_tone`) |
+| `app.services.chatbot._USE_LLM` | `app.services.chatbot.orchestrator._USE_LLM` |
+
+The `send()`, `send_multi()`, and `assert_classified()` helpers in `conftest.py` patch all of these correctly — prefer them over hand-rolled `@patch` decorators when possible.
+
+### Test-quality tooling
+
+Three tools live in `tests/_tools/`:
+
+- **`audit_tests.py`** — static scanner for known anti-patterns (dead mocks, assertionless tests, env-leaky tests, unauthenticated admin calls). Run with `make audit` or `python3 tests/_tools/audit_tests.py`.
+- **`check_audit_baseline.py`** — CI gate that compares current findings against `tests/_tools/audit_baseline.txt`. The build fails if any category's count rises above the baseline.
+- **`fix_patch_targets.py`** — codemod that rewrites the dead patch targets above to their live equivalents. Already applied once (130 rewrites across 21 files); re-run with `--apply` if needed.
+
+See `TEST_INFRASTRUCTURE.md` at the repo root for the full operator's guide, including mutation testing on safety-critical modules.
 
 ## Import Changes (Chatbot Refactor)
 
