@@ -56,12 +56,17 @@ jobs:
           # Highest thresholds. A surviving mutant here is release-blocking.
           - module: backend/app/services/crisis_detector.py
             tests: >-
+              tests/unit/test_crisis_detector.py
               tests/unit/test_phrase_audit.py
               tests/unit/test_contraction_normalization.py
-              tests/unit/test_frustration_and_crisis.py
             # Crisis-path tests expect fail-open behavior; we pass a
             # benign user message expectation rather than mocking
             # the LLM call for mutation purposes.
+            # PAIRING NOTE (2026-04-21): test_frustration_and_crisis.py
+            # was in this list but has 0 direct imports of crisis_detector
+            # — it tests the handler layer, not the detector — which
+            # explained the 6.8% mutation score in weekly run #1.
+            # Replaced with test_crisis_detector.py (36 dedicated tests).
 
           - module: backend/app/services/classifier.py
             tests: >-
@@ -79,8 +84,16 @@ jobs:
 
           - module: backend/app/services/session_token.py
             tests: >-
-              tests/unit/test_session_store.py
-              tests/unit/test_main.py
+              tests/unit/test_session_token.py
+            # PAIRING NOTE (2026-04-21): the previous list
+            # (test_session_store.py + test_main.py) had 0 direct
+            # imports of session_token — they test the SessionStore
+            # abstraction and FastAPI main routes respectively, not
+            # the HMAC token logic. This produced a 0.0% mutation
+            # score in weekly run #1 because nothing in the paired
+            # tests exercised the mutated code. The dedicated
+            # test_session_token.py (12 tests, HMAC sign/validate/
+            # forgery rejection) is the correct pairing.
 
           # --- Tier 2: high blast-radius (added from TEST_QUALITY_PLAN.md §4) ---
           # High-impact modules that feed the core chat pipeline. Lower
@@ -91,26 +104,71 @@ jobs:
           # of each module's branches.
           - module: backend/app/services/chatbot/pipeline.py
             tests: >-
+              tests/unit/test_chatbot_extracted_helpers.py
               tests/integration/test_classification_and_routing.py
               tests/integration/test_multi_turn_and_context.py
-              tests/integration/test_targeted_bug_regressions.py
+            # PAIRING NOTE (2026-04-21): two changes after weekly-run-#1
+            # audit. (1) Removed test_targeted_bug_regressions.py — 0
+            # direct imports of pipeline. (2) Added
+            # test_chatbot_extracted_helpers.py — 48 tests that import
+            # `app.services.chatbot.pipeline as pipeline_module` and
+            # monkeypatch `_USE_LLM` / `classify_unified` directly,
+            # exercising the LLM-gate and classification-routing paths
+            # that the two integration files only hit indirectly.
+            # Module already passed at 74.8%; this should widen the
+            # margin and catch more specific logic mutations.
 
           - module: backend/app/services/chatbot/execution.py
             tests: >-
               tests/unit/test_population_fallback.py
+              tests/unit/test_post_results.py
+              tests/unit/test_results_enhancements.py
+              tests/unit/test_service_card_display.py
+              tests/unit/test_display_and_pagination.py
               tests/integration/test_classification_and_routing.py
-              tests/integration/test_multi_turn_and_context.py
+            # PAIRING NOTE (2026-04-21): originally paired with 3 files
+            # including test_multi_turn_and_context.py (0 imports of
+            # execution). After the weekly-run-#1 audit, expanded to 6
+            # files — all 5 listed unit tests patch
+            # app.services.chatbot.execution.query_services directly and
+            # exercise specific execution concerns (post-results handler,
+            # result formatting, card display, pagination, population
+            # fallback). Combined with test_classification_and_routing.py
+            # this runs ~440 tests per mutant vs the previous ~270.
+            # Expect kill rate to jump from 42.4% toward 55-65%.
 
           - module: backend/app/services/slot_extractor.py
             tests: >-
               tests/unit/test_slot_extractor.py
               tests/unit/test_slot_extraction_keywords.py
               tests/unit/test_service_keywords.py
+              tests/unit/test_audit_regression.py
+              tests/unit/test_populations.py
+              tests/unit/test_gender_extraction.py
+            # PAIRING NOTE (2026-04-21): originally paired with 3 files
+            # (241 tests). Audit after weekly-run-#1 found 29 more test
+            # files with direct imports of slot_extractor that weren't
+            # running against mutants — largely explains the 45.2% score.
+            # Added the 3 highest-leverage: test_audit_regression.py
+            # (125 tests, slot-extraction regression coverage),
+            # test_populations.py (88 tests, population detection logic
+            # lives in slot_extractor), test_gender_extraction.py
+            # (52 tests, extraction edge cases). Combined test count:
+            # 241 → 506. Expect 45.2% → 55-65%.
 
           - module: backend/app/rag/query_templates.py
             tests: >-
               tests/unit/test_query_templates.py
               tests/unit/test_location_boundaries.py
+              tests/unit/test_audit_regression.py
+              tests/unit/test_populations.py
+            # PAIRING NOTE (2026-04-21): originally paired with 2 files
+            # (189 tests). Audit after weekly-run-#1 found 12 more test
+            # files with direct imports of query_templates. Added the 2
+            # highest-leverage: test_audit_regression.py (125 tests —
+            # query regression coverage) and test_populations.py
+            # (88 tests — population boost affects query ORDER BY).
+            # Combined test count: 189 → 402. Expect 53.1% → 60-70%.
 
           - module: backend/app/services/chatbot/handlers/confirmation.py
             tests: >-

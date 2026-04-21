@@ -50,12 +50,17 @@ jobs:
           # Modules that need mutation testing when touched. Pairs each
           # module with its focused test subset + threshold. KEEP IN SYNC
           # with .github/workflows/mutation-testing.yml (weekly).
+          # Pairings verified by tests/unit/test_mutation_workflow_pairings.py
+          # — that guard fails if any listed test file doesn't import
+          # or patch its paired module. Weekly run #1 (2026-04-21)
+          # exposed five pairing bugs where test files in the map had
+          # zero direct imports of the module under test; fixed below.
           declare -A TESTS_FOR_MODULE
-          TESTS_FOR_MODULE["backend/app/services/crisis_detector.py"]="tests/unit/test_phrase_audit.py tests/unit/test_contraction_normalization.py tests/unit/test_frustration_and_crisis.py"
+          TESTS_FOR_MODULE["backend/app/services/crisis_detector.py"]="tests/unit/test_crisis_detector.py tests/unit/test_phrase_audit.py tests/unit/test_contraction_normalization.py"
           TESTS_FOR_MODULE["backend/app/services/classifier.py"]="tests/integration/test_classification_and_routing.py tests/unit/test_contraction_normalization.py"
           TESTS_FOR_MODULE["backend/app/privacy/pii_redactor.py"]="tests/unit/test_pii_redactor.py"
           TESTS_FOR_MODULE["backend/app/services/chatbot/orchestrator.py"]="tests/integration/test_classification_and_routing.py tests/integration/test_multi_turn_and_context.py"
-          TESTS_FOR_MODULE["backend/app/services/session_token.py"]="tests/unit/test_session_store.py tests/unit/test_main.py"
+          TESTS_FOR_MODULE["backend/app/services/session_token.py"]="tests/unit/test_session_token.py"
 
           declare -A THRESHOLD_FOR_MODULE
           THRESHOLD_FOR_MODULE["backend/app/services/crisis_detector.py"]=50
