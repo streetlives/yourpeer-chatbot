@@ -66,6 +66,7 @@ from .handlers import (
     _handle_reset,
     _handle_spanish_detection,
     _handle_thanks,
+    _immigration_acknowledgment,
 )
 from .logging import _log_turn
 from .pipeline import (
@@ -395,9 +396,14 @@ def generate_reply(
     if merged.get("_emotional_context") and not existing.get("_emotional_context"):
         save_session_slots(session_id, merged)
 
-    # Prepend PII safety warning and/or Spanish acknowledgment before
-    # the tone prefix so they appear first in confirmations and follow-ups.
-    _prefix_prepend = _pii_warning + _spanish_acknowledgment
+    # Prepend PII safety warning, Spanish acknowledgment, and/or
+    # immigration-context acknowledgment before the tone prefix so they
+    # appear first in confirmations and follow-ups.
+    _prefix_prepend = (
+        _pii_warning
+        + _spanish_acknowledgment
+        + _immigration_acknowledgment(merged)
+    )
     if _prefix_prepend:
         _tone_prefix = _prefix_prepend + _tone_prefix
 

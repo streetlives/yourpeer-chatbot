@@ -434,3 +434,102 @@ class TestEvalScenarioApproximations:
         # Should have shame normalization
         assert "shame" in resp or "strength" in resp or \
             "lot of people" in resp or "search" in resp
+
+    # --- A.1.b Immigration acknowledgment (2 scenarios — new for A.1.b) ---
+    #
+    # When asylum or immigration context is disclosed as a secondary need
+    # (primary search is food/shelter), the confirmation-turn response
+    # should acknowledge the immigration context rather than silently
+    # searching for the primary service. Addresses the judge's
+    # cultural_responsiveness feedback for asylum-seeker scenarios.
+
+    def test_eval_immigration_acknowledgment_on_three_service_intent(self, sid):
+        """`multi_three_services_legal_benefits_food` scenario turn 1 —
+        user mentions asylum alongside food stamps + food. Priority-ordered
+        extraction picks food as primary, legal/asylum queued. The
+        confirmation response must now acknowledge the asylum context
+        rather than silently confirming just the food search."""
+        r = send(
+            "I need help with my asylum case, food stamps, and somewhere "
+            "to get food. I'm in Jackson Heights.",
+            session_id=sid,
+        )
+        resp = r["response"]
+        # Extraction produced the expected shape. Note: the orchestrator
+        # converts `additional_services` → `_queued_services` during
+        # merge, so the runtime slot state exposes the queue under
+        # `_queued_services`. The A.1.b helper reads both keys (see
+        # _QUEUE_KEYS in accessibility.py) for robustness.
+        assert r["slots"].get("service_type") == "food"
+        assert any(
+            len(svc) >= 2 and svc[1] == "asylum services"
+            for svc in r["slots"].get("_queued_services") or []
+        ), (
+            f"asylum should be queued for the secondary search; "
+            f"_queued_services was: "
+            f"{r['slots'].get('_queued_services')!r}"
+        )
+        # A.1.b acknowledgment prefix fires
+        assert "You also mentioned your asylum case" in resp, (
+            f"A.1.b acknowledgment prefix missing from confirmation — "
+            f"response was: {resp!r}"
+        )
+        assert "immigration legal services" in resp, (
+            f"Acknowledgment should offer to find immigration legal "
+            f"services, but response was: {resp!r}"
+        )
+        # Confirmation still primarily about food
+        assert "food" in resp.lower()
+
+    def test_eval_immigration_acknowledgment_on_asylum_seeker_sister_scenario(self, sid):
+        """`multi_asylum_seeker_food_legal` scenario turn 1 — user
+        mentions asylum with food as first-mentioned. Same pattern as
+        above (food primary, legal queued), acknowledgment should fire.
+        Asserts the distinctive A.1.b prefix phrase rather than just
+        the word "asylum" — the co-location confirmation builder
+        already mentions "asylum services" as part of listing the
+        multi-intent search, so the word alone doesn't prove A.1.b
+        fired."""
+        r = send(
+            "I came here recently from Venezuela and I need food for "
+            "my family and help with my asylum case. We are in Jackson Heights.",
+            session_id=sid,
+        )
+        resp = r["response"]
+        assert r["slots"].get("service_type") == "food"
+        assert "You also mentioned your asylum case" in resp, (
+            f"A.1.b acknowledgment prefix missing from confirmation — "
+            f"response was: {resp!r}"
+        )
+
+    def test_eval_no_double_up_when_asylum_is_primary(self, sid):
+        """Regression guard: when the user asks directly about asylum
+        (no other service), primary service_type is 'legal' with
+        service_detail='asylum services'. The acknowledgment must NOT
+        fire — user is getting immigration help directly, a meta-
+        acknowledgment would be redundant and tonally odd."""
+        r = send(
+            "I need help with my asylum case in Brooklyn",
+            session_id=sid,
+        )
+        resp = r["response"]
+        assert r["slots"].get("service_type") == "legal"
+        assert r["slots"].get("service_detail") == "asylum services"
+        # The A.1.b specific acknowledgment prefix must not appear —
+        # note we check for the distinctive phrase, not the word "asylum"
+        # alone, because a legal/asylum search result card may legitimately
+        # include the word.
+        assert "You also mentioned your asylum case" not in resp, (
+            f"A.1.b should NOT fire when asylum is the primary service. "
+            f"Response was: {resp!r}"
+        )
+
+    def test_eval_no_acknowledgment_on_plain_food_search(self, sid):
+        """Regression guard: a plain food search with no immigration
+        context should never emit the A.1.b acknowledgment. Baseline
+        behavior must be preserved."""
+        r = send("I need food in Brooklyn", session_id=sid)
+        resp = r["response"]
+        assert r["slots"].get("service_type") == "food"
+        assert "asylum" not in resp.lower()
+        assert "immigration legal services" not in resp
