@@ -556,7 +556,7 @@ Prevents silent data loss at serialization boundaries by asserting that mock fix
 | Admin stats drift | 5 | Top-level keys, confirmation breakdown shape, conversation quality shape, tone distribution shape, multi-intent shape |
 | Persistence failure isolation | 6 | log_conversation_turn, log_query_execution, log_feedback, save/clear session, full generate_reply all survive persistence failures |
 
-### `test_multi_turn_and_context.py` — 56 tests
+### `test_multi_turn_and_context.py` — 55 tests
 
 Comprehensive regression tests for multi-turn, multi-intent, and context-aware routing. Guards against state transition bugs, _last_action lifecycle issues, frustration counting, and handler interaction patterns found in eval analysis.
 
