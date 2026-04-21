@@ -2131,7 +2131,8 @@ def test_edge_frustration_scenario_does_not_repeat_response(fresh_session):
     # Core regression guard: turn 2 must not be an identical repeat.
     # Normalize whitespace to catch even spacing-only duplicates.
     import re
-    normalize = lambda s: re.sub(r"\s+", " ", s.strip().lower())
+    def normalize(s):
+        return re.sub(r"\s+", " ", s.strip().lower())
     assert normalize(turn1_response) != normalize(turn2_response), (
         f"Turn 2 response was an identical repeat of turn 1 — the exact "
         f"edge_frustration failure mode. Response: {turn2_response!r}"
@@ -2242,7 +2243,7 @@ def test_b2_rejection_alone_still_routes_to_menu(fresh_session):
         f"handler; got _last_action={t3['slots'].get('_last_action')!r}"
     )
     assert t3["slots"].get("_frustration_count", 0) >= 1, (
-        f"Handler should increment _frustration_count"
+        "Handler should increment _frustration_count"
     )
     # Menu's distinctive phrase
     assert "those options aren't what you need" in t3["response"].lower(), (
