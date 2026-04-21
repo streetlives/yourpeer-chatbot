@@ -226,7 +226,7 @@ class TestWeeklyMutationWorkflowPairings:
                 if not test_path.exists():
                     missing.append((module, test_path_str))
         assert not missing, (
-            f"Listed test files don't exist in the repo:\n  " +
+            "Listed test files don't exist in the repo:\n  " +
             "\n  ".join(f"{module} ← {tf}" for module, tf in missing)
         )
 
