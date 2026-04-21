@@ -6,7 +6,8 @@
 
 import "./globals.css";
 import { Inter } from "next/font/google";
-import type { Viewport } from "next";
+import type { Metadata, Viewport } from "next";
+import { PWARegister } from "./pwa-register";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -16,6 +17,28 @@ const inter = Inter({
 
 export const viewport: Viewport = {
   themeColor: "#FFD54F",
+  // Cover iOS safe areas so standalone mode doesn't look cut off
+  viewportFit: "cover",
+  // Mobile users often land here in a moment of stress — don't let
+  // them pinch-zoom accidentally while tapping buttons. maximumScale
+  // is a balance between a11y (users who need to zoom) and correct
+  // layout on small screens. Stick with defaults (zooming allowed).
+};
+
+export const metadata: Metadata = {
+  title: "YourPeer — Find Services",
+  description:
+    "Find shelter, food, and other services in NYC. Your conversation is private.",
+  manifest: "/manifest.webmanifest",
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "default",
+    title: "YourPeer",
+  },
+  icons: {
+    icon: "/icons/icon-192.png",
+    apple: "/icons/icon-192.png",
+  },
 };
 
 export default function RootLayout({
@@ -25,7 +48,10 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" className={inter.className}>
-      <body>{children}</body>
+      <body>
+        {children}
+        <PWARegister />
+      </body>
     </html>
   );
 }

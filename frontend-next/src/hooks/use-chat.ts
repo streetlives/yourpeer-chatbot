@@ -6,11 +6,19 @@
 
 "use client";
 
-import { useCallback } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { useChatStore, nextMsgId } from "@/lib/chat/store";
 import { sendChatMessage, sendFeedback } from "@/lib/chat/api";
 import { useGeolocation } from "./use-geolocation";
-import type { FeedbackRating } from "@/lib/chat/types";
+import type { FeedbackRating, ChatMessage } from "@/lib/chat/types";
+import {
+  enqueue as enqueueMessage,
+  dequeue as dequeueMessage,
+  readQueue,
+  reapExpired,
+  type QueuedMessage,
+} from "@/lib/chat/send-queue";
+import { cacheLastResults } from "@/lib/chat/offline-cache";
 
 const GEOLOCATION_TRIGGER = "__use_geolocation__";
 const CRISIS_GEO_TRIGGER = "__crisis_geo_search__";
@@ -25,8 +33,8 @@ const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 async function withRetry<T>(fn: () => Promise<T>, retryDelayMs = 1500): Promise<T> {
   try {
     return await fn();
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : "Unknown error";
+  } catch (err: unknown) {
+    const msg = errMessage(err);
     // Don't retry rate limits or auth errors
     if (msg.includes("429") || msg.includes("403")) throw err;
     await delay(retryDelayMs);
@@ -34,10 +42,31 @@ async function withRetry<T>(fn: () => Promise<T>, retryDelayMs = 1500): Promise<
   }
 }
 
+/** Safely extract a message string from an unknown thrown value. */
+function errMessage(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  if (typeof err === "string") return err;
+  if (err && typeof err === "object" && "message" in err) {
+    const m = (err as { message?: unknown }).message;
+    return typeof m === "string" ? m : "";
+  }
+  return "";
+}
+
+/** Safely extract an error name (e.g. "TypeError") from an unknown thrown value. */
+function errName(err: unknown): string {
+  if (err instanceof Error) return err.name;
+  if (err && typeof err === "object" && "name" in err) {
+    const n = (err as { name?: unknown }).name;
+    return typeof n === "string" ? n : "";
+  }
+  return "";
+}
+
 /** Convert a caught error into a user-friendly message. */
 function userFacingError(err: unknown): string {
-  const msg = err instanceof Error ? err.message : "Unknown error";
-  const name = err instanceof Error ? err.name : "Unknown error";
+  const msg = errMessage(err);
+  const name = errName(err);
   // Rate-limit messages include "wait" — pass through verbatim
   if (msg.includes("wait")) return msg;
   // API layer errors (503, 500) already have good messages — pass through
@@ -48,6 +77,42 @@ function userFacingError(err: unknown): string {
   if (name === "TimeoutError" || name === "AbortError") return "The search is taking longer than expected. Try again in a moment.";
   // Fallback
   return "Sorry, something went wrong. Try again in a moment.";
+}
+
+/**
+ * True when an error looks like a network failure (offline, DNS, etc.),
+ * as opposed to a server-returned error (4xx/5xx). Used to decide
+ * whether to enqueue the message for later flush or surface the error
+ * to the user immediately.
+ *
+ * Rate limits (429), auth (403), bad request (400), server errors
+ * (5xx) are NOT network errors — they mean we reached the server and
+ * it answered. Only retry via queue when there's genuinely no connection.
+ */
+function isNetworkError(err: unknown): boolean {
+  const msg = errMessage(err);
+  const name = errName(err);
+  if (name === "TypeError") return true;          // fetch itself failed
+  if (name === "TimeoutError") return true;
+  if (name === "AbortError") return true;
+  if (msg.includes("fetch")) return true;
+  if (msg.includes("NetworkError")) return true;
+  // HTTP status codes in the message mean we got a response
+  if (/\b[45]\d\d\b/.test(msg)) return false;
+  return false;
+}
+
+/**
+ * Write a bot response that includes service cards to the offline
+ * cache. Fire-and-forget — caching failures never block the UI.
+ *
+ * Called from all three success paths (geo flow, crisis flow, normal
+ * send). Kept as a standalone helper so if any success path is added
+ * later, we don't forget to cache there too.
+ */
+function cacheIfResults(botMessage: ChatMessage, userQuery: string): void {
+  if (!botMessage.services || botMessage.services.length === 0) return;
+  void cacheLastResults(botMessage, userQuery);
 }
 
 export function useChat() {
@@ -120,31 +185,35 @@ export function useChat() {
           removeMessage(searchProgressId);
           if (data.session_id) setSessionId(data.session_id);
 
-          addMessage({
+          const botMsg: ChatMessage = {
             id: nextMsgId(),
             role: "bot",
             text: data.response || "(No response text)",
             services: data.services,
             quick_replies: data.quick_replies,
             showFeedback: (data.services?.length ?? 0) > 0,
-          });
-        } catch (err) {
+          };
+          addMessage(botMsg);
+          cacheIfResults(botMsg, "near me");
+        } catch (err: unknown) {
           removeMessage(searchProgressId);
-          const msg = err instanceof Error ? err.message : "Unknown error"
+
           // Stale session token — clear and retry
-          if (msg.includes("403") && sessionId) {
+          if (errMessage(err).includes("403") && sessionId) {
             try {
               useChatStore.getState().setSessionId(null);
               const data = await sendChatMessage("near me", null, coords);
               if (data.session_id) setSessionId(data.session_id);
-              addMessage({
+              const botMsg: ChatMessage = {
                 id: nextMsgId(),
                 role: "bot",
                 text: data.response || "(No response text)",
                 services: data.services,
                 quick_replies: data.quick_replies,
                 showFeedback: (data.services?.length ?? 0) > 0,
-              });
+              };
+              addMessage(botMsg);
+              cacheIfResults(botMsg, "near me");
               setLoading(false);
               return;
             } catch {
@@ -198,30 +267,34 @@ export function useChat() {
           removeMessage(searchProgressId);
           if (data.session_id) setSessionId(data.session_id);
 
-          addMessage({
+          const botMsg: ChatMessage = {
             id: nextMsgId(),
             role: "bot",
             text: data.response || "(No response text)",
             services: data.services,
             quick_replies: data.quick_replies,
             showFeedback: (data.services?.length ?? 0) > 0,
-          });
-        } catch (err) {
+          };
+          addMessage(botMsg);
+          cacheIfResults(botMsg, "Yes, search");
+        } catch (err: unknown) {
           removeMessage(searchProgressId);
-          const msg = err instanceof Error ? err.message : "Unknown error";
-          if (msg.includes("403") && sessionId) {
+
+          if (errMessage(err).includes("403") && sessionId) {
             try {
               useChatStore.getState().setSessionId(null);
               const data = await sendChatMessage("Yes, search", null, coordsToSend);
               if (data.session_id) setSessionId(data.session_id);
-              addMessage({
+              const botMsg: ChatMessage = {
                 id: nextMsgId(),
                 role: "bot",
                 text: data.response || "(No response text)",
                 services: data.services,
                 quick_replies: data.quick_replies,
                 showFeedback: (data.services?.length ?? 0) > 0,
-              });
+              };
+              addMessage(botMsg);
+              cacheIfResults(botMsg, "Yes, search");
               setLoading(false);
               return;
             } catch {
@@ -244,7 +317,8 @@ export function useChat() {
       }
 
       // Normal message flow
-      addMessage({ id: nextMsgId(), role: "user", text: message });
+      const userMsgId = nextMsgId();
+      addMessage({ id: userMsgId, role: "user", text: message });
 
       setLoading(true);
       try {
@@ -254,38 +328,65 @@ export function useChat() {
         const data = await withRetry(() => sendChatMessage(message, sessionId, coords));
         if (data.session_id) setSessionId(data.session_id);
 
-        addMessage({
+        const botMsg: ChatMessage = {
           id: nextMsgId(),
           role: "bot",
           text: data.response || "(No response text)",
           services: data.services,
           quick_replies: data.quick_replies,
           showFeedback: (data.services?.length ?? 0) > 0,
-        });
-      } catch (err) {
+        };
+        addMessage(botMsg);
+        cacheIfResults(botMsg, message);
+      } catch (err: unknown) {
         // If the backend rejected our session token (e.g. SECRET changed),
         // clear the stale sessionId and retry once with no session so the
         // backend mints a fresh token.
-        const msg = err instanceof Error ? err.message : "Unknown error";
-        if (msg.includes("403") && sessionId) {
+        if (errMessage(err).includes("403") && sessionId) {
           try {
             useChatStore.getState().setSessionId(null);
             const coords = hasCoords ? { latitude: latitude!, longitude: longitude! } : null;
             const data = await sendChatMessage(message, null, coords);
             if (data.session_id) setSessionId(data.session_id);
-            addMessage({
+            const botMsg: ChatMessage = {
               id: nextMsgId(),
               role: "bot",
               text: data.response || "(No response text)",
               services: data.services,
               quick_replies: data.quick_replies,
               showFeedback: (data.services?.length ?? 0) > 0,
-            });
+            };
+            addMessage(botMsg);
+            cacheIfResults(botMsg, message);
             setLoading(false);
             return;
           } catch {
             // Retry also failed — fall through to normal error handling
           }
+        }
+
+        // Network error (offline, DNS, timeout) — enqueue the message
+        // for later flush instead of surfacing an error. The user's
+        // message stays in the chat so they can see what they sent.
+        // A subtle "waiting to send" bot message signals queue state.
+        if (isNetworkError(err)) {
+          const coords = hasCoords ? { latitude: latitude!, longitude: longitude! } : null;
+          const queuedMsg: QueuedMessage = {
+            id: userMsgId,
+            text: message,
+            coords,
+            sessionId,
+            queuedAt: Date.now(),
+          };
+          await enqueueMessage(queuedMsg);
+          addMessage({
+            id: nextMsgId(),
+            role: "bot",
+            text: "Saved — I'll send this when you're back online.",
+            transient: true,
+          });
+          setLoading(false);
+          return;
         }
 
         const friendlyMsg = userFacingError(err);
@@ -350,15 +451,17 @@ export function useChat() {
           const data = await withRetry(() => sendChatMessage("near me", sessionId, geoResult));
           removeMessage(searchProgressId);
           if (data.session_id) setSessionId(data.session_id);
-          addMessage({
+          const botMsg: ChatMessage = {
             id: nextMsgId(),
             role: "bot",
             text: data.response || "(No response text)",
             services: data.services,
             quick_replies: data.quick_replies,
             showFeedback: (data.services?.length ?? 0) > 0,
-          });
-        } catch (err) {
+          };
+          addMessage(botMsg);
+          cacheIfResults(botMsg, "near me");
+        } catch (err: unknown) {
           removeMessage(searchProgressId);
           const friendlyMsg = userFacingError(err);
           setError(friendlyMsg);
@@ -381,15 +484,17 @@ export function useChat() {
         const data = await withRetry(() => sendChatMessage(originalText, sessionId, coords));
         if (data.session_id) setSessionId(data.session_id);
 
-        addMessage({
+        const botMsg: ChatMessage = {
           id: nextMsgId(),
           role: "bot",
           text: data.response || "(No response text)",
           services: data.services,
           quick_replies: data.quick_replies,
           showFeedback: (data.services?.length ?? 0) > 0,
-        });
-      } catch (err) {
+        };
+        addMessage(botMsg);
+        cacheIfResults(botMsg, originalText);
+      } catch (err: unknown) {
         const friendlyMsg = userFacingError(err);
         setError(friendlyMsg);
         addMessage({
@@ -435,6 +540,138 @@ export function useChat() {
     },
     [sessionId, messages],
   );
+
+  // Flush queued messages when connection returns.
+  //
+  // Uses a ref-based lock so a rapid offline/online/offline flapping
+  // pattern doesn't fire concurrent flushes. Each flushed message is
+  // sent in serial order — the chatbot is stateful, so parallel sends
+  // would scramble conversational context.
+  //
+  // We deliberately DO NOT use the `send` callback here: that would
+  // push another "user" message into the chat for each queued item,
+  // but the user's original message is already in the chat (added
+  // when they typed it while offline). We use sendChatMessage
+  // directly and addMessage for just the bot response.
+  const flushingRef = useRef(false);
+
+  const flushQueue = useCallback(async () => {
+    if (flushingRef.current) return;
+    if (!navigator.onLine) return;
+    flushingRef.current = true;
+
+    try {
+      // Drop expired entries first. If any were reaped, tell the user
+      // which ones so they know why nothing happened for them.
+      const expired = await reapExpired();
+      if (expired.length > 0) {
+        addMessage({
+          id: nextMsgId(),
+          role: "bot",
+          text: `Some messages were waiting too long and weren't sent. Feel free to ask again: ${expired
+            .map((m) => `"${m.text.slice(0, 40)}${m.text.length > 40 ? "…" : ""}"`)
+            .join(", ")}`,
+          transient: true,
+        });
+      }
+
+      const queue = await readQueue();
+      if (queue.length === 0) return;
+
+      // Session probe: if the session expired server-side (30min TTL),
+      // warn the user before sending queued messages with a stale
+      // session token. We detect this by attempting the first message;
+      // if it returns 403, the backend mints a new session, but the
+      // conversational context (slots, last query) is gone.
+      //
+      // Rather than pre-probe (another round-trip), we optimistically
+      // send and tell the user conversationally if the session reset.
+      let sessionResetWarned = false;
+
+      for (const queued of queue) {
+        // Re-check online in case we went offline mid-flush
+        if (!navigator.onLine) break;
+
+        try {
+          const data = await sendChatMessage(
+            queued.text,
+            queued.sessionId,
+            queued.coords,
+          );
+          if (data.session_id) setSessionId(data.session_id);
+
+          // Session probe heuristic: if the queued message had a
+          // session ID but the response came back with a *different*
+          // session ID, the backend rejected our token and minted a
+          // fresh one. Context was lost — warn the user once.
+          if (
+            !sessionResetWarned &&
+            queued.sessionId &&
+            data.session_id &&
+            data.session_id !== queued.sessionId
+          ) {
+            addMessage({
+              id: nextMsgId(),
+              role: "bot",
+              text: "You were offline for a while — starting a fresh conversation.",
+              transient: true,
+            });
+            sessionResetWarned = true;
+          }
+
+          const botMsg: ChatMessage = {
+            id: nextMsgId(),
+            role: "bot",
+            text: data.response || "(No response text)",
+            services: data.services,
+            quick_replies: data.quick_replies,
+            showFeedback: (data.services?.length ?? 0) > 0,
+          };
+          addMessage(botMsg);
+          cacheIfResults(botMsg, queued.text);
+
+          // Success — remove from queue
+          await dequeueMessage(queued.id);
+        } catch (err: unknown) {
+          // Network error again (e.g., connection dropped mid-flush) —
+          // leave in queue and stop trying. Will retry on next online.
+          if (isNetworkError(err)) break;
+
+          // Server-side error (auth, rate limit, 5xx) — surface to
+          // user and dequeue the message so we don't retry forever.
+          // The user sees what failed and can try again manually.
+          const friendlyMsg = userFacingError(err);
+          addMessage({
+            id: nextMsgId(),
+            role: "bot",
+            text: `Couldn't send "${queued.text.slice(0, 40)}${queued.text.length > 40 ? "…" : ""}": ${friendlyMsg}`,
+            retryMessage: friendlyMsg.includes("wait") ? undefined : queued.text,
+          });
+          await dequeueMessage(queued.id);
+          // Rate-limit: stop flushing (don't burn through the rate
+          // limit for every queued message). Let the user manually
+          // retry from the button.
+          if (errMessage(err).includes("429")) break;
+        }
+      }
+    } finally {
+      flushingRef.current = false;
+    }
+  }, [addMessage, setSessionId]);
+
+  // Register the online handler once and also probe on mount (in case
+  // we came back online while the component was unmounted).
+  useEffect(() => {
+    const handler = () => {
+      void flushQueue();
+    };
+    window.addEventListener("online", handler);
+    // Probe on mount — queue might have entries from a previous session
+    if (navigator.onLine) {
+      void flushQueue();
+    }
+    return () => window.removeEventListener("online", handler);
+  }, [flushQueue]);
 
   return { messages, isLoading, error, send, retry, submitFeedback };
 }
