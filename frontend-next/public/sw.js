@@ -21,19 +21,47 @@
  * skip `/admin/*` paths in fetch so admin flows never see cached data.
  */
 
-const CACHE_VERSION = "v1";
+/* Bump when sw.js changes in a way that makes the prior cache unsafe
+ * to reuse. v2 bumped because v1's SHELL_CACHE contained a
+ * redirect-tainted "/" response that browsers refuse to serve to
+ * navigations — see SHELL_PRECACHE_URLS comment. On activate, the
+ * cleanup step below purges any cache whose name doesn't match the
+ * current version prefix. */
+const CACHE_VERSION = "v2";
 const STATIC_CACHE = `yourpeer-${CACHE_VERSION}-static`;
 const SHELL_CACHE = `yourpeer-${CACHE_VERSION}-shell`;
 
-/** Static assets pre-cached on install. The Next.js app bundle
- *  is NOT listed here — those paths have hashes we don't know at
- *  SW build time. They get cached opportunistically on first fetch. */
-const PRECACHE_URLS = [
-  "/",
+/** Static assets pre-cached on install into STATIC_CACHE (cache-first). */
+const STATIC_PRECACHE_URLS = [
   "/manifest.webmanifest",
+  "/favicon.ico",
   "/icons/icon-192.png",
   "/icons/icon-512.png",
 ];
+
+/** App shell URLs pre-cached on install into SHELL_CACHE (network-first).
+ *
+ *  **Critical:** we precache "/chat" and NOT "/". The root "/" is a
+ *  server-side redirect to "/chat" (see app/page.tsx — redirect("/chat")).
+ *  If we precached "/", cache.addAll() would follow the redirect and
+ *  cache a response with response.redirected === true. Navigations use
+ *  redirect: "manual" by default, so the browser rejects any cached
+ *  redirect-tainted response with a "network error response: a
+ *  redirected response was used for a request whose redirect mode is
+ *  not 'follow'" error — which is exactly what happens if you try to
+ *  reload the app while offline. Precaching the post-redirect URL
+ *  directly avoids this.
+ *
+ *  The navigation fallback in networkFirst() also falls back to "/chat"
+ *  — so users who navigate directly to "/" while offline still get the
+ *  app shell served, even though "/" itself isn't precached. */
+const SHELL_PRECACHE_URLS = [
+  "/chat",
+];
+
+/** The Next.js app bundle is NOT listed here — those paths have hashes
+ *  we don't know at SW build time. They get cached opportunistically on
+ *  first fetch into STATIC_CACHE. */
 
 /** Paths that should NEVER be served from cache. Admin endpoints
  *  should always hit the network, and chat POSTs are handled by the
@@ -54,9 +82,14 @@ const BYPASS_PATTERNS = [
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
-    caches
-      .open(STATIC_CACHE)
-      .then((cache) => cache.addAll(PRECACHE_URLS))
+    Promise.all([
+      caches
+        .open(SHELL_CACHE)
+        .then((cache) => cache.addAll(SHELL_PRECACHE_URLS)),
+      caches
+        .open(STATIC_CACHE)
+        .then((cache) => cache.addAll(STATIC_PRECACHE_URLS)),
+    ])
       .then(() => self.skipWaiting())
       .catch((err) => {
         // If precache fails (e.g., icons missing in dev), don't block
@@ -143,6 +176,28 @@ async function cacheFirst(request, cacheName) {
 }
 
 /**
+ * Strip the redirected flag from a response by re-wrapping its body in
+ * a fresh Response. Browsers refuse to serve cached responses where
+ * response.redirected === true to navigations with redirect: "manual"
+ * (the default for navigations), so any response we cache must have
+ * the flag cleared. Returns a new Response with the same body, status,
+ * and headers, but response.redirected === false.
+ *
+ * Only call this right before caching. Never call on a response the
+ * caller also plans to return to the browser directly — cloning + body
+ * consumption means the original is unusable afterward.
+ */
+async function stripRedirect(response) {
+  if (!response.redirected) return response;
+  const body = await response.blob();
+  return new Response(body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: response.headers,
+  });
+}
+
+/**
  * Network-first: try the network, fall back to cache. This is the
  * right strategy for HTML and API responses that may change between
  * deploys. The user gets fresh content when online and stale (but
@@ -154,19 +209,25 @@ async function networkFirst(request, cacheName) {
   try {
     const response = await fetch(request);
     if (response.ok) {
-      cache.put(request, response.clone()).catch(() => {});
+      // Strip redirect flag before caching. Navigations use
+      // redirect:"manual" and the browser rejects cached
+      // redirect-tainted responses.
+      const cacheable = await stripRedirect(response.clone());
+      cache.put(request, cacheable).catch(() => {});
     }
     return response;
   } catch {
     const cached = await cache.match(request);
     if (cached) return cached;
 
-    // No cache, no network — return a minimal offline HTML page for
-    // navigations. This should be rare because the root "/" is
-    // precached on install.
+    // No cache, no network — fall back to the app shell for
+    // navigations. "/chat" is the real shell; "/" server-side
+    // redirects to it so we never precache "/" directly. A direct
+    // navigation to "/" while offline lands here and is served the
+    // "/chat" shell, which is what the user expected anyway.
     if (request.mode === "navigate") {
-      const rootCache = await cache.match("/");
-      if (rootCache) return rootCache;
+      const shellCache = await cache.match("/chat");
+      if (shellCache) return shellCache;
     }
 
     return new Response("", { status: 503, statusText: "Offline" });
