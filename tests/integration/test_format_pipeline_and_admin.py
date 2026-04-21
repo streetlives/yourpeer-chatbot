@@ -69,8 +69,8 @@ def _fresh():
 def _send(msg, sid, mock_crisis=None):
     with (
         patch("app.services.chatbot.execution.query_services", return_value=MOCK_QUERY_RESULTS),
-        patch("app.services.chatbot.claude_reply", return_value="How can I help?"),
-        patch("app.services.chatbot.detect_crisis", return_value=mock_crisis),
+        patch("app.services.chatbot.handlers.meta.claude_reply", return_value="How can I help?"),
+        patch("app.services.chatbot.orchestrator.detect_crisis", return_value=mock_crisis),
     ):
         return generate_reply(msg, session_id=sid)
 
@@ -318,7 +318,7 @@ class TestSkipLlmPipeline:
         # would not affect the already-bound local name.
         with (
             patch("app.services.chatbot.execution.query_services", return_value=MOCK_QUERY_RESULTS),
-            patch("app.services.chatbot.claude_reply", return_value="ok"),
+            patch("app.services.chatbot.handlers.meta.claude_reply", return_value="ok"),
             patch("app.services.chatbot.orchestrator.detect_crisis", return_value=None) as mock_crisis,
         ):
             generate_reply("yes", session_id=sid)
@@ -335,7 +335,7 @@ class TestSkipLlmPipeline:
         _send("food in Manhattan", sid)
         with (
             patch("app.services.chatbot.execution.query_services", return_value=MOCK_QUERY_RESULTS),
-            patch("app.services.chatbot.claude_reply", return_value="ok"),
+            patch("app.services.chatbot.handlers.meta.claude_reply", return_value="ok"),
             patch("app.services.chatbot.orchestrator.detect_crisis",
                   return_value=("suicide_self_harm", "Call 988.")) as mock_crisis,
         ):
@@ -495,7 +495,7 @@ class TestPromptBuilders:
 
     def test_fallback_response_returns_string(self):
         from app.services.responses import _fallback_response
-        with patch("app.services.chatbot.claude_reply", return_value="Hi there!"):
+        with patch("app.services.chatbot.handlers.meta.claude_reply", return_value="Hi there!"):
             result = _fallback_response("hello", {})
         assert isinstance(result, str)
         assert len(result) > 0

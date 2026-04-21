@@ -178,7 +178,7 @@ class TestBug11DoubleCrisisCall:
         _classify_tone should NOT call detect_crisis again."""
         from app.services.classifier import _classify_tone
         # Pass None meaning "already checked, no crisis found"
-        with patch("app.services.chatbot.detect_crisis") as mock_dc:
+        with patch("app.services.chatbot.orchestrator.detect_crisis") as mock_dc:
             _classify_tone("some text", crisis_result=None)
             mock_dc.assert_not_called()
 
@@ -244,7 +244,22 @@ class TestBug12UrgentPhrasesModuleLevel:
 # -----------------------------------------------------------------------
 
 class TestBug13FrustrationNormalization:
-    """_classify_message should catch frustration with contractions."""
+    """_classify_message should catch frustration with contractions.
+
+    These tests call _classify_message directly rather than through
+    the conftest send()/assert_classified helpers. Each call reaches
+    _classify_tone which calls classifier.detect_crisis. With a
+    non-working ANTHROPIC_API_KEY, the real detector's LLM fallback
+    401s and fails open to a crisis response, which hijacks the
+    classification outcome. Patch both known bind sites at the
+    class level so every test in this class sees detect_crisis → None.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _stub_crisis(self):
+        with patch("app.services.classifier.detect_crisis", return_value=None), \
+             patch("app.services.chatbot.orchestrator.detect_crisis", return_value=None):
+            yield
 
     def test_wasnt_helpful(self):
         from app.services.classifier import _classify_message

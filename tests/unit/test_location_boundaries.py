@@ -244,16 +244,24 @@ def test_two_boroughs_in_message():
 
 
 def test_borough_with_typos():
-    """Common misspellings should still be handled if possible."""
-    # These won't match with exact regex — documenting the limitation
+    """Common misspellings are NOT currently auto-corrected.
+
+    Pins the current behavior: typos produce either no location or a
+    non-matching normalization. If we add fuzzy matching or an LLM
+    pass for location typos, this test should flip to expect normalized
+    values for every entry in `typos`.
+    """
     typos = ["brookyln", "quens", "manhatten", "bronks"]
     for typo in typos:
         slots = extract_slots(f"food in {typo}")
         normalized = normalize_location(slots["location"]) if slots["location"] else None
-        if normalized and normalized in ["Brooklyn", "Queens", "New York", "Bronx"]:
-            print(f"  INFO: typo '{typo}' → normalized correctly")
-        else:
-            print(f"  INFO: typo '{typo}' → not matched (needs LLM extraction)")
+        # Typos should NOT normalize to the correct borough with current regex.
+        # If any do, the fuzzy-match feature is working and this test
+        # should be updated.
+        assert normalized not in {"Brooklyn", "Queens", "New York", "Bronx"}, (
+            f"Typo '{typo}' unexpectedly normalized to {normalized!r}. "
+            f"If fuzzy matching was added, update this test."
+        )
 
 
 # -----------------------------------------------------------------------

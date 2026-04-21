@@ -294,13 +294,18 @@ def test_single_word_service_answer():
 
 
 def test_numbers_only():
-    """Just a number (like an age response) should extract age."""
-    # Note: the current age patterns require "I am X" or "age X",
-    # a bare number won't match — this documents the known limitation.
+    """Just a number (like an age response) should NOT currently extract age.
+
+    The regex patterns require "I am X" or "age X"; a bare number won't
+    match. This test pins the current behavior. If an LLM-based extractor
+    starts handling bare numbers in context, flip this to assert
+    slots['age'] == 17 and update the regex docs.
+    """
     slots = extract_slots("17")
-    # This will be None with the current regex approach
-    # (would need LLM-based extraction to handle bare numbers in context)
-    print(f"  INFO: bare number '17' → age={slots['age']} (None expected with regex)")
+    assert slots["age"] is None, (
+        f"Bare number '17' extracted age={slots['age']} — if this is "
+        f"intentional, update the assertion and the regex docs."
+    )
 
 
 # -----------------------------------------------------------------------

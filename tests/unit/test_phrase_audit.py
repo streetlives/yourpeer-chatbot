@@ -146,7 +146,7 @@ class TestP1P2Emotional:
         "I can't catch a break",
     ])
     def test_emotional_classification(self, phrase):
-        with patch("app.services.chatbot.detect_crisis", return_value=None):
+        with patch("app.services.chatbot.orchestrator.detect_crisis", return_value=None):
             tone = _classify_tone(phrase, crisis_result=None)
         assert tone == "emotional", \
             f"'{phrase}' should classify as emotional, got '{tone}'"
@@ -191,7 +191,7 @@ class TestP2Frustration:
         "this is pointless",
     ])
     def test_frustration_classification(self, phrase):
-        with patch("app.services.chatbot.detect_crisis", return_value=None):
+        with patch("app.services.chatbot.orchestrator.detect_crisis", return_value=None):
             tone = _classify_tone(phrase, crisis_result=None)
         assert tone == "frustrated", \
             f"'{phrase}' should classify as frustrated, got '{tone}'"
@@ -227,7 +227,7 @@ class TestP3Confused:
         "so much going on in my life",
     ])
     def test_confused_classification(self, phrase):
-        with patch("app.services.chatbot.detect_crisis", return_value=None):
+        with patch("app.services.chatbot.orchestrator.detect_crisis", return_value=None):
             tone = _classify_tone(phrase, crisis_result=None)
         assert tone == "confused", \
             f"'{phrase}' should classify as confused, got '{tone}'"
@@ -295,13 +295,23 @@ class TestFalsePositiveGuards:
         assert detect_crisis("I have no one", skip_llm=True) is None
 
     def test_disappear_is_crisis(self):
-        """'want to disappear' maps to wish-to-be-dead per C-SSRS."""
-        # Note: this is in the suicide list, not emotional
-        # If it ever moves to emotional, this test should be updated
-        _result = detect_crisis("I just want to disappear", skip_llm=True)
-        # Currently NOT in phrase list — handled by LLM stage
-        # This test documents the design decision
-        pass
+        """'want to disappear' is caught by the regex phrase list as a
+        wish-to-be-dead indicator per C-SSRS.
+
+        Pins the current regex behavior. If the phrase is removed from
+        the regex list (e.g., delegated entirely to the LLM stage),
+        update this test to mirror the new pathway.
+        """
+        result = detect_crisis("I just want to disappear", skip_llm=True)
+        assert result is not None, (
+            "'want to disappear' should be caught by the regex list — "
+            "if it was intentionally removed, move this test to the LLM "
+            "stage path."
+        )
+        category, _response = result
+        assert category == "suicide_self_harm", (
+            f"Expected 'suicide_self_harm', got {category!r}"
+        )
 
     def test_whats_the_point_without_anymore_not_suicide(self):
         """'what's the point' without 'anymore' should NOT trigger suicide.

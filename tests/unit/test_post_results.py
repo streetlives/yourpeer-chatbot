@@ -94,8 +94,8 @@ def _fresh():
 def _send(msg, sid, mock_crisis=None):
     with (
         patch("app.services.chatbot.execution.query_services", return_value=MOCK_QUERY_RESULTS),
-        patch("app.services.chatbot.claude_reply", return_value="How can I help?"),
-        patch("app.services.chatbot.detect_crisis", return_value=mock_crisis),
+        patch("app.services.chatbot.handlers.meta.claude_reply", return_value="How can I help?"),
+        patch("app.services.chatbot.orchestrator.detect_crisis", return_value=mock_crisis),
     ):
         return generate_reply(msg, session_id=sid)
 
