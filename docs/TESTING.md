@@ -86,6 +86,8 @@ The CI gate (`tests/_tools/check_audit_baseline.py`) compares the current findin
 make audit-baseline   # writes tests/_tools/audit_baseline.txt
 ```
 
+**Current baseline:** 29 findings total — D3=19 (advisory, not gated), D5=8 (deliberate env-handling tests), D8=1 and D9=1 (both legitimate and accepted). D1, D2, D4, D6, and D7 are all at 0 and gated — any new occurrence fails CI. Down from 203 pre-cleanup.
+
 This audit was prompted by an April 2026 cleanup that found 187 patches across 23 test files were silent no-ops — they patched `app.services.chatbot.X` at the package level when the runtime binding lives on a submodule. See "Patch where imported, not where defined" in `tests/README.md`.
 
 ### Mutation testing on safety-critical modules

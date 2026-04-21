@@ -175,7 +175,7 @@ information, preventing hallucination.
 - **Stability**: 1,000-char message length limit (frontend + backend), coordinate validation (lat ±90, lng ±180), 10s LLM timeout, 5s DB statement timeout, 30s frontend fetch timeout, admin endpoint rate limiting (120/min IP + 5/hr eval), rate limiter memory cap (5,000 buckets)
 - **Observability**: `X-Request-ID` correlation IDs flow from frontend → Next.js proxy → FastAPI backend → audit log, enabling end-to-end request tracing
 - **Admin data caching**: centralized Zustand store with 30-second staleness threshold; navigating between admin tabs reuses cached data
-- **Test suite**: 46 pytest files (~1,900+ tests) organized into `tests/unit/` and `tests/integration/`, plus an `eval/` directory. LLM-as-judge evaluation: 167 scenarios across 20 categories, 11 dimensions, Opus judge
+- **Test suite**: 69 pytest files (~3,700 collected tests across unit + integration) organized into `tests/unit/` (57 files — no DB or LLM) and `tests/integration/` (12 files — mocked DB/LLM via `send()`/`send_multi()` helpers), plus a separate `tests/eval/` for the LLM judge. Three CI quality gates run on every PR: line coverage (≥85%), static audit (`tests/_tools/audit_tests.py` with baseline check), and — for safety-critical modules only — mutation testing via cosmic-ray. Current audit baseline: 29 findings total (D3=19 advisory, D5=8 deliberate, D8=1, D9=1; D2/D6/D7 all at 0). See `TEST_INFRASTRUCTURE.md` at repo root. LLM-as-judge evaluation: 167 scenarios across 20 categories, 11 dimensions, Opus judge
 
 ## Known Gaps / In Progress
 
@@ -202,8 +202,8 @@ pytest tests/unit/test_slot_extractor.py  # single file
 pytest -k reset                           # filter by test name
 ```
 
-All tests mock `claude_reply()` and `query_services()` — no live services required.
-Tests are organized into `tests/unit/` (31 files, no external deps) and `tests/integration/` (15 files, use `send()`/`send_multi()` helpers).
+All tests mock `claude_reply()`, `query_services()`, and `detect_crisis()` at their submodule bind sites — no live services required. The `send()`/`send_multi()` helpers patch `detect_crisis` on BOTH `orchestrator` and `classifier` (separate bindings, both reachable at runtime), which is what makes the suite deterministic with or without `ANTHROPIC_API_KEY` set.
+Tests are organized into `tests/unit/` (57 files, no external deps) and `tests/integration/` (12 files, use `send()`/`send_multi()` helpers).
 Shared fixtures and helpers live in `tests/conftest.py` (use `send()`, `send_multi()`,
 `assert_classified()`). For live LLM integration tests:
 
