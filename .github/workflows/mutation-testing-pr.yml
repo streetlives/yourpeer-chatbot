@@ -64,17 +64,35 @@ jobs:
           THRESHOLD_FOR_MODULE["backend/app/services/chatbot/orchestrator.py"]=70
           THRESHOLD_FOR_MODULE["backend/app/services/session_token.py"]=85
 
+          # Per-module timeout in minutes. Most modules finish in ~20-25
+          # min, so the default cap is 45. Orchestrator is an outlier:
+          # 489 lines generate ~400-500 mutants, each run against two
+          # big integration test files (263 test functions combined).
+          # First parallelism attempt (30-min cap) hit the timeout at
+          # 28m38s on a clean single-module run — genuinely needed more.
+          # 60 min matches the observed runtime envelope with headroom
+          # for slow CI runners. If this entry ever climbs past 75 min,
+          # it's a signal to switch to the celery distributor (see
+          # follow-up note below) rather than bumping the cap further.
+          declare -A TIMEOUT_FOR_MODULE
+          TIMEOUT_FOR_MODULE["backend/app/services/crisis_detector.py"]=45
+          TIMEOUT_FOR_MODULE["backend/app/services/classifier.py"]=45
+          TIMEOUT_FOR_MODULE["backend/app/privacy/pii_redactor.py"]=30
+          TIMEOUT_FOR_MODULE["backend/app/services/chatbot/orchestrator.py"]=60
+          TIMEOUT_FOR_MODULE["backend/app/services/session_token.py"]=30
+
           changed=$(git diff --name-only origin/${{ github.base_ref }}...HEAD)
 
-          # Build a JSON array of {module, tests, threshold, safe_name}
-          # triples, one entry per changed critical module.
+          # Build a JSON array of {module, tests, threshold, safe_name,
+          # timeout_min} entries, one per changed critical module.
           matrix_entries=""
           for module in "${!TESTS_FOR_MODULE[@]}"; do
             if echo "$changed" | grep -qxF "$module"; then
               tests="${TESTS_FOR_MODULE[$module]}"
               threshold="${THRESHOLD_FOR_MODULE[$module]}"
+              timeout_min="${TIMEOUT_FOR_MODULE[$module]}"
               safe_name=$(echo "$module" | tr '/' '-')
-              entry="{\"module\":\"$module\",\"tests\":\"$tests\",\"threshold\":$threshold,\"safe_name\":\"$safe_name\"}"
+              entry="{\"module\":\"$module\",\"tests\":\"$tests\",\"threshold\":$threshold,\"safe_name\":\"$safe_name\",\"timeout_min\":$timeout_min}"
               if [ -z "$matrix_entries" ]; then
                 matrix_entries="$entry"
               else
@@ -97,21 +115,28 @@ jobs:
           fi
 
   # Stage 2: one parallel job per changed module. Matrix-expanded from
-  # stage 1's output. Each job gets its own 30-minute budget — the
-  # slowest module determines wall-clock time, not the sum of all.
+  # stage 1's output. Each cell gets its own per-module timeout (see
+  # TIMEOUT_FOR_MODULE in stage 1) — wall-clock is bounded by the
+  # slowest module, not the sum of all.
   #
-  # Pre-fix (the PR 6 hang): classifier + orchestrator ran serially in
-  # ONE 30-minute job. Classifier ate ~28 minutes; orchestrator hit the
-  # timeout immediately after starting.
+  # Pre-fix 1 (the PR 6 initial hang): classifier + orchestrator ran
+  # serially in ONE 30-minute job. Classifier ate ~28 minutes;
+  # orchestrator hit the timeout immediately after starting.
   #
-  # Post-fix: each module gets its own 30-minute job. Classifier and
-  # orchestrator each complete independently; total wall-clock is
-  # bounded by the single slowest module.
+  # Pre-fix 2 (first parallelism attempt): each module got its own
+  # 30-minute job, but orchestrator ALONE needs >30 min for its ~400-500
+  # mutants × 263-test integration set. Hit timeout at 28m38s on a
+  # clean single-module run.
+  #
+  # Post-fix: per-module timeout_min on each matrix entry. Orchestrator
+  # gets 60 min; most others get 45; tiny modules (pii_redactor,
+  # session_token) get 30. Each cell still runs in parallel; fast cells
+  # don't wait for slow ones.
   pr-mutation:
     needs: detect-changed-modules
     if: needs.detect-changed-modules.outputs.any-changed == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: ${{ matrix.timeout_min }}
     name: Mutate ${{ matrix.safe_name }}
 
     strategy:
