@@ -14,10 +14,12 @@ Anti-patterns detected:
  D2. Tests that don't assert — test functions with no `assert` statement
      and no pytest.raises/approx/warns/match. These "pass" unconditionally.
 
- D3. Tests whose only assertions are on the mock, not the behavior —
-     e.g. asserts call_count or call_args but never checks a return value
-     or side effect on real state. Not inherently wrong but worth flagging;
-     we saw cases where this masked "mock not wired."
+ D3. Tests whose ONLY assertions are on mock state (call_count,
+     assert_called, etc.) with no assertion on a real return value
+     or raised exception. Some of these are deliberate (verifying a
+     mock contract); others are accidents where the behavior check
+     was forgotten. Run occasionally, review findings by hand. Not
+     part of the CI baseline gate.
 
  D4. Tests that set a return_value and never verify the mock was called —
      if the mock is never called, the return_value is irrelevant. Flags
@@ -36,9 +38,6 @@ Anti-patterns detected:
  D8. Tests with time-dependent assertions that don't use fake timers.
 
  D9. Tests that sleep() — unreliable in CI.
-
- D10. Tests that import but never use key fixtures (fresh_session, etc.)
-      — often a copy-paste artifact.
 
 Run:
     python3 tests/_tools/audit_tests.py [--category D1|D2|...] [--file GLOB]
@@ -214,14 +213,108 @@ def audit_d2_no_assertions(report: Report, test_files: list[Path]) -> None:
 
 
 # --------------------------------------------------------------------------
-# D3 / D4 — mock-without-behavior-check
+# D3 — mock-without-behavior-check
 # --------------------------------------------------------------------------
+def audit_d3_mock_only(report: Report, test_files: list[Path]) -> None:
+    """D3 — tests whose ONLY assertions are on mock state, never on a
+    real return value, raised exception, or side effect.
 
-def audit_d3_d4_mock_only(report: Report, test_files: list[Path]) -> None:
+    Not inherently wrong; some tests (like the three explicitly listed
+    in tests/README.md's "LLM isolation" section) deliberately verify
+    the mock contract. But the pattern was the symptom of the 187
+    dead-patch bug: a dead patch combined with a mock-only assertion
+    silently passes.
+
+    FALSE-POSITIVE RATE: high (~50% from empirical prototype). Treat
+    every finding as a review prompt, not a defect. This check is
+    deliberately excluded from the CI baseline gate — it's advisory.
+    """
+    mock_state_tokens = (
+        ".assert_called", ".assert_not_called", ".assert_any_call",
+        ".assert_has_calls", ".call_count", ".call_args", ".called",
+    )
+    for path in test_files:
+        try:
+            tree = ast.parse(path.read_text(), filename=str(path))
+        except SyntaxError:
+            continue
+        source = path.read_text()
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            if not node.name.startswith("test_"):
+                continue
+
+            body_src = ast.get_source_segment(source, node) or ""
+            if not any(t in body_src for t in mock_state_tokens):
+                continue
+
+            # pytest.raises is a behavior check (the exception IS the result).
+            if "pytest.raises" in body_src or " raises(" in body_src:
+                continue
+
+            # Collect local bindings so we can tell "a name introduced
+            # in this test" from "a name imported from elsewhere."
+            locals_: set[str] = set()
+            for a in node.args.args + node.args.kwonlyargs:
+                locals_.add(a.arg)
+            for sub in ast.walk(node):
+                if isinstance(sub, ast.Assign):
+                    for t in sub.targets:
+                        if isinstance(t, ast.Name):
+                            locals_.add(t.id)
+                elif isinstance(sub, ast.With):
+                    for item in sub.items:
+                        if isinstance(item.optional_vars, ast.Name):
+                            locals_.add(item.optional_vars.id)
+
+            has_behavior_assertion = False
+            for sub in ast.walk(node):
+                # Function calls to assertion helpers (custom or unittest-style)
+                if isinstance(sub, ast.Call):
+                    fn = sub.func
+                    name = (fn.id if isinstance(fn, ast.Name)
+                            else fn.attr if isinstance(fn, ast.Attribute)
+                            else None)
+                    if name and (name.startswith("_assert") or
+                                 name.startswith("_check")):
+                        has_behavior_assertion = True
+                        break
+                # Bare `assert` statements referencing a non-mock local
+                if isinstance(sub, ast.Assert):
+                    test_src = ast.get_source_segment(source, sub.test) or ""
+                    is_pure_mock_check = (
+                        any(t in test_src for t in mock_state_tokens)
+                        and ".call_args.kwargs" not in test_src
+                        and ".call_args.args" not in test_src
+                        and ".call_args[" not in test_src
+                    )
+                    if is_pure_mock_check:
+                        continue
+                    for n in ast.walk(sub.test):
+                        if (isinstance(n, ast.Name)
+                            and n.id in locals_
+                            and not n.id.startswith("mock_")
+                            and not n.id.endswith("_mock")):
+                            has_behavior_assertion = True
+                            break
+                if has_behavior_assertion:
+                    break
+
+            if has_behavior_assertion:
+                continue
+
+            report.add("D3", path, node.lineno,
+                       f"def {node.name} — only mock-state assertions; "
+                       f"review: is a behavior check also needed?")
+# --------------------------------------------------------------------------
+# D4 — mock-without-behavior-check
+# --------------------------------------------------------------------------
+def audit_d4_mock_only(report: Report, test_files: list[Path]) -> None:
     """A test that patches with a return_value and also sets an assertion
     on behavior is a GOOD test. A test that patches with a return_value
     and whose only checks are on mock state — or a test whose mock is
-    set but never checked — is a candidate for D3/D4."""
+    set but never checked — is a candidate for D4."""
     for path in test_files:
         try:
             tree = ast.parse(path.read_text(), filename=str(path))
@@ -451,7 +544,8 @@ def main() -> int:
     report = Report()
     audit_d1_dead_patches(report, test_files, symbol_map)
     audit_d2_no_assertions(report, test_files)
-    audit_d3_d4_mock_only(report, test_files)
+    audit_d3_mock_only(report, test_files)
+    audit_d4_mock_only(report, test_files)
     audit_d5_env_dependent(report, test_files)
     audit_d6_admin_without_auth(report, test_files)
     audit_d7_reexport_patches(report, test_files)

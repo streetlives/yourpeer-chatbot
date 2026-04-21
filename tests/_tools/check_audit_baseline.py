@@ -71,6 +71,14 @@ def main() -> int:
 
     baseline = parse(args.baseline)
     current = parse(args.current)
+    current = parse(args.current)
+
+    # D3 is advisory — detection produces ~50% false positives (tests
+    # that deliberately verify a mock contract look identical to tests
+    # that forgot to verify behavior). We run the check to surface the
+    # pattern for human review but never gate the build on it.
+    baseline.pop("D3", None)
+    current.pop("D3", None)
 
     if not baseline:
         print(f"ERROR: no entries parsed from {args.baseline}. Malformed?",

@@ -14,6 +14,7 @@ Usage:
     python scripts/check_docs.py --github           # GitHub Actions annotations
     python scripts/check_docs.py --severity=error   # only fail on errors
     python scripts/check_docs.py --skip=test-counts # disable one check
+    python scripts/check_docs.py --skip=audit-baseline  # skip the live audit run
 
 Designed to run in CI (exits 1 if drift at or above `--severity` threshold,
 default=warning) or locally. No external dependencies beyond the Python
@@ -861,6 +862,312 @@ def check_deprecated_patterns(args):
 
 
 # -----------------------------------------------------------------------
+# 16. AUDIT-BASELINE DRIFT (new)
+# -----------------------------------------------------------------------
+# Cross-checks three sources that must stay in sync around the test-
+# quality audit tool:
+#
+#   1. tests/_tools/audit_tests.py     — the code (what we actually
+#                                        emit today)
+#   2. tests/_tools/audit_baseline.txt — accepted floor (what the CI
+#                                        gate compares against)
+#   3. TEST_INFRASTRUCTURE.md + tests/README.md — what the docs claim
+#
+# Failure modes this catches:
+#
+#   a) Baseline counts disagree with a fresh audit run. The CI gate
+#      (check_audit_baseline.py) would also catch this, but surfacing
+#      it in the drift checker means developers see it locally before
+#      pushing — and the error message points at the specific category
+#      that moved.
+#
+#   b) A category ID (D1, D2, ...) is documented in the audit_tests.py
+#      docstring but never emitted by report.add(). We hit this once
+#      with D3 and D10 — described in the module docstring but the
+#      code path was removed without updating the text.
+#
+#   c) Docs mention a category ID that no longer exists. If someone
+#      deletes the D9 check in the source, TEST_INFRASTRUCTURE.md
+#      shouldn't still list it.
+
+_AUDIT_TOOL_PATH = TESTS_DIR / "_tools" / "audit_tests.py"
+_AUDIT_BASELINE_PATH = TESTS_DIR / "_tools" / "audit_baseline.txt"
+
+# Markdown docs that describe the audit categories. Only flag mismatches
+# against files that are expected to reference them.
+_AUDIT_DOC_FILES = [
+    ROOT / "TEST_INFRASTRUCTURE.md",
+    TESTS_DIR / "README.md",
+]
+
+
+def _parse_audit_baseline(path: Path) -> dict[str, int]:
+    """Parse 'D5: 8' / 'TOTAL: 10' lines out of audit_baseline.txt.
+
+    Ignores blank lines and comments. Returns {category: count}.
+    The file format is documented in the baseline file's own header.
+    """
+    result: dict[str, int] = {}
+    line_re = re.compile(r"^\s*(D\d+|TOTAL)\s*:\s*(\d+)\s*$",
+                         re.IGNORECASE)
+    for raw in path.read_text().splitlines():
+        stripped = raw.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        m = line_re.match(raw)
+        if m:
+            result[m.group(1).upper()] = int(m.group(2))
+    return result
+
+
+def _parse_docstring_audit_categories(audit_src: str) -> set[str]:
+    """Find category IDs (D1, D2, ...) named in the module docstring.
+
+    Matches lines like ' D1. Dead mock targets — ...' so docstring prose
+    that happens to contain 'D10k' or 'D2D' doesn't trigger a match.
+    """
+    mod = ast.parse(audit_src)
+    doc = ast.get_docstring(mod) or ""
+    return set(re.findall(r"\bD\d+(?=\.|\s)", doc))
+
+
+def _parse_emitted_audit_categories(audit_src: str) -> set[str]:
+    """Find category IDs actually passed to report.add() in the source.
+
+    Conservative literal-string match — we're not evaluating Python;
+    just parsing the AST and collecting the first argument when it's
+    a string constant matching 'D\\d+'.
+    """
+    emitted: set[str] = set()
+    tree = ast.parse(audit_src)
+    cat_re = re.compile(r"^D\d+$")
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        # Look for  report.add("D5", ...)  — attribute call with a
+        # string literal first arg.
+        if not isinstance(node.func, ast.Attribute):
+            continue
+        if node.func.attr != "add":
+            continue
+        if not node.args:
+            continue
+        first = node.args[0]
+        if isinstance(first, ast.Constant) and isinstance(first.value, str):
+            if cat_re.match(first.value):
+                emitted.add(first.value)
+    return emitted
+
+
+def _run_audit_in_process() -> Optional[Counter[str]]:
+    """Run the audit tool without shelling out. Returns category counts.
+
+    This keeps check_docs.py's "no subprocess" style — we import the
+    audit module, build a Report in-memory, and call each audit_d*
+    function directly.
+
+    Returns None if the audit tool isn't importable for any reason
+    (moved, renamed, missing deps) — in that case we skip the runtime
+    comparison but still do the static checks.
+    """
+    import importlib.util
+    import sys as _sys
+
+    spec = importlib.util.spec_from_file_location(
+        "audit_tests_for_drift_check", _AUDIT_TOOL_PATH)
+    if spec is None or spec.loader is None:
+        return None
+    mod = importlib.util.module_from_spec(spec)
+    # Register in sys.modules BEFORE exec_module — @dataclass looks up
+    # cls.__module__ in sys.modules during class construction, and
+    # silently fails with an opaque AttributeError if the module
+    # isn't registered. This is a standard importlib idiom that trips
+    # people up the first time.
+    _sys.modules[spec.name] = mod
+    try:
+        spec.loader.exec_module(mod)
+    except Exception as e:  # noqa: BLE001
+        _sys.modules.pop(spec.name, None)
+        # Surface the specific failure — swallowing it silently hid a
+        # sys.modules registration bug for hours during development.
+        warn(rel(_AUDIT_TOOL_PATH),
+             f"could not import for in-process run: "
+             f"{type(e).__name__}: {e}",
+             category="audit-baseline", severity="warning")
+        return None
+
+    try:
+        # The audit tool exposes collect_test_files(),
+        # _build_backend_symbol_map(), and a Report class. We call the
+        # same functions main() calls so the comparison is against
+        # real audit output, not a re-implementation that can diverge.
+        test_files = mod.collect_test_files()
+        symbol_map = mod._build_backend_symbol_map()
+        report = mod.Report()
+        mod.audit_d1_dead_patches(report, test_files, symbol_map)
+        mod.audit_d2_no_assertions(report, test_files)
+        mod.audit_d3_mock_only(report, test_files)
+        mod.audit_d4_mock_only(report, test_files)
+        mod.audit_d5_env_dependent(report, test_files)
+        mod.audit_d6_admin_without_auth(report, test_files)
+        mod.audit_d7_reexport_patches(report, test_files)
+        mod.audit_d8_d9_timing(report, test_files)
+        return report.counter()
+    except Exception as e:  # noqa: BLE001
+        warn(rel(_AUDIT_TOOL_PATH),
+             f"in-process run failed: {type(e).__name__}: {e}",
+             category="audit-baseline", severity="warning")
+        return None
+    finally:
+        _sys.modules.pop(spec.name, None)
+
+
+# Matches "D5 findings", "D5: 7", "D5=7", "(D5=8, D8=1, D9=1, TOTAL=10)".
+# Captures the category (group 1) and optionally the count (group 2).
+_DOC_CATEGORY_REF_RE = re.compile(
+    r"\b(D\d+)\b\s*[:=]?\s*(\d+)?",
+)
+
+
+def check_audit_baseline(args):
+    """Validate audit_baseline.txt, audit_tests.py, and their docs agree.
+
+    Three sub-checks (see section header for rationale):
+      (a) baseline counts vs live audit counts
+      (b) docstring mentions vs actually-emitted categories
+      (c) doc mentions (TEST_INFRASTRUCTURE.md, tests/README.md) vs
+          emitted categories
+    """
+
+    # All three sub-checks need the audit source. If it's missing
+    # outright, that's its own error — someone moved or deleted the
+    # file without updating docs.
+    if not _AUDIT_TOOL_PATH.exists():
+        warn(rel(_AUDIT_TOOL_PATH.parent),
+             f"{_AUDIT_TOOL_PATH.name} not found — audit-baseline check "
+             "cannot run",
+             category="audit-baseline", severity="warning")
+        return
+
+    audit_src = _AUDIT_TOOL_PATH.read_text()
+    emitted = _parse_emitted_audit_categories(audit_src)
+
+    # ---------- (b) docstring drift inside audit_tests.py itself -----
+    documented = _parse_docstring_audit_categories(audit_src)
+    phantom = documented - emitted
+    if phantom:
+        warn(rel(_AUDIT_TOOL_PATH),
+             f"docstring mentions {sorted(phantom)} but report.add() "
+             f"never emits those categories — remove from docstring or "
+             f"implement the check",
+             category="audit-baseline", severity="warning",
+             suggested_fix="Update the docstring at the top of "
+                           "audit_tests.py to match the emitted "
+                           "categories, or add the missing audit "
+                           "function.")
+
+    undocumented = emitted - documented
+    if undocumented:
+        warn(rel(_AUDIT_TOOL_PATH),
+             f"report.add() emits {sorted(undocumented)} but they're "
+             f"not listed in the module docstring",
+             category="audit-baseline", severity="info")
+
+    # ---------- (a) baseline counts vs live audit counts -------------
+    if _AUDIT_BASELINE_PATH.exists():
+        try:
+            baseline = _parse_audit_baseline(_AUDIT_BASELINE_PATH)
+        except Exception as e:  # noqa: BLE001
+            warn(rel(_AUDIT_BASELINE_PATH),
+                 f"could not parse baseline counts: {e}",
+                 category="audit-baseline", severity="error")
+            baseline = {}
+
+        live = _run_audit_in_process()
+        if live is not None and baseline:
+            # Compare per-category, not just TOTAL — a silent swap
+            # (D5 drops by 1, D9 rises by 1) would net zero on TOTAL.
+            tracked = {k for k in baseline if k != "TOTAL"} | set(live)
+            for cat in sorted(tracked):
+                baseline_n = baseline.get(cat, 0)
+                live_n = live.get(cat, 0)
+                if baseline_n == live_n:
+                    continue
+                severity = "warning" if live_n > baseline_n else "info"
+                direction = "above" if live_n > baseline_n else "below"
+                note = ("run `make audit-baseline` after confirming the "
+                        "new findings are deliberate"
+                        if live_n > baseline_n
+                        else "run `make audit-baseline` to ratchet the "
+                             "floor down and lock in the win")
+                warn(rel(_AUDIT_BASELINE_PATH),
+                     f"{cat}: baseline says {baseline_n}, live audit "
+                     f"reports {live_n} ({direction} baseline)",
+                     category="audit-baseline", severity=severity,
+                     suggested_fix=note)
+
+            # And check TOTAL separately — useful signal even if
+            # categories agree (they shouldn't if TOTAL doesn't).
+            if "TOTAL" in baseline:
+                live_total = sum(live.values())
+                if baseline["TOTAL"] != live_total:
+                    warn(rel(_AUDIT_BASELINE_PATH),
+                         f"TOTAL: baseline says {baseline['TOTAL']}, "
+                         f"live audit reports {live_total}",
+                         category="audit-baseline", severity="warning")
+    else:
+        # No baseline file yet — recommend creating one, don't fail.
+        warn(rel(TESTS_DIR / "_tools"),
+             f"{_AUDIT_BASELINE_PATH.name} not found — generate with "
+             "`make audit-baseline`",
+             category="audit-baseline", severity="info")
+
+    # ---------- (c) markdown docs vs emitted categories --------------
+    # Scan the docs that explicitly describe audit categories. We only
+    # flag IDs that clearly mean an audit category: uppercase D followed
+    # by digits, appearing near words like "category" / "findings" or
+    # inside a known table. We do NOT scan every markdown file — many
+    # random docs use D1/D2 for unrelated reasons (diagrams, grades).
+    for md_path in _AUDIT_DOC_FILES:
+        if not md_path.exists():
+            continue
+        content = md_path.read_text()
+        if file_is_ignored(content):
+            continue
+        ignored = ignored_lines(content)
+
+        seen_phantom_in_file: set[str] = set()
+        for i, line in enumerate(content.split("\n"), start=1):
+            if i in ignored:
+                continue
+            # Gate on context words to avoid grading scales, diagram
+            # labels, etc. being mistaken for audit categories.
+            if not re.search(
+                r"audit|categor|finding|anti-pattern|baseline|patch where",
+                line, re.IGNORECASE,
+            ):
+                continue
+            for m in _DOC_CATEGORY_REF_RE.finditer(line):
+                cat = m.group(1)
+                if cat in emitted:
+                    continue
+                # Deduplicate — if D99 appears on 6 lines of a file,
+                # one warning is enough.
+                key = f"{md_path}:{cat}"
+                if key in seen_phantom_in_file:
+                    continue
+                seen_phantom_in_file.add(key)
+                warn(rel(md_path),
+                     f"mentions `{cat}` but audit_tests.py does not "
+                     f"emit that category",
+                     category="audit-baseline", severity="warning",
+                     line=i,
+                     suggested_fix=f"Remove the reference to {cat}, "
+                                   f"or add {cat} to audit_tests.py "
+                                   f"if the check was intended.")
+
+
+# -----------------------------------------------------------------------
 # OUTPUT FORMATTERS
 # -----------------------------------------------------------------------
 
@@ -936,6 +1243,7 @@ CHECKS = [
     ("category-counts",     check_category_counts),
     ("cross-doc",           check_cross_doc_contradictions),
     ("deprecated-patterns", check_deprecated_patterns),
+    ("audit-baseline",      check_audit_baseline),
 ]
 
 

@@ -296,12 +296,12 @@ On initial run, crisis_detector.py scored:
 
 The 3 actionable survivors:
 
-1. Line 488: `skip_llm: bool = False` — `False`→`True` survived.
+1. detect_crisis() signature: `skip_llm: bool = False` — `False`→`True` survived.
    No test called `detect_crisis(text)` with default args and
    asserted the LLM path was exercised.
-2. Line 552: `return _detect_crisis_llm(text)` — `AddNot` survived.
+2. detect_crisis() LLM branch: `return _detect_crisis_llm(text)` — `AddNot` survived.
    Same gap: no test verifies this return value.
-3. Line 562: `return detect_crisis(text) is not None` — `is not`→`is`
+3. is_crisis(): `return detect_crisis(text) is not None` — `is not`→`is`
    survived. `is_crisis()` has no test distinguishing crisis from None.
 
 These are each one-line test fixes. The 50% threshold for this module

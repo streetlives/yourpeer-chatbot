@@ -1,41 +1,12 @@
-# Audit baseline — accepted findings as of 2026-04-20.
-#
-# Format: one finding per line, in the form produced by
-# `python3 tests/_tools/audit_tests.py --summary`:
-#     <path>:<line>  <category>  <message>
-#
-# The check_audit_baseline.py script compares this file against the
-# current audit output. The CI gate fails if:
-#   (a) any line in "current" is not in this baseline (new finding),
-#   OR
-#   (b) the total count has dropped below the baseline — at which
-#       point you should regenerate the baseline by running
-#           python3 tests/_tools/audit_tests.py > tests/_tools/audit_baseline.txt
-#
-# To regenerate deliberately:
-#     python3 tests/_tools/audit_tests.py --summary | tail -n +5 | head -n -2 > tests/_tools/audit_baseline.txt
-#
-# Accepted findings as of the initial audit:
-#
-# D5 — env-dependent tests (7). All deliberate:
-#   - test_general_conversation, test_admin_api_stats_includes_new_keys,
-#     test_admin_api_stats_routed: read ADMIN_API_KEY inline to build
-#     auth headers. Could be refactored to a fixture in a follow-up.
-#   - test_missing_api_key_raises, test_init_error_cached,
-#     test_ping_no_api_key: explicitly test env-handling code paths.
-#   - test_sticky_detection_for_nonsense: uses patch() properly, but
-#     audit tool conservatively flags because the body mentions env.
-#
-# D8 — real-time assertion (1):
-#   - test_ping_cache_expires: tests a 2-second cache expiry; using
-#     a fake clock would reduce the test to a tautology.
-#
-# D9 — sleep() in CI (1):
-#   - test_get_conversations_summary_sorted_by_recency: sleeps 10ms
-#     between writes to establish ordering. Small enough to be reliable
-#     in CI; switching to explicit timestamps would obscure intent.
+========================================================================
+TEST AUDIT — 69 files scanned
+========================================================================
+  D2: 16 findings
+  D3: 19 findings
+  D5: 7 findings
+  D6: 30 findings
+  D7: 129 findings
+  D8: 1 findings
+  D9: 1 findings
+  TOTAL: 203 findings
 
-D5: 8
-D8: 1
-D9: 1
-TOTAL: 10

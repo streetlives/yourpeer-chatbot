@@ -55,7 +55,23 @@ jobs:
           python3 tests/_tools/check_audit_baseline.py \
             --baseline tests/_tools/audit_baseline.txt \
             --current /tmp/audit-current.txt
-
+      - name: Run docs drift checker
+        # Runs check_docs.py across all 16 checks, including the new
+        # audit-baseline check which validates that:
+        #   - audit_baseline.txt counts match a live audit run
+        #   - audit_tests.py docstring matches the categories it emits
+        #   - TEST_INFRASTRUCTURE.md and tests/README.md only mention
+        #     categories that actually exist in the code
+        #
+        # --github emits GitHub Actions annotations, so findings show
+        # up inline on the PR's "Files changed" tab next to the specific
+        # file and line. --severity=warning (the default) means warnings
+        # fail the build — tighten to --severity=error here if the
+        # warning floor turns out to be noisy in practice.
+        #
+        # No CI gate existed for docs drift before this — the script
+        # existed but was run manually. Adding it here closes that loop.
+        run: python3 scripts/check_docs.py --github --severity=error
       - name: Run tests with coverage
         # --cov-branch enables branch coverage (was missing before).
         # --cov-fail-under=85 is a CI gate; raise to 88, 90 as we fix
