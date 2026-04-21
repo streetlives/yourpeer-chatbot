@@ -1,6 +1,11 @@
 .PHONY: help test test-quick coverage coverage-branch audit audit-baseline mutation mutation-module mutation-report clean-mutation
 
 help:
+	@echo "Setup:"
+	@echo "  make setup            # Install test dependencies into active venv"
+	@echo ""
+	@echo "Test & quality targets:"
+	@echo "  make test             # Run full test suite"
 	@echo "Test & quality targets:"
 	@echo "  make test             # Run full test suite"
 	@echo "  make test-quick       # Fast subset (unit tests only)"
@@ -13,6 +18,15 @@ help:
 	@echo "  make mutation-report  # Summarize the latest mutation run"
 	@echo "  make clean-mutation   # Remove cr.sqlite and mutation configs"
 
+setup:
+	@# Install everything the test + quality tooling needs.
+	@# Assumes you're already inside a virtualenv — if not, create one first:
+	@#     python3 -m venv backend/venv && source backend/venv/bin/activate
+	pip install -r backend/requirements.txt
+	pip install pytest pytest-cov pytest-mock pytest-asyncio pytest-randomly cosmic-ray
+	@echo ""
+	@echo "Setup complete. Test toolchain installed in $$(which python3)"
+
 # Env vars the app requires at import time. These are fake values safe for
 # CI/local — the test suite mocks anything that would actually touch a
 # real service. Override in your shell if needed, e.g. for hitting a
@@ -21,13 +35,17 @@ export SESSION_SECRET ?= test-session-secret-local
 export ADMIN_API_KEY ?= test-admin-key-local
 export DATABASE_URL ?= postgresql://test:test@localhost/test_local
 
-test:
+# Internal — verify pytest is installed before running tests.
+_check_pytest:
+	@python3 -c "import pytest" 2>/dev/null || (echo "❌ pytest not installed. Run: make setup" && exit 1)
+
+test: _check_pytest
 	python3 -m pytest tests/ -v
 
 test-quick:
 	python3 -m pytest tests/unit/ -x --tb=short -q
 
-coverage:
+coverage: _check_pytest
 	python3 -m pytest tests/ \
 	    --cov=backend/app \
 	    --cov-report=term-missing:skip-covered \
