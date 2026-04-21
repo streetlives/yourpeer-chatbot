@@ -2159,6 +2159,119 @@ def test_edge_frustration_scenario_does_not_repeat_response(fresh_session):
 
 
 # ---------------------------------------------------------------------------
+# B.2 — Compound-intent override: rejection + new service intent in one turn
+# ---------------------------------------------------------------------------
+# Surfaced by INT-3 in REGRESSION_ANALYSIS.md. Before B.2, B.1's phrase
+# match fired negative_preference on the full message and dropped the
+# concrete service intent. B.2's orchestrator override detects the
+# compound case and routes to the service flow with frustration tone
+# instead, preserving the user's stated pivot.
+
+def test_b2_rejection_plus_new_service_routes_to_service_flow(fresh_session):
+    """The exact INT-3 regression — three-turn replay. After results
+    are displayed, user sends a message that combines a rejection
+    phrase with a new concrete service intent. B.2 must route this to
+    the service flow (not the negative_preference menu)."""
+    results = send_multi(
+        [
+            "I need food in Queens",
+            "Yes, search",
+            "I already tried those, I need shelter instead",
+        ],
+        session_id=fresh_session,
+    )
+    t3 = results[2]
+    # Primary assertion: the compound intent preserved the shelter pivot
+    assert t3["slots"].get("service_type") == "shelter", (
+        f"B.2 should have extracted and promoted 'shelter' as the new "
+        f"service_type. Actual slots: {t3['slots']!r}"
+    )
+    # Response should be a shelter confirmation, NOT the menu
+    resp = t3["response"]
+    assert "shelter" in resp.lower(), (
+        f"Turn 3 response must mention shelter (confirmation), got: {resp!r}"
+    )
+    # Response must NOT be the negative_preference menu's canonical opener.
+    # The menu's distinctive phrase is "those options aren't what you need" —
+    # check for that specifically rather than a general "understand" which
+    # the frustration-tone service confirmation also uses.
+    assert "those options aren't what you need" not in resp.lower(), (
+        f"Turn 3 should have routed to service flow, not the "
+        f"negative_preference menu. Response: {resp!r}"
+    )
+
+
+def test_b2_frustration_tone_applied_on_compound_rejection(fresh_session):
+    """B.2 promotes `tone='frustrated'` when overriding to the service
+    flow. The resulting confirmation should carry a frustration-aware
+    preamble ("I understand this has been frustrating" or similar)
+    rather than a neutral tone."""
+    results = send_multi(
+        [
+            "I need food in Queens",
+            "Yes, search",
+            "I already tried those, I need shelter instead",
+        ],
+        session_id=fresh_session,
+    )
+    resp = results[2]["response"].lower()
+    # Frustration tone prefix should be present
+    assert "frustrat" in resp or "try something different" in resp, (
+        f"Turn 3 should carry frustration-tone acknowledgment "
+        f"(override promotes tone='frustrated'), got: {resp!r}"
+    )
+
+
+def test_b2_rejection_alone_still_routes_to_menu(fresh_session):
+    """Regression guard: when a rejection stands alone with NO new
+    service intent, B.2 must NOT fire — the negative_preference
+    handler should still emit the menu. Otherwise B.2 would
+    accidentally swallow the B.1 fix it was built to complement."""
+    results = send_multi(
+        [
+            "I need food in Queens",
+            "Yes, search",
+            "I already tried those",
+        ],
+        session_id=fresh_session,
+    )
+    t3 = results[2]
+    # No new service extracted → override doesn't fire → handler runs
+    assert t3["slots"].get("_last_action") == "negative_preference", (
+        f"Rejection alone should route through the negative_preference "
+        f"handler; got _last_action={t3['slots'].get('_last_action')!r}"
+    )
+    assert t3["slots"].get("_frustration_count", 0) >= 1, (
+        f"Handler should increment _frustration_count"
+    )
+    # Menu's distinctive phrase
+    assert "those options aren't what you need" in t3["response"].lower(), (
+        f"Expected negative_preference menu, got: {t3['response']!r}"
+    )
+
+
+def test_b2_preserves_location_from_existing_when_not_provided(fresh_session):
+    """When the compound rejection specifies a new service but NO
+    new location, B.2's fall-through to the service flow should use
+    the existing location from session state. The whole point is a
+    pivot, not a reset."""
+    results = send_multi(
+        [
+            "I need food in Queens",
+            "Yes, search",
+            "I already tried those, I need shelter instead",
+        ],
+        session_id=fresh_session,
+    )
+    t3 = results[2]
+    # Location should persist from turn 1
+    assert t3["slots"].get("location") == "queens", (
+        f"Location should carry forward from existing session state; "
+        f"got location={t3['slots'].get('location')!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
 # RUN 22 — Privacy routing exception
 # ---------------------------------------------------------------------------
 

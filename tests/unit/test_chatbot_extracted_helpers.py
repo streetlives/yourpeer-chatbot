@@ -27,6 +27,12 @@ from app.services.chatbot import (
     _run_llm_gate,
 )
 
+from app.services.chatbot.handlers import _immigration_acknowledgment
+from app.services.chatbot.handlers.accessibility import (
+    _detect_immigration_context,
+    _immigration_context_detail,
+)
+
 
 @pytest.fixture
 def llm_enabled(monkeypatch):
@@ -351,13 +357,6 @@ class TestHandleSpanishDetection:
 # mentions surfaced by the extractor via service_detail, and only when
 # the primary service isn't already legal (no double-up when the user
 # is getting immigration help directly).
-
-from app.services.chatbot.handlers import _immigration_acknowledgment
-from app.services.chatbot.handlers.accessibility import (
-    _detect_immigration_context,
-    _immigration_context_detail,
-)
-
 
 class TestDetectImmigrationContext:
     """Detection predicate — true when asylum or immigration services

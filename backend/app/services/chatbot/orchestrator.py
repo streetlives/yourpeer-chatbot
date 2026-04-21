@@ -230,7 +230,28 @@ def generate_reply(
 
     # --- Negative preference ---
     if category == "negative_preference":
-        return _handle_negative_preference(session_id, redacted_message, existing, tone, request_id)
+        # B.2 compound-intent override: when the rejection message also
+        # carries a concrete NEW service intent (different from the
+        # existing primary), the user is telling us which direction to
+        # pivot, not asking for an open menu. Example:
+        #     "I already tried those, I need shelter instead"
+        # Pre-B.2, B.1's phrase match would drop the 'shelter' intent
+        # and show a menu. Here we downgrade the action to the service
+        # flow and promote frustration tone so the resulting
+        # confirmation acknowledges that the prior search didn't help.
+        # When the rejection stands alone (no new service intent, or
+        # user is refining the same service_type), the negative_preference
+        # handler still fires as before.
+        _new_service = early_extracted.get("service_type")
+        if _new_service and _new_service != existing.get("service_type"):
+            category = "service"
+            if tone is None:
+                tone = "frustrated"
+            # Fall through to normal service routing below.
+        else:
+            return _handle_negative_preference(
+                session_id, redacted_message, existing, tone, request_id,
+            )
 
     # --- Greeting ---
     if category == "greeting":
