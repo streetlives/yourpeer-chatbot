@@ -38,3 +38,38 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "tests/**/*.py" = ["F401", "F811"]  # unused imports, redefinition
 "scripts/**/*.py" = ["E402"]         # module-level imports not at top (some scripts set up sys.path first)
+
+
+[tool.pytest.ini_options]
+# pythonpath makes `from app.services...` resolve when pytest is run from
+# the repo root. Without this, individual tests that don't go through
+# conftest.py (e.g. `pytest tests/unit/test_X.py::test_Y`) can fail to
+# import. conftest.py sets sys.path as a belt-and-suspenders fallback,
+# but this setting is the canonical fix.
+pythonpath = ["backend"]
+
+# xfail_strict = true means an @pytest.mark.xfail test that actually
+# PASSES fails the build (shows as XPASSED → FAILED). This is the
+# signal we want: "hey, the feature this test was waiting on has
+# landed — flip the xfail to a real passing test." Without strict,
+# xpassed is silent and we lose the notification that a feature
+# gap closed. There are 6 xfails currently (see tests/README.md and
+# TEST_QUALITY_PLAN.md §2.1); when any of them starts passing, this
+# setting tells us immediately.
+xfail_strict = true
+
+# Registered custom markers. Using an unregistered marker (e.g.
+# @pytest.mark.slow) currently prints a deprecation warning; making
+# it fail is a future step. Register here so typos become loud.
+# Usage:
+#   @pytest.mark.slow              — tests > 1s individually
+#   @pytest.mark.requires_llm      — needs a real ANTHROPIC_API_KEY
+#   @pytest.mark.requires_db       — needs a live DATABASE_URL
+#   @pytest.mark.live              — integration with a real external service
+# (Unit/integration split is by directory, not by marker.)
+markers = [
+    "slow: tests that take more than ~1 second",
+    "requires_llm: tests that need a working ANTHROPIC_API_KEY",
+    "requires_db: tests that need a live DATABASE_URL connection",
+    "live: tests that hit real external services (not mocked)",
+]

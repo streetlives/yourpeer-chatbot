@@ -965,9 +965,12 @@ def test_pregnant_is_population_not_family_status():
         "Pregnancy should set pregnant population tag"
 
 
-@pytest.mark.xfail(reason="Not yet implemented: prepositional family phrases ('for me and my kids', 'have a baby')")
 def test_family_status_with_children_prepositional():
-    """Prepositional family phrases not yet matched by regex."""
+    """Prepositional and possessive 'for me and my kids' / 'have a baby' forms.
+
+    Added to `child_phrases` in `_extract_family_status` — was previously
+    xfailed as a regex gap.
+    """
     phrases = [
         "I need shelter for me and my kids",
         "I have a baby",

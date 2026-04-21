@@ -1188,12 +1188,23 @@ def _extract_family_status(text: str) -> Optional[str]:
     child_phrases = [
         "with my kid", "with my kids", "with my child", "with my children",
         "have kids", "have children", "have a kid", "have a child",
+        "have a baby",  # symmetric with "have a kid" / "have a child"
         "my son", "my daughter", "my baby", "my toddler", "my infant",
         "two kids", "three kids", "four kids",
         "2 kids", "3 kids", "4 kids",
         "with a baby", "with a toddler", "with an infant",
         "my kids are", "my children are",
         "year old daughter", "year old son", "year old child",
+        # Prepositional / compound forms. "me and my" on its own is too
+        # broad ("me and my friend" is not family), but "me and my kid/
+        # child/children" is unambiguously a child reference — and
+        # "for my kid/child/children" is the natural "I need X for them"
+        # phrasing. Both are substrings of the real-world utterance
+        # "I need shelter for me and my kids tonight."
+        "me and my kid", "me and my kids",
+        "me and my child", "me and my children",
+        "for my kid", "for my kids",
+        "for my child", "for my children",
         # "pregnant" removed — pregnancy ≠ with_children. Use pregnant population instead.
         # "single parent/mother/father" = has children, not alone
         "single mother", "single mom", "single father", "single dad",

@@ -367,6 +367,19 @@ def _run_population_fallback(
     # Dedupe against main results — same service shouldn't appear twice.
     deduped = [c for c in cards if c.get("service_id") not in existing_service_ids]
     if not deduped:
+        # Visibility for admin dashboards: the fallback RAN but every
+        # card it found was already in the main results. From the
+        # user's perspective, no "also found X further away" note
+        # appears. Without this log, the state "fallback attempted,
+        # fully deduped to nothing" is indistinguishable in the ops
+        # feed from "fallback was never attempted." See
+        # docs/design/POPULATION_FALLBACK_SPEC.md §Observability.
+        logger.warning(
+            "Population fallback dedup-to-empty: labels=%s "
+            "fallback_cards_fetched=%d main_result_ids=%d. "
+            "User sees no fallback note even though the query ran.",
+            labels, len(cards), len(existing_service_ids),
+        )
         return [], ""
 
     # Mark each card so the frontend can visually distinguish fallback
