@@ -110,6 +110,14 @@ def _classify_action(text: str) -> str | None:
         "wrong thing", "i didn't ask for that", "i didnt ask for that",
         "i didn't mean", "i didnt mean", "that's wrong", "thats wrong",
         "try again", "no that's not right", "no thats not right",
+        # C.2 escape-button variants (April 2026). When the topic-shift
+        # disambiguation fires, it offers a "💬 I was asking something
+        # else" quick reply. Clicking it routes the phrase here so the
+        # correction handler clears pending and prompts for what the
+        # user actually wanted. Typed variations are also caught.
+        "i was asking something else", "i was asking about something else",
+        "that wasn't my question", "that wasnt my question",
+        "different question", "asking about something else",
     ]
     for phrase in _CORRECTION_PHRASES:
         if phrase in cleaned:

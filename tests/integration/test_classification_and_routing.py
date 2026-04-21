@@ -2455,3 +2455,40 @@ def test_c2_regression_guard_plain_confirmation_still_renudges(fresh_session):
     # Should be the normal re-nudge, NOT disambiguation
     assert "asking something" not in response_lower
     assert "just to make sure" in response_lower or "let me just confirm" in response_lower
+
+
+def test_c2_escape_button_actually_escapes_pending_confirmation(fresh_session):
+    """Regression guard for INT-7 (found in post-implementation
+    regression analysis). The C.2 disambiguation prompt offers a
+    '💬 I was asking something else' quick reply. Initially, clicking
+    it sent 'I was asking something else' which matched no classifier
+    phrase, had no slots, and did NOT match the C.2 topic-shift
+    heuristic (no wh-word opener) — so it fell through to the exact
+    surreal-non-sequitur re-nudge C.2 was supposed to prevent.
+
+    Fix: 'I was asking something else' added to _CORRECTION_PHRASES.
+    Correction handler clears pending and offers options — the
+    intended escape-hatch behavior.
+    """
+    r1, r2, r3 = send_multi(
+        ["I need food in Brooklyn",
+         "can you speak spanish?",
+         "I was asking something else"],
+        session_id=fresh_session,
+    )
+    # Turn 1: confirmation pending
+    assert r1["slots"].get("_pending_confirmation") is True
+    # Turn 2: C.2 fires (sanity — the scenario we're guarding against
+    # depends on C.2 being active).
+    assert "asking something" in r2["response"].lower()
+    # Turn 3: clicking the escape must ACTUALLY escape:
+    # - pending confirmation cleared
+    assert r3["slots"].get("_pending_confirmation") is not True, (
+        "INT-7: escape button didn't clear pending. Got response: "
+        f"{r3['response'][:200]}"
+    )
+    # - response acknowledges the miss, not re-nudges
+    r3_lower = r3["response"].lower()
+    assert "just to make sure" not in r3_lower, (
+        f"INT-7: escape button fell through to re-nudge. Got: {r3['response'][:200]}"
+    )
