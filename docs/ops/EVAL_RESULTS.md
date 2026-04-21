@@ -5327,4 +5327,46 @@ For future-reader clarity:
 
 ---
 
+# Run 34 — Multi-Intent & Frustration Coverage Gaps (PENDING)
+
+**Branch:** main (PR 6 merged 2026-04-21)  |  **Runner:** eval_llm_judge.py v6 (167 scenarios, Opus judge)
+**Status:** NOT YET RUN. Eval scheduled post-merge. This section is a forward-looking record of the changes being tested, populated with actual scores when the run completes.
+
+## Code changes being measured
+
+Seven atomic fixes landed under the PR 6 umbrella:
+
+- **A.4** — `slot_extractor.py` `merge_slots` clears queue state on `service_type` change. Target bug: `"food in Manhattan"` → `"actually, shelter"` produced `"shelter AND food"` in the confirmation.
+- **B.1** — `classifier.py` `_NEGATIVE_PREFERENCE_PHRASES` expanded from 19 to 35. Target scenario: `edge_frustration` (previously matched nothing on `"This isn't helpful at all. I already tried those places."`).
+- **B.2** — `orchestrator.py` compound-intent override at `negative_preference` dispatch site. Target: regression-in-B.1 where `"I already tried those, I need shelter instead"` would drop the shelter intent.
+- **A.1.b** — `accessibility.py` immigration acknowledgment prefix, wired into the `_prefix_prepend` chain. Target scenarios: `multi_asylum_seeker_food_legal` and the three-service asylum scenario (`multi_three_services_legal_benefits_food` after A.1.a re-expectation).
+- **A.2** — `eval_llm_judge.py` key rename `should_queue_additional` → `should_handle_additional_service` (accepts either queueing OR co-located single-search). Target: reduce false failures in scenarios where runtime's choice between strategies is equally correct.
+- **A.3** — `multi_cross_borough_food_brooklyn_shelter_manhattan` expected flipped from `(food, brooklyn)` to `(shelter, manhattan)` to match priority-ordered extractor behavior. Target: correct a stale expectation, not a code change.
+- **A.1.a** — `multi_three_services_legal_benefits_food` expected flipped to `food` primary, aligning with sister scenario `multi_asylum_seeker_food_legal`. Target: correct a stale expectation, not a code change.
+
+## Scenarios most likely to move
+
+Scenarios the team expects to change, with predicted direction only (not magnitude):
+
+| Scenario | Current R32 | Expected direction | Why |
+|---|---|---|---|
+| `edge_frustration` | check R32 table | ↑ | B.1 adds the exact missing phrases that caused the apology-loop |
+| `multi_asylum_seeker_food_legal` | check R32 table | ↑ | A.1.b prefix adds cultural-responsiveness acknowledgment |
+| `multi_three_services_legal_benefits_food` | check R32 table | ↑ | A.1.a eval fix + A.1.b prefix |
+| `multi_cross_borough_food_brooklyn_shelter_manhattan` | 3.88 (multiple runs) | ↑ | A.3 eval fix (expectation now matches runtime) |
+| `wa_negative_preference` | 3.91 | possibly ↑ | B.1 phrase expansion may catch rejection phrases that previously missed |
+
+## Scenarios most at risk of regression
+
+No production code path was touched outside of (a) the `merge_slots` clearing branch, (b) the classifier phrase list, (c) the orchestrator `negative_preference` dispatch site, and (d) the new immigration-acknowledgment prefix helper. Pre-merge unit and integration suite: 3,829 passed, 0 failed. Primary monitoring target post-run:
+
+- Any scenario involving multi-intent that previously passed due to runtime returning the queue-based behavior may shift behavior now that the eval judge accepts either (A.2 rename) — scores should hold or improve; watch for any drop.
+- The triple-prefix stacking case (PII + Spanish + immigration) was identified in the regression analysis as ~400 chars of meta-statement before the confirmation. No single existing eval scenario exercises all three simultaneously, so regression risk is minimal; this is a post-merge monitoring item rather than a predicted delta.
+
+## Post-run
+
+When Run 33 completes, replace this stub with actual scores, deltas vs. R32, and updates to the "Progress Across Runs (Opus Era)" table. Surface any scenario that regressed ≥0.2.
+
+---
+
 *YourPeer AI Chat — Streetlives — April 2026*

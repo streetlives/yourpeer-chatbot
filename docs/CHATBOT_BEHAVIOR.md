@@ -157,9 +157,19 @@ This follows the industry-standard "clarification-before-classification" pattern
 
 ### Negative Preference
 
-Detects when the user rejects all offered options — "none of those", "I don't want any of those", "those don't help", "not what I need". Instead of falling through to the general handler or frustration handler (which wouldn't acknowledge the specific rejection), the bot explicitly acknowledges that the options aren't right, offers alternative service categories via `_WELCOME_QUICK_REPLIES`, and includes a peer navigator option. Sets `_last_action = "negative_preference"`.
+Detects when the user rejects all offered options and responds with acknowledgment plus alternatives. The phrase list in `_NEGATIVE_PREFERENCE_PHRASES` (`classifier.py`) covers three semantic clusters:
 
-This is distinct from frustration (which is about the bot failing) and correction (which is about the bot misunderstanding). Negative preference is: "you understood me, but the results aren't what I need."
+- **Direct rejection** — "none of those", "I don't want any of those", "those don't help", "not what I need", "something different"
+- **Experience-based rejection** — "been to all of those", "tried all of them", "had a bad experience", "was really unsafe", "turned me away", "already tried those [places/them/all]", "been there already", "i've already tried"
+- **Current-results dismissal** — "this isn't helpful", "this is not helping", "not helping me", "isn't helping" (distinct from "that is not helpful," which refers to a prior turn)
+
+The latter two clusters were expanded in B.1 (April 2026) to close a gap in the `edge_frustration` scenario, where `"This isn't helpful at all. I already tried those places."` previously matched nothing and produced an apology-wrapped repeat. The "this isn't helpful" variants were intentionally lifted from tone-level frustration to action-level negative preference because the refine-search UX (service menu + peer navigator) is a strictly better response than the frustration UI's generic "🔍 New search" button when a user is explicitly reporting the current results didn't help.
+
+**Compound-intent override (B.2).** When the rejection message ALSO carries a concrete new service intent (e.g., `"I already tried those, I need shelter instead"`), the orchestrator downgrades the action to the service flow and promotes `tone="frustrated"` so the resulting confirmation acknowledges the pivot without showing the menu. Implemented at the `negative_preference` dispatch site in `orchestrator.py`: the override fires when `early_extracted.service_type` differs from the existing session's primary. Bare rejections (no new service intent) still route to the menu. This preserves the principle that explicit user statements are honored directly rather than converted to menu clicks.
+
+The handler otherwise responds via `_WELCOME_QUICK_REPLIES` (service categories + peer navigator) and sets `_last_action = "negative_preference"`. Shares the `_frustration_count` counter with the frustration handler so escalation tiers still advance.
+
+This category is distinct from frustration (which is about the bot failing) and correction (which is about the bot misunderstanding). Negative preference is: "you understood me, but the results aren't what I need."
 
 ### Bot Identity
 
@@ -187,6 +197,8 @@ Four confirmation categories handle the user's response to a pending search conf
 - **confirm_deny** — Clears the confirmation, keeps slots, offers options (change service, change location, new search, peer navigator).
 - **confirm_change_service** — Clears the service type slot and asks what they need.
 - **confirm_change_location** — Clears the location slot and offers borough buttons.
+
+**Queue-state clearing on service change (A.4).** When a user explicitly changes `service_type` mid-flow (either via `confirm_change_service` or by typing a new service intent that contradicts the existing primary), `merge_slots` in `slot_extractor.py` clears `_queued_services`, `_queued_services_original`, and `_queue_offer_pending` so that any previously-queued secondary services from a prior multi-intent message don't leak into the new single-service confirmation. This closes a bug where `"food in Manhattan"` → `"actually, shelter"` produced `"shelter AND food"` in the response because the queue state from the food turn persisted across the merge. The `_is_additive` branch (e.g., `"I also need shelter"`) is explicitly excluded — additive intent correctly preserves the queue.
 
 Context-aware "yes" and "no": after an escalation or emotional response, "yes" and "no" refer to the peer navigator offer, not to a pending search. "Yes" after escalation or emotional shows the peer navigator contact info. "No" after escalation gives a gentle "I'm here if you change your mind." "No" after emotional gives "That's okay. I'm here whenever you're ready." This prevents a user who just shared something vulnerable from accidentally triggering a search confirmation.
 
@@ -309,6 +321,24 @@ Three LLM-powered features are used in production, each with a specific model as
 | Crisis detection (Stage 2) | Sonnet | Ambiguous messages where regex didn't fire | JSON: {crisis: bool, category: string} |
 
 See the Model Analysis tab in the admin console for cost/capability analysis and the rationale for each model assignment.
+
+---
+
+## Response Prefix Chain
+
+Before the tone prefix is applied to a confirmation or follow-up message, the orchestrator composes up to three acknowledgment prefixes in sequence. Each prefix fires independently and its output is concatenated into `_prefix_prepend` (in `orchestrator.py`), which is then prepended to `_tone_prefix`. This layering lets the bot validate multiple concurrent signals — a phone number disclosure, a Spanish greeting, an asylum mention — without silencing any of them.
+
+| Prefix | Trigger | Content |
+|---|---|---|
+| **PII safety warning** | Message contained PII that was redacted (phone, SSN, email, address) | "Just a heads up — I've removed your [type] from the conversation to protect your privacy…" |
+| **Spanish bilingual acknowledgment** | Message contains Spanish keywords (comida, tengo hambre, alimentos, refugio, albergue, etc.) AND has a service intent | "I can see you may prefer Spanish — lo siento, por ahora solo puedo ayudar en inglés. I'll do my best to help." |
+| **Immigration context acknowledgment (A.1.b)** | Slot state contains `service_detail` in `{"asylum services", "immigration services"}` either as primary or in the queued services, AND primary `service_type != "legal"` | "You also mentioned your [asylum\|immigration] case — I can help find immigration legal services after this." |
+
+The immigration prefix closes a cultural-responsiveness gap for asylum seekers: when the priority-ordered extractor picks food or shelter as primary and queues legal/asylum as a secondary, the queue-offer-after-results flow eventually surfaces the immigration service — but only after the primary search completes. Without A.1.b, the user's immigration disclosure goes unacknowledged at the confirmation turn. The prefix closes that gap.
+
+Suppression rules: the immigration prefix explicitly does NOT fire when primary `service_type == "legal"` — the user is getting immigration help directly, so a separate acknowledgment would be redundant. The detector reads both `additional_services` (extractor output key) and `_queued_services` (post-merge orchestrator key) via a dual-key check, so it works regardless of where in the pipeline a caller invokes it.
+
+**Implementation note.** The immigration prefix phrasing intentionally mirrors `_apply_queue_offer`'s "You also mentioned X" opener so the tonal register stays consistent across the confirmation-stage acknowledgment and the post-results queue offer. If you change one, change both.
 
 ---
 
@@ -462,7 +492,7 @@ Based on this research, the following principles govern emotional handling in th
 
 ### Conversational
 
-- **English only.** Multi-language support (Spanish minimum) is planned but not implemented.
+- **Partial Spanish support.** Spanish detection + bilingual acknowledgment are shipped: Spanish-only messages get a full bilingual response with peer navigator option; Spanish + service intent messages process normally with a bilingual acknowledgment prefix. Full Spanish parity (all dialog flows, service cards, confirmations in Spanish) is not implemented — see `docs/design/SPANISH_LANGUAGE_DESIGN.md` for the proposal. Languages other than English and Spanish are not detected.
 - **No memory across sessions.** Each session is independent. The bot cannot reference previous visits.
 - **Emotional detection phrase coverage.** Common emotional phrases ("feeling down", "I'm scared", "rough day") are caught by regex. Indirect or culturally specific expressions fall through to the LLM classifier. Without an API key (regex-only mode), only the explicit phrase list is active. The emotional phrase guard in `crisis_detector.py` prevents known sub-crisis emotional phrases from being over-escalated to crisis by the LLM. Keywords that could collide between emotional expressions and service requests (e.g., "stress" matching "stressed out") use word-boundary matching to prevent false positives.
 - **Shame tone not yet a distinct handler.** Shame/stigma phrases ("embarrassed to ask", "never thought I'd need help") are now detected and routed to the emotional handler with AVR acknowledgment. A dedicated shame handler with normalizing responses (e.g., "Lots of people use these services — there's nothing to be ashamed of") is planned for a future iteration.

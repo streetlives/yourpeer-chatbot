@@ -1,6 +1,6 @@
 # Phrase List Audit Report
 
-**Date:** 2026-04-08
+**Date:** 2026-04-08 (inventory updated 2026-04-21 for B.1 additions)
 **Scope:** All regex phrase lists in `phrase_lists.py`, `classifier.py`, `crisis_detector.py`, and `slot_extractor.py`
 **Methodology:** Cross-referenced against C-SSRS (Columbia Suicide Severity Rating Scale), ISEAR emotion model, DAPHNE social needs chatbot research, Woebot/Wysa clinical patterns, NYC homeless population service terminology, and NLP suicide detection literature.
 
@@ -19,14 +19,39 @@
 | Emotional | phrase_lists.py | 135 | Sub-crisis distress routing → AVR handler. Includes "i'm X", "im X", "i am X", "i feel X", and "i am feeling X" forms for 13 emotional states, plus intensifier variants |
 | Frustration | phrase_lists.py | 40 | System frustration → 3-tier escalation handler |
 | Confused | phrase_lists.py | 25 | Overwhelm → gentle guidance handler |
-| Negative preference | classifier.py | 19 | Rejection of offered options → alternative service categories |
+| Negative preference | classifier.py | 35 | Rejection of offered options → alternative service categories. **Expanded from 19 to 35 in B.1 (2026-04-21)** — added 16 phrases covering "already tried" and "this isn't helpful" variants. See B.1 entry under Audit Trail below |
 | Escalation | phrase_lists.py | 13 | Human handoff requests |
 | Help | phrase_lists.py | 15 | Capability questions |
 | Bot question | phrase_lists.py | 65 | Privacy/capability meta-questions (includes 12 provider data-sharing phrases) |
 | Bot identity | phrase_lists.py | 15 | "Am I talking to a robot?" |
 | Service keywords | slot_extractor.py | 220 | Service type extraction (9 categories) |
 | Word-boundary keywords | slot_extractor.py | 6 | Collision-prone service keywords |
-| **Total** | | **~759** | |
+| **Total** | | **~775** | |
+
+---
+
+## Audit Trail
+
+### B.1 — Negative preference expansion (2026-04-21)
+
+The `edge_frustration` eval scenario input `"This isn't helpful at all. I already tried those places."` matched no existing phrase, routed as a normal service request, and produced an apology-wrapped functional repeat of the prior confirmation. Root cause: the phrase list was missing two common semantic clusters for rejection-with-context.
+
+**16 phrases added to `_NEGATIVE_PREFERENCE_PHRASES` in `classifier.py`:**
+
+Cluster 1 — "already tried" variants (8):
+- "already tried those", "already tried them", "already tried all"
+- "already tried those places", "already tried that"
+- "i've already tried", "ive already tried"
+- "been there already"
+
+Cluster 2 — "this isn't helpful" / "not helping" variants (8):
+- "this isn't helpful", "this isnt helpful"
+- "this is not helpful", "this is not helping"
+- "not helping me", "isn't helping", "isnt helping"
+
+**Intentional reclassification:** `"this isn't helpful"` variants previously routed to `frustrated` tone via `_FRUSTRATION_PHRASES`; they now route to `negative_preference` action. The negative-preference handler opens the refine-search UX (service menu + peer navigator), strictly better for this specific signal than the frustration UI. One pre-existing test (`test_frustrated_first_buttons`) had its input phrase updated accordingly.
+
+**Compound-intent override (B.2).** At the orchestrator dispatch site, when `early_extracted.service_type` differs from existing, the `negative_preference` action is downgraded to the service flow with `tone="frustrated"` so compound messages like `"I already tried those, I need shelter instead"` honor the user's stated pivot rather than showing a menu. See `CHATBOT_BEHAVIOR.md` Negative Preference section for full behavior.
 
 ---
 
