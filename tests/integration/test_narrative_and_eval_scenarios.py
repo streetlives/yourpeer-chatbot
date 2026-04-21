@@ -13,12 +13,28 @@ from app.services.session_store import get_session_slots
 from app.privacy.pii_redactor import redact_pii
 from app.services.chatbot import _USE_LLM
 
-requires_llm = pytest.mark.requires_llm(
-    pytest.mark.skipif(
+def requires_llm(func):
+    """Skip when ANTHROPIC_API_KEY is not set AND register under the
+    'requires_llm' marker so ``pytest -m requires_llm`` selects these tests.
+
+    Both behaviors are needed:
+    - Skip: CI runs without an API key. Without the skip, these tests hit
+      the regex-fallback path and fail on narratives like "I just got
+      out of the hospital..." where the LLM is actually correct.
+    - Marker: enables ``pytest -m requires_llm`` to target just these
+      tests when debugging LLM-specific behavior with a real key present.
+
+    A function decorator is the only working composition for this. Don't
+    replace with ``pytest.mark.requires_llm(pytest.mark.skipif(...))`` —
+    that's marker-of-marker, which pytest stores as an argument on the
+    outer marker and never actually fires the skip.
+    """
+    func = pytest.mark.skipif(
         not _USE_LLM,
         reason="Requires ANTHROPIC_API_KEY for LLM narrative extraction",
-    )
-)
+    )(func)
+    func = pytest.mark.requires_llm(func)
+    return func
 
 
 @pytest.fixture
