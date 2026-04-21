@@ -134,6 +134,23 @@ def _classify_action(text: str) -> str | None:
         "don't like any of those", "dont like any of those",
         "turned me away", "was really unsafe", "had a bad experience",
         "already been there", "i've been there", "ive been there",
+        # B.1: "already tried" variants with "already" as temporal anchor.
+        # Different from "tried all of those" above — these cover natural
+        # phrasings where users frame rejection as prior experience.
+        # "already tried those" is a prefix of "already tried those places"
+        # via the `in cleaned` match, so the longer form is redundant but
+        # kept for readability.
+        "already tried those", "already tried them", "already tried all",
+        "already tried those places", "already tried that",
+        "i've already tried", "ive already tried",
+        "been there already",
+        # B.1: "This isn't helpful" — pointer "this" refers to the
+        # CURRENT results/conversation, as distinct from "that is not
+        # helpful" (above) which could refer to an earlier point. Both
+        # exist because tense/specificity matter for detection.
+        "this isn't helpful", "this isnt helpful",
+        "this is not helpful", "this is not helping",
+        "not helping me", "isn't helping", "isnt helping",
     ]
     for phrase in _NEGATIVE_PREFERENCE_PHRASES:
         if phrase in cleaned:

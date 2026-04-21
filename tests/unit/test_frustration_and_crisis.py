@@ -18,6 +18,94 @@ from test_helpers import _fresh, _send
 
 
 # =======================================================================
+# B.1: Expanded negative-preference phrases — "already tried" and
+# "this isn't helping" variants
+# =======================================================================
+
+class TestExpandedNegativePreferencePhrases:
+    """B.1 fix: the `edge_frustration` eval scenario sent
+    'This isn't helpful at all. I already tried those places.' which
+    matched neither the pre-fix _NEGATIVE_PREFERENCE_PHRASES list nor
+    any frustration pattern. It routed as a normal service request,
+    hit the confirmation handler, and produced an identical response
+    to the previous turn — critical error_recovery=1 failure.
+
+    These tests lock in coverage for the two phrase clusters added to
+    close the gap: 'already tried *' variants and 'this isn't help*'
+    variants.
+    """
+
+    @pytest.mark.parametrize("msg", [
+        # Exact edge_frustration scenario phrase (primary regression target)
+        "This isn't helpful at all. I already tried those places.",
+        # "already tried" variants
+        "I already tried those places",
+        "I already tried those",
+        "already tried them",
+        "I already tried that",
+        "I've already tried those",
+        "ive already tried the shelters",
+        "I've already tried",
+        # "this isn't helpful" variants
+        "This isn't helpful",
+        "This isnt helpful",
+        "this is not helpful",
+        "This is not helping",
+        "You're not helping me",
+        "that isn't helping",
+        "isnt helping",
+        # "been there already"
+        "been there already",
+    ])
+    def test_expanded_phrases_classify_as_negative_preference(self, msg):
+        """All phrases added by the B.1 fix should route to negative_preference."""
+        assert _classify_action(msg) == "negative_preference", (
+            f"'{msg}' should classify as negative_preference but got "
+            f"{_classify_action(msg)}"
+        )
+
+    @pytest.mark.parametrize("msg", [
+        # "already tried" with a concrete object shouldn't fire — the user
+        # is reporting, not rejecting.
+        "I already tried calling 311",
+        "I already tried texting them",
+        # General "tried" without the rejection context should pass through
+        "I tried a new restaurant last week",
+    ])
+    def test_specific_positive_actions_still_pass_through(self, msg):
+        """Negative guard: the new phrases shouldn't swallow messages that
+        use 'already tried' in a reporting/narrative sense rather than a
+        rejection sense. These should NOT classify as negative_preference."""
+        assert _classify_action(msg) != "negative_preference", (
+            f"'{msg}' is narrative/reporting, not rejection — should not "
+            f"classify as negative_preference, got {_classify_action(msg)}"
+        )
+
+    def test_existing_negative_preference_phrases_still_fire(self):
+        """Regression guard: the expansion must not break the pre-existing
+        list. Pick one representative from each historical cluster."""
+        for msg in [
+            "not what i want",              # basic
+            "none of those",                # set rejection
+            "that is not helpful",          # "that" pointer (distinct from "this")
+            "tried all of those",           # experience — pre-existing "tried all"
+            "already been there",           # pre-existing "already been"
+            "had a bad experience",         # experience qualitative
+        ]:
+            assert _classify_action(msg) == "negative_preference", (
+                f"Pre-existing phrase '{msg}' regressed"
+            )
+
+    def test_edge_frustration_scenario_exact_phrase(self):
+        """Guard for the exact text used by the `edge_frustration` eval
+        scenario — keep this test green and the scenario's critical
+        error_recovery failure stays fixed."""
+        assert _classify_action(
+            "This isn't helpful at all. I already tried those places."
+        ) == "negative_preference"
+
+
+# =======================================================================
 # FIX 4: Frustration re-statement phrases
 # =======================================================================
 

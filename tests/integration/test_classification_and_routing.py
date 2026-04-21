@@ -1871,8 +1871,18 @@ def test_emotional_buttons_no_welcome_menu(fresh_session):
 
 
 def test_frustrated_first_buttons(fresh_session):
-    """Frustrated (first time) should show New search + Peer navigator."""
-    result = send("this is not helpful at all", session_id=fresh_session)
+    """Frustrated (first time) should show New search + Peer navigator.
+
+    Input phrase changed from 'this is not helpful at all' to
+    'this is useless' as part of the B.1 fix: 'this isn't helpful'
+    variants were intentionally reclassified to negative_preference
+    (which opens a refine-search UX pathway with service-menu
+    buttons), so they no longer route to the frustration UI. This
+    test specifically exercises the frustration UI, so the phrase
+    was updated to one that still routes to frustration tone with
+    no action classifier match.
+    """
+    result = send("this is useless", session_id=fresh_session)
     labels = [qr["label"] for qr in result.get("quick_replies", [])]
     assert "🔍 New search" in labels
     assert "🤝 Peer navigator" in labels
@@ -2089,6 +2099,63 @@ def test_negative_preference_handler(fresh_session):
     # Should show service menu + navigator
     assert any("Peer navigator" in lable for lable in labels)
     assert any("Food" in lable or "Shelter" in lable for lable in labels)
+
+
+def test_edge_frustration_scenario_does_not_repeat_response(fresh_session):
+    """B.1 regression guard — replays the exact `edge_frustration` eval
+    scenario turns.
+
+    Before the fix, turn 2's message "This isn't helpful at all.
+    I already tried those places." matched neither the negative-preference
+    phrase list nor any frustration pattern. The classifier routed it as
+    a normal service request, the pending-confirmation handler fired, and
+    the bot emitted an IDENTICAL response to turn 1 — the eval judge
+    flagged this as a critical error_recovery=1 failure.
+
+    After the fix, turn 2's message routes to negative_preference, the
+    handler acknowledges the rejection, offers alternatives, and
+    increments `_frustration_count` — the textbook recovery path for
+    this class of user signal.
+    """
+    turn1, turn2 = send_multi(
+        [
+            "I need shelter in Queens",
+            "This isn't helpful at all. I already tried those places.",
+        ],
+        session_id=fresh_session,
+    )
+
+    turn1_response = turn1["response"]
+    turn2_response = turn2["response"]
+
+    # Core regression guard: turn 2 must not be an identical repeat.
+    # Normalize whitespace to catch even spacing-only duplicates.
+    import re
+    normalize = lambda s: re.sub(r"\s+", " ", s.strip().lower())
+    assert normalize(turn1_response) != normalize(turn2_response), (
+        f"Turn 2 response was an identical repeat of turn 1 — the exact "
+        f"edge_frustration failure mode. Response: {turn2_response!r}"
+    )
+
+    # Turn 2 should have routed through the negative-preference handler,
+    # which emits an acknowledging message with specific structural markers.
+    turn2_lower = turn2_response.lower()
+    assert (
+        "understand" in turn2_lower
+        or "peer navigator" in turn2_lower
+        or "different type" in turn2_lower
+    ), (
+        f"Turn 2 response doesn't contain a negative-preference "
+        f"recovery cue (understand / peer navigator / different type): "
+        f"{turn2_response!r}"
+    )
+
+    # Frustration count should have incremented — the handler counts
+    # negative_preference turns as frustration for tiered escalation.
+    assert turn2["slots"].get("_frustration_count", 0) >= 1, (
+        f"_frustration_count should have incremented after rejection, "
+        f"got {turn2['slots'].get('_frustration_count')}"
+    )
 
 
 # ---------------------------------------------------------------------------
