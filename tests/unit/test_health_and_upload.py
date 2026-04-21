@@ -28,7 +28,15 @@ from app.main import app
 from app.services.audit_log import get_eval_results, clear_audit_log
 
 
-client = TestClient(app)
+# When ADMIN_API_KEY is set, admin routes require
+# `Authorization: Bearer <key>`. Attach it at client construction time
+# so individual tests don't need to remember. Non-admin routes
+# (/api/health/*) ignore unknown auth headers, so this is harmless
+# for them. When ADMIN_API_KEY is unset (local dev), the headers dict
+# is empty and behavior is unchanged.
+_admin_key = os.environ.get("ADMIN_API_KEY")
+_default_headers = {"Authorization": f"Bearer {_admin_key}"} if _admin_key else {}
+client = TestClient(app, headers=_default_headers)
 
 
 # -----------------------------------------------------------------------
@@ -268,12 +276,10 @@ class TestPingLlm:
 # 2. ENRICHED HEALTH ENDPOINT
 # =======================================================================
 
-@patch.dict(os.environ, {}, clear=False)
 class TestHealthEndpointEnriched:
     """Tests for the enriched /api/health response."""
 
     def setup_method(self):
-        os.environ.pop("ADMIN_API_KEY", None)
         _reset_ping_cache()
         _reset_client()
 
@@ -397,12 +403,10 @@ class TestSemanticRouterStatus:
 # 4. EVAL UPLOAD ENDPOINT
 # =======================================================================
 
-@patch.dict(os.environ, {}, clear=False)
 class TestEvalUpload:
     """Tests for POST /admin/api/eval/upload."""
 
     def setup_method(self):
-        os.environ.pop("ADMIN_API_KEY", None)
         clear_audit_log()
 
     # -- Happy path --
@@ -534,12 +538,6 @@ class TestEvalUpload:
 class TestHttpErrorMessages:
     """Verify backend returns appropriate status codes that the
     frontend's userFacingError() can classify."""
-
-    def test_rate_limit_429_includes_detail(self):
-        """429 response should include a detail message with timing info."""
-        # Rate limiting is tested separately; this verifies the shape
-        # The frontend checks msg.includes("wait") to detect rate limits
-        pass  # Covered by existing .py
 
     def test_health_503_when_db_down(self):
         """Health endpoint returns 503 when database is unreachable."""

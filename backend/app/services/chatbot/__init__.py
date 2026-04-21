@@ -107,25 +107,53 @@ from .handlers import (  # noqa: F401
     _validate_emotional_enhancement,
 )
 
-# --- MONKEYPATCH TARGETS -----------------------------------------------------
-# These names are bound on the package so tests that do
-# ``patch("app.services.chatbot.X", ...)`` can intercept them. Submodules
-# that need these import them directly from their source module — the
-# binding here exists only for patch-path compatibility with existing tests.
+# --- PACKAGE-LEVEL RE-EXPORTS ------------------------------------------------
 #
-#   patch("app.services.chatbot.detect_crisis", ...)
-#     → tests/unit/test_safety_identity_and_tone.py
-#   patch("app.services.chatbot.random_warmth_prefix", ...)
-#     → tests/unit/test_chatbot_extracted_helpers.py
-#   from app.services.chatbot import _build_confirmation_message
-#     → tests/unit/test_gender_extraction.py
-#   monkeypatch.setattr(chatbot_module, "save_session_slots", ...)
-#     → tests/unit/test_chatbot_extracted_helpers.py (9 call sites)
-#   monkeypatch.setattr(chatbot_module, "classify_unified", ...)
-#     → tests/unit/test_chatbot_extracted_helpers.py::TestRunLLMGate
-#     classify_unified is bound conditionally (only when _USE_LLM is truthy,
-#     ie ANTHROPIC_API_KEY is set). In regex-only mode it's left unbound
-#     and the test fixture provides a stub via monkeypatch.
+# These imports bind the names on the package (`app.services.chatbot.X`).
+# In production they exist mostly for import-path convenience. In tests they
+# are a known footgun — read this before writing new patches.
+#
+# Why the footgun: `patch("app.services.chatbot.X", ...)` only affects the
+# name bound here. Submodules like `orchestrator.py` do
+# `from app.services.crisis_detector import detect_crisis` at module-load
+# time — that statement binds `orchestrator.detect_crisis` to the real
+# function. Patching the package-level `detect_crisis` does NOT change
+# what `orchestrator.detect_crisis` points to, so the real function
+# runs in the hot path and the mock is never called. Tests "pass" only
+# because the real function returns benign defaults for typical inputs
+# (None from detect_crisis, etc.); the day you send a crisis-shaped
+# input or set ANTHROPIC_API_KEY, they fail in confusing ways.
+#
+# CORRECT patch targets (patch where the function is looked up, not
+# where it's defined):
+#
+#   detect_crisis         → app.services.chatbot.orchestrator.detect_crisis
+#                           (also app.services.classifier.detect_crisis
+#                            for tests that exercise the classifier path)
+#   claude_reply (service flow) → app.services.chatbot.handlers.meta.claude_reply
+#   claude_reply (fallback)     → app.services.responses.claude_reply
+#   _USE_LLM (dispatch gate)    → app.services.chatbot.orchestrator._USE_LLM
+#   _USE_LLM (classifier gate)  → app.services.chatbot.pipeline._USE_LLM
+#   query_services              → app.services.chatbot.execution.query_services
+#   classify_unified            → app.services.chatbot.pipeline.classify_unified
+#                                 (bound only when _USE_LLM; see below)
+#   save_session_slots          → the specific submodule using it; search
+#                                 for `from app.services.session_store import
+#                                 save_session_slots` to find bind sites
+#
+# The `send()` and `send_multi()` helpers in tests/conftest.py use the
+# correct targets and should be the template for any new helpers.
+#
+# Why we still re-export here: some legacy unit tests and a codemod-
+# applied rewrite target these names. Removing the re-exports would
+# break those tests without improving anything. The fix belongs in
+# the tests — migrate them to the correct targets listed above and
+# eventually these `# noqa: F401` lines can go.
+#
+# classify_unified is bound conditionally (only when _USE_LLM is truthy,
+# ie ANTHROPIC_API_KEY is set). In regex-only mode it's left unbound
+# and test fixtures should patch `app.services.chatbot.pipeline.classify_unified`.
+#
 from app.llm.claude_client import claude_reply  # noqa: F401
 from app.services.confirmation import _build_confirmation_message  # noqa: F401
 from app.services.crisis_detector import detect_crisis  # noqa: F401

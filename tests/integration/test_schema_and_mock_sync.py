@@ -177,8 +177,8 @@ class TestReplyResponseSync:
         clear_session(sid)
         with (
             patch("app.services.chatbot.execution.query_services"),
-            patch("app.services.chatbot.claude_reply", return_value="ok"),
-            patch("app.services.chatbot.detect_crisis", return_value=None),
+            patch("app.services.chatbot.handlers.meta.claude_reply", return_value="ok"),
+            patch("app.services.chatbot.orchestrator.detect_crisis", return_value=None),
         ):
             result = generate_reply("hello", session_id=sid)
         clear_session(sid)
@@ -239,8 +239,8 @@ class TestFullPipeline:
         clear_session(sid)
         with (
             patch("app.services.chatbot.execution.query_services", return_value=mock_results),
-            patch("app.services.chatbot.claude_reply", return_value="ok"),
-            patch("app.services.chatbot.detect_crisis", return_value=None),
+            patch("app.services.chatbot.handlers.meta.claude_reply", return_value="ok"),
+            patch("app.services.chatbot.orchestrator.detect_crisis", return_value=None),
         ):
             generate_reply("I need food in Brooklyn", session_id=sid)
             result = generate_reply("yes", session_id=sid)
@@ -482,8 +482,8 @@ class TestPersistenceFailureIsolation:
                     "params_applied": {}, "relaxed": False, "execution_ms": 30,
                     "freshness": {"fresh": 1, "total": 1, "total_with_date": 1},
                 }),
-                patch("app.services.chatbot.claude_reply", return_value="ok"),
-                patch("app.services.chatbot.detect_crisis", return_value=None),
+                patch("app.services.chatbot.handlers.meta.claude_reply", return_value="ok"),
+                patch("app.services.chatbot.orchestrator.detect_crisis", return_value=None),
             ):
                 r1 = generate_reply("I need food in Brooklyn", session_id=sid)
                 assert "food" in r1["response"].lower()

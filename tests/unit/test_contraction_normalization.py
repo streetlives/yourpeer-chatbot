@@ -106,7 +106,7 @@ class TestNormalizationInClassifyTone:
         # match "has not helped". So this is still a vocab gap.
     ])
     def test_frustration_via_normalization(self, phrase):
-        with patch("app.services.chatbot.detect_crisis", return_value=None):
+        with patch("app.services.chatbot.orchestrator.detect_crisis", return_value=None):
             tone = _classify_tone(phrase, crisis_result=None)
         assert tone == "frustrated", \
             f"'{phrase}' should be frustrated via normalization, got '{tone}'"
@@ -116,7 +116,7 @@ class TestNormalizationInClassifyTone:
         "it's all too much for me",
     ])
     def test_confused_via_normalization(self, phrase):
-        with patch("app.services.chatbot.detect_crisis", return_value=None):
+        with patch("app.services.chatbot.orchestrator.detect_crisis", return_value=None):
             tone = _classify_tone(phrase, crisis_result=None)
         assert tone == "confused", \
             f"'{phrase}' should be confused via normalization, got '{tone}'"
@@ -128,7 +128,7 @@ class TestNormalizationInClassifyTone:
         "i've been feeling down lately",
     ])
     def test_emotional_via_normalization(self, phrase):
-        with patch("app.services.chatbot.detect_crisis", return_value=None):
+        with patch("app.services.chatbot.orchestrator.detect_crisis", return_value=None):
             tone = _classify_tone(phrase, crisis_result=None)
         assert tone == "emotional", \
             f"'{phrase}' should be emotional via normalization, got '{tone}'"
@@ -179,12 +179,37 @@ class TestNormalizationDoesNotAffectCrisis:
         assert detect_crisis("i cant take it anymore", skip_llm=True) is not None
 
     def test_normalization_function_not_called_in_crisis(self):
-        """Verify crisis detection path doesn't depend on normalization."""
-        # Crisis detection in _classify_tone calls detect_crisis(text)
-        # with the ORIGINAL text, not the normalized version.
-        # This is verified by the code structure, not easily testable
-        # in isolation, but we document the design intent here.
-        pass
+        """Crisis detection receives the ORIGINAL text, not the normalized form.
+
+        Design invariant: in _classify_tone, detect_crisis() is called
+        with the raw user input. Normalization happens LATER in the
+        function (for frustration/emotional phrase matching), but the
+        crisis path stays raw so contractions like "can't go on" match
+        the phrase list as typed.
+
+        Enforces the invariant by spying on detect_crisis's argument.
+        If a future refactor accidentally swaps `text` → `normalized`
+        at the crisis call site, this test fails loudly.
+        """
+        from unittest.mock import patch
+        from app.services import classifier
+
+        crisis_phrase = "I can't go on anymore"
+        # Make detect_crisis a no-op so we can observe the argument
+        # without triggering the early-return "crisis" path.
+        with patch.object(classifier, "detect_crisis",
+                          return_value=None) as spy:
+            classifier._classify_tone(crisis_phrase)
+
+        assert spy.call_count >= 1, "detect_crisis was never called"
+        # First call's first arg should be the raw input, unchanged.
+        called_with = spy.call_args_list[0].args[0]
+        assert called_with == crisis_phrase, (
+            f"detect_crisis was called with {called_with!r}, expected the "
+            f"raw {crisis_phrase!r}. If normalization was intentionally "
+            f"applied before the crisis check, re-evaluate whether the "
+            f"regex phrase list still matches the pre/post forms."
+        )
 
 
 # -----------------------------------------------------------------------
@@ -229,7 +254,7 @@ class TestIntensifierInClassifyTone:
     def test_intensifier_emotion_matrix(self, intensifier, emotion):
         """Every intensifier×emotion combination should classify as emotional."""
         phrase = f"I'm {intensifier} {emotion}"
-        with patch("app.services.chatbot.detect_crisis", return_value=None):
+        with patch("app.services.chatbot.orchestrator.detect_crisis", return_value=None):
             tone = _classify_tone(phrase, crisis_result=None)
         assert tone == "emotional", \
             f"'{phrase}' should be emotional, got '{tone}'"
@@ -241,7 +266,7 @@ class TestIntensifierInClassifyTone:
     ])
     def test_intensifier_frustration(self, phrase):
         """Intensifiers in frustration phrases should still match."""
-        with patch("app.services.chatbot.detect_crisis", return_value=None):
+        with patch("app.services.chatbot.orchestrator.detect_crisis", return_value=None):
             tone = _classify_tone(phrase, crisis_result=None)
         assert tone == "frustrated", \
             f"'{phrase}' should be frustrated, got '{tone}'"
@@ -253,7 +278,7 @@ class TestIntensifierInClassifyTone:
     ])
     def test_intensifier_confused(self, phrase):
         """Intensifiers in confused phrases should still match."""
-        with patch("app.services.chatbot.detect_crisis", return_value=None):
+        with patch("app.services.chatbot.orchestrator.detect_crisis", return_value=None):
             tone = _classify_tone(phrase, crisis_result=None)
         assert tone == "confused", \
             f"'{phrase}' should be confused, got '{tone}'"
