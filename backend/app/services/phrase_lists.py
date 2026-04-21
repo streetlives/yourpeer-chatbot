@@ -327,6 +327,14 @@ _BOT_IDENTITY_PHRASES = [
     "is this a real person", "who am i talking to",
     "are you a computer", "are you a machine",
     "talking to a robot",
+    # C.1 (April 2026) — direct identity questions. Route to bot_identity
+    # (not general/LLM) so "what's your name?" during a pending confirmation
+    # doesn't fall through to the re-nudge path. See
+    # docs/CHATBOT_BEHAVIOR.md § Bot Identity.
+    "what's your name", "whats your name", "what is your name",
+    "do you have a name",
+    "who are you", "what are you",
+    "tell me about yourself", "introduce yourself",
 ]
 
 # Bot capability questions — asking HOW the bot works, not WHO it is.
@@ -340,6 +348,14 @@ _BOT_QUESTION_PHRASES = [
     "can you explain", "can you tell me how",
     "why did you show", "why did you give",
     "what happened to", "what went wrong",
+    # C.1 (April 2026) — attribution/origin questions. These get factual
+    # LLM answers (Streetlives created the bot) rather than the
+    # bot_identity "I'm an AI" template. See docs/CHATBOT_BEHAVIOR.md
+    # § Bot Question.
+    "who made you", "who built you", "who created you",
+    "who developed you", "who designed you",
+    "where do you come from", "where did you come from",
+    "what company made", "what organization made",
     # Privacy questions
     "is this private", "is this confidential", "is this safe",
     "is this anonymous", "are you recording",

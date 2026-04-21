@@ -177,3 +177,122 @@ def _handle_spanish_detection(session_id, message, redacted_message, existing,
         "solo puedo ayudar en inglés. I'll do my best to help.\n\n"
     )
     return None, acknowledgment
+
+
+# ---------------------------------------------------------------------------
+# A.1.b — Immigration-context acknowledgment
+# ---------------------------------------------------------------------------
+# When a user mentions asylum or immigration alongside another primary
+# service need (e.g., "my asylum case, food stamps, and somewhere to get
+# food"), the priority-ordered extractor picks food as primary (Tier 2
+# survival) and queues legal/asylum as an additional service. This is
+# correct ordering — but silently searching for food without
+# acknowledging the immigration context is a cultural-responsiveness
+# failure for a population that is specifically anxious about
+# immigration status.
+#
+# The queue-offer-after-results flow eventually surfaces "You also
+# mentioned asylum services — would you like me to search for that
+# too?" — but only AFTER the primary search completes, which leaves a
+# gap at the confirmation step where the user's immigration disclosure
+# goes unacknowledged.
+#
+# This acknowledgment closes that gap: on the confirmation turn, a
+# brief prefix validates the immigration context and sets expectation
+# that legal help is queued next. Mirrors the tonal pattern of
+# `_apply_queue_offer`'s "You also mentioned X" phrasing for
+# consistency.
+#
+# Scope notes:
+#   - Triggers ONLY on explicit "asylum" or "immigration" keywords
+#     (via service_detail). Does NOT fire on general undocumented
+#     status without those keywords — that's a broader signal
+#     warranting separate work.
+#   - Does NOT fire when the primary service is already legal (user
+#     is getting immigration help directly; no need for a meta-
+#     acknowledgment).
+#   - Does NOT add a new population tag; population-based filtering
+#     of searches is out of scope.
+
+_IMMIGRATION_LEGAL_DETAILS = frozenset({
+    "asylum services",
+    "immigration services",
+})
+
+
+# The extractor returns secondary services under `additional_services`,
+# but the orchestrator converts this to `_queued_services` on the merged
+# slot state before downstream prefix computation fires. Checking both
+# keys makes the helper callable from either side of that conversion
+# — orchestrator runtime uses `_queued_services`, unit tests and any
+# direct extractor consumers can use `additional_services`.
+_QUEUE_KEYS = ("additional_services", "_queued_services")
+
+
+def _detect_immigration_context(slots: dict) -> bool:
+    """Return True when the slot state contains asylum or immigration
+    legal context — either as the primary service's detail or anywhere
+    in the secondary-service queue (checked under both
+    `additional_services` and `_queued_services`; see _QUEUE_KEYS).
+
+    A narrow detector by design: only fires on explicit asylum/
+    immigration mentions surfaced by the extractor via service_detail.
+    Does not fire on broader signals (e.g., "undocumented,"
+    "recently arrived") which the extractor does not currently surface
+    as structured slot state.
+    """
+    if slots.get("service_detail") in _IMMIGRATION_LEGAL_DETAILS:
+        return True
+    for queue_key in _QUEUE_KEYS:
+        for svc in slots.get(queue_key) or []:
+            # Tuple shape: (service_type, detail, location) — length 2
+            # in older callers, length 3 after per-service location
+            # binding landed.
+            if len(svc) >= 2 and svc[1] in _IMMIGRATION_LEGAL_DETAILS:
+                return True
+    return False
+
+
+def _immigration_context_detail(slots: dict) -> str:
+    """Return the specific immigration detail to reference in the
+    acknowledgment prefix ("asylum" or "immigration"). Prefers the
+    primary service's detail when present; otherwise walks both queue
+    keys for the first matching additional service.
+    """
+    # Check primary first
+    primary_detail = slots.get("service_detail")
+    if primary_detail == "asylum services":
+        return "asylum"
+    if primary_detail == "immigration services":
+        return "immigration"
+    # Then the queues (additional_services or _queued_services)
+    for queue_key in _QUEUE_KEYS:
+        for svc in slots.get(queue_key) or []:
+            if len(svc) >= 2:
+                if svc[1] == "asylum services":
+                    return "asylum"
+                if svc[1] == "immigration services":
+                    return "immigration"
+    # Should be unreachable when called after _detect_immigration_context,
+    # but default safely.
+    return "immigration"
+
+
+def _immigration_acknowledgment(slots: dict) -> str:
+    """Return the acknowledgment prefix when immigration context is
+    detected AND the primary service is not already legal.
+
+    Returns empty string when the trigger conditions aren't met, so
+    callers can safely concatenate unconditionally.
+    """
+    if not _detect_immigration_context(slots):
+        return ""
+    # Primary is already legal — the user is getting immigration help
+    # directly, no separate acknowledgment needed.
+    if slots.get("service_type") == "legal":
+        return ""
+    detail_word = _immigration_context_detail(slots)
+    return (
+        f"You also mentioned your {detail_word} case — I can help "
+        f"find immigration legal services after this.\n\n"
+    )

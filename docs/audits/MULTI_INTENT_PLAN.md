@@ -20,6 +20,8 @@ The chatbot originally assumed one service type per message. Classification gate
 | PR 3 | ✅ Done | Service queue — offer queued services after results |
 | PR 4 | ✅ Done | LLM extractor — update schema for multi-service |
 | PR 5 | ✅ Done | Co-located queries — prioritize locations with all requested services |
+| PR 6 (Apr 2026) | ✅ Done | Close multi-intent & frustration coverage gaps — A.4 queue-clearing on service change, B.1 negative-preference phrase expansion, B.2 compound-intent override, A.1.b immigration acknowledgment, A.1.a/A.2/A.3 eval expectation updates. See "Completed: PR 6" section below. |
+| PR 7 (Apr 2026) | ✅ Done | Close bot-identity phrase gap + topic-shift disambiguation — C.1 phrase expansion (`what's your name`, `who made you`, etc.), C.2 disambiguation prompt in `_handle_post_pending_confirmation` Path 3. Defense-in-depth against surreal non-sequiturs during pending confirmations. See "Completed: PR 7" section below. |
 
 ---
 
@@ -419,4 +421,67 @@ Research identified shame/embarrassment as a distinct emotional state in this po
 **Eval coverage:** 3 scenarios test shame/embarrassment detection and normalizing responses: `multi_shame_food_bank_first_time`, `multi_shame_shelter_stigma`, `multi_shame_single_service`.
 
 ### Cross-service slot conflicts (Completed — Run 23, Phase 4)
-"I need food in Brooklyn and shelter in Manhattan" — per-service location binding implemented. `_extract_all_locations()` finds all location matches with text positions. `extract_slots()` binds each service to its nearest location. Queue offers include per-service location ("You also mentioned shelter in Manhattan"). Quick reply values include location for slot extraction on acceptance. The `multi_cross_borough` eval scenario (3.88) shows the binding doesn't fire in all cases — needs investigation.
+"I need food in Brooklyn and shelter in Manhattan" — per-service location binding implemented. `_extract_all_locations()` finds all location matches with text positions. `extract_slots()` binds each service to its nearest location. Queue offers include per-service location ("You also mentioned shelter in Manhattan"). Quick reply values include location for slot extraction on acceptance.
+
+**Update (April 2026 — A.3 investigation):** The earlier note that `multi_cross_borough` scored 3.88 because "the binding doesn't fire in all cases" was incorrect. Investigation proved the binding does fire correctly and produces a coherent runtime state (`service_type=shelter` primary bound to `manhattan`, with `food-in-brooklyn` queued as a secondary). The eval scenario's `expected` dict was encoding a different rule ("first-mentioned wins" → `service_type=food, location=brooklyn`), inconsistent with the priority-ordered extractor behavior and with sister scenarios like `multi_asylum_seeker_food_legal`. Fix was to update the eval expectation rather than the code. See PR 6 below.
+
+---
+
+## Completed: PR 6 — Close multi-intent & frustration coverage gaps (April 2026)
+
+Seven targeted fixes addressing eval scenarios that were either failing or scoring below threshold due to gaps in multi-intent coverage, frustration detection, or stale eval expectations. Landed as a single PR with seven atomic commits. Full per-fix rationale lives in the PR description; summary below.
+
+### Production code changes
+
+**A.4 — Clear queue state on service_type change.** `merge_slots` in `slot_extractor.py` now clears `_queued_services`, `_queued_services_original`, and `_queue_offer_pending` when the user explicitly changes `service_type` (non-additive intent). Closes the bug where `"food in Manhattan"` → `"actually, shelter"` produced `"shelter AND food"` because the queue from the prior multi-intent turn persisted. The primary failure path was `_handle_post_pending_confirmation` → `merge_slots` in `handlers/confirmation.py:561`, which bypassed the orchestrator's queue-pop at `orchestrator.py:359-364`. `_is_additive` branch excluded.
+
+**B.1 — Expand negative-preference phrase list.** 16 new phrases added to `_NEGATIVE_PREFERENCE_PHRASES` in `classifier.py` in two clusters: "already tried" variants (8) and "this isn't helpful" variants (8). Closes the gap where `"This isn't helpful at all. I already tried those places."` matched nothing and produced an apology-wrapped functional repeat. `"this isn't helpful"` variants were intentionally reclassified from `frustrated` tone to `negative_preference` action — the refine-search UX is strictly better than the frustration UI's "🔍 New search" button for this signal. See `docs/audits/PHRASE_LIST_AUDIT.md` Audit Trail for the full phrase additions.
+
+**B.2 — Compound-intent override.** Surfaced post-B.1 as a regression: `"I already tried those, I need shelter instead"` would match B.1's phrase and route to the menu, dropping the shelter intent. Fixed with an orchestrator-level override at the `negative_preference` dispatch site: when `early_extracted.service_type` differs from existing, downgrade the action to the service flow and promote `tone="frustrated"`. Bare rejections (no new service intent) still hit the menu. See `docs/CHATBOT_BEHAVIOR.md` Negative Preference section for the full trigger truth table.
+
+**A.1.b — Immigration context acknowledgment prefix.** New `_immigration_acknowledgment(slots)` helper in `handlers/accessibility.py`, wired into the orchestrator's `_prefix_prepend` chain alongside the existing PII warning and Spanish acknowledgment. Fires when slot state contains `service_detail in {"asylum services", "immigration services"}` AND primary `service_type != "legal"`. Emits `"You also mentioned your [asylum|immigration] case — I can help find immigration legal services after this."` Dual-reads both `additional_services` (extractor-output key) and `_queued_services` (post-merge orchestrator key) via `_QUEUE_KEYS`. See `docs/CHATBOT_BEHAVIOR.md` Response Prefix Chain section.
+
+### Eval expectation updates (test-data only)
+
+**A.2 — Rename `should_queue_additional` → `should_handle_additional_service`.** The old key encoded a specific implementation strategy (sequential queue); runtime correctly accepts either queueing OR co-located single-search. 22 occurrences renamed + header comment documenting the accepted-either-way semantic.
+
+**A.3 — Cross-borough scenario expectation.** Investigation proved the extractor correctly handles `"food in Brooklyn and shelter in Manhattan"` — binds each service to its own location, picks shelter as priority-ordered primary. The eval's expected (`food, brooklyn`) encoded first-mentioned semantics. Updated expected to `shelter, manhattan`; rewrote description.
+
+**A.1.a — Three-service asylum-seeker scenario expectation.** Same structural issue as A.3, plus an internal-inconsistency finding: the SISTER scenario `multi_asylum_seeker_food_legal` already expected `food` primary (priority-ordered). Aligned the two scenarios.
+
+### Regression analysis
+
+Post-implementation cross-fix analysis (seven interaction probes) surfaced INT-3 (B.1 dropping service intent in compound messages) which was resolved in-PR by B.2. Six other probes confirmed clean composition. One soft concern flagged for post-merge monitoring: triple-prefix stacking (PII + Spanish + A.1.b) can emit ~400 characters of meta-statements before the confirmation on a single compound message. Each prefix is tonally apt in isolation but stacked experience could feel heavy. See `REGRESSION_ANALYSIS.md` in the PR outputs.
+
+### Deferred to future PRs
+
+- **B.1 Part 2 — identical-response detector** (orchestrator-level text-similarity check as defense-in-depth against future phrase-list misses).
+- **Extend semantic router to `INTENT_ROUTES`.** Current asymmetry: router covers only `SERVICE_ROUTES` and `POPULATION_ROUTES`, so intents (`negative_preference`, `frustration`, `reset`, `bot_question`) have only Tier 1 regex and Tier 3 LLM — no Tier 2 middle ground for durable coverage against novel phrasings.
+- **Add `edge_compound_rejection_with_new_service_intent` scenario** to `eval_llm_judge.py` to lock B.2's behavior at eval-measurement level.
+
+---
+
+## Completed: PR 7 — Bot identity phrase gap + topic-shift disambiguation (April 2026)
+
+Follow-on to PR 6, addressing two related pre-existing issues surfaced by reviewing the same failure mode (surreal non-sequitur on `"what's your name?"` during pending confirmation). Two atomic fixes:
+
+### Production code changes
+
+**C.1 — bot_identity / bot_question phrase expansion.** 17 phrases added across two lists (8 to `_BOT_IDENTITY_PHRASES`, 9 to `_BOT_QUESTION_PHRASES`); see `docs/audits/PHRASE_LIST_AUDIT.md` Audit Trail for the full enumeration. Intentional reclassification: `"who are you"` moved from `help` to `bot_identity`. Target bug: direct identity questions (`"what's your name?"`, `"who are you?"`) during pending confirmations silently re-nudged the prior search instead of identifying the bot. One pre-existing test updated to match.
+
+**C.2 — Topic-shift disambiguation in `_handle_post_pending_confirmation` Path 3.** New helper `_looks_like_topic_shift_question(message)` + new branch before the re-nudge. When a pending confirmation exists and the user sends a substantive question (≥3 words, wh-word or auxiliary-verb opener, OR ≥4 words ending in `?`), the bot emits a disambiguation prompt and adds a `"💬 I was asking something else"` quick reply — rather than re-nudging blindly. Target bug: novel question phrasings that slip past classifier phrase lists produced the same surreal-non-sequitur UX. Conservative heuristic by design — 2-word questions, fragments, and confirmation-shaped utterances still fall through to the re-nudge path.
+
+### Why both fixes (defense-in-depth)
+
+C.1 closes the common case at Tier 1 (classifier-level). C.2 closes the novel-phrasing case at Tier 3 (fallback-level). Either alone would leave a gap: C.1 only covers phrases we've anticipated, and phrase lists are by definition incomplete. C.2 only fires at the fallback layer, which is a worse user experience than a clean bot_identity response. Together they form a layered guarantee that pending-confirmation state is never silently re-asserted against a clear topic shift.
+
+### Verification
+
+- Full suite: 3845 passed, 17 skipped, 3 xfailed (was 3829 pre-C; net +16 tests).
+- Regression-guard discipline proven: stripping C.1 phrases causes `test_c1_regression_guard_whats_your_name_during_pending_confirmation` to fail (falls through to C.2, which catches it with the disambiguation prompt instead of a bot_identity response — exactly the defense-in-depth behavior). Stripping the C.2 branch causes `test_c2_novel_off_topic_question_during_pending_gets_disambiguation` to fail with the expected evidence: `"Got: Just to make sure — I'll look for food in Brooklyn — sound good? Tap 'Yes, search' to go, or you can change the details."` — the literal surreal non-sequitur.
+
+### Paired follow-ups also deferred
+
+- **Add semantic router coverage for bot_identity / bot_question.** Same asymmetry issue as mentioned above for negative_preference — the three-tier cascade skips Tier 2 for intent routes.
+- **Add `edge_off_topic_question_during_pending_confirmation` eval scenario.** LLM-judge coverage for C.2's disambiguation behavior. Current test coverage is at the integration layer only.
+- **Audit `_handle_post_pending_confirmation` Path 3 for other silent-retention bugs.** This same pattern (retain pending state, nudge with the stale intent) might be wrong in other contexts too — for instance, if the user sent an emotional message during pending, the current code relies on the `response_tone == "emotional"` nudge-prefix branch to soften the re-nudge, but the re-nudge itself may still be the wrong move.

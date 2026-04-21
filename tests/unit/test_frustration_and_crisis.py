@@ -18,6 +18,94 @@ from test_helpers import _fresh, _send
 
 
 # =======================================================================
+# B.1: Expanded negative-preference phrases — "already tried" and
+# "this isn't helping" variants
+# =======================================================================
+
+class TestExpandedNegativePreferencePhrases:
+    """B.1 fix: the `edge_frustration` eval scenario sent
+    'This isn't helpful at all. I already tried those places.' which
+    matched neither the pre-fix _NEGATIVE_PREFERENCE_PHRASES list nor
+    any frustration pattern. It routed as a normal service request,
+    hit the confirmation handler, and produced an identical response
+    to the previous turn — critical error_recovery=1 failure.
+
+    These tests lock in coverage for the two phrase clusters added to
+    close the gap: 'already tried *' variants and 'this isn't help*'
+    variants.
+    """
+
+    @pytest.mark.parametrize("msg", [
+        # Exact edge_frustration scenario phrase (primary regression target)
+        "This isn't helpful at all. I already tried those places.",
+        # "already tried" variants
+        "I already tried those places",
+        "I already tried those",
+        "already tried them",
+        "I already tried that",
+        "I've already tried those",
+        "ive already tried the shelters",
+        "I've already tried",
+        # "this isn't helpful" variants
+        "This isn't helpful",
+        "This isnt helpful",
+        "this is not helpful",
+        "This is not helping",
+        "You're not helping me",
+        "that isn't helping",
+        "isnt helping",
+        # "been there already"
+        "been there already",
+    ])
+    def test_expanded_phrases_classify_as_negative_preference(self, msg):
+        """All phrases added by the B.1 fix should route to negative_preference."""
+        assert _classify_action(msg) == "negative_preference", (
+            f"'{msg}' should classify as negative_preference but got "
+            f"{_classify_action(msg)}"
+        )
+
+    @pytest.mark.parametrize("msg", [
+        # "already tried" with a concrete object shouldn't fire — the user
+        # is reporting, not rejecting.
+        "I already tried calling 311",
+        "I already tried texting them",
+        # General "tried" without the rejection context should pass through
+        "I tried a new restaurant last week",
+    ])
+    def test_specific_positive_actions_still_pass_through(self, msg):
+        """Negative guard: the new phrases shouldn't swallow messages that
+        use 'already tried' in a reporting/narrative sense rather than a
+        rejection sense. These should NOT classify as negative_preference."""
+        assert _classify_action(msg) != "negative_preference", (
+            f"'{msg}' is narrative/reporting, not rejection — should not "
+            f"classify as negative_preference, got {_classify_action(msg)}"
+        )
+
+    def test_existing_negative_preference_phrases_still_fire(self):
+        """Regression guard: the expansion must not break the pre-existing
+        list. Pick one representative from each historical cluster."""
+        for msg in [
+            "not what i want",              # basic
+            "none of those",                # set rejection
+            "that is not helpful",          # "that" pointer (distinct from "this")
+            "tried all of those",           # experience — pre-existing "tried all"
+            "already been there",           # pre-existing "already been"
+            "had a bad experience",         # experience qualitative
+        ]:
+            assert _classify_action(msg) == "negative_preference", (
+                f"Pre-existing phrase '{msg}' regressed"
+            )
+
+    def test_edge_frustration_scenario_exact_phrase(self):
+        """Guard for the exact text used by the `edge_frustration` eval
+        scenario — keep this test green and the scenario's critical
+        error_recovery failure stays fixed."""
+        assert _classify_action(
+            "This isn't helpful at all. I already tried those places."
+        ) == "negative_preference"
+
+
+# =======================================================================
 # FIX 4: Frustration re-statement phrases
 # =======================================================================
 
@@ -378,6 +466,106 @@ class TestCrisisStepDownGeolocation:
             "option" in result["response"].lower() or \
             "found" in result["response"].lower(), \
             f"Youth runaway + coords should search immediately: {result['response']}"
+
+# ---------------------------------------------------------------------------
+# C.2 — Topic-shift question detection heuristic
+# ---------------------------------------------------------------------------
+# Unit tests for _looks_like_topic_shift_question, the conservative
+# heuristic that distinguishes off-topic questions from confirmation-
+# shaped utterances during a pending confirmation.
+
+
+class TestLooksLikeTopicShiftQuestion:
+    """Unit coverage for the C.2 disambiguation heuristic.
+
+    Per the helper's docstring, it should fire on clear off-topic
+    questions but not on fragments, short confirmations, or unclear
+    utterances. Conservative by design — ambiguous cases fall through
+    to the re-nudge path (safer default).
+    """
+
+    def test_question_mark_with_wh_word_fires(self):
+        from app.services.chatbot.handlers.confirmation import (
+            _looks_like_topic_shift_question,
+        )
+        assert _looks_like_topic_shift_question("what's your name?") is True
+        assert _looks_like_topic_shift_question("who are you?") is True
+        assert _looks_like_topic_shift_question("how does this work?") is True
+
+    def test_wh_word_start_three_words_fires(self):
+        from app.services.chatbot.handlers.confirmation import (
+            _looks_like_topic_shift_question,
+        )
+        assert _looks_like_topic_shift_question("who are you really") is True
+        assert _looks_like_topic_shift_question("where does this data go") is True
+
+    def test_auxiliary_verb_opener_fires(self):
+        from app.services.chatbot.handlers.confirmation import (
+            _looks_like_topic_shift_question,
+        )
+        assert _looks_like_topic_shift_question("can you speak spanish?") is True
+        assert _looks_like_topic_shift_question("do you remember me") is True
+        assert _looks_like_topic_shift_question("is this conversation private") is True
+
+    def test_question_mark_four_words_fires(self):
+        """Question mark + substantive content but no wh-word opener
+        still counts as a topic shift."""
+        from app.services.chatbot.handlers.confirmation import (
+            _looks_like_topic_shift_question,
+        )
+        assert _looks_like_topic_shift_question(
+            "my friend mentioned something else?"
+        ) is True
+
+    def test_single_word_does_not_fire(self):
+        from app.services.chatbot.handlers.confirmation import (
+            _looks_like_topic_shift_question,
+        )
+        assert _looks_like_topic_shift_question("what") is False
+        assert _looks_like_topic_shift_question("why") is False
+        assert _looks_like_topic_shift_question("?") is False
+
+    def test_short_confirmation_fragments_do_not_fire(self):
+        """Confirmation-shaped utterances must not be misclassified as
+        topic shifts — otherwise C.2 would steal legitimate re-nudge
+        cases."""
+        from app.services.chatbot.handlers.confirmation import (
+            _looks_like_topic_shift_question,
+        )
+        for msg in ("yes", "no", "ok", "yeah ok", "sounds good",
+                    "maybe", "i dunno", "idk", "change it"):
+            assert _looks_like_topic_shift_question(msg) is False, (
+                f"Heuristic falsely fired on confirmation fragment: {msg!r}"
+            )
+
+    def test_empty_and_whitespace_do_not_fire(self):
+        from app.services.chatbot.handlers.confirmation import (
+            _looks_like_topic_shift_question,
+        )
+        assert _looks_like_topic_shift_question("") is False
+        assert _looks_like_topic_shift_question("   ") is False
+        assert _looks_like_topic_shift_question("\n\t") is False
+
+    def test_service_request_without_question_does_not_fire(self):
+        """A service request like 'food in brooklyn' must not trigger
+        the heuristic. Service intents are handled by slot extraction
+        upstream of C.2 and should never reach Path 3."""
+        from app.services.chatbot.handlers.confirmation import (
+            _looks_like_topic_shift_question,
+        )
+        assert _looks_like_topic_shift_question("food in brooklyn") is False
+        assert _looks_like_topic_shift_question("actually shelter") is False
+
+    def test_heuristic_is_conservative_with_ambiguous_short_questions(self):
+        """'what now?' is ambiguous — could be confused (Path: confused
+        handler) or genuine topic shift. The heuristic declines to
+        fire and defers to the earlier confused/help classifiers.
+        Two-word questions don't trip the heuristic."""
+        from app.services.chatbot.handlers.confirmation import (
+            _looks_like_topic_shift_question,
+        )
+        assert _looks_like_topic_shift_question("what now?") is False
+        assert _looks_like_topic_shift_question("why not?") is False
 
 
 # =======================================================================

@@ -27,6 +27,12 @@ from app.services.chatbot import (
     _run_llm_gate,
 )
 
+from app.services.chatbot.handlers import _immigration_acknowledgment
+from app.services.chatbot.handlers.accessibility import (
+    _detect_immigration_context,
+    _immigration_context_detail,
+)
+
 
 @pytest.fixture
 def llm_enabled(monkeypatch):
@@ -342,6 +348,212 @@ class TestHandleSpanishDetection:
                 assert not (result is not None and prefix), (
                     f"Both outputs non-empty for msg={msg!r}, has_si={has_si}"
                 )
+
+
+# -----------------------------------------------------------------------
+# _immigration_acknowledgment — A.1.b cultural-responsiveness prefix
+# -----------------------------------------------------------------------
+# Narrow detector by design: fires only on explicit asylum/immigration
+# mentions surfaced by the extractor via service_detail, and only when
+# the primary service isn't already legal (no double-up when the user
+# is getting immigration help directly).
+
+class TestDetectImmigrationContext:
+    """Detection predicate — true when asylum or immigration services
+    appears in the primary detail or anywhere in the additional_services
+    queue.
+    """
+
+    def test_primary_asylum_detail(self):
+        assert _detect_immigration_context({
+            "service_type": "legal",
+            "service_detail": "asylum services",
+            "additional_services": [],
+        })
+
+    def test_primary_immigration_detail(self):
+        assert _detect_immigration_context({
+            "service_type": "legal",
+            "service_detail": "immigration services",
+            "additional_services": [],
+        })
+
+    def test_asylum_queued_behind_food(self):
+        """The A.1 primary scenario — food primary, asylum queued."""
+        assert _detect_immigration_context({
+            "service_type": "food",
+            "service_detail": None,
+            "additional_services": [
+                ("legal", "asylum services", None),
+                ("other", "food stamps / SNAP", None),
+            ],
+        })
+
+    def test_asylum_in_queued_services_key(self):
+        """Runtime reality: orchestrator converts `additional_services`
+        → `_queued_services` during merge_slots. The detector must
+        check both keys so it works regardless of where in the
+        pipeline it's called. If a future refactor drops this dual
+        check, this test fires immediately."""
+        assert _detect_immigration_context({
+            "service_type": "food",
+            "service_detail": None,
+            # Note: no `additional_services` — only `_queued_services`,
+            # which is the state at orchestrator.py:405 where the
+            # helper actually fires.
+            "_queued_services": [
+                ("legal", "asylum services", None),
+                ("other", "food stamps / SNAP", None),
+            ],
+        })
+
+    def test_immigration_queued_behind_food(self):
+        assert _detect_immigration_context({
+            "service_type": "food",
+            "service_detail": None,
+            "additional_services": [("legal", "immigration services", None)],
+        })
+
+    def test_no_immigration_context(self):
+        """Pure food search — no mention of asylum/immigration anywhere."""
+        assert not _detect_immigration_context({
+            "service_type": "food",
+            "service_detail": None,
+            "additional_services": [],
+        })
+
+    def test_unrelated_legal_detail_does_not_fire(self):
+        """Non-immigration legal (e.g., eviction) must not trigger."""
+        assert not _detect_immigration_context({
+            "service_type": "legal",
+            "service_detail": "eviction help",
+            "additional_services": [],
+        })
+
+    def test_empty_slots_is_safe(self):
+        """Robustness: totally empty slot dict returns False, no exception."""
+        assert not _detect_immigration_context({})
+
+
+class TestImmigrationContextDetail:
+    """The word used in the acknowledgment phrase — 'asylum' vs
+    'immigration'. Prefers the primary detail, falls back to the
+    first matching queued service, defaults safely if unreachable.
+    """
+
+    def test_primary_asylum_returns_asylum(self):
+        assert _immigration_context_detail({
+            "service_detail": "asylum services",
+            "additional_services": [],
+        }) == "asylum"
+
+    def test_primary_immigration_returns_immigration(self):
+        assert _immigration_context_detail({
+            "service_detail": "immigration services",
+            "additional_services": [],
+        }) == "immigration"
+
+    def test_queued_asylum_returns_asylum(self):
+        assert _immigration_context_detail({
+            "service_detail": None,
+            "additional_services": [("legal", "asylum services", None)],
+        }) == "asylum"
+
+    def test_queued_immigration_returns_immigration(self):
+        assert _immigration_context_detail({
+            "service_detail": None,
+            "additional_services": [("legal", "immigration services", None)],
+        }) == "immigration"
+
+    def test_asylum_wins_over_immigration_when_both_present(self):
+        """When both appear in the queue, the first match wins. Primary
+        takes precedence over queue."""
+        assert _immigration_context_detail({
+            "service_detail": None,
+            "additional_services": [
+                ("legal", "asylum services", None),
+                ("legal", "immigration services", None),  # unreachable in practice
+            ],
+        }) == "asylum"
+
+
+class TestImmigrationAcknowledgment:
+    """Integrated behavior — prefix string fires/suppresses based on
+    trigger conditions.
+    """
+
+    def test_fires_when_asylum_queued_behind_food(self):
+        """The A.1 primary scenario — confirmation turn should get
+        acknowledgment prefix."""
+        ack = _immigration_acknowledgment({
+            "service_type": "food",
+            "service_detail": None,
+            "additional_services": [("legal", "asylum services", None)],
+        })
+        assert ack != ""
+        assert "asylum" in ack
+        assert "immigration legal services" in ack
+        # Trailing newlines for concatenation readability
+        assert ack.endswith("\n\n")
+
+    def test_fires_when_immigration_queued_behind_food(self):
+        ack = _immigration_acknowledgment({
+            "service_type": "food",
+            "service_detail": None,
+            "additional_services": [("legal", "immigration services", None)],
+        })
+        assert ack != ""
+        assert "immigration case" in ack
+
+    def test_suppressed_when_primary_is_legal_asylum(self):
+        """No double-up: user asking about asylum directly gets legal
+        results, no meta-acknowledgment needed."""
+        ack = _immigration_acknowledgment({
+            "service_type": "legal",
+            "service_detail": "asylum services",
+            "additional_services": [],
+        })
+        assert ack == ""
+
+    def test_suppressed_when_primary_is_legal_immigration(self):
+        ack = _immigration_acknowledgment({
+            "service_type": "legal",
+            "service_detail": "immigration services",
+            "additional_services": [],
+        })
+        assert ack == ""
+
+    def test_suppressed_when_no_immigration_context(self):
+        """Baseline — pure food search gets empty string, safe to
+        unconditionally concatenate."""
+        assert _immigration_acknowledgment({
+            "service_type": "food",
+            "service_detail": None,
+            "additional_services": [],
+        }) == ""
+
+    def test_suppressed_when_legal_detail_is_not_immigration(self):
+        """Eviction help is legal but not immigration — no fire."""
+        assert _immigration_acknowledgment({
+            "service_type": "food",
+            "service_detail": None,
+            "additional_services": [("legal", "eviction help", None)],
+        }) == ""
+
+    def test_safe_on_empty_slots(self):
+        """Empty dict must not raise — orchestrator concatenates
+        unconditionally."""
+        assert _immigration_acknowledgment({}) == ""
+
+    def test_phrase_matches_queue_offer_tonal_convention(self):
+        """Phrasing mirrors _apply_queue_offer's 'You also mentioned'
+        opener for tonal consistency across the confirmation + results
+        flow. If either changes, both should change together."""
+        ack = _immigration_acknowledgment({
+            "service_type": "food",
+            "additional_services": [("legal", "asylum services", None)],
+        })
+        assert ack.startswith("You also mentioned")
 
 
 # -----------------------------------------------------------------------

@@ -44,13 +44,17 @@ def test_classify_thanks():
         assert_classified(phrase, "thanks")
 def test_classify_help():
     """Help phrases should classify as 'help'."""
-    for phrase in ["help", "what is this", "who are you",
-                   "list services", "show services"]:
+    for phrase in ["help", "what is this", "list services", "show services"]:
         assert_classified(phrase, "help")
-    # Capability questions now route to bot_question (more specific answers)
-    for phrase in ["how does this work", "what can you do",
-                   "why weren't you able to get my location"]:
+    # Capability questions route to bot_question (more specific answers)
+    for phrase in ["how does this work", "what can you do", "why weren't you able to get my location"]:
         assert_classified(phrase, "bot_question")
+    # C.1 (April 2026) intentional reclassification: "who are you" /
+    # "what are you" are identity questions, not help requests. They
+    # now route to bot_identity where the handler introduces the bot
+    # rather than to the help handler which lists services.
+    for phrase in ["who are you", "what are you", "what's your name", "introduce yourself"]:
+        assert_classified(phrase, "bot_identity")
 def test_classify_service():
     """Messages with service keywords should classify as 'service'."""
     for phrase in ["I need food", "shelter in Brooklyn",
@@ -392,6 +396,63 @@ def test_new_input_clears_pending_confirmation(fresh_session):
     assert "queens" in result["slots"].get("location", "").lower()
     # Contradiction detection auto-executes — returns results, not re-confirmation
     assert result["result_count"] >= 1 or result["follow_up_needed"] is False
+
+
+def test_service_change_does_not_leak_old_service_into_response(fresh_session):
+    """A.4 regression guard.
+
+    When a user changes service mid-conversation, the response should
+    mention the NEW service only — not the old primary, and not any
+    service queued during the old context. Prior to the merge_slots
+    queue-clear fix, a session that had queue state from the old
+    service's context would leak "and {queued_service}" into the
+    confirmation message (e.g. "I'll look for shelter AND clothing"
+    when the user switched from food+clothing to just shelter).
+    """
+    # Two-service seed establishes queue state around "food": clothing
+    # is queued alongside food as the primary. User then switches the
+    # primary to shelter during confirmation — the queued clothing
+    # should be dropped along with food's context.
+    *_, result = send_multi(
+        [
+            "I need food and clothing in Manhattan",   # food primary, clothing queued
+            "actually, shelter instead",               # service change
+        ],
+        session_id=fresh_session,
+    )
+    response_lower = result["response"].lower()
+    slots = result["slots"]
+
+    # Primary service is now shelter
+    assert slots.get("service_type") == "shelter", (
+        f"Expected service_type=shelter after change, got "
+        f"{slots.get('service_type')}"
+    )
+
+    # Queue state from the old context is gone
+    assert not slots.get("_queued_services"), (
+        f"_queued_services should be cleared, got {slots.get('_queued_services')}"
+    )
+    assert "_queued_services_original" not in slots
+    assert not slots.get("_queue_offer_pending")
+
+    # Response mentions the new service
+    assert "shelter" in response_lower, (
+        f"Response should mention 'shelter': {result['response']}"
+    )
+
+    # Response does NOT leak the old primary or the queued service
+    # from the old context. These are the words that would appear in
+    # a confirmation message like "I'll look for shelter and clothing"
+    # (the bug) — they must not appear after the service change.
+    assert "food" not in response_lower, (
+        f"Response leaked old primary 'food' after change: {result['response']}"
+    )
+    assert "clothing" not in response_lower, (
+        f"Response leaked old queued 'clothing' after change: {result['response']}"
+    )
+
+
 def test_results_have_post_search_quick_replies(fresh_session):
     """After results are shown, should offer new search and peer navigator buttons."""
     _, result = send_multi(
@@ -1814,8 +1875,18 @@ def test_emotional_buttons_no_welcome_menu(fresh_session):
 
 
 def test_frustrated_first_buttons(fresh_session):
-    """Frustrated (first time) should show New search + Peer navigator."""
-    result = send("this is not helpful at all", session_id=fresh_session)
+    """Frustrated (first time) should show New search + Peer navigator.
+
+    Input phrase changed from 'this is not helpful at all' to
+    'this is useless' as part of the B.1 fix: 'this isn't helpful'
+    variants were intentionally reclassified to negative_preference
+    (which opens a refine-search UX pathway with service-menu
+    buttons), so they no longer route to the frustration UI. This
+    test specifically exercises the frustration UI, so the phrase
+    was updated to one that still routes to frustration tone with
+    no action classifier match.
+    """
+    result = send("this is useless", session_id=fresh_session)
     labels = [qr["label"] for qr in result.get("quick_replies", [])]
     assert "🔍 New search" in labels
     assert "🤝 Peer navigator" in labels
@@ -2034,6 +2105,177 @@ def test_negative_preference_handler(fresh_session):
     assert any("Food" in lable or "Shelter" in lable for lable in labels)
 
 
+def test_edge_frustration_scenario_does_not_repeat_response(fresh_session):
+    """B.1 regression guard — replays the exact `edge_frustration` eval
+    scenario turns.
+
+    Before the fix, turn 2's message "This isn't helpful at all.
+    I already tried those places." matched neither the negative-preference
+    phrase list nor any frustration pattern. The classifier routed it as
+    a normal service request, the pending-confirmation handler fired, and
+    the bot emitted an IDENTICAL response to turn 1 — the eval judge
+    flagged this as a critical error_recovery=1 failure.
+
+    After the fix, turn 2's message routes to negative_preference, the
+    handler acknowledges the rejection, offers alternatives, and
+    increments `_frustration_count` — the textbook recovery path for
+    this class of user signal.
+    """
+    turn1, turn2 = send_multi(
+        [
+            "I need shelter in Queens",
+            "This isn't helpful at all. I already tried those places.",
+        ],
+        session_id=fresh_session,
+    )
+
+    turn1_response = turn1["response"]
+    turn2_response = turn2["response"]
+
+    # Core regression guard: turn 2 must not be an identical repeat.
+    # Normalize whitespace to catch even spacing-only duplicates.
+    import re
+    def normalize(s):
+        return re.sub(r"\s+", " ", s.strip().lower())
+    assert normalize(turn1_response) != normalize(turn2_response), (
+        f"Turn 2 response was an identical repeat of turn 1 — the exact "
+        f"edge_frustration failure mode. Response: {turn2_response!r}"
+    )
+
+    # Turn 2 should have routed through the negative-preference handler,
+    # which emits an acknowledging message with specific structural markers.
+    turn2_lower = turn2_response.lower()
+    assert (
+        "understand" in turn2_lower
+        or "peer navigator" in turn2_lower
+        or "different type" in turn2_lower
+    ), (
+        f"Turn 2 response doesn't contain a negative-preference "
+        f"recovery cue (understand / peer navigator / different type): "
+        f"{turn2_response!r}"
+    )
+
+    # Frustration count should have incremented — the handler counts
+    # negative_preference turns as frustration for tiered escalation.
+    assert turn2["slots"].get("_frustration_count", 0) >= 1, (
+        f"_frustration_count should have incremented after rejection, "
+        f"got {turn2['slots'].get('_frustration_count')}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# B.2 — Compound-intent override: rejection + new service intent in one turn
+# ---------------------------------------------------------------------------
+# Surfaced by INT-3 in REGRESSION_ANALYSIS.md. Before B.2, B.1's phrase
+# match fired negative_preference on the full message and dropped the
+# concrete service intent. B.2's orchestrator override detects the
+# compound case and routes to the service flow with frustration tone
+# instead, preserving the user's stated pivot.
+
+def test_b2_rejection_plus_new_service_routes_to_service_flow(fresh_session):
+    """The exact INT-3 regression — three-turn replay. After results
+    are displayed, user sends a message that combines a rejection
+    phrase with a new concrete service intent. B.2 must route this to
+    the service flow (not the negative_preference menu)."""
+    results = send_multi(
+        [
+            "I need food in Queens",
+            "Yes, search",
+            "I already tried those, I need shelter instead",
+        ],
+        session_id=fresh_session,
+    )
+    t3 = results[2]
+    # Primary assertion: the compound intent preserved the shelter pivot
+    assert t3["slots"].get("service_type") == "shelter", (
+        f"B.2 should have extracted and promoted 'shelter' as the new "
+        f"service_type. Actual slots: {t3['slots']!r}"
+    )
+    # Response should be a shelter confirmation, NOT the menu
+    resp = t3["response"]
+    assert "shelter" in resp.lower(), (
+        f"Turn 3 response must mention shelter (confirmation), got: {resp!r}"
+    )
+    # Response must NOT be the negative_preference menu's canonical opener.
+    # The menu's distinctive phrase is "those options aren't what you need" —
+    # check for that specifically rather than a general "understand" which
+    # the frustration-tone service confirmation also uses.
+    assert "those options aren't what you need" not in resp.lower(), (
+        f"Turn 3 should have routed to service flow, not the "
+        f"negative_preference menu. Response: {resp!r}"
+    )
+
+
+def test_b2_frustration_tone_applied_on_compound_rejection(fresh_session):
+    """B.2 promotes `tone='frustrated'` when overriding to the service
+    flow. The resulting confirmation should carry a frustration-aware
+    preamble ("I understand this has been frustrating" or similar)
+    rather than a neutral tone."""
+    results = send_multi(
+        [
+            "I need food in Queens",
+            "Yes, search",
+            "I already tried those, I need shelter instead",
+        ],
+        session_id=fresh_session,
+    )
+    resp = results[2]["response"].lower()
+    # Frustration tone prefix should be present
+    assert "frustrat" in resp or "try something different" in resp, (
+        f"Turn 3 should carry frustration-tone acknowledgment "
+        f"(override promotes tone='frustrated'), got: {resp!r}"
+    )
+
+
+def test_b2_rejection_alone_still_routes_to_menu(fresh_session):
+    """Regression guard: when a rejection stands alone with NO new
+    service intent, B.2 must NOT fire — the negative_preference
+    handler should still emit the menu. Otherwise B.2 would
+    accidentally swallow the B.1 fix it was built to complement."""
+    results = send_multi(
+        [
+            "I need food in Queens",
+            "Yes, search",
+            "I already tried those",
+        ],
+        session_id=fresh_session,
+    )
+    t3 = results[2]
+    # No new service extracted → override doesn't fire → handler runs
+    assert t3["slots"].get("_last_action") == "negative_preference", (
+        f"Rejection alone should route through the negative_preference "
+        f"handler; got _last_action={t3['slots'].get('_last_action')!r}"
+    )
+    assert t3["slots"].get("_frustration_count", 0) >= 1, (
+        "Handler should increment _frustration_count"
+    )
+    # Menu's distinctive phrase
+    assert "those options aren't what you need" in t3["response"].lower(), (
+        f"Expected negative_preference menu, got: {t3['response']!r}"
+    )
+
+
+def test_b2_preserves_location_from_existing_when_not_provided(fresh_session):
+    """When the compound rejection specifies a new service but NO
+    new location, B.2's fall-through to the service flow should use
+    the existing location from session state. The whole point is a
+    pivot, not a reset."""
+    results = send_multi(
+        [
+            "I need food in Queens",
+            "Yes, search",
+            "I already tried those, I need shelter instead",
+        ],
+        session_id=fresh_session,
+    )
+    t3 = results[2]
+    # Location should persist from turn 1
+    assert t3["slots"].get("location") == "queens", (
+        f"Location should carry forward from existing session state; "
+        f"got location={t3['slots'].get('location')!r}"
+    )
+
+
 # ---------------------------------------------------------------------------
 # RUN 22 — Privacy routing exception
 # ---------------------------------------------------------------------------
@@ -2081,3 +2323,172 @@ def test_frustration_third_tier(fresh_session):
     assert "🤝 Peer navigator" in labels
     # Should NOT have New search on 3rd tier
     assert "🔍 New search" not in labels
+
+
+# ---------------------------------------------------------------------------
+# C.1 — bot_identity / bot_question phrase expansion
+# ---------------------------------------------------------------------------
+# Added April 2026. Before C.1, "what's your name?" and similar direct
+# identity questions fell through to the `general` category and — during
+# a pending confirmation — produced a surreal re-nudge of the prior
+# search. C.1 adds these phrases to the classifier so they correctly
+# route to bot_identity / bot_question.
+
+def test_c1_whats_your_name_routes_to_bot_identity():
+    """'what's your name?' must classify as bot_identity, not general."""
+    from app.services.classifier import _classify_action
+    assert _classify_action("what's your name?") == "bot_identity"
+    assert _classify_action("whats your name") == "bot_identity"
+    assert _classify_action("what is your name") == "bot_identity"
+
+
+def test_c1_who_are_you_routes_to_bot_identity():
+    """'who are you?' must classify as bot_identity."""
+    from app.services.classifier import _classify_action
+    assert _classify_action("who are you") == "bot_identity"
+    assert _classify_action("who are you?") == "bot_identity"
+
+
+def test_c1_introduce_yourself_routes_to_bot_identity():
+    """Introduction prompts classify as bot_identity."""
+    from app.services.classifier import _classify_action
+    assert _classify_action("tell me about yourself") == "bot_identity"
+    assert _classify_action("introduce yourself") == "bot_identity"
+
+
+def test_c1_who_made_you_routes_to_bot_question():
+    """Attribution questions route to bot_question (LLM has factual context)."""
+    from app.services.classifier import _classify_action
+    assert _classify_action("who made you") == "bot_question"
+    assert _classify_action("who built you") == "bot_question"
+    assert _classify_action("who created you") == "bot_question"
+
+
+def test_c1_regression_guard_whats_your_name_during_pending_confirmation(fresh_session):
+    """Regression guard for the original surreal-non-sequitur bug.
+
+    Pre-C.1 sequence: user says "I need food in Brooklyn" (pending
+    confirmation set) → user asks "what's your name?" → bot replies
+    with a re-nudge of the food search, silently dropping the question.
+
+    Post-C.1: the identity classifier catches the question first, so
+    the bot_identity handler answers it. Pending confirmation can
+    still be preserved for a follow-up "yes" if the bot_identity
+    handler chooses (currently it returns service buttons, not the
+    old confirm prompt — that behavior is correct; the user re-asserts
+    their intent afresh).
+    """
+    r1, r2 = send_multi(
+        ["I need food in Brooklyn", "what's your name?"],
+        session_id=fresh_session,
+    )
+    # r1: confirmation for food-in-Brooklyn
+    assert r1["slots"].get("_pending_confirmation") is True
+    # r2: must be a bot_identity response, NOT a re-nudge
+    response_lower = r2["response"].lower()
+    # Bot-identity responses mention AI / assistant / YourPeer nature;
+    # re-nudge responses say "Just to make sure" and name the search.
+    assert "just to make sure" not in response_lower, (
+        "'what's your name?' was silently re-nudged — C.1 classifier "
+        "didn't catch it. Expected bot_identity response."
+    )
+    # Should contain some identity marker
+    assert any(term in response_lower for term in
+               ("ai", "assistant", "yourpeer", "chatbot")), (
+        "Expected bot_identity response to identify the bot. Got: "
+        f"{r2['response'][:200]}"
+    )
+
+# ---------------------------------------------------------------------------
+# C.2 — Topic-shift disambiguation during pending confirmation
+# ---------------------------------------------------------------------------
+# Added April 2026. Catches novel off-topic questions that slip past
+# the bot_identity / bot_question / help classifiers. Previously these
+# fell into `_handle_post_pending_confirmation` Path 3 (silent re-nudge);
+# now they produce a disambiguation prompt.
+
+def test_c2_novel_off_topic_question_during_pending_gets_disambiguation(fresh_session):
+    """Novel question phrasing (not in any classifier phrase list) during
+    pending confirmation should produce a disambiguation prompt, not a
+    silent re-nudge of the prior search.
+
+    'can you speak spanish' isn't in _BOT_QUESTION_PHRASES or
+    _BOT_IDENTITY_PHRASES, so it survives through to
+    _handle_post_pending_confirmation. Before C.2, it got a silent
+    re-nudge. After C.2, it gets the topic-shift disambiguation prompt.
+    """
+    r1, r2 = send_multi(
+        ["I need food in Brooklyn", "can you speak spanish?"],
+        session_id=fresh_session,
+    )
+    assert r1["slots"].get("_pending_confirmation") is True
+    response_lower = r2["response"].lower()
+    # Disambiguation marker: asks whether the user was asking
+    # something else OR wants to proceed.
+    assert "asking something" in response_lower or "something different" in response_lower, (
+        "Expected topic-shift disambiguation response. Got: "
+        f"{r2['response'][:200]}"
+    )
+    # Pending confirmation is still preserved so "yes" still works.
+    assert r2["slots"].get("_pending_confirmation") is True
+    # Quick replies should include the "something else" escape.
+    labels = [qr["label"] for qr in r2.get("quick_replies", [])]
+    assert any("something else" in lbl.lower() for lbl in labels), (
+        f"Expected 'I was asking something else' quick reply. "
+        f"Got labels: {labels}"
+    )
+
+
+def test_c2_regression_guard_plain_confirmation_still_renudges(fresh_session):
+    """Sanity check: a short confirmation-shaped message during pending
+    confirmation should still trigger the re-nudge path (not the
+    disambiguation branch). The disambiguation heuristic is
+    intentionally conservative so it doesn't swallow legitimate
+    confirmation-follow-ups.
+    """
+    r1, r2 = send_multi(
+        ["I need food in Brooklyn", "um maybe"],
+        session_id=fresh_session,
+    )
+    assert r1["slots"].get("_pending_confirmation") is True
+    response_lower = r2["response"].lower()
+    # Should be the normal re-nudge, NOT disambiguation
+    assert "asking something" not in response_lower
+    assert "just to make sure" in response_lower or "let me just confirm" in response_lower
+
+
+def test_c2_escape_button_actually_escapes_pending_confirmation(fresh_session):
+    """Regression guard for INT-7 (found in post-implementation
+    regression analysis). The C.2 disambiguation prompt offers a
+    '💬 I was asking something else' quick reply. Initially, clicking
+    it sent 'I was asking something else' which matched no classifier
+    phrase, had no slots, and did NOT match the C.2 topic-shift
+    heuristic (no wh-word opener) — so it fell through to the exact
+    surreal-non-sequitur re-nudge C.2 was supposed to prevent.
+
+    Fix: 'I was asking something else' added to _CORRECTION_PHRASES.
+    Correction handler clears pending and offers options — the
+    intended escape-hatch behavior.
+    """
+    r1, r2, r3 = send_multi(
+        ["I need food in Brooklyn",
+         "can you speak spanish?",
+         "I was asking something else"],
+        session_id=fresh_session,
+    )
+    # Turn 1: confirmation pending
+    assert r1["slots"].get("_pending_confirmation") is True
+    # Turn 2: C.2 fires (sanity — the scenario we're guarding against
+    # depends on C.2 being active).
+    assert "asking something" in r2["response"].lower()
+    # Turn 3: clicking the escape must ACTUALLY escape:
+    # - pending confirmation cleared
+    assert r3["slots"].get("_pending_confirmation") is not True, (
+        "INT-7: escape button didn't clear pending. Got response: "
+        f"{r3['response'][:200]}"
+    )
+    # - response acknowledges the miss, not re-nudges
+    r3_lower = r3["response"].lower()
+    assert "just to make sure" not in r3_lower, (
+        f"INT-7: escape button fell through to re-nudge. Got: {r3['response'][:200]}"
+    )

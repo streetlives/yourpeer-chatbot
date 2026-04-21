@@ -26,6 +26,8 @@ The chatbot has minimal Spanish support today:
 - **Eval:** one scenario (`edge_spanish_input`) tests basic Spanish input. Scores 4.5-4.9 because the LLM handles it, not because the system does.
 - **Service data:** all database content (organization names, descriptions, addresses, hours) is in English. The `languages` table tracks which services offer Spanish-speaking staff.
 
+**Related pattern — immigration-context acknowledgment (A.1.b, April 2026).** The Spanish bilingual acknowledgment established the prefix-prepend pattern: a short validating note composed into `_prefix_prepend` in `orchestrator.py`, prepended to the tone prefix on confirmations. A.1.b uses the same pattern for a different signal — asylum or immigration context in the slot state. Both prefixes can fire together on a compound message. If the full Spanish parity work in this proposal lands, the prefix composition in `orchestrator.py` is where language-specific variants would slot in — the current English-only phrasing of the immigration acknowledgment would need a Spanish counterpart in `_immigration_acknowledgment()` selected based on `_language`. See `CHATBOT_BEHAVIOR.md` Response Prefix Chain section for the current composition.
+
 ---
 
 ## 3. Architecture Decision: Session-Level Language, Not Per-Message Translation

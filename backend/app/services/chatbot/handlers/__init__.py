@@ -23,6 +23,7 @@ from .accessibility import (
     _handle_demographic_skip,
     _handle_location_unknown,
     _handle_spanish_detection,
+    _immigration_acknowledgment,
 )
 from .confirmation import (
     _handle_change_location_request,
@@ -78,6 +79,7 @@ __all__ = [
     "_handle_demographic_skip",
     "_handle_location_unknown",
     "_handle_spanish_detection",
+    "_immigration_acknowledgment",
     # confirmation
     "_handle_change_location_request",
     "_handle_change_service_request",

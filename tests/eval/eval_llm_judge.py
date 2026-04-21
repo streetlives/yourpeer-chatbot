@@ -1800,6 +1800,23 @@ SCENARIOS = [
     # =======================================================================
     # SECTION 1: CORE QUEUE FLOW — two services extracted, both searched
     # =======================================================================
+    #
+    # NOTE on `should_handle_additional_service`: this key (previously
+    # `should_queue_additional`) accepts EITHER of two valid outcomes:
+    #
+    # 1. Sequential queue — bot searches the primary service, offers the
+    #    secondary after ("I found X food options. Want me to search shelter
+    #    next?"). The traditional multi-intent flow documented in
+    #    MULTI_INTENT_PLAN.md.
+    #
+    # 2. Co-located search — bot finds a single location that offers both
+    #    services ("I found X locations offering both food AND shelter")
+    #    when the database supports it. Strictly better UX when available.
+    #
+    # The rename from `should_queue_additional` to `should_handle_additional_service`
+    # codifies this: what matters is that the second service is addressed,
+    # not which path was taken. See MULTI_INTENT_AND_FRUSTRATION_FIX_PLAN.md
+    # A.2 for the decision rationale.
 
     {
         "id": "multi_food_and_shelter_brooklyn",
@@ -1814,7 +1831,7 @@ SCENARIOS = [
             "service_type": "food",
             "location_contains": "brooklyn",
             "should_reach_confirmation": True,
-            "should_queue_additional": True,
+            "should_handle_additional_service": True,
             "additional_service": "shelter",
         },
     },
@@ -1849,7 +1866,7 @@ SCENARIOS = [
             "service_type": "personal_care",
             "location_contains": "manhattan",
             "should_reach_confirmation": True,
-            "should_queue_additional": True,
+            "should_handle_additional_service": True,
             "additional_service": "food",
         },
     },
@@ -1865,7 +1882,7 @@ SCENARIOS = [
             "service_type": "clothing",
             "location_contains": "harlem",
             "should_reach_confirmation": True,
-            "should_queue_additional": True,
+            "should_handle_additional_service": True,
             "additional_service": "food",
         },
     },
@@ -1891,27 +1908,35 @@ SCENARIOS = [
             "service_type": "food",
             "location_contains": "manhattan",
             "should_reach_confirmation": True,
-            "should_queue_additional": True,
+            "should_handle_additional_service": True,
         },
     },
     {
         "id": "multi_three_services_legal_benefits_food",
         "name": "Legal, benefits, and food — asylum seeker trio",
         "category": "multi_intent",
-        "description": "Asylum seekers commonly need immigration legal help, benefits "
-                       "enrollment, and food simultaneously. YourPeer's Community "
-                       "Information Specialists include asylum seekers who understand "
-                       "this pattern firsthand.",
+        "description": "Asylum seekers commonly need immigration legal help, "
+                       "benefits enrollment, and food simultaneously. The "
+                       "extractor correctly identifies all three services "
+                       "(food + legal/asylum + other/food-stamps) and uses "
+                       "priority-ordering to pick food as primary (Tier 2 "
+                       "survival), with legal and benefits queued as "
+                       "additional services. Mirrors the sister scenario "
+                       "`multi_asylum_seeker_food_legal`. "
+                       "(Cultural-responsiveness acknowledgment of the "
+                       "asylum-seeker context is tracked separately as "
+                       "A.1.b.)",
         "user_turns": [
             "I need help with my asylum case, food stamps, and somewhere "
             "to get food. I'm in Jackson Heights.",
             "Yes, search",
         ],
         "expected": {
-            "service_type": "legal",
+            "service_type": "food",
             "location_contains": "jackson heights",
             "should_reach_confirmation": True,
-            "should_queue_additional": True,
+            "should_handle_additional_service": True,
+            "additional_service": "legal",
         },
     },
 
@@ -2000,21 +2025,27 @@ SCENARIOS = [
         "id": "multi_cross_borough_food_brooklyn_shelter_manhattan",
         "name": "Cross-borough: food in Brooklyn, shelter in Manhattan",
         "category": "multi_intent",
-        "description": "Known limitation: only one location is extracted per message. "
-                       "User says two different boroughs for two services. System "
-                       "should extract the first-mentioned location and use it for "
-                       "the primary service. The user can correct via 'change location' "
-                       "when the second service is offered.",
+        "description": "User mentions two services in two different boroughs. "
+                       "The extractor correctly binds each service to its own "
+                       "location and uses priority-ordering (shelter > food "
+                       "per need urgency) to pick the primary — shelter gets "
+                       "Manhattan, food-in-Brooklyn is queued as an additional "
+                       "service. User can accept the queued second search via "
+                       "'Yes' after seeing shelter results. "
+                       "(Updated from stale first-mentioned expectation: "
+                       "the extractor no longer has the 'only one location "
+                       "extracted per message' limitation the original "
+                       "description assumed.)",
         "user_turns": [
             "I need food in Brooklyn and shelter in Manhattan",
             "Yes, search",
         ],
         "expected": {
-            "service_type": "food",
-            "location_contains": "brooklyn",
+            "service_type": "shelter",
+            "location_contains": "manhattan",
             "should_reach_confirmation": True,
-            "should_queue_additional": True,
-            "additional_service": "shelter",
+            "should_handle_additional_service": True,
+            "additional_service": "food",
         },
     },
     {
@@ -2031,7 +2062,7 @@ SCENARIOS = [
         "expected": {
             "service_type": "personal_care",
             "should_reach_confirmation": True,
-            "should_queue_additional": True,
+            "should_handle_additional_service": True,
         },
     },
 
@@ -2057,7 +2088,7 @@ SCENARIOS = [
             "location_contains": "brooklyn",
             "should_reach_confirmation": True,
             "should_show_empathy": True,
-            "should_queue_additional": True,
+            "should_handle_additional_service": True,
         },
     },
     {
@@ -2096,7 +2127,7 @@ SCENARIOS = [
             "location_contains": "manhattan",
             "should_reach_confirmation": True,
             "should_show_empathy": True,
-            "should_queue_additional": True,
+            "should_handle_additional_service": True,
         },
     },
     {
@@ -2117,7 +2148,7 @@ SCENARIOS = [
             "location_contains": "queens",
             "should_reach_confirmation": True,
             "should_show_empathy": True,
-            "should_queue_additional": True,
+            "should_handle_additional_service": True,
         },
     },
     {
@@ -2138,7 +2169,7 @@ SCENARIOS = [
             "location_contains": "bronx",
             "should_reach_confirmation": True,
             "should_show_empathy": True,
-            "should_queue_additional": True,
+            "should_handle_additional_service": True,
         },
     },
 
@@ -2166,7 +2197,7 @@ SCENARIOS = [
             "location_contains": "midtown",
             "should_reach_confirmation": True,
             "should_show_empathy": True,
-            "should_queue_additional": True,
+            "should_handle_additional_service": True,
             "additional_service": "clothing",
         },
     },
@@ -2189,7 +2220,7 @@ SCENARIOS = [
             "location_contains": "east village",
             "should_reach_confirmation": True,
             "should_show_empathy": True,
-            "should_queue_additional": True,
+            "should_handle_additional_service": True,
         },
     },
     {
@@ -2235,7 +2266,7 @@ SCENARIOS = [
             "age": 19,
             "should_reach_confirmation": True,
             "should_show_empathy": True,
-            "should_queue_additional": True,
+            "should_handle_additional_service": True,
             "additional_service": "food",
         },
     },
@@ -2257,7 +2288,7 @@ SCENARIOS = [
             "location_contains": "bushwick",
             "age": 17,
             "should_reach_confirmation": True,
-            "should_queue_additional": True,
+            "should_handle_additional_service": True,
             "additional_service": "clothing",
         },
     },
@@ -2280,7 +2311,7 @@ SCENARIOS = [
             "location_contains": "bed-stuy",
             "age": 21,
             "should_reach_confirmation": True,
-            "should_queue_additional": True,
+            "should_handle_additional_service": True,
             "additional_service": "employment",
         },
     },
@@ -2302,7 +2333,7 @@ SCENARIOS = [
             "service_type": "food",
             "location_contains": "jackson heights",
             "should_reach_confirmation": True,
-            "should_queue_additional": True,
+            "should_handle_additional_service": True,
             "additional_service": "legal",
         },
     },
@@ -2325,7 +2356,7 @@ SCENARIOS = [
             "service_type": "shelter",
             "location_contains": "bronx",
             "should_reach_confirmation": True,
-            "should_queue_additional": True,
+            "should_handle_additional_service": True,
             "additional_service": "employment",
         },
     },
@@ -2347,7 +2378,7 @@ SCENARIOS = [
             "service_type": "shelter",
             "location_contains": "harlem",
             "should_reach_confirmation": True,
-            "should_queue_additional": True,
+            "should_handle_additional_service": True,
             "additional_service": "food",
             "family_status": "children",
         },
@@ -2413,7 +2444,7 @@ SCENARIOS = [
             "service_type": "mental_health",
             "location_contains": "lower east side",
             "should_reach_confirmation": True,
-            "should_queue_additional": True,
+            "should_handle_additional_service": True,
             "additional_service": "shelter",
         },
     },
@@ -2435,7 +2466,7 @@ SCENARIOS = [
             "service_type": "shelter",
             "location_contains": "manhattan",
             "should_reach_confirmation": True,
-            "should_queue_additional": True,
+            "should_handle_additional_service": True,
             "age": 19,
         },
     },
@@ -2553,7 +2584,7 @@ SCENARIOS = [
             "family_status": "with_children",
             "urgency": "high",
             "should_reach_confirmation": True,
-            "should_queue_additional": True,
+            "should_handle_additional_service": True,
             "notes": "Should extract shelter as primary, food and medical as "
                      "additional. 'Diapers' maps to food (WIC). Results should "
                      "include Covenant House and/or PATH. After shelter results, "

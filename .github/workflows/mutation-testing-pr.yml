@@ -8,6 +8,11 @@ name: Mutation Testing (PR)
 # to run on every PR for PRs that touch safety-critical code.
 #
 # If a PR doesn't touch any critical module, this workflow skips entirely.
+#
+# Multi-module parallelism: each changed critical module runs in its own
+# parallel job (matrix-include). A PR that touches both classifier.py
+# and orchestrator.py gets TWO parallel jobs, not one serial job that
+# risks timing out on the second module (the PR 6 hang root cause).
 
 on:
   pull_request:
@@ -23,9 +28,120 @@ on:
       - "backend/app/services/session_token.py"
 
 jobs:
-  pr-mutation:
+  # Stage 1: figure out which critical modules this PR changed, and emit
+  # a matrix JSON for stage 2. This runs fast (no Python setup needed)
+  # and outputs zero rows if no critical module changed → matrix jobs
+  # skipped entirely.
+  detect-changed-modules:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.build-matrix.outputs.matrix }}
+      any-changed: ${{ steps.build-matrix.outputs.any-changed }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Need full history to diff against the base branch.
+          fetch-depth: 0
+
+      - name: Build mutation matrix from changed files
+        id: build-matrix
+        run: |
+          # Modules that need mutation testing when touched. Pairs each
+          # module with its focused test subset + threshold. KEEP IN SYNC
+          # with .github/workflows/mutation-testing.yml (weekly).
+          declare -A TESTS_FOR_MODULE
+          TESTS_FOR_MODULE["backend/app/services/crisis_detector.py"]="tests/unit/test_phrase_audit.py tests/unit/test_contraction_normalization.py tests/unit/test_frustration_and_crisis.py"
+          TESTS_FOR_MODULE["backend/app/services/classifier.py"]="tests/integration/test_classification_and_routing.py tests/unit/test_contraction_normalization.py"
+          TESTS_FOR_MODULE["backend/app/privacy/pii_redactor.py"]="tests/unit/test_pii_redactor.py"
+          TESTS_FOR_MODULE["backend/app/services/chatbot/orchestrator.py"]="tests/integration/test_classification_and_routing.py tests/integration/test_multi_turn_and_context.py"
+          TESTS_FOR_MODULE["backend/app/services/session_token.py"]="tests/unit/test_session_store.py tests/unit/test_main.py"
+
+          declare -A THRESHOLD_FOR_MODULE
+          THRESHOLD_FOR_MODULE["backend/app/services/crisis_detector.py"]=50
+          THRESHOLD_FOR_MODULE["backend/app/services/classifier.py"]=70
+          THRESHOLD_FOR_MODULE["backend/app/privacy/pii_redactor.py"]=85
+          THRESHOLD_FOR_MODULE["backend/app/services/chatbot/orchestrator.py"]=70
+          THRESHOLD_FOR_MODULE["backend/app/services/session_token.py"]=85
+
+          # Per-module timeout in minutes. Most modules finish in ~20-25
+          # min, so the default cap is 45. Orchestrator is an outlier:
+          # 489 lines generate ~400-500 mutants, each run against two
+          # big integration test files (263 test functions combined).
+          # First parallelism attempt (30-min cap) hit the timeout at
+          # 28m38s on a clean single-module run — genuinely needed more.
+          # 60 min matches the observed runtime envelope with headroom
+          # for slow CI runners. If this entry ever climbs past 75 min,
+          # it's a signal to switch to the celery distributor (see
+          # follow-up note below) rather than bumping the cap further.
+          declare -A TIMEOUT_FOR_MODULE
+          TIMEOUT_FOR_MODULE["backend/app/services/crisis_detector.py"]=45
+          TIMEOUT_FOR_MODULE["backend/app/services/classifier.py"]=45
+          TIMEOUT_FOR_MODULE["backend/app/privacy/pii_redactor.py"]=30
+          TIMEOUT_FOR_MODULE["backend/app/services/chatbot/orchestrator.py"]=60
+          TIMEOUT_FOR_MODULE["backend/app/services/session_token.py"]=30
+
+          changed=$(git diff --name-only origin/${{ github.base_ref }}...HEAD)
+
+          # Build a JSON array of {module, tests, threshold, safe_name,
+          # timeout_min} entries, one per changed critical module.
+          matrix_entries=""
+          for module in "${!TESTS_FOR_MODULE[@]}"; do
+            if echo "$changed" | grep -qxF "$module"; then
+              tests="${TESTS_FOR_MODULE[$module]}"
+              threshold="${THRESHOLD_FOR_MODULE[$module]}"
+              timeout_min="${TIMEOUT_FOR_MODULE[$module]}"
+              safe_name=$(echo "$module" | tr '/' '-')
+              entry="{\"module\":\"$module\",\"tests\":\"$tests\",\"threshold\":$threshold,\"safe_name\":\"$safe_name\",\"timeout_min\":$timeout_min}"
+              if [ -z "$matrix_entries" ]; then
+                matrix_entries="$entry"
+              else
+                matrix_entries="$matrix_entries,$entry"
+              fi
+            fi
+          done
+
+          if [ -z "$matrix_entries" ]; then
+            echo "No critical modules changed — mutation matrix will be empty."
+            echo "any-changed=false" >> $GITHUB_OUTPUT
+            # Emit an empty-but-valid matrix so the downstream job skips
+            # cleanly instead of erroring on malformed JSON.
+            echo 'matrix={"include":[]}' >> $GITHUB_OUTPUT
+          else
+            echo "any-changed=true" >> $GITHUB_OUTPUT
+            echo "matrix={\"include\":[$matrix_entries]}" >> $GITHUB_OUTPUT
+            echo "Changed critical modules (will mutate in parallel):"
+            echo "[$matrix_entries]" | python3 -m json.tool
+          fi
+
+  # Stage 2: one parallel job per changed module. Matrix-expanded from
+  # stage 1's output. Each cell gets its own per-module timeout (see
+  # TIMEOUT_FOR_MODULE in stage 1) — wall-clock is bounded by the
+  # slowest module, not the sum of all.
+  #
+  # Pre-fix 1 (the PR 6 initial hang): classifier + orchestrator ran
+  # serially in ONE 30-minute job. Classifier ate ~28 minutes;
+  # orchestrator hit the timeout immediately after starting.
+  #
+  # Pre-fix 2 (first parallelism attempt): each module got its own
+  # 30-minute job, but orchestrator ALONE needs >30 min for its ~400-500
+  # mutants × 263-test integration set. Hit timeout at 28m38s on a
+  # clean single-module run.
+  #
+  # Post-fix: per-module timeout_min on each matrix entry. Orchestrator
+  # gets 60 min; most others get 45; tiny modules (pii_redactor,
+  # session_token) get 30. Each cell still runs in parallel; fast cells
+  # don't wait for slow ones.
+  pr-mutation:
+    needs: detect-changed-modules
+    if: needs.detect-changed-modules.outputs.any-changed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ matrix.timeout_min }}
+    name: Mutate ${{ matrix.safe_name }}
+
+    strategy:
+      fail-fast: false  # One module's failure shouldn't cancel the others.
+      matrix: ${{ fromJson(needs.detect-changed-modules.outputs.matrix) }}
 
     env:
       SESSION_SECRET: test-session-secret-for-ci-only
@@ -35,7 +151,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # Need full history to diff against the base branch.
           fetch-depth: 0
 
       - uses: actions/setup-python@v5
@@ -48,107 +163,56 @@ jobs:
           pip install -r backend/requirements.txt
           pip install pytest pytest-cov pytest-mock pytest-asyncio cosmic-ray
 
-      - name: Identify changed critical modules
-        id: changed
+      - name: Run mutation testing for ${{ matrix.module }}
         run: |
-          # Diff against the PR base branch, filter to critical modules.
-          CRITICAL_MODULES=(
-            "backend/app/services/crisis_detector.py"
-            "backend/app/services/classifier.py"
-            "backend/app/privacy/pii_redactor.py"
-            "backend/app/services/chatbot/orchestrator.py"
-            "backend/app/services/session_token.py"
-          )
-          changed=$(git diff --name-only origin/${{ github.base_ref }}...HEAD)
-          targets=""
-          for mod in "${CRITICAL_MODULES[@]}"; do
-            if echo "$changed" | grep -qxF "$mod"; then
-              targets="$targets $mod"
-            fi
-          done
-          targets=$(echo "$targets" | xargs)  # trim
-          echo "targets=$targets" >> $GITHUB_OUTPUT
-          echo "Changed critical modules: $targets"
-
-          if [ -z "$targets" ]; then
-            echo "No critical modules changed — skipping mutation run."
-            echo "skip=true" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Run mutation testing per changed module
-        if: steps.changed.outputs.skip != 'true'
-        # For each changed critical module, run a focused mutation pass
-        # using the per-module test map defined in the weekly workflow.
-        run: |
-          # Map of module → focused test subset. Keep in sync with
-          # .github/workflows/mutation-testing.yml.
-          declare -A TESTS_FOR_MODULE
-          TESTS_FOR_MODULE["backend/app/services/crisis_detector.py"]="tests/unit/test_phrase_audit.py tests/unit/test_contraction_normalization.py tests/unit/test_frustration_and_crisis.py"
-          TESTS_FOR_MODULE["backend/app/services/classifier.py"]="tests/integration/test_classification_and_routing.py tests/unit/test_contraction_normalization.py"
-          TESTS_FOR_MODULE["backend/app/privacy/pii_redactor.py"]="tests/unit/test_pii_redactor.py"
-          TESTS_FOR_MODULE["backend/app/services/chatbot/orchestrator.py"]="tests/integration/test_classification_and_routing.py tests/integration/test_multi_turn_and_context.py"
-          TESTS_FOR_MODULE["backend/app/services/session_token.py"]="tests/unit/test_session_store.py tests/unit/test_main.py"
-
-          failed=0
-          for module in ${{ steps.changed.outputs.targets }}; do
-            tests="${TESTS_FOR_MODULE[$module]}"
-            safe_name=$(echo "$module" | tr '/' '-')
-
-            echo "::group::Mutating $module"
-            cat > cosmic-ray.toml <<EOF
+          echo "::group::Mutating ${{ matrix.module }}"
+          cat > cosmic-ray.toml <<EOF
           [cosmic-ray]
-          module-path = "$module"
+          module-path = "${{ matrix.module }}"
           timeout = 60
           excluded-modules = []
-          test-command = "python -m pytest $tests -x --tb=no -q"
+          test-command = "python -m pytest ${{ matrix.tests }} -x --tb=no -q"
           [cosmic-ray.distributor]
           name = "local"
           [cosmic-ray.interceptors]
           enabled = ["spor", "pragma_no_mutate", "operators-filter"]
           EOF
 
-            rm -f cr-$safe_name.sqlite
-            cosmic-ray init cosmic-ray.toml cr-$safe_name.sqlite
-            cosmic-ray --verbosity WARNING baseline cosmic-ray.toml
-            cosmic-ray exec cosmic-ray.toml cr-$safe_name.sqlite
-            cr-report cr-$safe_name.sqlite | tail -20
-            echo "::endgroup::"
+          rm -f cr-${{ matrix.safe_name }}.sqlite
+          cosmic-ray init cosmic-ray.toml cr-${{ matrix.safe_name }}.sqlite
+          cosmic-ray --verbosity WARNING baseline cosmic-ray.toml
+          cosmic-ray exec cosmic-ray.toml cr-${{ matrix.safe_name }}.sqlite
+          cr-report cr-${{ matrix.safe_name }}.sqlite | tail -20
+          echo "::endgroup::"
 
-            # Same threshold logic as the weekly workflow.
-            python3 <<PY || failed=1
+          # Threshold check. Uses the per-module threshold captured in
+          # the matrix entry; avoids repeating the THRESHOLDS dict here.
+          python3 <<PY
           import sqlite3, sys
-          THRESHOLDS = {
-              "backend/app/services/crisis_detector.py": 50,
-              "backend/app/services/classifier.py": 70,
-              "backend/app/privacy/pii_redactor.py": 85,
-              "backend/app/services/chatbot/orchestrator.py": 70,
-              "backend/app/services/session_token.py": 85,
-          }
-          module = "$module"
-          threshold = THRESHOLDS.get(module, 70)
+          threshold = ${{ matrix.threshold }}
 
-          con = sqlite3.connect("cr-$safe_name.sqlite")
+          con = sqlite3.connect("cr-${{ matrix.safe_name }}.sqlite")
           cur = con.cursor()
           killed = cur.execute("SELECT COUNT(*) FROM work_results WHERE test_outcome='KILLED'").fetchone()[0]
           survived = cur.execute("SELECT COUNT(*) FROM work_results WHERE test_outcome='SURVIVED'").fetchone()[0]
           total = killed + survived
           if total == 0:
-              print(f"WARN: no mutants ran for {module}")
+              print("WARN: no mutants ran for ${{ matrix.module }}")
               sys.exit(0)
           score = 100 * killed / total
-          print(f"{module}: {score:.1f}% ({killed}/{total}) threshold={threshold}%")
+          print(f"${{ matrix.module }}: {score:.1f}% ({killed}/{total}) threshold={threshold}%")
           if score < threshold:
-              print(f"::error file={module}::Mutation score {score:.1f}% below threshold {threshold}%")
+              print(f"::error file=${{ matrix.module }}::Mutation score {score:.1f}% below threshold {threshold}%")
               sys.exit(1)
           PY
-          done
 
-          exit $failed
-
-      - name: Upload mutation reports
-        if: always() && steps.changed.outputs.skip != 'true'
+      - name: Upload mutation report for ${{ matrix.safe_name }}
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: pr-mutation-reports
-          path: cr-*.sqlite
+          # Unique per-module artifact name. Pre-fix used a single shared
+          # name ("pr-mutation-reports"), which causes a second matrix
+          # cell to overwrite the first on upload.
+          name: pr-mutation-report-${{ matrix.safe_name }}
+          path: cr-${{ matrix.safe_name }}.sqlite
           retention-days: 14

@@ -37,6 +37,61 @@ from ..logging import _log_turn
 logger = logging.getLogger(__name__)
 
 
+# Wh-words used for topic-shift detection. Listed explicitly rather than
+# via regex class so the match is deterministic and linter-friendly.
+_WH_WORD_STARTERS = (
+    "who ", "what ", "where ", "when ", "why ", "how ",
+    "who's ", "whats ", "what's ", "hows ", "how's ",
+    "whos ", "whens ", "wheres ", "whys ",
+    "are you ", "do you ", "can you ", "will you ",
+    "did you ", "have you ", "is this ", "is that ",
+)
+
+
+def _looks_like_topic_shift_question(message: str) -> bool:
+    """Return True if `message` looks like an off-topic question during a
+    pending confirmation — something that deserves a disambiguation prompt
+    rather than a silent re-nudge of the prior search.
+
+    This is intentionally conservative. It fires only on messages where the
+    user is clearly asking about something else (a question ending in "?",
+    starting with a wh-word or auxiliary-verb opener). Single-word
+    responses, fragments, and short confirmation-shaped utterances
+    ("yeah ok", "maybe", "I dunno") are excluded.
+
+    Called only from Path 3 of ``_handle_post_pending_confirmation`` —
+    where the message already failed to match any routing category AND had
+    no slot updates. In practice, most true topic-shift questions
+    (e.g. "what's your name?") are caught earlier by bot_identity /
+    bot_question / help classifiers; this is the defense-in-depth for
+    novel phrasings that slip past those lists.
+    """
+    if not message:
+        return False
+    stripped = message.strip().lower()
+    # Too short to be a substantive question — probably a confirmation
+    # fragment like "ok?", "yes?", single-word "what".
+    words = stripped.split()
+    if len(words) < 2:
+        return False
+    # Strong signal: ends with a question mark.
+    ends_with_question = stripped.rstrip().endswith("?")
+    # Starts with a wh-word or question opener.
+    starts_with_question = stripped.startswith(_WH_WORD_STARTERS)
+    # Require either (a) both signals AND ≥3 words, (b) a strong lead
+    # with at least 3 words, or (c) a question mark with at least 4
+    # words. Short two-word questions like "what now?" are ambiguous
+    # (closer to a confused/help response than a clean topic shift)
+    # and fall through to the existing re-nudge path.
+    if ends_with_question and starts_with_question and len(words) >= 3:
+        return True
+    if starts_with_question and len(words) >= 3:
+        return True
+    if ends_with_question and len(words) >= 4:
+        return True
+    return False
+
+
 def _handle_change_location_request(session_id, redacted_message, existing,
                                     early_extracted, category, tone, request_id):
     """User asked to change search location ("search somewhere else").
@@ -630,6 +685,46 @@ def _handle_post_pending_confirmation(session_id, message, redacted_message, exi
         existing = merge_slots(existing, pending_extracted)
     existing["_pending_confirmation"] = True
     save_session_slots(session_id, existing)
+
+    # C.2 (April 2026) — topic-shift disambiguation. If the user sent
+    # something that looks like an off-topic question (e.g. "what's your
+    # name?", "can you speak Spanish?") while a confirmation was pending,
+    # replying with a blind re-nudge of the prior search reads as a
+    # surreal non-sequitur. Most such questions are caught earlier by
+    # bot_identity / bot_question / help classifiers; this branch
+    # catches novel phrasings that slipped past those lists. We preserve
+    # _pending_confirmation so "yes" still works, but offer the user a
+    # clear choice rather than silently assuming they want the old
+    # search. See docs/CHATBOT_BEHAVIOR.md § Confirmation Actions.
+    if _looks_like_topic_shift_question(message):
+        confirm_msg = (
+            "I wasn't sure if that was a question about something else, "
+            "or if you were still thinking about the search. "
+            + _build_confirmation_message(existing)
+            + " — should I go ahead with that, or were you asking "
+            "something different?"
+        )
+        qr = _confirmation_quick_replies(existing)
+        # Augment with an explicit "something else" escape so the user
+        # doesn't have to type their off-topic question twice.
+        qr = list(qr) + [
+            {"label": "💬 I was asking something else",
+             "value": "I was asking something else"},
+        ]
+        result = {
+            "session_id": session_id,
+            "response": confirm_msg,
+            "follow_up_needed": True,
+            "slots": existing,
+            "services": [],
+            "result_count": 0,
+            "relaxed_search": False,
+            "quick_replies": qr,
+        }
+        _log_turn(session_id, redacted_message, result,
+                  "topic_shift_disambiguation",
+                  request_id=request_id, tone=tone)
+        return result
 
     nudge_prefix = "Just to make sure — "
     if response_tone == "emotional":
