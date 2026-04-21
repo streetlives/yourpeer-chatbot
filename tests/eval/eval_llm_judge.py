@@ -1915,20 +1915,28 @@ SCENARIOS = [
         "id": "multi_three_services_legal_benefits_food",
         "name": "Legal, benefits, and food — asylum seeker trio",
         "category": "multi_intent",
-        "description": "Asylum seekers commonly need immigration legal help, benefits "
-                       "enrollment, and food simultaneously. YourPeer's Community "
-                       "Information Specialists include asylum seekers who understand "
-                       "this pattern firsthand.",
+        "description": "Asylum seekers commonly need immigration legal help, "
+                       "benefits enrollment, and food simultaneously. The "
+                       "extractor correctly identifies all three services "
+                       "(food + legal/asylum + other/food-stamps) and uses "
+                       "priority-ordering to pick food as primary (Tier 2 "
+                       "survival), with legal and benefits queued as "
+                       "additional services. Mirrors the sister scenario "
+                       "`multi_asylum_seeker_food_legal`. "
+                       "(Cultural-responsiveness acknowledgment of the "
+                       "asylum-seeker context is tracked separately as "
+                       "A.1.b.)",
         "user_turns": [
             "I need help with my asylum case, food stamps, and somewhere "
             "to get food. I'm in Jackson Heights.",
             "Yes, search",
         ],
         "expected": {
-            "service_type": "legal",
+            "service_type": "food",
             "location_contains": "jackson heights",
             "should_reach_confirmation": True,
             "should_handle_additional_service": True,
+            "additional_service": "legal",
         },
     },
 
@@ -2017,21 +2025,27 @@ SCENARIOS = [
         "id": "multi_cross_borough_food_brooklyn_shelter_manhattan",
         "name": "Cross-borough: food in Brooklyn, shelter in Manhattan",
         "category": "multi_intent",
-        "description": "Known limitation: only one location is extracted per message. "
-                       "User says two different boroughs for two services. System "
-                       "should extract the first-mentioned location and use it for "
-                       "the primary service. The user can correct via 'change location' "
-                       "when the second service is offered.",
+        "description": "User mentions two services in two different boroughs. "
+                       "The extractor correctly binds each service to its own "
+                       "location and uses priority-ordering (shelter > food "
+                       "per need urgency) to pick the primary — shelter gets "
+                       "Manhattan, food-in-Brooklyn is queued as an additional "
+                       "service. User can accept the queued second search via "
+                       "'Yes' after seeing shelter results. "
+                       "(Updated from stale first-mentioned expectation: "
+                       "the extractor no longer has the 'only one location "
+                       "extracted per message' limitation the original "
+                       "description assumed.)",
         "user_turns": [
             "I need food in Brooklyn and shelter in Manhattan",
             "Yes, search",
         ],
         "expected": {
-            "service_type": "food",
-            "location_contains": "brooklyn",
+            "service_type": "shelter",
+            "location_contains": "manhattan",
             "should_reach_confirmation": True,
             "should_handle_additional_service": True,
-            "additional_service": "shelter",
+            "additional_service": "food",
         },
     },
     {
