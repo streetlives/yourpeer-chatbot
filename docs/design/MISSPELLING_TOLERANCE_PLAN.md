@@ -339,7 +339,7 @@ RapidFuzz has no transitive dependencies beyond the C++ build tools (which are s
 
 ### Tests
 
-Unit tests in `tests/unit/test_fuzzy_keywords.py`:
+Unit tests:
 
 ```python
 # Corrections that should fire
