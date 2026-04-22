@@ -177,6 +177,144 @@ class TestConfirmationGender:
         msg = self.build_msg(slots)
         assert "LGBTQ" not in msg
 
+    # --- Gender eligibility suffix (Sprint 2) ---
+    # When the user asks for a gender-segregated service, the
+    # confirmation should echo that back so the user can verify the
+    # filter was captured. Opus judge flagged R35's no_result_shelter_thin
+    # specifically for failing this: "missed an opportunity to verify
+    # that the 'for women' demographic filter was being applied".
+
+    def test_female_gets_for_women_suffix(self):
+        slots = {"service_type": "shelter", "location": "queens", "_gender": "female"}
+        msg = self.build_msg(slots)
+        assert "for women" in msg
+        # And it shouldn't also get a male suffix
+        assert "for men" not in msg
+
+    def test_male_gets_for_men_suffix(self):
+        slots = {"service_type": "shelter", "location": "brooklyn", "_gender": "male"}
+        msg = self.build_msg(slots)
+        assert "for men" in msg
+        assert "for women" not in msg
+
+    def test_lgbtq_does_not_get_gender_suffix(self):
+        """LGBTQ is handled via prefix, not via 'for women'/'for men' suffix."""
+        slots = {"service_type": "shelter", "location": "soho", "_gender": "lgbtq"}
+        msg = self.build_msg(slots)
+        assert "LGBTQ-friendly" in msg
+        assert "for women" not in msg
+        assert "for men" not in msg
+
+    def test_transgender_does_not_get_gender_suffix(self):
+        """transgender doesn't map to a NYC eligibility filter, so no suffix."""
+        slots = {"service_type": "shelter", "location": "soho", "_gender": "transgender"}
+        msg = self.build_msg(slots)
+        assert "for women" not in msg
+        assert "for men" not in msg
+
+    def test_nonbinary_does_not_get_gender_suffix(self):
+        slots = {"service_type": "shelter", "location": "soho", "_gender": "nonbinary"}
+        msg = self.build_msg(slots)
+        assert "for women" not in msg
+        assert "for men" not in msg
+
+    def test_no_gender_no_suffix(self):
+        slots = {"service_type": "shelter", "location": "queens"}
+        msg = self.build_msg(slots)
+        assert "for women" not in msg
+        assert "for men" not in msg
+
+    def test_female_with_children_both_suffixes(self):
+        """Gender suffix precedes family_status, so reading flows naturally:
+        'shelter in Queens, for women, with children'."""
+        slots = {
+            "service_type": "shelter",
+            "location": "queens",
+            "_gender": "female",
+            "family_status": "with_children",
+        }
+        msg = self.build_msg(slots)
+        assert "for women" in msg
+        assert "with children" in msg
+        # Ordering: "for women" comes before "with children"
+        assert msg.index("for women") < msg.index("with children")
+
+    def test_female_with_cross_location_queue(self):
+        """Gender suffix applies to the whole request, placed after
+        the cross-location queue bits."""
+        slots = {
+            "service_type": "shelter",
+            "location": "queens",
+            "_gender": "female",
+            "_queued_services": [("food", None, "brooklyn")],
+        }
+        msg = self.build_msg(slots)
+        assert "shelter in Queens" in msg
+        assert "food in Brooklyn" in msg
+        assert "for women" in msg
+        # "for women" follows the queued cross-location item
+        assert msg.index("food in Brooklyn") < msg.index("for women")
+
+    def test_transman_gets_lgbtq_prefix_and_male_suffix(self):
+        """A transman's extraction sets _gender=male AND _populations=['lgbtq'].
+        Both the LGBTQ-friendly prefix and the 'for men' suffix apply —
+        the prefix signals affirming-context, the suffix carries the
+        eligibility filter. Both are meaningful to the user."""
+        slots = {
+            "service_type": "clothing",
+            "location": "manhattan",
+            "_gender": "male",
+            "_populations": ["lgbtq"],
+        }
+        msg = self.build_msg(slots)
+        assert "LGBTQ-friendly" in msg
+        assert "for men" in msg
+
+    # --- LGBTQ populations check (Sprint 2 latent bug fix) ---
+    # Before the fix, only `_gender == "lgbtq"` triggered the
+    # LGBTQ-friendly prefix. But some phrases (e.g. "queer") populate
+    # `_populations=["lgbtq"]` without setting `_gender`. Those users
+    # silently lost their identity affirmation. Fix checks both slots.
+
+    def test_lgbtq_via_populations_gets_prefix(self):
+        """When LGBTQ only surfaces in _populations (not _gender), the
+        prefix still fires. This is the common path for phrases like
+        'queer' that populate the broader tag without overwriting gender."""
+        slots = {
+            "service_type": "shelter",
+            "location": "manhattan",
+            "_populations": ["lgbtq"],
+        }
+        msg = self.build_msg(slots)
+        assert "LGBTQ-friendly" in msg
+
+    def test_lgbtq_populations_and_female_gender_both_apply(self):
+        """A user who is both female and LGBTQ (e.g. 'I'm a woman, also
+        queer') gets the LGBTQ-friendly prefix AND the 'for women' suffix."""
+        slots = {
+            "service_type": "shelter",
+            "location": "queens",
+            "_gender": "female",
+            "_populations": ["lgbtq"],
+        }
+        msg = self.build_msg(slots)
+        assert "LGBTQ-friendly" in msg
+        assert "for women" in msg
+
+    def test_lgbtq_in_populations_wins_over_other_population_tags(self):
+        """Ordering: the LGBTQ check is first in the identity-prefix
+        elif chain, so it takes precedence over veteran/disabled/reentry
+        prefixes when both are present. Rationale: LGBTQ affirmation is
+        typically the most safety-critical signal for this population."""
+        slots = {
+            "service_type": "shelter",
+            "location": "queens",
+            "_populations": ["lgbtq", "veteran"],
+        }
+        msg = self.build_msg(slots)
+        assert "LGBTQ-friendly" in msg
+        assert "veteran-friendly" not in msg
+
 
 # ---------------------------------------------------------------------------
 # 4. Query layer — gender filter mapping + LGBTQ sort boost

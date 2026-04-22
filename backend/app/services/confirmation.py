@@ -164,7 +164,13 @@ def _build_confirmation_message(slots: dict) -> str:
     gender = slots.get("_gender")
     populations = slots.get("_populations", [])
 
-    if gender == "lgbtq":
+    # LGBTQ context can land in either slot: _gender="lgbtq" when the
+    # phrase itself is a gender/orientation word ("bisexual", "lesbian"),
+    # or _populations=["lgbtq"] when the phrase sets a broader population
+    # tag ("queer", "transman" — the latter also sets _gender=male, which
+    # makes checking both fields essential). Check both so that neither
+    # extraction path silently loses the LGBTQ-friendly affirmation.
+    if gender == "lgbtq" or "lgbtq" in populations:
         _prefix = "LGBTQ-friendly "
     elif "veteran" in populations:
         _prefix = "veteran-friendly "
@@ -202,6 +208,28 @@ def _build_confirmation_message(slots: dict) -> str:
             else:
                 cross_bits.append(q_label)
         parts[0] += ", then " + ", then ".join(cross_bits)
+
+    # --- Gender eligibility suffix ---
+    # When the user asks for a gender-segregated service (e.g. "shelter
+    # for women"), echo that back in the confirmation so they can
+    # correct us if we misread. Only female/male get a suffix — "lgbtq"
+    # is handled above as a prefix ("LGBTQ-friendly"), and
+    # transgender/nonbinary don't map to a NYC eligibility filter we
+    # can meaningfully act on (the query layer treats those as sort
+    # boosts rather than hard filters; see TestGenderFilterMapping).
+    #
+    # Placed after cross-location queued and before family_status so
+    # the single-intent reading is natural ("shelter in Queens, for
+    # women, with children") and the multi-intent reading attaches the
+    # filter to the primary service ("shelter in Queens, then food in
+    # Brooklyn, for women"). The latter is slightly ambiguous about
+    # whether "for women" applies to the queued service too — in
+    # practice this is rare enough that the extra clarity isn't worth
+    # the complexity of per-queued-item gender echoes.
+    if gender == "female":
+        parts[0] += ", for women"
+    elif gender == "male":
+        parts[0] += ", for men"
 
     family = slots.get("family_status")
     if family == "with_children":
