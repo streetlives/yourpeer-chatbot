@@ -54,8 +54,6 @@ SERVICE_KEYWORDS = {
         # to eat" and "need a place to shower". Use purpose-specific phrases.
         "need a place to stay", "need a place tonight",
         "a place tonight", "a place to go",
-        # Foster care / aging out (Run 24 eval gap)
-        "aging out", "aged out", "foster care", "aging out of foster",
         # Spanish (basic bilingual support)
         "refugio", "albergue",
         # Negation-as-request phrases.
@@ -542,11 +540,13 @@ _NOTABLE_SUB_TYPES = {
 
 _GENDER_PHRASES = {
     # Female-identifying
-    "woman": "female", "female": "female", "girl": "female",
+    "woman": "female", "women": "female",
+    "female": "female", "girl": "female",
     "mom": "female", "mother": "female",
 
     # Male-identifying
-    "man": "male", "male": "male", "guy": "male",
+    "man": "male", "men": "male",
+    "male": "male", "guy": "male",
     "dad": "male", "father": "male",
 
     # Trans-identifying — map to the gender they identify AS
@@ -588,6 +588,30 @@ _SELF_REFERENCE_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Patterns that indicate the gender term describes SERVICE eligibility
+# (filter by gender) rather than the user's own gender. Common in
+# shelter/service searches:
+#   - "shelter FOR women", "a service FOR men"   (prepositional filter)
+#   - "women's shelter", "men's services"        (possessive filter)
+#   - "women-only", "men only"                   (restricted access)
+# Semantically different from self-gender, but the downstream effect is
+# the same — the DB query's gender eligibility filter catches both. See
+# R34 Sprint 2.
+_ELIGIBILITY_BEFORE_RE = re.compile(
+    # Matches when the text leading up to the gender term ends with
+    # "for ", "for a ", "for just ", "for only ". Anchored to end of
+    # the pre-match window so it's a close-context check.
+    r"\bfor\s+(?:a\s+|any\s+|just\s+|only\s+)?$",
+    re.IGNORECASE,
+)
+_ELIGIBILITY_AFTER_RE = re.compile(
+    # Matches when the text immediately after the gender term starts
+    # with "'s " (possessive), "-only", or " only". Straight apostrophe
+    # and curly apostrophe both accepted.
+    r"^(?:['\u2019]s\b|\s*-\s*only\b|\s+only\b)",
+    re.IGNORECASE,
+)
+
 
 def _extract_gender(text: str) -> Optional[str]:
     """Extract gender or LGBTQ identity from user message.
@@ -614,17 +638,32 @@ def _extract_gender(text: str) -> Optional[str]:
                 continue
 
         # Guard against "the man at the counter" — check that the gender
-        # term is used as self-identification, not referring to someone else.
-        # For short unambiguous identity terms (lgbtq, trans*, nonbinary, etc.)
-        # we trust the match. For common words (man, woman, guy, girl, mom, dad)
-        # we require a self-reference pattern nearby.
-        _COMMON_GENDER_WORDS = {"man", "woman", "guy", "girl", "male", "female",
+        # term is used as self-identification OR as a service-eligibility
+        # filter. For short unambiguous identity terms (lgbtq, trans*,
+        # nonbinary, etc.) we trust the match. For common words (man,
+        # woman, guy, girl, mom, dad and their plurals) we require one
+        # of: a self-reference pattern ("I'm a woman"), OR a service-
+        # eligibility pattern ("shelter for women", "women's shelter",
+        # "men-only services"). See R34 Sprint 2.
+        _COMMON_GENDER_WORDS = {"man", "men", "woman", "women",
+                                 "guy", "girl", "male", "female",
                                  "mom", "mother", "dad", "father"}
         if phrase in _COMMON_GENDER_WORDS:
-            # Check for self-reference pattern in the ~30 chars before the match
+            # Self-reference check — the ~30 chars before the match
             prefix = text[max(0, pos - 30):pos + end]
-            if not _SELF_REFERENCE_RE.search(prefix):
-                continue
+            if _SELF_REFERENCE_RE.search(prefix):
+                return value
+            # Eligibility-filter fallback — checks for "for ___" before
+            # or "'s"/"-only"/" only" after. Small window to avoid false
+            # positives on distant "for" occurrences.
+            before_window = lower[max(0, pos - 15):pos]
+            after_window = lower[end:end + 10]
+            if (
+                _ELIGIBILITY_BEFORE_RE.search(before_window)
+                or _ELIGIBILITY_AFTER_RE.match(after_window)
+            ):
+                return value
+            continue
 
         return value
 

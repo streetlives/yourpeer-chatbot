@@ -67,6 +67,65 @@ class TestSensitiveContextToneOverride:
         resp = r[0]["response"].lower()
         assert "difficult situation" in resp
 
+    # R34 Sprint 3 — Option 1 architectural fix: `_tone_prefix` is
+    # computed early in the orchestrator and passed to help/confused
+    # handlers too, not just service-flow responses. Previously the
+    # sensitive-context empathy only fired when the user also had a
+    # concrete service keyword in the message; open-ended or help-
+    # category messages ("what do I do", "where do I start") routed
+    # to handlers that never saw the tone prefix.
+
+    def test_sensitive_context_applies_to_help_route(self):
+        """Help-category message with sensitive context should still
+        receive the sensitive-context prefix. Before Option 1, the
+        help handler built its own response without ever seeing
+        `_tone_prefix` — so "I'm aging out of foster care and need
+        help in the Bronx" (which routes to help when service_type
+        is not auto-assigned) produced a bare help menu with no
+        acknowledgment of the foster-care context."""
+        r = send_multi(["I'm aging out of foster care and need help in the Bronx"])
+        resp = r[0]["response"].lower()
+        assert "difficult situation" in resp, (
+            "Help-routed message with sensitive context should receive "
+            "the sensitive-context empathy prefix. If this is failing, "
+            "check that orchestrator's _tone_prefix is being passed to "
+            "_handle_help (meta.py)."
+        )
+
+    def test_sensitive_context_applies_to_confused_route(self):
+        """Confused-category message with sensitive context should
+        receive the sensitive-context prefix. Mirror of the help case
+        above — _handle_confused also receives `_tone_prefix` and
+        prepends it to _CONFUSED_RESPONSE."""
+        r = send_multi(["I aged out of foster care and don't know what to do in the Bronx"])
+        resp = r[0]["response"].lower()
+        assert "difficult situation" in resp, (
+            "Confused-routed message with sensitive context should "
+            "receive the sensitive-context empathy prefix. If failing, "
+            "check that orchestrator's _tone_prefix is passed to "
+            "_handle_confused (meta.py)."
+        )
+
+    def test_no_double_empathy_help_plus_sensitive(self):
+        """When sensitive prefix is present, help handler uses the
+        standard _HELP_RESPONSE instead of its own 'I hear you — it
+        can feel overwhelming' lead-in. Otherwise responses would
+        read as doubled empathy:
+            'I understand this is a difficult situation. Let me help.
+             I hear you — it can feel overwhelming...'
+        This guard ensures the two empathy framings don't stack."""
+        r = send_multi(["I'm aging out of foster care and need help in the Bronx"])
+        resp = r[0]["response"].lower()
+        # Sensitive prefix present, but the help-specific "I hear you"
+        # lead-in should NOT be present too.
+        assert "difficult situation" in resp
+        assert "i hear you" not in resp, (
+            "Both the sensitive-context prefix AND the help handler's "
+            "generic emotional lead-in appeared — meta.py _handle_help "
+            "should use _HELP_RESPONSE (not the 'I hear you' variant) "
+            "when tone_prefix is non-empty."
+        )
+
 
 # -----------------------------------------------------------------------
 # HELP + CONFUSED EMPATHY

@@ -42,6 +42,7 @@ class TestExpandedNegativePreferencePhrases:
         "I already tried those places",
         "I already tried those",
         "already tried them",
+        "already tried all of those",  # D.3 gap close
         "I already tried that",
         "I've already tried those",
         "ive already tried the shelters",
@@ -51,6 +52,7 @@ class TestExpandedNegativePreferencePhrases:
         "This isnt helpful",
         "this is not helpful",
         "This is not helping",
+        "it is not helping me at all",  # D.3 gap close
         "You're not helping me",
         "that isn't helping",
         "isnt helping",
@@ -467,6 +469,12 @@ class TestCrisisStepDownGeolocation:
             "found" in result["response"].lower(), \
             f"Youth runaway + coords should search immediately: {result['response']}"
 
+
+# =======================================================================
+# PAGINATION: _DISPLAY_PAGE_SIZE = 5
+# =======================================================================
+
+
 # ---------------------------------------------------------------------------
 # C.2 — Topic-shift question detection heuristic
 # ---------------------------------------------------------------------------
@@ -566,8 +574,3 @@ class TestLooksLikeTopicShiftQuestion:
         )
         assert _looks_like_topic_shift_question("what now?") is False
         assert _looks_like_topic_shift_question("why not?") is False
-
-
-# =======================================================================
-# PAGINATION: _DISPLAY_PAGE_SIZE = 5
-# =======================================================================

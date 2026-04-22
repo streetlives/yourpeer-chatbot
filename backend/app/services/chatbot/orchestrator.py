@@ -220,6 +220,34 @@ def generate_reply(
     if _spanish_result:
         return _spanish_result
 
+    # --- Tone prefix (computed early so help/confused/emotional handlers
+    # can use it too, not just service-flow responses). The sensitive-
+    # context override in `_compute_tone_prefix` fires unconditionally
+    # when the message matches _SENSITIVE_CONTEXT_RE — so even when the
+    # user's question routes to help/confused (e.g. "aging out of foster
+    # care, what do I do"), the empathic acknowledgment still applies.
+    #
+    # Computed with is_service_flow=(category == "service") as it
+    # currently stands. If B.2 below promotes negative_preference →
+    # service, the baseline-warmth / response_tone branches of the
+    # prefix would differ — but sensitive context (the reason we
+    # moved this up) is unconditional, so the promoted case still
+    # works correctly with the early computation.
+    _is_service_flow = category == "service"
+    _tone_prefix, _emotional_context_update = _compute_tone_prefix(
+        message=message,
+        response_tone=_response_tone,
+        is_service_flow=_is_service_flow,
+        prior_emotional_context=existing.get("_emotional_context"),
+    )
+
+    # Persist emotional context for subsequent turns (needed here, not
+    # just at the service-flow site below, because help/confused
+    # handlers can now set sensitive context on the first turn).
+    if _emotional_context_update is not None:
+        existing["_emotional_context"] = _emotional_context_update
+        save_session_slots(session_id, existing)
+
     # --- Reset ---
     if category == "reset":
         return _handle_reset(session_id, redacted_message, category, tone, request_id)
@@ -264,7 +292,7 @@ def generate_reply(
     # --- Help ---
     if category == "help":
         return _handle_help(session_id, message, redacted_message, existing,
-                            _response_tone, category, tone, request_id)
+                            _response_tone, category, tone, _tone_prefix, request_id)
 
     # --- Bot Identity ---
     if category == "bot_identity":
@@ -292,7 +320,7 @@ def generate_reply(
     # --- Confused / Overwhelmed ---
     if category == "confused":
         return _handle_confused(session_id, redacted_message, existing,
-                                category, tone, request_id)
+                                category, tone, _tone_prefix, request_id)
 
     # --- Emotional expression ---
     if category == "emotional":
@@ -398,7 +426,13 @@ def generate_reply(
         and _has_session_coords
     )
 
-    # --- Tone prefix for service-flow responses ---
+    # --- Tone prefix refresh (B.2 promotion case) ---
+    # We already computed `_tone_prefix` early for the help/confused
+    # handlers. If B.2 promoted negative_preference → service, the
+    # early prefix was computed with is_service_flow=False. Recompute
+    # here with the corrected flag so the service-flow baseline-warmth
+    # / response-tone prefix fires. Sensitive-context override still
+    # wins last, so foster-care-type messages stay empathic either way.
     _is_service_flow = category == "service"
     _tone_prefix, _emotional_context_update = _compute_tone_prefix(
         message=message,
@@ -407,7 +441,10 @@ def generate_reply(
         prior_emotional_context=existing.get("_emotional_context"),
     )
 
-    # Persist emotional context for subsequent turns
+    # Persist emotional context update (may differ from the early
+    # computation if B.2 promoted — e.g., shame prefix only fires for
+    # service flow, so the context could transition from None early to
+    # "shame" here).
     if _emotional_context_update is not None:
         merged["_emotional_context"] = _emotional_context_update
 
