@@ -405,11 +405,17 @@ def _handle_pending_confirmation(
     Returns a result dict, or None if no pending handling applies.
     """
     if not pending:
-        # Check queue offer decline
+        # Queue offer active (post-results "You also mentioned X — search too?"):
+        # handle yes and no distinctly. Without this, yes-to-queue falls
+        # through to default handlers which see stale primary slots still
+        # in session and rebuild a primary confirmation. See R34
+        # Diagnosis 2, Bug 3.
         queue_offer_active = existing.get("_queued_services") or existing.get("_queue_offer_pending")
         if category == "confirm_deny" and queue_offer_active:
             existing.pop("_queued_services", None)
             existing.pop("_queue_offer_pending", None)
+            existing.pop("_queued_offer", None)
+            existing.pop("_queued_location", None)
             existing.pop("_queued_services_original", None)
             save_session_slots(session_id, existing)
             result = _empty_reply(
@@ -420,6 +426,39 @@ def _handle_pending_confirmation(
             )
             _log_turn(session_id, redacted_message, result, "queue_decline", request_id=request_id, tone=tone)
             return result
+        if category == "confirm_yes" and queue_offer_active:
+            offer = existing.get("_queued_offer")
+            if offer:
+                next_service, next_detail, next_location = offer
+                # Clear the prior results' post-search state — we're
+                # starting a fresh search, not paginating/filtering the
+                # previous one.
+                existing.pop("_last_results", None)
+                existing.pop("_displayed_count", None)
+                existing.pop("_filtered_results", None)
+                existing.pop("_filter_phrase", None)
+                # Promote the queued service to primary.
+                existing["service_type"] = next_service
+                if next_detail:
+                    existing["service_detail"] = next_detail
+                else:
+                    existing.pop("service_detail", None)
+                if next_location:
+                    existing["location"] = next_location
+                # Clear queue state.
+                existing.pop("_queue_offer_pending", None)
+                existing.pop("_queued_offer", None)
+                existing.pop("_queued_location", None)
+                # Note: _queued_services may still have remaining items
+                # for multi-queued scenarios (user queued 3+ services).
+                # Leave it intact — _apply_queue_offer will re-fire after
+                # this search completes.
+                # Skip re-confirmation: user's "yes" IS the confirmation
+                # for the search we just promoted. Go straight to query.
+                save_session_slots(session_id, existing)
+                result = _execute_and_respond(session_id, message, existing, request_id=request_id)
+                _log_turn(session_id, redacted_message, result, "queue_accept", request_id=request_id, tone=tone)
+                return result
         return None
 
     if category == "confirm_yes":

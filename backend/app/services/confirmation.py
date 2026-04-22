@@ -97,6 +97,11 @@ def _build_confirmation_message(slots: dict) -> str:
     if age == "skipped":
         age = None
 
+    # Capture raw primary location (pre-display) for same/cross-location
+    # queue comparison below. The redacted/display-cased `location` that
+    # follows is for rendering, not matching.
+    raw_primary_location = slots.get("location")
+
     # When using browser geolocation, show "near your location"
     # instead of the raw "__near_me__" sentinel.
     if (
@@ -117,12 +122,32 @@ def _build_confirmation_message(slots: dict) -> str:
     else:
         location_phrase = f"in {location}"
 
-    # Build the service label, including co-located services
+    # Build the service label, including co-located services.
+    # Partition queued services by whether their location matches the
+    # primary's. Same-location items fold into the combined label ("food
+    # and showers in Brooklyn"). Cross-location items are mentioned
+    # separately as ", then X in Y" — see R34 Diagnosis 2, Bug 1.
+    # Without this split, "food in Brooklyn and shelter in Manhattan"
+    # rendered as "shelter and food in Manhattan" — dropping Brooklyn.
     queued = slots.get("_queued_services", [])
-    if queued:
+    same_location_queued = []
+    cross_location_queued = []
+    for q in queued:
+        q_loc = q[2] if len(q) > 2 else None
+        # A queued item is same-location if it has no location of its
+        # own OR its location matches the primary's (case-insensitive).
+        if (not q_loc) or (
+            raw_primary_location
+            and q_loc.lower() == str(raw_primary_location).lower()
+        ):
+            same_location_queued.append(q)
+        else:
+            cross_location_queued.append(q)
+
+    if same_location_queued:
         co_labels = [
             (q[1] if len(q) > 1 and q[1] else None) or _SERVICE_LABELS.get(q[0], q[0])
-            for q in queued
+            for q in same_location_queued
         ]
         all_labels = [service_label] + co_labels
         if len(all_labels) == 2:
@@ -158,6 +183,25 @@ def _build_confirmation_message(slots: dict) -> str:
             f"I\u2019ll look for {service_label}",
             f"I\u2019ll look for {_prefix}{service_label}",
         )
+
+    # Append cross-location queued services as ", then X in Y" — placed
+    # before family_status so "with children" applies to the whole
+    # multi-search rather than just the last mentioned location.
+    if cross_location_queued:
+        cross_bits = []
+        for q in cross_location_queued:
+            q_service = q[0]
+            q_detail = q[1] if len(q) > 1 else None
+            q_loc = q[2] if len(q) > 2 else None
+            q_label = q_detail or _SERVICE_LABELS.get(q_service, q_service)
+            # Redact + display-case the queued location
+            q_loc_clean, _ = redact_pii(q_loc) if q_loc else (q_loc, None)
+            q_loc_display = _display_location(q_loc_clean) if q_loc_clean else ""
+            if q_loc_display:
+                cross_bits.append(f"{q_label} in {q_loc_display}")
+            else:
+                cross_bits.append(q_label)
+        parts[0] += ", then " + ", then ".join(cross_bits)
 
     family = slots.get("family_status")
     if family == "with_children":
