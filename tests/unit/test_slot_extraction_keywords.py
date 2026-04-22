@@ -183,6 +183,49 @@ class TestFosterCareKeywords:
             assert extract_slots(kw)["service_type"] == "shelter"
 
 
+class TestShelterNegationPhrases:
+    """Shelter keywords that embed the negation ("no place to go",
+    "nowhere to sleep", "don't have anywhere to stay"). These need
+    complete coverage because the extractor can't fall back to a bare
+    "place to go" / "place to sleep" keyword — the 25-char lookback
+    for "no" / "don't" would negate it. Longest-first sort means the
+    negation-embedded form must match as-is."""
+
+    @pytest.mark.parametrize("phrase", [
+        # "nowhere to X" family
+        "nowhere to sleep",
+        "nowhere to stay",
+        "nowhere to go",
+        # "no place to X" family
+        "no place to sleep",
+        "no place to stay",
+        "no place to go",
+        # "don't have anywhere to X" family — ALL three verbs must be
+        # present. Missing just "don't have anywhere to go" was the
+        # Sprint 3 regression that dropped multi_foster_youth_aging_out
+        # from service_type=shelter to service_type=employment.
+        "I don't have anywhere to sleep",
+        "I don't have anywhere to stay",
+        "I don't have anywhere to go",
+        # Apostrophe-stripped form (for loose-typing users)
+        "I dont have anywhere to sleep",
+        "I dont have anywhere to stay",
+        "I dont have anywhere to go",
+        # "don't have a place to X" family
+        "I don't have a place to sleep",
+        "I don't have a place to stay",
+    ])
+    def test_negation_embedded_phrase_extracts_shelter(self, phrase):
+        """Each phrase in this set must extract service_type=shelter.
+        If any fails, the corresponding keyword was removed or typo'd
+        in slot_extractor.py's shelter SERVICE_KEYWORDS list."""
+        s = extract_slots(phrase)
+        assert s["service_type"] == "shelter", (
+            f"{phrase!r} should extract shelter. Got {s['service_type']!r}. "
+            "Check slot_extractor.py shelter keywords for missing variant."
+        )
+
+
 # -----------------------------------------------------------------------
 # NEGATION-AWARE EXTRACTION
 # -----------------------------------------------------------------------

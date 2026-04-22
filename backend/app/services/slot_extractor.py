@@ -74,6 +74,7 @@ SERVICE_KEYWORDS = {
         "nowhere to sleep", "nowhere to stay", "nowhere to go",
         "don't have anywhere to sleep", "dont have anywhere to sleep",
         "don't have anywhere to stay", "dont have anywhere to stay",
+        "don't have anywhere to go", "dont have anywhere to go",
         "don't have a place to sleep", "dont have a place to sleep",
         "don't have a place to stay", "dont have a place to stay",
     ],
