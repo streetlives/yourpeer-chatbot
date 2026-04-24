@@ -385,8 +385,13 @@ class TestTrustModel3SetAgreement:
     LLM picks primary. The six worked-examples table rows are each
     one test."""
 
-    def test_row1_cross_borough_sets_match_regex_priority_wins(self):
+    def test_row1_cross_borough_sets_match_llm_wins(self):
         # "food in Brooklyn and shelter in Manhattan"
+        # This is the multi_cross_borough migration headline win.
+        # Under Ext-2b, the LLM's primary (food/brooklyn, matching the
+        # scenario name's first-mentioned ordering) wins the sets-match
+        # case. Pre-Ext-2b this returned shelter/manhattan (regex priority
+        # tier 1).
         regex = _empty_regex_result()
         regex.update({
             "service_type": "shelter",
@@ -400,12 +405,17 @@ class TestTrustModel3SetAgreement:
         )
         primary, loc, additional = \
             _merge_service_type_and_primary_location(regex, llm)
-        # Sets both = {food, shelter}. Regex priority wins → shelter.
-        assert primary == "shelter"
-        assert loc == "manhattan"
+        # Sets both = {food, shelter}. Ext-2b: LLM wins → food/brooklyn.
+        assert primary == "food"
+        assert loc == "brooklyn"
+        # LLM's additional_services come through when LLM wins
+        assert additional == [("shelter", None, "manhattan")]
 
-    def test_row2_same_location_multi_intent_regex_priority_wins(self):
+    def test_row2_same_location_multi_intent_llm_wins(self):
         # "I need food and shelter in Brooklyn"
+        # This is multi_food_and_shelter_brooklyn (R36 Category A.1).
+        # Short prompt (Option 4) teaches first-mentioned wins → food.
+        # Ext-2b trusts that pick on sets-match.
         regex = _empty_regex_result()
         regex.update({
             "service_type": "shelter",
@@ -419,8 +429,9 @@ class TestTrustModel3SetAgreement:
         )
         primary, loc, additional = \
             _merge_service_type_and_primary_location(regex, llm)
-        assert primary == "shelter"
+        assert primary == "food"
         assert loc == "brooklyn"
+        assert additional == [("shelter", None, None)]
 
     def test_row3_hospital_context_llm_wins(self):
         # "just got out of hospital, need somewhere safe"
@@ -449,8 +460,10 @@ class TestTrustModel3SetAgreement:
             _merge_service_type_and_primary_location(regex, llm)
         assert primary == "food"
 
-    def test_row5_three_services_sets_match_regex_priority_wins(self):
+    def test_row5_three_services_sets_match_llm_wins(self):
         # "food, shelter, and a job"
+        # Short prompt teaches first-mentioned wins → food.
+        # Ext-2b trusts the LLM on sets-match regardless of path.
         regex = _empty_regex_result()
         regex.update({
             "service_type": "shelter",
@@ -468,7 +481,7 @@ class TestTrustModel3SetAgreement:
         )
         primary, loc, additional = \
             _merge_service_type_and_primary_location(regex, llm)
-        assert primary == "shelter"  # regex priority tier 1
+        assert primary == "food"  # Ext-2b: LLM's first-mentioned wins
 
     def test_row6_regex_empty_llm_wins(self):
         # "I ran out of insulin" — regex has no keyword for this; LLM does.
@@ -537,23 +550,27 @@ class TestTrustModel3SetAgreement:
         # Location is bound to the LLM's choice; both sides agree here
         assert loc == "east new york"
 
-    def test_short_path_sets_match_regex_still_wins(self):
-        """Short-path message with set match — original rule preserved.
+    def test_short_path_sets_match_llm_wins_ext_2b(self):
+        """Short-path sets-match: LLM primary wins under Ext-2b.
 
-        For messages under _NARRATIVE_THRESHOLD words, Option 4's short
-        prompt teaches first-mentioned-wins which aligns with regex's
-        text-position tiebreak. Keep regex-wins behavior so the short
-        path doesn't flip to LLM-wins and create new surprises.
+        This is the scenario that motivated Ext-2b. Before the change,
+        short-path sets-match returned regex_primary (shelter, by priority
+        tier). Now it returns llm_primary (food, by Option 4's first-
+        mentioned rule).
+
+        The `message` param is preserved but no longer consulted in the
+        sets-match branch — Ext-2b collapsed the short/narrative
+        distinction.
         """
-        # Short message: "food and shelter" — regex picks food (text
-        # position tier 2 tied with mental_health, but food comes first).
-        # LLM (under Option 4 prompt) picks food (first-mentioned).
-        # Sets match. Short-path rule: regex wins (stays food).
+        # Short message: "I need food and shelter in Brooklyn"
+        # Regex (priority table): primary=shelter, additional=food
+        # LLM (Option 4, first-mentioned): primary=food, additional=shelter
+        # Sets match ({food, shelter}). Ext-2b: LLM wins.
         message = "I need food and shelter in Brooklyn"
         regex = _empty_regex_result()
         regex.update({
-            "service_type": "food",
-            "additional_services": [("shelter", None, None)],
+            "service_type": "shelter",
+            "additional_services": [("food", None, None)],
             "location": "brooklyn",
         })
         llm = _llm_result(
@@ -563,12 +580,33 @@ class TestTrustModel3SetAgreement:
         )
         primary, loc, additional = \
             _merge_service_type_and_primary_location(regex, llm, message)
-        # On short path, regex still wins on sets-match (unchanged rule).
-        # In this case regex and LLM agree anyway, but we verify the
-        # triple comes from the regex side.
-        assert primary == "food"
+        assert primary == "food", (
+            f"Ext-2b: short-path sets-match should return LLM's primary; "
+            f"got {primary!r}"
+        )
         assert additional == [("shelter", None, None)]
         assert loc == "brooklyn"
+
+    def test_short_path_sets_match_message_none_also_llm_wins(self):
+        """Ext-2b removes the message-based path distinction — sets-match
+        always returns LLM primary, whether or not the caller supplies
+        a message. Direct-caller unit tests (without a message arg) get
+        the same behavior as pipeline callers.
+        """
+        regex = _empty_regex_result()
+        regex.update({
+            "service_type": "shelter",
+            "additional_services": [("food", None, None)],
+        })
+        llm = _llm_result(
+            service_type="food",
+            additional_services=[("shelter", None, None)],
+        )
+        # No message supplied — pre-Ext-2b this returned regex_primary
+        # (shelter). Post-Ext-2b it returns LLM primary (food).
+        primary, loc, additional = \
+            _merge_service_type_and_primary_location(regex, llm)
+        assert primary == "food"
 
     def test_narrative_sets_differ_llm_wins_unchanged(self):
         """Narrative-path message with differing sets — original rule
@@ -2051,9 +2089,11 @@ class TestMergeAdditionalServicesEdgeCases:
         )
         primary, loc, additional = \
             _merge_service_type_and_primary_location(regex, llm)
-        # Sets both == {shelter, food}; regex wins, regex_primary is
-        # already priority-picked → shelter. The None/empty entries
-        # were silently skipped; neither extractor's output crashed.
+        # Sets both == {shelter, food}; both sides agree on
+        # primary=shelter, so the LLM-wins rule (Ext-2b) and the prior
+        # regex-wins rule produce the same answer here. The test's
+        # purpose is verifying that None/empty entries don't crash the
+        # set-build loop — both primaries are identical by design.
         assert primary == "shelter"
 
     def test_union_skips_non_string_populations(self):

@@ -29,6 +29,17 @@ USAGE:
         python scripts/mini_eval_r36_regressions.py \
         --subset option-4
 
+    # Run a single scenario and dump its full turn-by-turn transcript
+    USE_UNIFIED_EXTRACTOR=1 ANTHROPIC_API_KEY=sk-... \
+        python scripts/mini_eval_r36_regressions.py \
+        --scenario confirm_multi_change --dump-transcripts
+
+    # Dump transcripts for every scenario in a subset (saves sidecar JSON
+    # to <output>.transcripts.json if --output is also set)
+    USE_UNIFIED_EXTRACTOR=1 ANTHROPIC_API_KEY=sk-... \
+        python scripts/mini_eval_r36_regressions.py \
+        --dump-transcripts --output mini.json
+
 COST / TIME:
     Full set (15 scenarios): ~3-6 minutes, ~$2-4 in Opus judge costs.
     --subset option-4 (4 scenarios): ~60-90s, ~$0.50.
@@ -124,12 +135,30 @@ def _require_env():
 # Scenario filter
 # ---------------------------------------------------------------------------
 
-def _select_scenarios(all_scenarios, subset: Optional[str]):
+def _select_scenarios(all_scenarios, subset: Optional[str],
+                     scenario_id: Optional[str] = None):
     """Return the list of scenario dicts matching our target IDs.
 
     all_scenarios — the SCENARIOS list from tests/eval/eval_llm_judge.py
     subset — optional keyword to narrow further ('option-4', 'failing')
+    scenario_id — if set, return only that one scenario (may be any ID in
+        SCENARIOS, not just R36 targets). Overrides subset. Useful for
+        single-scenario debug runs paired with --dump-transcripts.
     """
+    if scenario_id is not None:
+        matched = [s for s in all_scenarios if s["id"] == scenario_id]
+        if not matched:
+            print(f"ERROR: scenario ID {scenario_id!r} not found in "
+                  f"SCENARIOS list.", file=sys.stderr)
+            # Offer close matches to help with typos
+            all_ids = [s["id"] for s in all_scenarios]
+            import difflib
+            near = difflib.get_close_matches(scenario_id, all_ids, n=3, cutoff=0.6)
+            if near:
+                print(f"Did you mean: {', '.join(near)}?", file=sys.stderr)
+            sys.exit(2)
+        return matched
+
     wanted_ids = {t[0] for t in _TARGETS}
     if subset == "option-4":
         wanted_ids &= _SUBSET_OPTION_4
@@ -177,6 +206,7 @@ _CAT_NAMES = {
     "H": "held from legacy",
     "L": "long-standing failure",
     "W": "migration headline win",
+    "?": "other (not in R36 targets)",
 }
 
 
@@ -190,6 +220,168 @@ def _delta_arrow(delta: float) -> str:
     if delta <= -0.05:
         return "▼"
     return "·"
+
+
+# Slot keys worth surfacing inline for every turn. These cover the
+# state transitions that the R36 failures hinge on:
+#   - service_type / location — the primary intent
+#   - additional_services — multi-intent secondary services
+#   - _pending_confirmation — whether the bot is waiting for yes/no
+#   - _awaiting_service_after_clear — the flag the post-change-service
+#     fast-path depends on (the confirm_multi_change hot spot)
+#   - _queue_offer_pending / _queued_offer — queue-accept state
+#     (relevant for multi_accept_queued_shelter and Fix #1)
+_INLINE_SLOT_KEYS = (
+    "service_type",
+    "location",
+    "additional_services",
+    "_pending_confirmation",
+    "_awaiting_service_after_clear",
+    "_queue_offer_pending",
+    "_queued_offer",
+)
+
+
+def _short_slot_str(slots: dict) -> str:
+    """Compact inline summary of the slots we care about for debugging."""
+    parts = []
+    for key in _INLINE_SLOT_KEYS:
+        if key in slots:
+            val = slots[key]
+            if val is None or val == [] or val is False:
+                # Skip noise — but ALWAYS show _pending_confirmation,
+                # _queue_offer_pending, and _awaiting_service_after_clear
+                # when present, even if False-ish, because a missing
+                # entry vs False is a different state we might care about.
+                if key not in ("_pending_confirmation",
+                               "_queue_offer_pending",
+                               "_awaiting_service_after_clear"):
+                    continue
+            # Strip the leading underscore for readability
+            display_key = key.lstrip("_")
+            parts.append(f"{display_key}={val!r}")
+    return " | ".join(parts) if parts else "(empty)"
+
+
+def _wrap_text(text: str, prefix: str, width: int = 92) -> str:
+    """Word-wrap `text` to `width` chars, with `prefix` on every line."""
+    import textwrap
+    if not text:
+        return prefix + "(empty)"
+    # Preserve the first-line prefix, indent wraps to match its width
+    indent = " " * len(prefix)
+    lines = textwrap.wrap(text, width=width - len(prefix))
+    if not lines:
+        return prefix
+    return "\n".join(
+        (prefix if i == 0 else indent) + line
+        for i, line in enumerate(lines)
+    )
+
+
+def _dump_transcript(scenario_id: str, conversation: dict):
+    """Pretty-print the turn-by-turn transcript of a simulated conversation.
+
+    Format per turn:
+        T<n> USER: <user message>
+             BOT:  <bot response, wrapped>
+             ↳ key slot summary (service, location, flags, queue state)
+
+    The "↳" line shows the session state AFTER the bot's response — i.e.
+    what the next user turn starts with. For diagnosing a scenario like
+    confirm_multi_change, this is typically the most useful single line
+    per turn: "does service_type actually equal 'shelter' after turn 3?"
+    """
+    transcript = conversation.get("transcript", [])
+    if not transcript:
+        print(f"    (no transcript to dump for {scenario_id})")
+        return
+
+    print()
+    print("    " + "─" * 96)
+    print(f"    TRANSCRIPT — {scenario_id}  ({conversation.get('turn_count', '?')} turns)")
+    print("    " + "─" * 96)
+
+    # Walk in user/bot pairs. The simulator appends user then bot for
+    # every iteration (see simulate_conversation in eval_llm_judge.py),
+    # so pairs come 2-at-a-time.
+    turn_num = 0
+    i = 0
+    while i < len(transcript):
+        entry = transcript[i]
+        if entry.get("role") == "user":
+            turn_num += 1
+            user_text = entry.get("text", "")
+            bot_entry = transcript[i + 1] if i + 1 < len(transcript) else {}
+            bot_text = bot_entry.get("text", "")
+            slots = bot_entry.get("slots", {})
+
+            print(_wrap_text(user_text, f"    T{turn_num} USER: "))
+            print(_wrap_text(bot_text, "         BOT:  "))
+            print(f"         ↳ {_short_slot_str(slots)}")
+
+            # Quick-reply labels, when present, are useful context for
+            # understanding why the NEXT user turn took the shape it did.
+            qrs = bot_entry.get("quick_replies", [])
+            if qrs:
+                qr_line = " | ".join(str(q) for q in qrs[:6])
+                if len(qrs) > 6:
+                    qr_line += f" | (+{len(qrs) - 6} more)"
+                print(f"         quick_replies: {qr_line}")
+
+            i += 2
+        else:
+            # Defensive: shouldn't happen, but don't crash if transcript
+            # structure changes upstream.
+            i += 1
+
+    print()
+
+
+def _build_transcripts_payload(results: list) -> list:
+    """Shape the transcript sidecar JSON — one entry per scenario,
+    including the user/bot turns and slots AND the judge's scores, so
+    a diagnosis pass can correlate transcript shape with score deltas."""
+    payload = []
+    for r in results:
+        conv = r.get("conversation", {})
+        judgment = r.get("judgment", {})
+        scenario = conv.get("scenario", {})
+
+        turns = []
+        transcript = conv.get("transcript", [])
+        i = 0
+        turn_num = 0
+        while i < len(transcript):
+            entry = transcript[i]
+            if entry.get("role") == "user":
+                turn_num += 1
+                bot_entry = transcript[i + 1] if i + 1 < len(transcript) else {}
+                turns.append({
+                    "turn": turn_num,
+                    "user": entry.get("text", ""),
+                    "bot_response": bot_entry.get("text", ""),
+                    "slots_after": bot_entry.get("slots", {}),
+                    "quick_replies": bot_entry.get("quick_replies", []),
+                    "services_count": bot_entry.get("services_count", 0),
+                    "follow_up_needed": bot_entry.get("follow_up_needed", False),
+                })
+                i += 2
+            else:
+                i += 1
+
+        payload.append({
+            "scenario_id": r["scenario_id"],
+            "scenario_name": scenario.get("name", ""),
+            "category": scenario.get("category", ""),
+            "user_turns_scripted": scenario.get("user_turns", []),
+            "expected": scenario.get("expected", {}),
+            "avg_score": r.get("avg", 0.0),
+            "critical_failures": judgment.get("critical_failures", []),
+            "scores": judgment.get("scores", {}),
+            "turns": turns,
+        })
+    return payload
 
 
 def _print_summary(results, elapsed_total: float):
@@ -211,7 +403,7 @@ def _print_summary(results, elapsed_total: float):
     header = f"{'scenario':56s}  {'R36 L':>6}  {'R36 U':>6}  {'this':>6}  {'vs U':>7}  {'pass?':>6}"
     separator = "-" * len(header)
 
-    for cat in ["A", "B", "C", "D", "H", "L", "W"]:
+    for cat in ["A", "B", "C", "D", "H", "L", "W", "?"]:
         rows = by_cat.get(cat, [])
         if not rows:
             continue
@@ -278,12 +470,33 @@ def main():
         ),
     )
     parser.add_argument(
+        "--scenario", type=str, default=None, metavar="ID",
+        help=(
+            "Run only the specified scenario by ID. Accepts any scenario in "
+            "the main SCENARIOS list, not just R36 targets. Overrides --subset. "
+            "Pair with --dump-transcripts for single-scenario debugging "
+            "(e.g. --scenario confirm_multi_change --dump-transcripts)."
+        ),
+    )
+    parser.add_argument(
         "--output", type=str, default=None,
         help="Save JSON report to this file (same shape as full eval).",
     )
     parser.add_argument(
         "--verbose", action="store_true",
         help="Show the judge's justification for each scenario.",
+    )
+    parser.add_argument(
+        "--dump-transcripts", action="store_true",
+        help=(
+            "After each scenario, print its turn-by-turn transcript: user "
+            "message, bot response, and the session slots AFTER that turn. "
+            "If --output is also set, writes the full per-turn structure "
+            "to a sidecar file at <output>.transcripts.json. This is the "
+            "quickest way to diagnose why a specific scenario scored "
+            "differently than expected — the judge's score tells you "
+            "something's wrong; the transcript tells you which turn."
+        ),
     )
     args = parser.parse_args()
 
@@ -298,15 +511,19 @@ def main():
         generate_report,
     )
 
-    scenarios = _select_scenarios(SCENARIOS, args.subset)
+    scenarios = _select_scenarios(SCENARIOS, args.subset, args.scenario)
 
     print("=" * 100)
     print("OPTION 4 + 2b MINI-EVAL — R36 regressions + watch-list")
     print("=" * 100)
     print(f"USE_UNIFIED_EXTRACTOR = {os.getenv('USE_UNIFIED_EXTRACTOR')}")
     print(f"Running {len(scenarios)} scenario(s)")
-    if args.subset:
+    if args.scenario:
+        print(f"Scenario: {args.scenario}")
+    elif args.subset:
         print(f"Subset: {args.subset}")
+    if args.dump_transcripts:
+        print("Dumping per-turn transcripts after each scenario.")
     print()
 
     # Pre-warm semantic router (same as main eval)
@@ -327,7 +544,13 @@ def main():
     for i, scenario in enumerate(scenarios):
         sid = scenario["id"]
         cat, leg, uni, note = _target_meta(sid)
-        label = f"[{i+1}/{len(scenarios)}] [{cat}] {sid} (R36 uni={uni:.2f})"
+        # _target_meta returns ("?", 0.0, 0.0, "") for scenarios that
+        # aren't in _TARGETS — typically happens when --scenario is used
+        # for a scenario outside the R36 target set. Label accordingly.
+        if uni > 0:
+            label = f"[{i+1}/{len(scenarios)}] [{cat}] {sid} (R36 uni={uni:.2f})"
+        else:
+            label = f"[{i+1}/{len(scenarios)}] {sid} (not in R36 targets)"
         print(f"  ▶ {label} ...", end="", flush=True)
 
         start = time.time()
@@ -345,6 +568,8 @@ def main():
                 "conversation": conversation,
                 "judgment": judgment,
             })
+            if args.dump_transcripts:
+                _dump_transcript(sid, conversation)
             continue
 
         scores = judgment.get("scores", {})
@@ -353,7 +578,11 @@ def main():
         delta = avg - uni
         arrow = _delta_arrow(delta)
         emoji = "✅" if avg >= 4.0 else "⚠️" if avg >= 3.0 else "❌"
-        print(f" {emoji} {avg:.2f}/5.0  Δ={delta:+.2f}{arrow}  ({elapsed:.1f}s)")
+        if uni > 0:
+            print(f" {emoji} {avg:.2f}/5.0  Δ={delta:+.2f}{arrow}  ({elapsed:.1f}s)")
+        else:
+            # No R36 baseline — skip the delta
+            print(f" {emoji} {avg:.2f}/5.0  ({elapsed:.1f}s)")
 
         if args.verbose:
             notes = judgment.get("overall_notes", "")
@@ -367,6 +596,9 @@ def main():
             "conversation": conversation,
             "judgment": judgment,
         })
+
+        if args.dump_transcripts:
+            _dump_transcript(sid, conversation)
 
     elapsed_total = time.time() - run_start
 
@@ -384,6 +616,17 @@ def main():
         with open(args.output, "w") as f:
             json.dump(full_report, f, indent=2)
         print(f"\nJSON report saved to {args.output}")
+
+        # Sidecar with full per-turn transcripts — the main report strips
+        # these for size, but they're essential for diagnosis. Only write
+        # when the user has asked for transcripts, so the default output
+        # stays small.
+        if args.dump_transcripts:
+            sidecar_path = args.output.rsplit(".", 1)[0] + ".transcripts.json"
+            transcripts_payload = _build_transcripts_payload(results)
+            with open(sidecar_path, "w") as f:
+                json.dump(transcripts_payload, f, indent=2, default=str)
+            print(f"Transcript sidecar saved to {sidecar_path}")
 
     # Exit code: 0 if all passed, 1 otherwise
     failing = sum(1 for r in results if r["avg"] < 4.0)

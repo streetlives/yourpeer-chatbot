@@ -67,6 +67,7 @@ from .handlers import (
     _handle_spanish_detection,
     _handle_thanks,
     _immigration_acknowledgment,
+    _promote_queued_offer,
 )
 from .logging import _log_turn
 from .pipeline import (
@@ -166,6 +167,43 @@ def generate_reply(
     if tone == "crisis":
         pass  # handled below in routing
     else:
+        # --- QUEUE-ACCEPT FAST PATH ---
+        # When the user has a pending queue offer (from a prior multi-
+        # intent search) AND the current message's extracted service
+        # matches the offered service, treat this as queue-accept: promote
+        # the offer and search immediately. Covers both the button-click
+        # path (quick reply sends "I need <queued_service> in <loc>") and
+        # the typed re-statement path ("I need food").
+        #
+        # Must run BEFORE `_handle_post_results_interaction` because that
+        # handler wipes `_queue_offer_pending` and other queue state when
+        # it sees `has_service_intent` (it treats any new service intent
+        # as a fresh search). It must also run BEFORE the normal service
+        # flow, whose `merge_slots` hits its "service change" guard
+        # (`slot_extractor.py:1804-1809`) and also wipes queue state,
+        # resulting in a redundant re-confirmation of the queued service.
+        #
+        # Without this fast path, `multi_accept_queued_shelter`-style
+        # flows score a critical failure because the scenario expects an
+        # immediate search on turn 3 ("I need food" accepts the queued
+        # offer), not another "I'll look for food in Brooklyn — sound
+        # right?" turn.
+        #
+        # Delegates to `_promote_queued_offer`, the same helper the
+        # `confirm_yes`-on-queue path uses — both are "user accepts the
+        # queued offer," expressed either as a bare `yes` or as a
+        # service-phrased sentence.
+        if (has_service_intent
+                and existing.get("_queue_offer_pending")
+                and existing.get("_queued_offer")
+                and early_extracted.get("service_type") == existing["_queued_offer"][0]):
+            offer = existing["_queued_offer"]
+            return _promote_queued_offer(
+                session_id, message, redacted_message, existing, offer,
+                request_id, tone,
+                location_override=early_extracted.get("location"),
+            )
+
         # --- POST-RESULTS QUESTION CHECK ---
         _post_result = _handle_post_results_interaction(
             session_id, message, redacted_message, existing,
@@ -380,11 +418,37 @@ def generate_reply(
 
     # --- Service request or general conversation ---
     if _USE_LLM and category == "service":
+        # Post-change-service bypass: if the user just said "change
+        # service" on the prior turn and regex confidently extracted a
+        # single service on this turn (no ambiguity — no additional
+        # services, service_type set), trust regex and skip the LLM.
+        #
+        # Rationale: the transcript stores only user messages, so the
+        # bot's "What kind of help do you need?" prompt is missing from
+        # the history the LLM sees. A bare "Shelter" reply then gets
+        # interpreted with the stale prior request still in view, and
+        # the LLM can bundle the cleared-out service back in as either
+        # primary (with the new one as additional) or as additional
+        # (with the new one as primary) — both break the expected
+        # "service_type replaced" state. Covers confirm_multi_change.
+        #
+        # The guard on `early_extracted.additional_services` keeps this
+        # from firing when the user names multiple services on this
+        # turn ("shelter and food") — those cases still need the LLM.
+        awaiting_clear = existing.get("_awaiting_service_after_clear")
+        regex_confident = (
+            early_extracted.get("service_type") is not None
+            and not early_extracted.get("additional_services")
+        )
+        if awaiting_clear and regex_confident:
+            extracted = dict(early_extracted)
+            existing.pop("_awaiting_service_after_clear", None)
+            save_session_slots(session_id, existing)
         # Feature flag for Phase 2 of the llm_slot_extractor migration.
         # When USE_UNIFIED_EXTRACTOR=1, route through the new
         # `slot_extraction.extract()`; otherwise use the legacy
         # `extract_slots_smart`. See UNIFIED_EXTRACTOR_MIGRATION.md.
-        if _USE_UNIFIED_EXTRACTOR:
+        elif _USE_UNIFIED_EXTRACTOR:
             from app.services.slot_extraction import extract as extract_unified
             extracted = extract_unified(
                 message,

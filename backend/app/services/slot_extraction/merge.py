@@ -362,8 +362,7 @@ def _merge_service_type_and_primary_location(
 
         if R is empty:              LLM wins
         elif L is empty:            regex wins
-        elif R == L:                regex priority wins   (see narrative
-                                                          exception below)
+        elif R == L:                LLM wins            ← Ext-2b
         else:                       LLM wins
 
     When regex wins, we return `regex_result`'s triple verbatim.
@@ -373,33 +372,28 @@ def _merge_service_type_and_primary_location(
     dedup-union with the loser is done afterward by
     `_merge_additional_services`.
 
-    Narrative-path exception (R == L case, added for Category B /
-    natural_long_story regression in R36):
+    Ext-2b (applied after R36 Phase 2 parallel-run, replacing the
+    earlier narrative-path-only exception):
 
-        The narrative system prompt explicitly teaches the LLM the
-        urgency hierarchy with worked examples — e.g., "I just got out
-        of the hospital and my housing fell through → service_type:
-        shelter (NOT medical — housing is more urgent)". When the set-
-        equality rule fires on a narrative-path message, regex's own
-        text-position tiebreak (see slot_extractor._extract_all_service_types
-        line ~933, which orders by `_SERVICE_NEED_PRIORITY` tier then
-        text position) overrides the LLM's reasoned interpretation.
-        For shelter/medical both at tier 1, whichever keyword appears
-        first wins — which discards the LLM's ability to distinguish
-        context ("hospital" = past event) from current need ("somewhere
-        to stay" = present request).
+        When sets match, the LLM's primary pick wins regardless of
+        message length. Both LLM paths teach primary selection:
 
-        The exception: when a narrative-path message produced set
-        agreement, trust the LLM's primary. Short-path messages keep
-        the original rule — short-prompt Option 4 teaches first-
-        mentioned as default, which aligns with regex's text-position
-        tiebreak on short multi-intent inputs.
+          - Narrative prompt: full urgency hierarchy with worked
+            examples (hospital = context, shelter = request).
+          - Short prompt (Option 4): first-mentioned by default,
+            shelter/medical when a safety signal is present
+            ("tonight", "right now", "nowhere to sleep", etc.).
 
-        `message` defaults to None for callers that don't supply it
-        (legacy test paths); when None, the original rule fires
-        unchanged — this preserves backward compatibility for unit
-        tests that call the merge helpers directly without the
-        narrative/short distinction.
+        Regex's static priority table can't distinguish request from
+        context or first-mentioned from priority-ordered; the prompts
+        can. This rule change unifies the treatment across paths and
+        lets the prompt — not the merge — be the locus of primary-
+        selection logic going forward.
+
+        `message` is preserved in the signature for backward
+        compatibility with direct-caller unit tests and for possible
+        future use; it is no longer consulted in the sets-match
+        branch.
     """
     regex_primary = regex_result.get("service_type")
     regex_additional = regex_result.get("additional_services") or []
@@ -430,34 +424,49 @@ def _merge_service_type_and_primary_location(
         return regex_primary, regex_result.get("location"), regex_additional
 
     if regex_set == llm_set:
-        # Narrative-path exception: the narrative prompt specifically
-        # teaches urgency hierarchy via worked examples. Trust the LLM's
-        # reasoned primary rather than regex's text-position tiebreak.
-        # See `natural_long_story` (R36 Category B) for the motivating
-        # failure case.
-        if message is not None and _is_narrative(message):
-            logger.info(
-                f"Set-agreement (narrative path): regex set={sorted(regex_set)}, "
-                f"llm set={sorted(llm_set)}, LLM wins on primary"
-            )
-            return llm_primary, llm_result.get("location"), llm_additional
-
-        # Short path: both parsers agree on WHAT was requested. Regex's
-        # priority table decides WHICH is primary. This is where the set-
-        # equality blind spot lives on the short path — see the four
-        # watch-list scenarios in the Phase 2 acceptance criteria. The
-        # short-prompt Option 4 hardening teaches the LLM first-mentioned-
-        # wins which aligns with regex's text-position tiebreak for
-        # short inputs.
+        # Both parsers agree on WHAT was requested. Trust the LLM's
+        # primary pick regardless of message length ("Ext-2b":
+        # extension of the original narrative-path exception to the
+        # short path).
         #
-        # Note: we return `regex_primary` directly rather than re-applying
-        # _SERVICE_NEED_PRIORITY here because regex's own extract_slots
-        # ALREADY sorts its output by priority (see
-        # slot_extractor._extract_all_service_types:933). So
-        # regex_primary is, by construction, the priority-table winner
-        # of its own set. The rule's "regex priority wins" is satisfied
-        # trivially.
-        return regex_primary, regex_result.get("location"), regex_additional
+        # Why LLM wins on sets-match:
+        #   - The narrative prompt teaches urgency hierarchy with
+        #     worked examples (e.g., "I just got out of the hospital
+        #     and my housing fell through → service_type: shelter,
+        #     NOT medical").
+        #   - The short prompt (Option 4 hardening, Phase 2) teaches
+        #     first-mentioned-wins UNLESS a safety signal is present
+        #     ("tonight", "right now", "nowhere to sleep", etc.),
+        #     in which case shelter/medical wins.
+        #   - Regex's priority table is static — it can't distinguish
+        #     "I need food and shelter in Brooklyn" (first-mentioned
+        #     food is what the user said first) from "I need a bed
+        #     tonight and some food" (safety signal promotes shelter).
+        #     The prompts can.
+        #
+        # This collapses the earlier short/narrative distinction. The
+        # `message` parameter is no longer consulted in this branch;
+        # it's preserved in the signature for backward compatibility
+        # with direct-caller unit tests and for future use.
+        #
+        # Scenarios this rule serves (R36 Category A + B, same fix):
+        #   - multi_food_and_shelter_brooklyn (short, food-first)
+        #   - multi_shower_and_food_drop_in (short, personal_care-first)
+        #   - multi_cross_neighborhood_shower_les_food_chinatown (short)
+        #   - natural_long_story (narrative, hospital-context)
+        #
+        # Scenario this rule potentially re-ranks (R36 migration win):
+        #   - multi_cross_borough_food_brooklyn_shelter_manhattan —
+        #     regex previously won with shelter/manhattan as primary
+        #     (4.73); under Ext-2b the LLM's food/brooklyn wins. The
+        #     scenario name encodes food as the author's intended
+        #     primary, so this is expected to improve or hold steady,
+        #     but MUST be validated in the mini-eval.
+        logger.info(
+            f"Set-agreement: regex set={sorted(regex_set)}, "
+            f"llm set={sorted(llm_set)}, LLM wins on primary"
+        )
+        return llm_primary, llm_result.get("location"), llm_additional
 
     # Sets disagree. LLM's filtering (context vs request) or coverage
     # (missing regex keyword) is the signal we trust.

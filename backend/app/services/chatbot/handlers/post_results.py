@@ -519,6 +519,8 @@ def _handle_post_results_interaction(
             existing.pop("_queued_services", None)
             existing.pop("_queued_services_original", None)
             existing.pop("_queue_offer_pending", None)
+            existing.pop("_queued_offer", None)
+            existing.pop("_queued_location", None)
             existing.pop("_pending_confirmation", None)
             existing.pop("_displayed_count", None)
             # Filter state was tied to the prior _last_results — clear it

@@ -319,3 +319,158 @@ class TestQueueYesPromotesQueuedService:
         turn3 = r[2]["response"].lower()
         # Decline message
         assert "no problem" in turn3 or "let me know" in turn3
+
+
+class TestQueueAcceptServiceMatch:
+    """Service-category message that matches the queued offer should be
+    treated as queue-accept, not as a new service request.
+
+    The scenario this fixes (multi_accept_queued_shelter in R36): after
+    the primary search returns results and the queue offer fires for the
+    secondary service, the user either taps the quick-reply button
+    ("I need food in Brooklyn") or re-types the service name
+    ("I need food"). Both should promote the queued service and run
+    the search immediately — same UX as `yes`.
+
+    Pre-fix: these messages fell through to the normal service flow,
+    where merge_slots' service-change clearing wiped the queue offer and
+    the orchestrator built a fresh confirmation for the "new" search —
+    an extra redundant turn and a judge-scored critical failure.
+
+    Note on scenario shapes: these tests use cross-borough inputs
+    ("food in Brooklyn and shelter in Manhattan") to force the queue
+    path. Same-borough multi-intent falls into co-located search, which
+    returns both services at one location and never queues — a
+    different code path not exercised here.
+    """
+
+    def test_typed_queued_service_promotes_and_searches(self):
+        """'I need food' after a food queue offer: promote the
+        offer's location (Brooklyn) and run the search. Don't
+        re-confirm — the explicit service name IS the acceptance.
+
+        Turn 1 extracts shelter as tier-1 primary with food queued;
+        after turn 2's shelter/Manhattan search runs, the queue offer
+        fires for food/Brooklyn. Turn 3's 'I need food' matches the
+        queued food.
+        """
+        r = send_multi([
+            "I need food in Brooklyn and shelter in Manhattan",
+            "Yes, search",
+            "I need food",
+        ])
+        turn3 = r[2]["response"].lower()
+        # Bot searches and returns results (not a re-confirmation)
+        assert "found" in turn3 or "option" in turn3, (
+            f"Turn 3 should run the food search immediately. Got: {turn3!r}. "
+            f"Pre-fix, merge_slots' service-change clear wiped the queue "
+            f"offer and the orchestrator built a 'look for food in Brooklyn, "
+            f"sound right?' confirmation — an extra redundant turn."
+        )
+        # Specifically should NOT re-confirm the queued service
+        assert "sound right" not in turn3 and "sound good" not in turn3, (
+            "Turn 3 should NOT re-confirm — user's 'I need food' IS "
+            "the acceptance of the queue offer."
+        )
+
+    def test_button_click_value_promotes_and_searches(self):
+        """Simulates the user tapping the '✅ Yes, search for food'
+        quick reply, which sends 'I need food in brooklyn' (the
+        value set by _apply_queue_offer). Should be recognized as
+        queue-accept, not a fresh search."""
+        r = send_multi([
+            "I need food in Brooklyn and shelter in Manhattan",
+            "Yes, search",
+            "I need food in brooklyn",  # The qr_value shape
+        ])
+        turn3 = r[2]["response"].lower()
+        assert "found" in turn3 or "option" in turn3
+        assert "sound right" not in turn3 and "sound good" not in turn3
+
+    def test_typed_service_honors_user_location_override(self):
+        """If the user re-specifies a different location than the
+        queued offer ('I need food in Queens' when the offer
+        was for Brooklyn), honor the user's location — they've just
+        signaled a location change. The queued service still
+        promotes; only the location comes from the user."""
+        import uuid
+        from app.services.session_store import get_session_slots
+        sid = f"test-{uuid.uuid4().hex[:8]}"
+        send_multi([
+            "I need food in Brooklyn and shelter in Manhattan",
+            "Yes, search",
+            "I need food in Queens",  # Different location than queued
+        ], session_id=sid)
+        slots = get_session_slots(sid)
+        # Primary slots: queued service promoted, user's location wins
+        assert slots.get("service_type") == "food"
+        assert slots.get("location") == "queens", (
+            f"User's typed location should override the queued "
+            f"location; got {slots.get('location')!r}."
+        )
+        # Queue state cleared
+        assert slots.get("_queue_offer_pending") is None
+        assert slots.get("_queued_offer") is None
+
+    def test_different_service_falls_through_to_service_flow(self):
+        """User types a DIFFERENT service than queued (queue offer is
+        for food, user types 'I need clothing'). Queue-accept must
+        NOT fire — the normal service flow handles it, which includes
+        clearing the stale queue state via merge_slots' service-change
+        guard. That's the right behavior here."""
+        import uuid
+        from app.services.session_store import get_session_slots
+        sid = f"test-{uuid.uuid4().hex[:8]}"
+        r = send_multi([
+            "I need food in Brooklyn and shelter in Manhattan",
+            "Yes, search",
+            "I need clothing",  # Different service — not the queued food
+        ], session_id=sid)
+        slots = get_session_slots(sid)
+        # Normal service flow: new primary is clothing, queue cleared
+        assert slots.get("service_type") == "clothing"
+        assert slots.get("_queued_offer") is None
+        # Turn 3 should be a confirmation (user's clothing request is new,
+        # hasn't been confirmed yet) — not an immediate search.
+        turn3 = r[2]["response"].lower()
+        # Either confirmation prompt or missing-slot question; NOT a
+        # results page yet.
+        assert "found" not in turn3, (
+            f"Different service should go through normal service flow "
+            f"(which asks or confirms), not queue-accept's immediate "
+            f"search. Got: {turn3!r}"
+        )
+
+    def test_typed_queued_service_updates_session_to_queued(self):
+        """After queue-accept via service-typed message, session
+        reflects the queued service + its location."""
+        import uuid
+        from app.services.session_store import get_session_slots
+        sid = f"test-{uuid.uuid4().hex[:8]}"
+        send_multi([
+            "I need food in Brooklyn and shelter in Manhattan",
+            "Yes, search",
+            "I need food",
+        ], session_id=sid)
+        slots = get_session_slots(sid)
+        # Queued service (food at brooklyn) is now the primary
+        assert slots.get("service_type") == "food"
+        assert slots.get("location") == "brooklyn"
+        # Queue state cleared (same as the confirm_yes path)
+        assert slots.get("_queue_offer_pending") is None
+        assert slots.get("_queued_offer") is None
+
+    def test_no_queue_offer_service_message_is_normal_flow(self):
+        """Regression guard: with no pending queue offer, a service
+        message should take the normal service flow (confirmation or
+        missing-slot question). Queue-accept must not accidentally
+        fire when there's no queue."""
+        import uuid
+        sid = f"test-{uuid.uuid4().hex[:8]}"
+        r = send_multi(["I need shelter in Brooklyn"], session_id=sid)
+        turn1 = r[0]["response"].lower()
+        # Should reach a confirmation, not an immediate search
+        assert "sound right" in turn1 or "sound good" in turn1 or "look for" in turn1, (
+            f"Bare service request should confirm, not queue-accept. "
+            f"Got: {turn1!r}"
+        )
