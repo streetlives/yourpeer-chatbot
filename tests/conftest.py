@@ -59,50 +59,264 @@ for _sub in ("unit", "integration"):
 # ---------------------------------------------------------------------------
 # MOCK SERVICE DATA
 # ---------------------------------------------------------------------------
-# Shared across test_classification_and_routing.py, test_http_routes_and_models.py, and any new test
-# files that need a realistic query_services() return value.
-# Update this in ONE place when the service card schema changes.
+# Shared across integration tests (test_classification_and_routing.py,
+# test_http_routes_and_models.py, test_browser_geolocation.py,
+# test_service_data_llm_firewall.py, test_crisis_and_flow_regressions.py)
+# and the eval harness (tests/eval/eval_llm_judge.py — which has its own
+# duplicate of MOCK_QUERY_RESULTS that should use build_mock_query_results
+# via side_effect after this change lands).
+#
+# Prior to 2026-04, this file exposed a single hardcoded MOCK_QUERY_RESULTS
+# dict (one Brooklyn food pantry) that was used regardless of what the
+# caller queried. That caused two problems:
+#   1. An eval scenario where the user asks for shelter in Manhattan would
+#      get a food pantry in Brooklyn back, contaminating the Opus judge's
+#      scoring of search-quality dimensions.
+#   2. Multi-service scenarios couldn't distinguish "searched for shelter"
+#      from "searched for food" because both returned the same cards.
+#
+# The new API keeps the old constant (MOCK_QUERY_RESULTS) for
+# backward compatibility in integration tests that don't care about
+# service-type fidelity, and adds build_mock_query_results(...) for tests
+# that DO care — especially the eval harness which should use
+# `side_effect=lambda **kwargs: build_mock_query_results(**kwargs)` so
+# the mock responds to the actual query_services() arguments at each call.
+#
+# Update SERVICE_CARD_TEMPLATES in ONE place when the service card schema
+# changes. MOCK_SERVICE_CARD is kept as an alias for backward-compat with
+# tests that import it directly; it points at the Brooklyn food pantry.
 
 
-MOCK_SERVICE_CARD = {
-    "service_name": "Test Food Pantry",
+# Field defaults shared across all card templates — override per-template only where they differ.
+_DEFAULT_CARD_FIELDS = {
     "organization": "Test Org",
-    "description": "Free meals every weekday",
-    "address": "123 Test St, Brooklyn, NY 11201",
-    "city": "Brooklyn",
-    # Realistic Brooklyn coordinates for downstream map/distance logic.
-    "latitude": 40.6937,
-    "longitude": -73.9946,
-    "phone": "212-555-0001",
-    "email": "info@testpantry.org",
-    "website": "https://testpantry.org",
     "fees": "Free",
-    "yourpeer_url": "https://yourpeer.nyc/locations/test-food-pantry",
-    "hours_today": "9:00 AM – 5:00 PM",
     "is_open": "open",
-    "service_id": "svc-001",
     "requires_membership": False,
     "last_validated_at": "2026-04-01T10:00:00",
-    "also_available": ["Shower", "Clothing Pantry"],
-    # Optional fields added to ServiceCard Pydantic model
+    # Optional fields added to the ServiceCard Pydantic model
     "accessibility": None,
     "eligibility_summary": None,
     "review_highlight": None,
     "required_documents": None,
     "languages": None,
-    # Raw DB taxonomy tags — used by post-results sub-category filters.
-    "service_taxonomies": ["Food", "Soup Kitchen", "Pantry"],
 }
 
-MOCK_QUERY_RESULTS = {
-    "services": [MOCK_SERVICE_CARD],
-    "result_count": 1,
-    "template_used": "FoodQuery",
-    "params_applied": {"taxonomy_name": "Food", "city": "Brooklyn"},
-    "relaxed": False,
-    "execution_ms": 50,
-    "freshness": {"fresh": 1, "total": 1, "total_with_date": 1},
+# Per-service-type card templates. Fields here override _DEFAULT_CARD_FIELDS.
+# Each template is applied against the user-supplied location (when present)
+# so the returned card plausibly matches the query.
+_SERVICE_CARD_TEMPLATES = {
+    "food": {
+        "service_name": "Test Food Pantry",
+        "description": "Free meals every weekday",
+        "phone": "212-555-0001",
+        "email": "info@testpantry.org",
+        "website": "https://testpantry.org",
+        "yourpeer_url": "https://yourpeer.nyc/locations/test-food-pantry",
+        "hours_today": "9:00 AM – 5:00 PM",
+        "service_id": "svc-food-001",
+        "also_available": ["Shower", "Clothing Pantry"],
+        "service_taxonomies": ["Food", "Soup Kitchen", "Pantry"],
+    },
+    "shelter": {
+        "service_name": "Test Shelter",
+        "description": "Emergency shelter with 24/7 intake",
+        "phone": "212-555-0002",
+        "email": "intake@testshelter.org",
+        "website": "https://testshelter.org",
+        "yourpeer_url": "https://yourpeer.nyc/locations/test-shelter",
+        "hours_today": "24 hours",
+        "service_id": "svc-shelter-001",
+        "also_available": ["Case Management", "Meals"],
+        "service_taxonomies": ["Shelter", "Emergency Housing"],
+    },
+    "medical": {
+        "service_name": "Test Community Clinic",
+        "description": "Walk-in medical care, no insurance required",
+        "phone": "212-555-0003",
+        "email": "info@testclinic.org",
+        "website": "https://testclinic.org",
+        "yourpeer_url": "https://yourpeer.nyc/locations/test-clinic",
+        "hours_today": "9:00 AM – 6:00 PM",
+        "service_id": "svc-medical-001",
+        "also_available": ["Dental", "Vision"],
+        "service_taxonomies": ["Medical", "Clinic", "Primary Care"],
+    },
+    "mental_health": {
+        "service_name": "Test Counseling Center",
+        "description": "Counseling, therapy, and substance use support",
+        "phone": "212-555-0004",
+        "email": "help@testcounseling.org",
+        "website": "https://testcounseling.org",
+        "yourpeer_url": "https://yourpeer.nyc/locations/test-counseling",
+        "hours_today": "9:00 AM – 8:00 PM",
+        "service_id": "svc-mh-001",
+        "also_available": ["Support Groups"],
+        "service_taxonomies": ["Mental Health", "Counseling", "Substance Use"],
+    },
+    "clothing": {
+        "service_name": "Test Clothing Pantry",
+        "description": "Free clothing, coats, and seasonal gear",
+        "phone": "212-555-0005",
+        "email": "info@testclothing.org",
+        "website": "https://testclothing.org",
+        "yourpeer_url": "https://yourpeer.nyc/locations/test-clothing",
+        "hours_today": "10:00 AM – 4:00 PM",
+        "service_id": "svc-clothing-001",
+        "also_available": ["Hygiene Kits"],
+        "service_taxonomies": ["Clothing", "Clothing Pantry"],
+    },
+    "personal_care": {
+        "service_name": "Test Drop-in Center",
+        "description": "Showers, laundry, and personal care supplies",
+        "phone": "212-555-0006",
+        "email": "info@testdropin.org",
+        "website": "https://testdropin.org",
+        "yourpeer_url": "https://yourpeer.nyc/locations/test-dropin",
+        "hours_today": "8:00 AM – 5:00 PM",
+        "service_id": "svc-pc-001",
+        "also_available": ["Meals", "Mail Service"],
+        "service_taxonomies": ["Personal Care", "Drop-in Center", "Shower"],
+    },
+    "legal": {
+        "service_name": "Test Legal Aid",
+        "description": "Free legal help for housing, immigration, and benefits",
+        "phone": "212-555-0007",
+        "email": "help@testlegal.org",
+        "website": "https://testlegal.org",
+        "yourpeer_url": "https://yourpeer.nyc/locations/test-legal",
+        "hours_today": "9:00 AM – 5:00 PM",
+        "service_id": "svc-legal-001",
+        "also_available": ["Translation"],
+        "service_taxonomies": ["Legal", "Legal Aid"],
+    },
+    "employment": {
+        "service_name": "Test Jobs Center",
+        "description": "Job placement, resume help, and workforce training",
+        "phone": "212-555-0008",
+        "email": "jobs@testemployment.org",
+        "website": "https://testemployment.org",
+        "yourpeer_url": "https://yourpeer.nyc/locations/test-employment",
+        "hours_today": "9:00 AM – 5:00 PM",
+        "service_id": "svc-emp-001",
+        "also_available": ["Computer Access"],
+        "service_taxonomies": ["Employment", "Workforce Development"],
+    },
+    "other": {
+        "service_name": "Test Benefits Office",
+        "description": "Help enrolling in SNAP, Medicaid, and public benefits",
+        "phone": "212-555-0009",
+        "email": "info@testbenefits.org",
+        "website": "https://testbenefits.org",
+        "yourpeer_url": "https://yourpeer.nyc/locations/test-benefits",
+        "hours_today": "9:00 AM – 4:00 PM",
+        "service_id": "svc-other-001",
+        "also_available": ["IDs", "Phone Access"],
+        "service_taxonomies": ["Other", "Benefits Enrollment"],
+    },
 }
+
+# Per-borough coordinate centroids (approximate) — used so a Manhattan card
+# gets Manhattan coordinates, a Bronx card gets Bronx coordinates, etc.
+# Makes distance-based downstream logic behave plausibly in tests.
+_BOROUGH_COORDS = {
+    "brooklyn":        (40.6937, -73.9946),
+    "manhattan":       (40.7831, -73.9712),
+    "bronx":           (40.8448, -73.8648),
+    "queens":          (40.7282, -73.7949),
+    "staten island":   (40.5795, -74.1502),
+}
+
+# Rough ZIP mapping for the `address` field. Unknown locations fall
+# back to Brooklyn's ZIP to preserve historical test assertions.
+_BOROUGH_ZIPS = {
+    "brooklyn": "11201",
+    "manhattan": "10001",
+    "bronx": "10451",
+    "queens": "11101",
+    "staten island": "10301",
+}
+
+
+def build_mock_query_results(
+    service_type: str = None,
+    location: str = None,
+    *,
+    result_count: int = 1,
+    relaxed: bool = False,
+    **_unused_kwargs,
+) -> dict:
+    """Build a query_services() return value that plausibly matches the query.
+
+    Args:
+        service_type: Canonical service type (food, shelter, medical, ...).
+            If unknown or None, falls back to the food template so tests
+            that don't care about service-type fidelity keep working.
+        location:     NYC borough or neighborhood string. Used to build
+            plausible coordinates and addresses for the returned cards.
+            If None, defaults to Brooklyn (legacy behavior).
+        result_count: How many copies of the template card to include.
+            Defaults to 1. Tests that need the "multiple results" path
+            (e.g. pagination, relaxed mode) can pass a higher number.
+        relaxed:      Whether to mark the result as relaxed-query. Used
+            by tests that exercise the relaxed-query fallback path.
+        **_unused_kwargs: Silently accept and ignore any other kwargs
+            that query_services accepts (age, gender, weekday, etc.).
+            Mocks shouldn't fail on future signature additions.
+
+    Returns: a dict matching query_services()'s return contract.
+    """
+    # Pick template — unknown service types fall back to food
+    template_key = service_type.lower() if isinstance(service_type, str) else "food"
+    if template_key not in _SERVICE_CARD_TEMPLATES:
+        template_key = "food"
+    template = _SERVICE_CARD_TEMPLATES[template_key]
+
+    # Resolve location → coords + address
+    loc_lower = location.lower().strip() if isinstance(location, str) else "brooklyn"
+    lat, lng = _BOROUGH_COORDS.get(loc_lower, _BOROUGH_COORDS["brooklyn"])
+    zip_code = _BOROUGH_ZIPS.get(loc_lower, _BOROUGH_ZIPS["brooklyn"])
+    display_loc = location.title() if isinstance(location, str) else "Brooklyn"
+
+    card = {
+        **_DEFAULT_CARD_FIELDS,
+        **template,
+        "address": f"123 Test St, {display_loc}, NY {zip_code}",
+        "city": display_loc,
+        "latitude": lat,
+        "longitude": lng,
+    }
+
+    services = [dict(card) for _ in range(max(1, result_count))]
+
+    return {
+        "services": services,
+        "result_count": len(services),
+        "template_used": f"{template_key.capitalize()}Query",
+        "params_applied": {
+            "taxonomy_name": template["service_taxonomies"][0],
+            "city": display_loc,
+        },
+        "relaxed": relaxed,
+        "execution_ms": 50,
+        "freshness": {
+            "fresh": len(services),
+            "total": len(services),
+            "total_with_date": len(services),
+        },
+    }
+
+
+# Backward-compat constants — preserved for the many existing tests that
+# import these directly. Both resolve to the "food in Brooklyn" default
+# which matches the pre-2026-04 fixture behavior.
+MOCK_SERVICE_CARD = build_mock_query_results(
+    service_type="food", location="Brooklyn"
+)["services"][0]
+
+MOCK_QUERY_RESULTS = build_mock_query_results(
+    service_type="food", location="Brooklyn"
+)
 
 MOCK_EMPTY_RESULTS = {
     "services": [],
@@ -113,14 +327,9 @@ MOCK_EMPTY_RESULTS = {
     "execution_ms": 10,
 }
 
-MOCK_RELAXED_RESULTS = {
-    "services": [MOCK_SERVICE_CARD],
-    "result_count": 1,
-    "template_used": "FoodQuery",
-    "params_applied": {"taxonomy_name": "Food"},
-    "relaxed": True,
-    "execution_ms": 75,
-}
+MOCK_RELAXED_RESULTS = build_mock_query_results(
+    service_type="food", location="Brooklyn", relaxed=True,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -152,6 +361,32 @@ def mock_query_results():
 def mock_empty_results():
     """A query_services() return value with zero results."""
     return dict(MOCK_EMPTY_RESULTS)
+
+
+@pytest.fixture
+def mock_query_builder():
+    """The service-type-aware mock builder, for tests that want
+    query-sensitive mocks.
+
+    Usage:
+        def test_shelter_in_manhattan(mock_query_builder):
+            with patch(
+                "app.services.chatbot.execution.query_services",
+                side_effect=lambda **kwargs: mock_query_builder(**kwargs),
+            ):
+                result = generate_reply(
+                    "I need shelter in Manhattan", session_id=sid,
+                )
+                # The bot's query_services call receives
+                # service_type="shelter", location="Manhattan" and the mock
+                # returns a shelter card with Manhattan address + coords.
+
+    The eval harness (tests/eval/eval_llm_judge.py) should use the same
+    pattern: replace `return_value=MOCK_QUERY_RESULTS` with
+    `side_effect=lambda **kwargs: build_mock_query_results(**kwargs)`
+    so scoring isn't contaminated by service-type-mismatched mock data.
+    """
+    return build_mock_query_results
 
 
 @pytest.fixture

@@ -403,6 +403,41 @@ def test_age_out_of_range():
             f"Should reject out-of-range age in: {phrase} → {slots['age']}"
 
 
+def test_age_does_not_match_for_duration_phrases():
+    """Preventive hardening (April 2026): 'for NN <time-unit>' is always
+    a duration, never an age. The preprocessing step in _extract_age
+    strips these substrings before pattern matching so future regex
+    additions can't accidentally match them."""
+    duration_phrases = [
+        "for 3 years",
+        "I've been homeless for 3 years",
+        "waiting for 6 months",
+        "homeless for 12 days now",
+        "waited for 2 weeks",
+        "for 10 days",
+    ]
+    for phrase in duration_phrases:
+        slots = extract_slots(phrase)
+        assert slots["age"] is None, \
+            f"Duration phrase should not yield an age: {phrase} → {slots['age']}"
+
+
+def test_age_preserved_when_duration_and_age_coexist():
+    """When a message contains BOTH a duration phrase AND an age
+    statement, the duration is stripped first and the real age is
+    still extracted."""
+    cases = [
+        ("I'm 25 and I've been homeless for 3 years", 25),
+        ("I've lived here for 3 years and I'm 45", 45),
+        ("for 6 months now, I'm 19", 19),
+        ("I am 30, homeless for 2 years", 30),
+    ]
+    for phrase, expected in cases:
+        slots = extract_slots(phrase)
+        assert slots["age"] == expected, \
+            f"Expected age={expected} for: {phrase} → {slots['age']}"
+
+
 # -----------------------------------------------------------------------
 # URGENCY EXTRACTION
 # -----------------------------------------------------------------------
