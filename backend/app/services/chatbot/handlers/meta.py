@@ -40,13 +40,20 @@ _SHAME_HELP_SIGNALS = (
 
 
 def _handle_help(session_id, message, redacted_message, existing,
-                 response_tone, category, tone, request_id):
+                 response_tone, category, tone, tone_prefix, request_id):
     """Show the service-menu help response.
 
     Two variants: if the user is expressing shame around asking ("I'm
     embarrassed to ask for help"), this routes to the emotional handler
     instead. Confused or emotional callers get a lead-in that acknowledges
     the overwhelm before the menu.
+
+    `tone_prefix` is the sensitive-context / tonal prefix computed by
+    the orchestrator (e.g., "I understand this is a difficult situation.
+    Let me help. " for foster-care / fleeing / just-got-out-of-jail
+    messages). When non-empty, it PRE-empts the generic confused/emotional
+    lead-in below — the sensitive prefix is more specific, and stacking
+    both reads as doubled empathy ("I understand... I hear you...").
     """
     # Shame + help: vulnerability disclosure masquerading as a help request.
     # Route to emotional handler with the shame-specific response.
@@ -67,9 +74,13 @@ def _handle_help(session_id, message, redacted_message, existing,
                       request_id=request_id, tone=tone)
             return result
 
-    # When the user is confused or emotional AND asking for help,
-    # lead with empathy before showing the service menu.
-    if response_tone in ("confused", "emotional"):
+    # When sensitive context is present, the orchestrator's tone_prefix
+    # already provides an empathic acknowledgment — use standard menu
+    # body to avoid doubling up. Otherwise, confused / emotional callers
+    # still get the overwhelm lead-in.
+    if tone_prefix:
+        help_msg = tone_prefix + _HELP_RESPONSE
+    elif response_tone in ("confused", "emotional"):
         help_msg = (
             "I hear you — it can feel overwhelming when you don't know "
             "where to start. Let's take it one step at a time. "
@@ -120,13 +131,19 @@ def _handle_bot_capability_question(session_id, message, redacted_message, exist
     return result
 
 
-def _handle_confused(session_id, redacted_message, existing, category, tone, request_id):
+def _handle_confused(session_id, redacted_message, existing, category, tone, tone_prefix, request_id):
     """Acknowledge overwhelm with the standard confused response and mark
-    _last_action so a follow-up 'yes' / 'no' is interpreted in this context."""
+    _last_action so a follow-up 'yes' / 'no' is interpreted in this context.
+
+    `tone_prefix` is prepended when set (e.g., sensitive-context empathy
+    for foster-care / fleeing scenarios). The standard confused response
+    ("That's okay — you don't have to know exactly...") flows naturally
+    after any tone prefix without doubling empathy.
+    """
     existing["_last_action"] = "confused"
     save_session_slots(session_id, existing)
     result = _empty_reply(
-        session_id, _CONFUSED_RESPONSE, existing,
+        session_id, tone_prefix + _CONFUSED_RESPONSE, existing,
         quick_replies=list(_WELCOME_QUICK_REPLIES) + [
             {"label": "🤝 Peer navigator", "value": "Connect with peer navigator"},
         ],

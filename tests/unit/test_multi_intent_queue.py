@@ -110,3 +110,212 @@ class TestSameBoroughColocation:
         resp = r[0]["response"].lower()
         assert "food" in resp
         assert "shelter" in resp
+
+
+# -----------------------------------------------------------------------
+# R34 SPRINT 1 — THREE-BUG FIX FOR CROSS-LOCATION MULTI-INTENT
+# -----------------------------------------------------------------------
+
+class TestCrossLocationConfirmationWording:
+    """Bug 1: confirmation message must surface BOTH locations when
+    queued services have distinct locations from the primary.
+
+    Pre-fix, "food in Brooklyn and shelter in Manhattan" rendered as
+    "I'll look for shelter and food in Manhattan" — dropping Brooklyn
+    entirely and silently misrepresenting the user's request.
+    """
+
+    def test_cross_borough_confirmation_surfaces_both_locations(self):
+        r = send_multi(["I need food in Brooklyn and shelter in Manhattan"])
+        resp = r[0]["response"].lower()
+        # Primary location must appear
+        assert "manhattan" in resp
+        # Queued location must ALSO appear — the pre-fix bug dropped it
+        assert "brooklyn" in resp
+
+    def test_cross_borough_confirmation_does_not_conflate_services(self):
+        """Queued cross-location service must not be folded into the
+        primary's location. Pre-fix rendered 'shelter and food in
+        Manhattan' — conflation that dropped Brooklyn."""
+        r = send_multi(["I need food in Brooklyn and shelter in Manhattan"])
+        resp = r[0]["response"].lower()
+        # "food in Manhattan" is the exact string the pre-fix produced.
+        # The post-fix string says "food in Brooklyn" separately.
+        assert "food in manhattan" not in resp
+
+    def test_cross_neighborhood_confirmation_surfaces_both_locations(self):
+        r = send_multi([
+            "I want to shower in the Lower East Side and grab food in Chinatown"
+        ])
+        resp = r[0]["response"].lower()
+        assert "chinatown" in resp
+        assert "lower east side" in resp
+
+    def test_same_location_multi_intent_still_folds(self):
+        """Regression guard: same-location queued services should STILL
+        fold into the combined label (pre-fix co-location behavior
+        preserved for the same-location case)."""
+        r = send_multi(["I need food and shelter in Brooklyn"])
+        resp = r[0]["response"].lower()
+        # Both services mentioned, single location
+        assert "food" in resp and "shelter" in resp
+        assert "brooklyn" in resp
+        # Should NOT double-mention Brooklyn (no cross-location split)
+        assert resp.count("brooklyn") == 1
+
+
+class TestQueuedOfferSlotPersistence:
+    """Bug 2: _apply_queue_offer must save the offered item's full tuple
+    in _queued_offer so a typed 'yes' (not button-click) can reconstruct
+    the promoted search."""
+
+    def test_queued_offer_slot_set_after_primary_search(self):
+        """After the primary search returns results and queue offer
+        fires, _queued_offer should contain the full offered tuple."""
+        import uuid
+        from app.services.session_store import get_session_slots
+        sid = f"test-{uuid.uuid4().hex[:8]}"
+        send_multi([
+            "I need food in Brooklyn and shelter in Manhattan",
+            "Yes, search",
+        ], session_id=sid)
+        slots = get_session_slots(sid)
+        assert slots.get("_queue_offer_pending") is True
+        # _queued_offer is the persisted full tuple of what was offered
+        offer = slots.get("_queued_offer")
+        assert offer is not None, (
+            "_queued_offer must be persisted so typed 'yes' can "
+            "reconstruct the promoted search; without it the yes "
+            "falls through to a stale primary confirmation"
+        )
+        assert offer[0] == "food"
+        assert offer[2] == "brooklyn"
+
+    def test_queued_offer_cleared_after_decline(self):
+        """No to queue offer clears the _queued_offer slot."""
+        import uuid
+        from app.services.session_store import get_session_slots
+        sid = f"test-{uuid.uuid4().hex[:8]}"
+        send_multi([
+            "I need food in Brooklyn and shelter in Manhattan",
+            "Yes, search",
+            "No thanks",
+        ], session_id=sid)
+        slots = get_session_slots(sid)
+        assert slots.get("_queue_offer_pending") is None
+        assert slots.get("_queued_offer") is None
+
+
+class TestQueueOfferLocationDisplay:
+    """The queue-offer message ('You also mentioned X in Y...') should
+    display-case the queued location the same way the primary
+    confirmation does. Pre-fix, the primary said 'Lower East Side'
+    (display-cased) while the queue-offer said 'lower east side' (raw
+    lowercase from the slot extractor) — cosmetic but jarring."""
+
+    def test_queue_offer_location_is_display_cased(self):
+        """Queue-offer shows 'Brooklyn', not 'brooklyn'."""
+        r = send_multi([
+            "I need food in Brooklyn and shelter in Manhattan",
+            "Yes, search",
+        ])
+        resp = r[1]["response"]
+        # Find the "also mentioned" line
+        assert "also mentioned" in resp.lower()
+        # Display-cased Brooklyn should appear
+        assert "Brooklyn" in resp, (
+            f"Queue-offer should display-case the queued location. "
+            f"Got: {resp!r}"
+        )
+
+    def test_queue_offer_location_respects_nyc_casing_overrides(self):
+        """NYC-specific casing (Lower East Side, SoHo, etc.) should
+        flow through to the queue-offer message via _display_location."""
+        r = send_multi([
+            "I want to shower in the Lower East Side and grab food in Chinatown",
+            "Yes, search",
+        ])
+        resp = r[1]["response"]
+        assert "also mentioned" in resp.lower()
+        # Title-cased per _display_location's .title() fallback for
+        # names not in _LOCATION_DISPLAY_OVERRIDES.
+        assert "Lower East Side" in resp, (
+            f"Queue-offer should apply the same display-casing as the "
+            f"primary confirmation. Got: {resp!r}"
+        )
+
+
+class TestQueueYesPromotesQueuedService:
+    """Bug 3: typed 'yes' to queue offer must promote the queued service
+    to primary and execute its search. Pre-fix, yes fell through to
+    default handlers which saw stale primary slots still in session and
+    rebuilt a primary confirmation — total disconnect from user intent."""
+
+    def test_yes_to_queue_offer_searches_queued_service(self):
+        """Three-turn flow: multi-intent → primary results → yes →
+        queued-service results. Pre-fix turn 3 re-confirmed primary
+        instead of searching queued."""
+        r = send_multi([
+            "I need food in Brooklyn and shelter in Manhattan",
+            "Yes, search",
+            "yes",  # accept queue offer
+        ])
+        # Turn 3 (index 2) should be results for the queued service
+        turn3 = r[2]["response"].lower()
+        # Post-fix: bot searches and returns results
+        assert "found" in turn3 or "option" in turn3, (
+            f"Turn 3 should show results for the queued search. Got: {turn3!r}. "
+            f"Pre-fix this would say 'I'll look for shelter in Manhattan — sound good?' "
+            f"(re-confirming the already-searched primary)."
+        )
+        # Specifically should NOT re-confirm the primary
+        assert "look for shelter" not in turn3, (
+            "Turn 3 should NOT re-confirm the primary shelter search — "
+            "pre-fix bug symptom. User said yes to FOOD, not shelter."
+        )
+
+    def test_yes_to_queue_offer_updates_primary_slots(self):
+        """After yes-to-queue, the session's service_type and location
+        should reflect the promoted (queued) service, not the stale
+        primary that was already searched."""
+        import uuid
+        from app.services.session_store import get_session_slots
+        sid = f"test-{uuid.uuid4().hex[:8]}"
+        send_multi([
+            "I need food in Brooklyn and shelter in Manhattan",
+            "Yes, search",
+            "yes",
+        ], session_id=sid)
+        slots = get_session_slots(sid)
+        # Primary slots now reflect the queued (promoted) service
+        assert slots.get("service_type") == "food"
+        assert slots.get("location") == "brooklyn"
+        # Queue state cleared
+        assert slots.get("_queue_offer_pending") is None
+        assert slots.get("_queued_offer") is None
+
+    def test_cross_neighborhood_yes_also_promotes(self):
+        """Same behavior across both cross-location shapes."""
+        r = send_multi([
+            "I want to shower in the Lower East Side and grab food in Chinatown",
+            "Yes, search",
+            "yes",
+        ])
+        turn3 = r[2]["response"].lower()
+        assert "found" in turn3 or "option" in turn3
+        assert "look for food" not in turn3, (
+            "Turn 3 should not re-confirm the primary food search "
+            "when user yes'd the queued showers offer."
+        )
+
+    def test_no_to_queue_offer_still_declines(self):
+        """Regression guard: the pre-existing decline path still works
+        after adding the yes case."""
+        r = send_multi([
+            "I need food in Brooklyn and shelter in Manhattan",
+            "Yes, search",
+            "No thanks",
+        ])
+        turn3 = r[2]["response"].lower()
+        # Decline message
+        assert "no problem" in turn3 or "let me know" in turn3

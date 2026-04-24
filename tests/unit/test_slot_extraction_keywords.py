@@ -109,26 +109,121 @@ class TestReentryPopulationAdditions:
 # -----------------------------------------------------------------------
 
 class TestFosterCareKeywords:
-    """Foster care / aging out → service_type=shelter."""
+    """Foster care / aging out phrases.
 
-    @pytest.mark.parametrize("phrase,expected", [
-        ("aging out", "shelter"),
-        ("aged out", "shelter"),
-        ("foster care", "shelter"),
-        ("aging out of foster", "shelter"),
+    Pre-R34-Sprint: 'aging out', 'foster care' etc. were shelter
+    keywords — any mention auto-assigned service_type=shelter.
+
+    Post-R34-Sprint (peer_aging_out_foster investigation): these
+    phrases describe a SITUATION, not a service. They set
+    _populations=['foster_youth'] but leave service_type=None unless
+    an explicit service keyword is also present. This lets the bot
+    route open-question flows ('aging out of foster care, what do I
+    do') to a service-category menu rather than silently assuming
+    shelter.
+    """
+
+    @pytest.mark.parametrize("phrase", [
+        "aging out",
+        "aged out",
+        "foster care",
+        "aging out of foster",
     ])
-    def test_keyword_extracts_shelter(self, phrase, expected):
-        assert extract_slots(phrase)["service_type"] == expected
+    def test_phrase_sets_foster_youth_population_only(self, phrase):
+        """Pre-fix these forced service_type=shelter. Post-fix they set
+        the population flag but leave service_type open — the user
+        hasn't said what they need yet."""
+        s = extract_slots(phrase)
+        assert s["service_type"] is None, (
+            f"'{phrase}' should not auto-assign service_type — it "
+            f"describes a situation, not a service. Got {s['service_type']!r}"
+        )
+        assert "foster_youth" in (s.get("_populations") or []), (
+            f"'{phrase}' should set _populations=['foster_youth']. "
+            f"Got {s.get('_populations')}"
+        )
 
-    def test_full_scenario_with_age_and_location(self):
-        s = extract_slots("I'm aging out of foster care, 21, in the Bronx")
+    def test_open_question_no_auto_shelter(self):
+        """R34 peer_aging_out_foster target — the failing eval case."""
+        s = extract_slots("aging out of foster care next month, what do I do")
+        assert s["service_type"] is None, (
+            "Open-ended question after foster-care context should not "
+            "auto-assign shelter. The bot should offer service "
+            "categories via the fallback menu."
+        )
+        assert "foster_youth" in (s.get("_populations") or [])
+
+    def test_explicit_shelter_with_foster_context_still_extracts(self):
+        """Safety check — when shelter IS explicitly requested alongside
+        foster context, service_type=shelter is still correctly set."""
+        s = extract_slots("aging out of foster care and need a place to stay")
         assert s["service_type"] == "shelter"
+        assert "foster_youth" in (s.get("_populations") or [])
+
+    def test_former_foster_with_explicit_shelter(self):
+        s = extract_slots("former foster youth, need shelter tonight")
+        assert s["service_type"] == "shelter"
+        assert "foster_youth" in (s.get("_populations") or [])
+
+    def test_aging_out_with_age_and_location_no_auto_shelter(self):
+        """Updated from 'I'm aging out of foster care, 21, in the Bronx'
+        which used to auto-pick shelter. Post-fix: age + location are
+        captured, population is set, service_type remains open for the
+        user to clarify."""
+        s = extract_slots("I'm aging out of foster care, 21, in the Bronx")
+        assert s["service_type"] is None
         assert s["age"] == 21
         assert "bronx" in s["location"]
+        assert "foster_youth" in (s.get("_populations") or [])
 
     def test_existing_shelter_keywords_unchanged(self):
+        """Regression guard — removing aging-out-as-shelter must not
+        affect other shelter keyword extraction."""
         for kw in ["shelter", "homeless", "place to stay", "evicted"]:
             assert extract_slots(kw)["service_type"] == "shelter"
+
+
+class TestShelterNegationPhrases:
+    """Shelter keywords that embed the negation ("no place to go",
+    "nowhere to sleep", "don't have anywhere to stay"). These need
+    complete coverage because the extractor can't fall back to a bare
+    "place to go" / "place to sleep" keyword — the 25-char lookback
+    for "no" / "don't" would negate it. Longest-first sort means the
+    negation-embedded form must match as-is."""
+
+    @pytest.mark.parametrize("phrase", [
+        # "nowhere to X" family
+        "nowhere to sleep",
+        "nowhere to stay",
+        "nowhere to go",
+        # "no place to X" family
+        "no place to sleep",
+        "no place to stay",
+        "no place to go",
+        # "don't have anywhere to X" family — ALL three verbs must be
+        # present. Missing just "don't have anywhere to go" was the
+        # Sprint 3 regression that dropped multi_foster_youth_aging_out
+        # from service_type=shelter to service_type=employment.
+        "I don't have anywhere to sleep",
+        "I don't have anywhere to stay",
+        "I don't have anywhere to go",
+        # Apostrophe-stripped form (for loose-typing users)
+        "I dont have anywhere to sleep",
+        "I dont have anywhere to stay",
+        "I dont have anywhere to go",
+        # "don't have a place to X" family
+        "I don't have a place to sleep",
+        "I don't have a place to stay",
+    ])
+    def test_negation_embedded_phrase_extracts_shelter(self, phrase):
+        """Each phrase in this set must extract service_type=shelter.
+        If any fails, the corresponding keyword was removed or typo'd
+        in slot_extractor.py's shelter SERVICE_KEYWORDS list."""
+        s = extract_slots(phrase)
+        assert s["service_type"] == "shelter", (
+            f"{phrase!r} should extract shelter. Got {s['service_type']!r}. "
+            "Check slot_extractor.py shelter keywords for missing variant."
+        )
 
 
 # -----------------------------------------------------------------------

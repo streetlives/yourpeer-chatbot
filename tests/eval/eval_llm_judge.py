@@ -2028,14 +2028,16 @@ SCENARIOS = [
         "description": "User mentions two services in two different boroughs. "
                        "The extractor correctly binds each service to its own "
                        "location and uses priority-ordering (shelter > food "
-                       "per need urgency) to pick the primary — shelter gets "
-                       "Manhattan, food-in-Brooklyn is queued as an additional "
-                       "service. User can accept the queued second search via "
-                       "'Yes' after seeing shelter results. "
-                       "(Updated from stale first-mentioned expectation: "
-                       "the extractor no longer has the 'only one location "
-                       "extracted per message' limitation the original "
-                       "description assumed.)",
+                       "per _SERVICE_NEED_PRIORITY) to pick the primary — "
+                       "shelter gets Manhattan, food-in-Brooklyn is queued. "
+                       "Scoring depends on three dialog-handler fixes (see "
+                       "R34_SPRINT_PLAN.md Diagnosis 2): (1) confirmation "
+                       "message must not conflate cross-located services "
+                       "under one location; (2) cross-location confirmation "
+                       "should surface both locations ('shelter in Manhattan, "
+                       "then food in Brooklyn'); (3) queued-yes must promote "
+                       "the queued service to primary and execute its search, "
+                       "not re-confirm the already-searched primary.",
         "user_turns": [
             "I need food in Brooklyn and shelter in Manhattan",
             "Yes, search",

@@ -49,6 +49,39 @@ class TestConfirmationRequired:
         r = send_multi(["I'm aging out of foster care, 21, need help in the Bronx"])
         assert r[0]["result_count"] == 0, "Must show confirmation"
 
+    def test_multi_foster_youth_aging_out_eval_scenario(self):
+        """R34 eval message (word-for-word from eval_llm_judge.py).
+
+        Covers the Sprint 3 regression: removing 'aging out' as a shelter
+        keyword used to drop service_type from shelter to employment
+        because 'don't have anywhere to go' wasn't in the shelter keyword
+        list (only 'no place to go' / 'nowhere to go' were). Both shelter
+        variants should now extract; shelter wins on priority tiering
+        (shelter=1, employment=4) and employment queues as an additional
+        service.
+
+        If this regresses, check `slot_extractor.py` shelter keywords
+        for 'don't have anywhere to go' / 'dont have anywhere to go'.
+        """
+        r = send_multi([
+            "I just aged out of foster care and I'm 21. I don't have "
+            "anywhere to go and I need a job. I'm in Bed-Stuy.",
+        ])
+        assert r[0]["result_count"] == 0, "Must show confirmation"
+        slots = r[0]["slots"]
+        assert slots.get("service_type") == "shelter", (
+            "Shelter must be primary (priority 1) over employment "
+            f"(priority 4). Got {slots.get('service_type')!r}. If this "
+            "is 'employment', the 'don't have anywhere to go' shelter "
+            "keyword may have been removed from slot_extractor.py."
+        )
+        assert "foster_youth" in (slots.get("_populations") or [])
+        # Bot response should reference both services (primary + queued)
+        resp = r[0]["response"].lower()
+        assert "shelter" in resp, (
+            f"Shelter should appear in confirmation. Got: {r[0]['response']!r}"
+        )
+
     def test_schedule_open_now_request(self):
         """schedule_open_now_request: 4.75 → 3.50 in R25."""
         r = send_multi(["What food pantries are open right now in Manhattan?"])

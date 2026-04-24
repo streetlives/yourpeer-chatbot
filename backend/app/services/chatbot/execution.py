@@ -22,7 +22,8 @@ import logging
 from typing import Optional
 
 from app.rag import query_services
-from app.services.confirmation import _no_results_message
+from app.services.confirmation import _display_location, _no_results_message
+from app.privacy.pii_redactor import redact_pii
 from app.services.phrase_lists import _SERVICE_LABELS, _WELCOME_QUICK_REPLIES
 from app.services.session_store import save_session_slots
 from app.services.slot_extractor import NEAR_ME_SENTINEL
@@ -495,6 +496,12 @@ def _apply_queue_offer(
         slots.pop("_queued_services", None)
     slots["_queue_offer_pending"] = True
 
+    # Persist the full offered item so a typed "yes" (not button-click)
+    # can reconstruct the promoted search. The button's qr_value encodes
+    # the full command as text, but free-text "yes" has no context
+    # without this slot. See R34 Diagnosis 2, Bug 2.
+    slots["_queued_offer"] = (next_service, next_detail, next_location)
+
     if next_location and next_location != slots.get("location"):
         slots["_queued_location"] = next_location
     save_session_slots(session_id, slots)
@@ -502,11 +509,22 @@ def _apply_queue_offer(
     label = next_detail or _SERVICE_LABELS.get(next_service, next_service)
     loc_suffix = ""
     if next_location and next_location != slots.get("location"):
-        loc_suffix = f" in {next_location}"
+        # Match the display-casing + PII-redaction treatment the primary
+        # confirmation message applies to its location. Without this,
+        # the queue-offer message shows raw lowercase ("showers in lower
+        # east side") while the primary confirmation above says
+        # display-cased ("Lower East Side") — cosmetic but jarring.
+        loc_clean, _ = redact_pii(next_location)
+        loc_display = _display_location(loc_clean)
+        loc_suffix = f" in {loc_display}"
     augmented = bot_response + (
         f"\n\nYou also mentioned {label}{loc_suffix} — would you like me to "
         f"search for that too?"
     )
+    # Note: qr_value (the button's returned message) stays lowercase —
+    # it's a command string fed back through slot extraction, which is
+    # case-insensitive. Display-casing it would add no value and could
+    # mask case-sensitivity bugs if any exist downstream.
     qr_value = f"I need {next_service}"
     if next_location:
         qr_value += f" in {next_location}"

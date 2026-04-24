@@ -31,7 +31,7 @@ If you remember one thing from this guide, make it this. When you see code that 
 
 The system is two applications talking to each other, plus an external database they both ultimately serve.
 
-**Frontend** — a Next.js 15 web application (React 19, TypeScript, Tailwind CSS). Serves the chat interface at `/chat` and a staff review console at `/admin`. Deployed as its own service on Render.
+**Frontend** — a Next.js 15 Progressive Web App (React 19, TypeScript, Tailwind CSS). Serves the chat interface at `/chat` and a staff review console at `/admin`. Deployed as its own service on Render. The PWA features (service worker, offline cache, send queue) mean the app can be installed on a phone's home screen and continues working when the internet drops — critical for users on library Wi-Fi or limited data plans.
 
 **Backend** — a Python FastAPI server. Handles all the intelligence: understanding the user's message, querying the database, formatting results. Also serves the admin API. Deployed as a separate service on Render.
 
@@ -503,6 +503,30 @@ All admin API calls go through a catch-all proxy route (`app/api/admin/[...slug]
 → `frontend-next/src/components/admin/` — reusable admin UI components
 → `frontend-next/src/lib/admin/store.ts` — the admin Zustand store
 
+### PWA and offline support
+
+YourPeer is a Progressive Web App (PWA) — users can add it to their phone's home screen, and it keeps working when the internet drops. This is not a nice-to-have: the target population relies on unreliable connections (library Wi-Fi, shelter hotspots, prepaid data), and losing search results mid-session means losing the address of the shelter they were heading to.
+
+The PWA is built from several pieces:
+
+**`public/manifest.webmanifest`** — tells the browser this site can be installed as an app. Contains the YourPeer name, icon references, color scheme, and `"display": "standalone"` (opens without browser chrome).
+
+**`public/sw.js`** — the service worker. A hand-written (~230 line) script that runs in the browser background. It caches the app's core files on first load (so repeat visits are instant), uses a network-first strategy for API calls (tries the live server, falls back to cached results), and serves a basic offline page as a last resort.
+
+**`src/lib/chat/offline-cache.ts`** — IndexedDB-backed cache for the most recent search results. When the chatbot returns service cards, they're written to IndexedDB with a 24-hour TTL. If the user loses connectivity, the cached results remain visible with a "may be outdated" banner.
+
+**`src/lib/chat/send-queue.ts`** — IndexedDB-backed queue for messages typed while offline. Instead of failing with an error, offline messages are stored locally and flushed automatically (in order) when the connection returns.
+
+**`src/hooks/use-offline-state.ts`** — aggregates online/offline status, queue state, and cache freshness into a single hook that the UI consumes for banner display.
+
+**`src/components/chat/offline-banner.tsx`** — the amber banner that appears when the user is offline or viewing cached results.
+
+**`src/app/pwa-register.tsx`** — registers the service worker at app startup.
+
+The key design choice: the service worker caches the app shell (HTML/CSS/JS) aggressively but uses network-first for API data. This means the app always loads instantly, but chat responses are always fresh when connectivity exists. Only when the network is unavailable does the cache serve stale data — and the UI clearly labels it as such.
+
+→ `docs/PWA_GUIDE.md` — full explanation of PWA features, how to use as an end user, and improvement roadmap
+
 ---
 
 ## 10. Common Design Patterns in the Codebase
@@ -525,11 +549,15 @@ All admin API calls go through a catch-all proxy route (`app/api/admin/[...slug]
 
 **Housing-First priority** — when multiple service intents are detected in one message, the primary is chosen by `_SERVICE_NEED_PRIORITY` (shelter/medical > food/mental_health > clothing/personal_care > legal/employment > other), not by text position. "I need food and shelter" makes shelter primary; food gets queued and offered after the shelter results.
 
+**Request idempotency** — every chat message carries an `X-Request-ID` header. If the same ID arrives twice within 60 seconds (common on flaky connections where the client isn't sure the first request succeeded), the server returns the cached response without re-running the LLM or the database query. This prevents duplicate results and wasted API calls. The idempotency cache runs before session validation, so even if a session expired between the first and second attempt, the replay still works. See `backend/app/services/idempotency.py` and `tests/unit/test_idempotency.py`.
+
+**Offline-first queuing** — the frontend never shows a raw network error to the user. When a send fails due to connectivity, the message is written to an IndexedDB queue and a "sending..." indicator appears. When the connection returns, queued messages flush automatically in order. The user sees the conversation continue as if nothing happened. If the session expired during the offline period, a "session reset" warning fires and the user is offered a fresh start with a link to their earlier results.
+
 ---
 
 ## 11. How We Keep the Tests Honest
 
-The test suite is large (3,700+ tests, 88% line coverage), but raw pass/fail and raw coverage don't actually tell you whether the tests *work*. A test can execute every line of a function and still not notice if the function is broken. In April 2026 a cleanup audit found 187 patches across 23 test files that were silent no-ops — tests that "passed" without actually exercising the code they claimed to test. After we fixed those, we built three layers of quality gates to catch the same class of problem before it accumulates again. This section explains all three so you can read a failing CI message and know what it means.
+The test suite is large (3,800+ tests, 88% line coverage), but raw pass/fail and raw coverage don't actually tell you whether the tests *work*. A test can execute every line of a function and still not notice if the function is broken. In April 2026 a cleanup audit found 187 patches across 23 test files that were silent no-ops — tests that "passed" without actually exercising the code they claimed to test. After we fixed those, we built three layers of quality gates to catch the same class of problem before it accumulates again. This section explains all three so you can read a failing CI message and know what it means.
 
 ### The three gates, briefly
 
@@ -610,20 +638,27 @@ Three specific function names have this problem in this codebase. Always use the
 
 Mutation testing asks the question coverage can't: *if I introduce a small bug in the code, would any test fail?* A mutation-testing tool automatically creates tiny "mutants" — changes like flipping `==` to `!=`, or changing `True` to `False`, or replacing `return x` with `return not x` — then runs the test suite against each mutant. A mutant is **killed** if at least one test fails; **survived** if every test still passes. A test suite that kills most mutants is actually verifying behavior. One that lets mutants survive is measuring execution but not correctness.
 
-We use `cosmic-ray` (not `mutmut`, which fights our `backend/` layout). Mutation testing is expensive — tens of minutes per module — so we only run it on five safety-critical modules where silent bugs cause real harm:
+We use `cosmic-ray` (not `mutmut`, which fights our `backend/` layout). Mutation testing is expensive — tens of minutes per module — so we run it on a curated matrix of safety-critical (Tier 1) and high-blast-radius (Tier 2) modules where silent bugs cause real harm:
 
-| Module | Why | Threshold |
-|---|---|---|
-| `crisis_detector.py` | Missed crisis detection = user doesn't get a hotline | 50% (raw — has untestable LLM-API paths) |
-| `classifier.py` | Misclassification silently sends users down the wrong path | 70% |
-| `pii_redactor.py` | PII leak = privacy violation for vulnerable users | 85% |
-| `chatbot/orchestrator.py` | Main dispatch; routing bugs are subtle | 70% |
-| `session_token.py` | Security-adjacent; bugs affect identity | 85% |
+| Module | Tier | Why | Threshold |
+|---|---|---|---|
+| `crisis_detector.py` | T1 | Missed crisis = user doesn't get a hotline | 50% |
+| `classifier.py` | T1 | Misclassification silently sends users down the wrong path | 70% |
+| `pii_redactor.py` | T1 | PII leak = privacy violation for vulnerable users | 85% |
+| `chatbot/orchestrator.py` | T1 | Main dispatch; routing bugs are subtle | 70% |
+| `session_token.py` | T1 | Security-adjacent; bugs affect identity | 85% |
+| `chatbot/pipeline.py` | T2 | Unified LLM gate; controls when LLM fires vs regex | 55% |
+| `chatbot/execution.py` | T2 | Runs every DB query, formats every service card | 55% |
+| `slot_extractor.py` | T2 | Extracts every slot; every downstream decision reads these | 60% |
+| `rag/query_templates.py` | T2 | SQL templates; wrong query = wrong results | 60% |
+| `chatbot/handlers/confirmation.py` | T2 | Yes/no misinterpretation is high user-visibility | 55% |
+
+The Tier 2 modules were added in April 2026 after the initial five proved the system's value. Thresholds are set conservatively — they represent "the tests meaningfully verify behavior," not "every line is perfect." The thresholds will ratchet upward as walkup tests close the remaining gaps.
 
 Two CI workflows run this:
 
-- **`mutation-testing.yml`** — every Sunday at 03:00 UTC, full matrix across all five modules. If any drops below threshold, an issue is auto-filed with label `test-quality`.
-- **`mutation-testing-pr.yml`** — runs on PRs but *only* if the PR changes one of the five critical files. Mutates only the changed file. (This is the "Google model" from Petrović & Ivanković, TSE 2021 — incremental mutation on the changed code, not the whole codebase.)
+- **`mutation-testing.yml`** — weekly (manually triggered or scheduled), full matrix across all ten modules in parallel. If any drops below threshold, an issue is auto-filed with label `test-quality`. Runtime is ~1.5 hours across 10 parallel matrix cells.
+- **`mutation-testing-pr.yml`** — runs on PRs but *only* if the PR changes one of the ten mutation-tested files. Mutates only the changed file. (This is the "Google model" from Petrović & Ivanković, TSE 2021 — incremental mutation on the changed code, not the whole codebase.)
 
 Locally:
 
@@ -664,6 +699,8 @@ Once you're comfortable with the architecture, these documents cover specific ar
 | Borough boundaries | `docs/audits/BOUNDARY_AUDIT.md` | Why `pa.city` isn't fully trustworthy and how the polygon validator mitigates |
 | Query parity | `docs/audits/QUERY_PARITY_AUDIT.md` | Line-by-line comparison of chatbot SQL vs YourPeer's query logic |
 | Evaluation framework | `docs/ops/EVAL_RESULTS.md` | LLM-as-judge system, 11 scoring dimensions, per-run scoring commentary |
+| Eval guide | `docs/ops/EVAL_GUIDE.md` | How the eval works, what the scores mean, how to read results — written for non-engineers |
+| PWA guide | `docs/PWA_GUIDE.md` | What the PWA is, why it matters for this population, how end users install and use it, improvement roadmap |
 | Regex keyword audit | `docs/audits/REGEX_AUDIT.md` | Collision risk analysis, word boundary decisions |
 | Metrics | `docs/ops/METRICS.md` | 35+ success metrics with definitions, targets, and measurement methods |
 | Hardcoded messages | `docs/audits/HARDCODED_MESSAGES_REVIEW.md` | Every user-facing hardcoded message with trigger conditions and source locations |
@@ -689,7 +726,9 @@ Here's a suggested order for getting oriented:
 
 **Day 5 — Understand the frontend.** Open the chat in your browser with DevTools Network tab open. Send a message and inspect the request/response. Then open `frontend-next/src/hooks/use-chat.ts` and trace how the response becomes chat messages. Look at `service-card.tsx` to see how service data renders.
 
-**Day 6 — Run the tests and read about quality gates.** Run `pytest tests/unit tests/integration -q --no-header` from the repo root. It should report 3,700+ passing. Then run `make coverage` and `make audit` to see the other two gates in action. Read Section 11 ("How We Keep the Tests Honest") end-to-end — especially the "Patch where imported, not where defined" subsection, because it's the single thing most likely to confuse you the first time you write a test. Read `tests/README.md` for the test-file layout. If you have an Anthropic API key, try running a single eval scenario: `python tests/eval/eval_llm_judge.py --scenarios 1`.
+**Day 6 — Run the tests and read about quality gates.** Run `pytest tests/unit tests/integration -q --no-header` from the repo root. It should report 3,800+ passing. Then run `make coverage` and `make audit` to see the other two gates in action. Read Section 11 ("How We Keep the Tests Honest") end-to-end — especially the "Patch where imported, not where defined" subsection, because it's the single thing most likely to confuse you the first time you write a test. Read `tests/README.md` for the test-file layout. If you have an Anthropic API key, try running a single eval scenario: `python tests/eval/eval_llm_judge.py --scenarios 1`.
+
+**Day 7 — Understand the eval framework.** The chatbot's quality is tracked by an LLM-as-Judge evaluation system that scores conversations across 11 dimensions (safety, hallucination resistance, privacy, dignity, response tone, and more). Read `docs/ops/EVAL_RESULTS.md` — start from the most recent run at the bottom. The eval uses 171 scripted scenarios organized into 20 categories (happy path, crisis, emotional, multi-intent, adversarial, etc.). An AI judge (Claude Opus) reads each simulated conversation transcript and scores it 1-5 on each dimension. The passing threshold is ≥4.0 average across all dimensions. Understanding the eval is important because many engineering decisions are driven by specific eval scenario failures — the "What's Next" section of each eval run explains what code changes are planned and why. A single eval run costs ~$15-25 and takes 30-60 minutes. You can run a single scenario for ~$0.10 in under a minute to test a specific change.
 
 ---
 
@@ -718,6 +757,12 @@ After Phase 3, "where to add a thing" is more specific than it used to be becaus
 | Add a new admin metric | `frontend-next/src/lib/admin/metric-definitions.ts` + `backend/app/services/audit_log.py` |
 | Change the chat UI layout | `frontend-next/src/components/chat/chat-container.tsx` |
 | Add a test for a new feature | Check `tests/README.md` for the right file, or create a new one in `tests/unit/` |
+| Change PWA caching behavior | `frontend-next/public/sw.js` — the service worker |
+| Change the offline banner | `frontend-next/src/components/chat/offline-banner.tsx` + `src/hooks/use-offline-state.ts` |
+| Change what's cached for offline | `frontend-next/src/lib/chat/offline-cache.ts` (results) and `send-queue.ts` (messages) |
+| Run a single eval scenario | `python tests/eval/eval_llm_judge.py --scenarios 1` (costs ~$0.10, takes <1 min) |
+| Run the full eval suite | `python tests/eval/eval_llm_judge.py` (costs ~$15-25, takes 30-60 min, needs `ANTHROPIC_API_KEY`) |
+| Add a new eval scenario | `tests/eval/eval_llm_judge.py` → the `SCENARIOS` list; follow the pattern of existing scenarios in the same category |
 | Write a test and it passes but clearly isn't doing what you want | Almost certainly a D7 dead patch — see Section 11 "Patch where imported, not where defined." Run `make audit --category D7` to confirm. Prefer the `conftest.py` helpers (`send`, `send_multi`) over hand-rolled `@patch` decorators. |
 | Fix a mutation-testing failure | The CI error message names the module. Run `make mutation-module MODULE=<path>` locally to reproduce. Read the surviving mutants in `TEST_INFRASTRUCTURE.md` → "How to interpret a mutation score" for the fix patterns (usually a one-line assertion). |
 | Change health endpoint behavior | `backend/app/main.py` — `/api/health/live` is tight (for frequent polling), `/api/health` is deep (for dashboards/diagnostics) |
@@ -729,6 +774,6 @@ After Phase 3, "where to add a thing" is more specific than it used to be becaus
 
 If you're stuck, check the docs list in Section 11 first — most design decisions are documented somewhere. The code comments in the `chatbot/` package files, `query_templates.py`, and `responses.py` are especially detailed about the "why" behind decisions. If a doc points you at `chatbot.py` and it doesn't exist, that's Phase 3 drift — the code is now in `services/chatbot/`. <!-- drift:ignore: historical chatbot.py reference; package now lives at chatbot/ -->
 
-If you're making a change and aren't sure if it's safe, look for related tests in `tests/README.md`. The test suite is large specifically because the codebase handles sensitive situations where regressions can cause real harm. Run the full suite with `pytest tests/unit tests/integration -q` before merging — it completes in about 25 seconds.
+If you're making a change and aren't sure if it's safe, look for related tests in `tests/README.md`. The test suite has 3,800+ tests specifically because the codebase handles sensitive situations where regressions can cause real harm. Run the full suite with `pytest tests/unit tests/integration -q` before merging — it completes in about 25 seconds.
 
 Welcome to the team.
