@@ -36,6 +36,7 @@ from .context import (
     MessageContext,
     _DISPLAY_PAGE_SIZE,
     _USE_LLM,
+    _USE_UNIFIED_EXTRACTOR,
     _count_unique_locations,
     _empty_reply,
 )
@@ -170,6 +171,7 @@ __all__ = [
     "MessageContext",
     "_DISPLAY_PAGE_SIZE",
     "_USE_LLM",
+    "_USE_UNIFIED_EXTRACTOR",
     "_count_unique_locations",
     "_empty_reply",
     # Pipeline
