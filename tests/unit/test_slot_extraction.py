@@ -383,6 +383,123 @@ class TestTrustModel3SetAgreement:
         assert primary == "food"
         assert loc == "brooklyn"
 
+    # --- Narrative-path exception (Option 2b / R36 Category B) ---
+
+    def test_narrative_sets_match_llm_wins_natural_long_story(self):
+        """The motivating case: 'I just got out of the hospital and I've
+        been staying with friends in East New York but they can't keep me
+        anymore. I need to find somewhere to stay.' (30 words).
+
+        Regex extracts {medical, shelter} — 'hospital' is tier 1 medical,
+        'somewhere to stay' is tier 1 shelter. Text-position tiebreak
+        picks medical (hospital mentioned first).
+
+        Narrative prompt teaches the LLM that hospital is context, not a
+        current request; LLM returns shelter primary with medical as
+        additional.
+
+        Sets match {medical, shelter}. Without the narrative exception,
+        regex wins → primary=medical (wrong). With the exception, LLM's
+        primary wins → primary=shelter (correct).
+        """
+        message = (
+            "I just got out of the hospital and I've been staying with friends "
+            "in East New York but they can't keep me anymore. I need to find "
+            "somewhere to stay."
+        )
+        regex = _empty_regex_result()
+        regex.update({
+            "service_type": "medical",
+            "additional_services": [("shelter", None, None)],
+            "location": "east new york",
+        })
+        llm = _llm_result(
+            service_type="shelter",
+            additional_services=[("medical", None, None)],
+            location="east new york",
+        )
+        primary, loc, additional = \
+            _merge_service_type_and_primary_location(regex, llm, message)
+        # LLM's primary wins on narrative-path set-match
+        assert primary == "shelter", (
+            f"narrative-path exception should promote LLM primary; got {primary!r}"
+        )
+        # LLM's additional_services come through when LLM wins
+        assert additional == [("medical", None, None)]
+        # Location is bound to the LLM's choice; both sides agree here
+        assert loc == "east new york"
+
+    def test_short_path_sets_match_regex_still_wins(self):
+        """Short-path message with set match — original rule preserved.
+
+        For messages under _NARRATIVE_THRESHOLD words, Option 4's short
+        prompt teaches first-mentioned-wins which aligns with regex's
+        text-position tiebreak. Keep regex-wins behavior so the short
+        path doesn't flip to LLM-wins and create new surprises.
+        """
+        # Short message: "food and shelter" — regex picks food (text
+        # position tier 2 tied with mental_health, but food comes first).
+        # LLM (under Option 4 prompt) picks food (first-mentioned).
+        # Sets match. Short-path rule: regex wins (stays food).
+        message = "I need food and shelter in Brooklyn"
+        regex = _empty_regex_result()
+        regex.update({
+            "service_type": "food",
+            "additional_services": [("shelter", None, None)],
+            "location": "brooklyn",
+        })
+        llm = _llm_result(
+            service_type="food",
+            additional_services=[("shelter", None, None)],
+            location="brooklyn",
+        )
+        primary, loc, additional = \
+            _merge_service_type_and_primary_location(regex, llm, message)
+        # On short path, regex still wins on sets-match (unchanged rule).
+        # In this case regex and LLM agree anyway, but we verify the
+        # triple comes from the regex side.
+        assert primary == "food"
+        assert additional == [("shelter", None, None)]
+        assert loc == "brooklyn"
+
+    def test_narrative_sets_differ_llm_wins_unchanged(self):
+        """Narrative-path message with differing sets — original rule
+        (R != L → LLM wins) still fires regardless of message param.
+
+        Guards against regression where the narrative-path branch
+        accidentally disables the R != L branch.
+        """
+        # Long message where regex over-extracts (catches a keyword the
+        # LLM correctly treats as context and filters out).
+        message = (
+            "My case worker mentioned legal aid might help but honestly "
+            "what I really need right now is food for my kids and a place "
+            "to stay tonight in the Bronx."
+        )
+        regex = _empty_regex_result()
+        regex.update({
+            "service_type": "legal",
+            "additional_services": [
+                ("food", None, None),
+                ("shelter", None, None),
+            ],
+            "location": "bronx",
+        })
+        # LLM filters "legal" as context (case worker mentioned) and
+        # returns only the actual requests.
+        llm = _llm_result(
+            service_type="shelter",
+            additional_services=[("food", None, None)],
+            location="bronx",
+        )
+        primary, loc, additional = \
+            _merge_service_type_and_primary_location(regex, llm, message)
+        # regex_set = {legal, food, shelter}, llm_set = {shelter, food}
+        # Sets differ → LLM wins (existing rule, unchanged).
+        assert primary == "shelter"
+        assert additional == [("food", None, None)]
+        assert loc == "bronx"
+
 
 # ---------------------------------------------------------------------------
 # TRUST MODEL 4 — union with FP tolerance
@@ -1151,6 +1268,102 @@ class TestPromptSanity:
         assert "type" in item_schema["properties"]
         assert "detail" in item_schema["properties"]
         assert "location" in item_schema["properties"]
+
+    # -----------------------------------------------------------------
+    # Option 4 hardening (Phase 2 contingency)
+    # -----------------------------------------------------------------
+    # These four tests guard the short-prompt multi-intent rule:
+    # first-mentioned wins UNLESS a safety signal is present, in which
+    # case shelter/medical wins. Added to recover the 4 set-equality
+    # blind-spot scenarios flagged in UNIFIED_EXTRACTOR_MIGRATION.md's
+    # Phase 2 watch list. See that doc's "Option 4" section for the
+    # design rationale.
+    #
+    # These tests only check prompt CONTENTS (cheap, fast, no API
+    # calls). The real validation that the LLM obeys the new guidance
+    # is in `scripts/mini_eval_option_4.py`, which runs the 4
+    # watch-list scenarios against a live Haiku call and compares
+    # primary-service picks to the scenario-author expectations.
+
+    def test_short_prompt_teaches_first_mentioned_default(self):
+        """Option 4 core rule: without safety signals, first-mentioned
+        wins. Under the pre-Option-4 prompt, 'most urgent or
+        first-mentioned' was ambiguous — the LLM could interpret
+        'urgent' as priority-ordered, over-promoting shelter on
+        scenarios like multi_food_and_shelter_brooklyn."""
+        assert "FIRST-mentioned" in _SHORT_SYSTEM_PROMPT, (
+            "Short prompt must explicitly teach first-mentioned default "
+            "for multi-intent cases; pre-Option-4 wording was ambiguous "
+            "('most urgent or first-mentioned')."
+        )
+
+    def test_short_prompt_lists_safety_signal_override_terms(self):
+        """Option 4 exception: listed safety-signal terms should
+        override first-mentioned and promote shelter/medical. Without
+        this list, the LLM has to guess what counts as urgent.
+
+        The canonical list from the migration doc: 'tonight',
+        'right now', 'nowhere to sleep', 'can't stay', 'urgent',
+        'help me now' (minimum set). Additional terms harmonized
+        with the existing `_augment_urgency_from_clues` list are
+        allowed but not asserted — those are tested by the dispatch
+        urgency-inference tests, not the prompt."""
+        required_signals = [
+            "tonight",
+            "right now",
+            "nowhere to sleep",
+            "urgent",
+            "help me now",
+        ]
+        missing = [
+            s for s in required_signals if s not in _SHORT_SYSTEM_PROMPT
+        ]
+        assert not missing, (
+            f"Short prompt missing required safety signals: {missing}. "
+            f"The LLM needs an explicit enumeration to apply the "
+            f"first-mentioned override correctly."
+        )
+
+    def test_short_prompt_has_both_example_directions(self):
+        """Option 4 needs worked examples in BOTH directions:
+
+          - no safety signal → first-mentioned wins (positive examples)
+          - safety signal present → shelter/medical wins (override examples)
+
+        Without both, the LLM sees one pattern and over-generalizes.
+        The failure mode would be: LLM learns 'first-mentioned wins'
+        universally and ignores safety signals, or vice versa."""
+        # Positive (first-mentioned) example: must show food winning
+        # over shelter in a no-safety-signal message. This is the
+        # multi_food_and_shelter_brooklyn shape.
+        assert (
+            "food and a place to sleep" in _SHORT_SYSTEM_PROMPT
+            and "'food'" in _SHORT_SYSTEM_PROMPT
+        ), "Short prompt missing first-mentioned example (food before shelter)"
+
+        # Safety-signal override example: must show shelter winning
+        # even when mentioned after another service because of a
+        # safety-signal word.
+        assert (
+            "tonight" in _SHORT_SYSTEM_PROMPT
+            and "safety override" in _SHORT_SYSTEM_PROMPT.lower()
+        ), "Short prompt missing safety-override example (shelter despite food-first)"
+
+    def test_short_prompt_preserves_no_hallucination_constraint(self):
+        """Option 4 adds ~30 LOC of multi-intent guidance. Make sure
+        we didn't inadvertently drop the existing 'only extract what
+        is explicitly stated' firewall — the whole migration rests
+        on the LLM not inventing slots.
+
+        Also checks the empty-call rule (return `{}` for messages
+        with no service intent) and the multi-turn context rule
+        (use prior turns for reference resolution; extract only from
+        the latest message). These three rules are the prompt's
+        load-bearing instructions — losing any of them on a prompt
+        refactor is a regression."""
+        assert "Only extract what is explicitly stated" in _SHORT_SYSTEM_PROMPT
+        assert "empty object {}" in _SHORT_SYSTEM_PROMPT
+        assert "LATEST user message" in _SHORT_SYSTEM_PROMPT
 
 
 # ---------------------------------------------------------------------------

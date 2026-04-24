@@ -253,11 +253,23 @@ _URGENCY_HIERARCHY = {
 # SHORT-PATH SYSTEM PROMPT
 # ---------------------------------------------------------------------------
 # Used for messages under _NARRATIVE_THRESHOLD words. Compact; the
-# narrative prompt's urgency hierarchy is NOT included here — short
-# messages don't usually carry the ambiguity that hierarchy resolves,
-# and keeping the prompt small saves input tokens. If Phase 2 eval
-# surfaces blind-spot regressions, the contingency plan (Option 4)
-# appends a ~30 LOC priority-tie-breaker here.
+# narrative prompt's FULL urgency hierarchy (9-way priority table) is
+# not included here — short messages don't usually carry the ambiguity
+# that full hierarchy resolves, and keeping the prompt small saves
+# input tokens.
+#
+# The multi-intent block below (Option 4 hardening from Phase 2 of the
+# llm_slot_extractor migration) teaches a simpler rule: first-mentioned
+# is primary, UNLESS a safety signal is present. This aligns the LLM's
+# short-path primary pick with the scenario-author convention that
+# breaks when Trust Model 3's set-equality rule falls back to regex
+# priority (regex priority-orders services, which over-promotes
+# shelter/medical when the user mentioned them second without any
+# urgency cue).
+#
+# Keep aligned with `_URGENCY_HIERARCHY` (above) when safety signals
+# fire: the safety-signal override promotes shelter or medical, which
+# matches the top two rungs of the hierarchy.
 
 _SHORT_SYSTEM_PROMPT = (
     "You are a slot extraction engine for a social services chatbot in NYC. "
@@ -265,11 +277,32 @@ _SHORT_SYSTEM_PROMPT = (
     "extract_intake_slots tool. Only extract what is explicitly stated or "
     "strongly implied. Do not guess or assume. If the message doesn't contain "
     "any service-related information, call the tool with an empty object {}.\n\n"
-    "If the user mentions multiple service needs, put the most urgent or "
-    "first-mentioned in service_type and any others in additional_services. "
-    "For example: 'I need food and somewhere to sleep' → service_type: 'food', "
-    "additional_services: [{\"type\": \"shelter\"}]. Do not repeat the primary "
+    "When the user mentions MULTIPLE service needs, choose the primary "
+    "service_type as follows:\n"
+    "  1. If a SAFETY SIGNAL is present — 'tonight', 'right now', 'nowhere "
+    "to sleep', \"can't stay\", 'urgent', 'help me now', 'kicked out', "
+    "'evicted', 'nowhere to go', 'just got out' — shelter or medical wins "
+    "as primary, EVEN IF mentioned second.\n"
+    "  2. Otherwise, the FIRST-mentioned service is primary. Any other "
+    "services go into additional_services. Do not repeat the primary "
     "service in additional_services.\n\n"
+    "Examples (no safety signal → first-mentioned wins):\n"
+    "  'I need food and a place to sleep in Brooklyn'\n"
+    "  → service_type: 'food' (first-mentioned)\n"
+    "  → additional_services: [{\"type\": \"shelter\"}]\n\n"
+    "  'Where can I shower and get a meal in Manhattan?'\n"
+    "  → service_type: 'personal_care' (first-mentioned)\n"
+    "  → additional_services: [{\"type\": \"food\"}]\n\n"
+    "  'I need some clean clothes and a meal in Harlem'\n"
+    "  → service_type: 'clothing' (first-mentioned)\n"
+    "  → additional_services: [{\"type\": \"food\"}]\n\n"
+    "Examples (safety signal present → shelter/medical wins):\n"
+    "  'I need food and somewhere to sleep tonight' (\"tonight\" = safety)\n"
+    "  → service_type: 'shelter' (safety override)\n"
+    "  → additional_services: [{\"type\": \"food\"}]\n\n"
+    "  'I need a job but nowhere to go right now' (\"nowhere to go\" = safety)\n"
+    "  → service_type: 'shelter' (safety override)\n"
+    "  → additional_services: [{\"type\": \"employment\"}]\n\n"
     "You may receive prior conversation turns for context. Use them to resolve "
     "references like 'there', 'that area', 'try Queens instead', or 'what about "
     "Brooklyn?' — but only extract slots from the LATEST user message."

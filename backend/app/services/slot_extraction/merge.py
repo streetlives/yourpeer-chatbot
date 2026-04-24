@@ -43,6 +43,7 @@ import logging
 import re
 from typing import Any, Optional
 
+from .dispatch import _is_narrative
 from .prompts import _SERVICE_TYPE_ENUM
 
 logger = logging.getLogger(__name__)
@@ -272,6 +273,7 @@ def _merge_llm_semantic(
 def _merge_service_type_and_primary_location(
     regex_result: dict,
     llm_result: dict,
+    message: Optional[str] = None,
 ) -> tuple[Optional[str], Optional[str], list]:
     """Trust Model 3: the set-agreement rule for `service_type` and
     its primary `location` plus `additional_services`.
@@ -286,7 +288,8 @@ def _merge_service_type_and_primary_location(
 
         if R is empty:              LLM wins
         elif L is empty:            regex wins
-        elif R == L:                regex priority wins
+        elif R == L:                regex priority wins   (see narrative
+                                                          exception below)
         else:                       LLM wins
 
     When regex wins, we return `regex_result`'s triple verbatim.
@@ -295,6 +298,34 @@ def _merge_service_type_and_primary_location(
     `additional_services` here is the WINNER's list — the hybrid
     dedup-union with the loser is done afterward by
     `_merge_additional_services`.
+
+    Narrative-path exception (R == L case, added for Category B /
+    natural_long_story regression in R36):
+
+        The narrative system prompt explicitly teaches the LLM the
+        urgency hierarchy with worked examples — e.g., "I just got out
+        of the hospital and my housing fell through → service_type:
+        shelter (NOT medical — housing is more urgent)". When the set-
+        equality rule fires on a narrative-path message, regex's own
+        text-position tiebreak (see slot_extractor._extract_all_service_types
+        line ~933, which orders by `_SERVICE_NEED_PRIORITY` tier then
+        text position) overrides the LLM's reasoned interpretation.
+        For shelter/medical both at tier 1, whichever keyword appears
+        first wins — which discards the LLM's ability to distinguish
+        context ("hospital" = past event) from current need ("somewhere
+        to stay" = present request).
+
+        The exception: when a narrative-path message produced set
+        agreement, trust the LLM's primary. Short-path messages keep
+        the original rule — short-prompt Option 4 teaches first-
+        mentioned as default, which aligns with regex's text-position
+        tiebreak on short multi-intent inputs.
+
+        `message` defaults to None for callers that don't supply it
+        (legacy test paths); when None, the original rule fires
+        unchanged — this preserves backward compatibility for unit
+        tests that call the merge helpers directly without the
+        narrative/short distinction.
     """
     regex_primary = regex_result.get("service_type")
     regex_additional = regex_result.get("additional_services") or []
@@ -325,10 +356,25 @@ def _merge_service_type_and_primary_location(
         return regex_primary, regex_result.get("location"), regex_additional
 
     if regex_set == llm_set:
-        # Both parsers agree on WHAT was requested. Regex's priority
-        # table decides WHICH is primary. This is where the set-
-        # equality blind spot lives — see the four watch-list scenarios
-        # in the Phase 2 acceptance criteria.
+        # Narrative-path exception: the narrative prompt specifically
+        # teaches urgency hierarchy via worked examples. Trust the LLM's
+        # reasoned primary rather than regex's text-position tiebreak.
+        # See `natural_long_story` (R36 Category B) for the motivating
+        # failure case.
+        if message is not None and _is_narrative(message):
+            logger.info(
+                f"Set-agreement (narrative path): regex set={sorted(regex_set)}, "
+                f"llm set={sorted(llm_set)}, LLM wins on primary"
+            )
+            return llm_primary, llm_result.get("location"), llm_additional
+
+        # Short path: both parsers agree on WHAT was requested. Regex's
+        # priority table decides WHICH is primary. This is where the set-
+        # equality blind spot lives on the short path — see the four
+        # watch-list scenarios in the Phase 2 acceptance criteria. The
+        # short-prompt Option 4 hardening teaches the LLM first-mentioned-
+        # wins which aligns with regex's text-position tiebreak for
+        # short inputs.
         #
         # Note: we return `regex_primary` directly rather than re-applying
         # _SERVICE_NEED_PRIORITY here because regex's own extract_slots
@@ -531,7 +577,11 @@ def _unpack_additional_item(item: Any) -> tuple:
 # TOP-LEVEL COMPOSITION
 # ---------------------------------------------------------------------------
 
-def merge(regex_result: dict, llm_result: dict) -> dict:
+def merge(
+    regex_result: dict,
+    llm_result: dict,
+    message: Optional[str] = None,
+) -> dict:
     """Merge regex and LLM extraction results into the 13-field dict
     the orchestrator expects.
 
@@ -541,6 +591,13 @@ def merge(regex_result: dict, llm_result: dict) -> dict:
       - `llm_result` has the 10 LLM-contributed fields populated where
         possible (the 3 regex-only Trust Model 5 fields are not
         present).
+      - `message` (optional) is the original user message. When
+        supplied, Trust Model 3 uses it to distinguish narrative-path
+        messages (≥ _NARRATIVE_THRESHOLD words) from short-path ones
+        and applies the narrative-path exception to the sets-match
+        rule. When None, the original sets-match rule (regex priority
+        wins) applies — this preserves backward compatibility for
+        unit tests that call `merge()` without the path distinction.
 
     Postconditions:
       - returned dict has the same 13 keys as regex_result
@@ -550,7 +607,7 @@ def merge(regex_result: dict, llm_result: dict) -> dict:
     """
     # TRUST MODEL 3: service_type, primary location, winner's additionals
     service_type, location_from_primary, winner_additional = \
-        _merge_service_type_and_primary_location(regex_result, llm_result)
+        _merge_service_type_and_primary_location(regex_result, llm_result, message)
 
     # TRUST MODEL 1: location (regex-literal)
     # Note: location is Trust Model 1 by design — the regex's explicit
