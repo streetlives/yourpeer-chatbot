@@ -647,6 +647,203 @@ class TestTrustModel3SetAgreement:
         assert loc == "bronx"
 
 
+class TestTrustModel3CrossBoroughCarveOut:
+    """Ext-2b cross-borough carve-out: when sets match AND regex has
+    distinct per-service locations AND LLM collapsed both services to
+    one location, regex wins on primary+location+additional.
+
+    Protects `multi_cross_borough_food_brooklyn_shelter_manhattan`
+    (R36 headline win — was 4.73, plain Ext-2b regressed to 3.36).
+    """
+
+    def test_mcb_regex_wins_when_llm_collapses(self):
+        """"food in Brooklyn and shelter in Manhattan" — regex binds
+        food→brooklyn + shelter→manhattan; LLM collapses both to
+        Manhattan. Sets {food, shelter} match. Regex wins."""
+        regex = dict(
+            service_type="shelter",
+            location="manhattan",
+            additional_services=[("food", None, "brooklyn")],
+        )
+        llm = dict(
+            service_type="food",
+            location="manhattan",
+            additional_services=[("shelter", None, "Manhattan")],
+        )
+        primary, loc, additional = \
+            _merge_service_type_and_primary_location(regex, llm, "I need food in Brooklyn and shelter in Manhattan")
+        assert primary == "shelter"
+        assert loc == "manhattan"
+        assert additional == [("food", None, "brooklyn")]
+
+    def test_slc_llm_wins_when_both_preserve_cross_location(self):
+        """"shower in LES and grab food in Chinatown" — both extractors
+        preserve cross-neighborhood structure. Regex's primary (food by
+        priority hierarchy) is wrong; LLM's primary (personal_care by
+        first-mentioned) is correct. Rule does NOT fire. Ext-2b applies:
+        LLM wins."""
+        regex = dict(
+            service_type="food",
+            location="chinatown",
+            additional_services=[("personal_care", "showers", "lower east side")],
+        )
+        llm = dict(
+            service_type="personal_care",
+            location="lower east side",
+            additional_services=[("food", None, "chinatown")],
+        )
+        primary, loc, additional = \
+            _merge_service_type_and_primary_location(regex, llm, "I want to shower in the Lower East Side and grab food in Chinatown")
+        assert primary == "personal_care"
+        assert loc == "lower east side"
+        assert additional == [("food", None, "chinatown")]
+
+    def test_same_location_unaffected_by_carveout(self):
+        """"food and shelter in Brooklyn" — single location, no cross-
+        borough. Rule does NOT fire. Ext-2b applies as before: LLM wins.
+        Protects multi_food_and_shelter_brooklyn (Ext-2b +0.64)."""
+        regex = dict(
+            service_type="shelter",
+            location="brooklyn",
+            additional_services=[("food", None, None)],
+        )
+        llm = dict(
+            service_type="food",
+            location="brooklyn",
+            additional_services=[("shelter", None, None)],
+        )
+        primary, loc, additional = \
+            _merge_service_type_and_primary_location(regex, llm, "I need food and shelter in Brooklyn")
+        assert primary == "food"
+        assert loc == "brooklyn"
+        assert additional == [("shelter", None, None)]
+
+    def test_case_insensitive_location_comparison(self):
+        """Carve-out detection must normalize case: regex lowercases
+        locations, LLM tool output often proper-cases them. A naive
+        string comparison would false-fire on 'manhattan' vs
+        'Manhattan'."""
+        regex = dict(
+            service_type="shelter",
+            location="manhattan",
+            additional_services=[("food", None, "brooklyn")],
+        )
+        llm = dict(
+            service_type="food",
+            location="Manhattan",  # proper case
+            additional_services=[("shelter", None, "Manhattan")],  # same as primary after normalization
+        )
+        primary, loc, additional = \
+            _merge_service_type_and_primary_location(regex, llm)
+        # LLM collapsed (both at "Manhattan" after normalization).
+        # Regex has distinct brooklyn vs manhattan. Rule fires.
+        assert primary == "shelter"
+        assert loc == "manhattan"
+
+    def test_regex_no_additional_location_does_not_fire(self):
+        """If regex's additional_services lacks location info, it has
+        no cross-borough signal. Rule does not fire."""
+        regex = dict(
+            service_type="shelter",
+            location="brooklyn",
+            additional_services=[("food", None, None)],  # no location
+        )
+        llm = dict(
+            service_type="food",
+            location="brooklyn",
+            additional_services=[("shelter", None, None)],
+        )
+        primary, loc, additional = \
+            _merge_service_type_and_primary_location(regex, llm)
+        # Plain Ext-2b: LLM wins.
+        assert primary == "food"
+        assert loc == "brooklyn"
+
+
+class TestPrimaryLocationBinding:
+    """When the primary-winner has a location, the top-level `merge()`
+    must use it — not re-compute via `_merge_location` on the raw sides.
+
+    Re-computing independently decouples location from primary-service
+    choice. When Ext-2b gives LLM's food the primary win with LLM's
+    location="Brooklyn", but regex has location="manhattan" (from regex's
+    rejected primary shelter), the independent `_merge_location` calls
+    picked "manhattan" — binding food to the wrong borough. This tests
+    the fix that preserves the primary-to-location binding.
+    """
+
+    def test_mcb_llm_primary_keeps_llm_location(self):
+        """LLM wins primary via Ext-2b with its own location; that
+        location must survive into the final merged output, not be
+        overridden by regex's (rejected primary's) location."""
+        regex_result = dict(
+            service_type="shelter",
+            location="manhattan",
+            additional_services=[("food", None, "brooklyn")],
+        )
+        llm_result = dict(
+            service_type="food",
+            location="Brooklyn",
+            additional_services=[("shelter", None, "Manhattan")],
+            age=None, urgency=None, _gender=None, family_status=None,
+            _populations=[], service_detail=None, org_name=None,
+            no_requirements=False,
+        )
+        merged = merge(regex_result, llm_result,
+                       message="I need food in Brooklyn and shelter in Manhattan")
+        # LLM primary won (Ext-2b); LLM's Brooklyn must bind to food,
+        # not get overridden by regex's manhattan (which went with
+        # shelter as primary in the regex view).
+        assert merged["service_type"] == "food"
+        assert merged["location"].lower() == "brooklyn"
+
+    def test_accessibility_low_literacy_still_falls_back_to_llm(self):
+        """Regression guard: when primary winner has no location (regex
+        won primary but regex couldn't parse the user's location
+        phrasing), fall back to `_merge_location` which consults LLM's
+        validated location. Protects `accessibility_low_literacy`."""
+        regex_result = dict(
+            service_type="shelter",
+            location=None,  # regex couldn't parse
+            additional_services=[],
+        )
+        llm_result = dict(
+            service_type="shelter",
+            location="lower east side",
+            additional_services=[],
+            age=None, urgency=None, _gender=None, family_status=None,
+            _populations=[], service_detail=None, org_name=None,
+            no_requirements=False,
+        )
+        merged = merge(regex_result, llm_result)
+        # Primary winner's location is None; fallback to LLM via validator-gated merge.
+        assert merged["service_type"] == "shelter"
+        assert merged["location"] == "lower east side"
+
+    def test_carve_out_regex_wins_uses_regex_location(self):
+        """Sanity: when the carve-out fires (regex wins primary), the
+        returned location is regex's location, not LLM's."""
+        regex_result = dict(
+            service_type="shelter",
+            location="manhattan",
+            additional_services=[("food", None, "brooklyn")],
+        )
+        llm_result = dict(
+            service_type="food",
+            location="manhattan",  # LLM collapsed
+            additional_services=[("shelter", None, "Manhattan")],
+            age=None, urgency=None, _gender=None, family_status=None,
+            _populations=[], service_detail=None, org_name=None,
+            no_requirements=False,
+        )
+        merged = merge(regex_result, llm_result,
+                       message="I need food in Brooklyn and shelter in Manhattan")
+        # Carve-out fires (regex has cross-borough, LLM collapsed).
+        # Regex wins: primary=shelter, location=manhattan.
+        assert merged["service_type"] == "shelter"
+        assert merged["location"] == "manhattan"
+
+
 # ---------------------------------------------------------------------------
 # TRUST MODEL 4 — union with FP tolerance
 # ---------------------------------------------------------------------------

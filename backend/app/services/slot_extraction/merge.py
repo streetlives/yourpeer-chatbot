@@ -455,13 +455,51 @@ def _merge_service_type_and_primary_location(
         #   - multi_cross_neighborhood_shower_les_food_chinatown (short)
         #   - natural_long_story (narrative, hospital-context)
         #
-        # Scenario this rule potentially re-ranks (R36 migration win):
-        #   - multi_cross_borough_food_brooklyn_shelter_manhattan —
-        #     regex previously won with shelter/manhattan as primary
-        #     (4.73); under Ext-2b the LLM's food/brooklyn wins. The
-        #     scenario name encodes food as the author's intended
-        #     primary, so this is expected to improve or hold steady,
-        #     but MUST be validated in the mini-eval.
+        # Ext-2b cross-borough carve-out:
+        #
+        # When regex detected distinct per-service locations ("food in
+        # Brooklyn and shelter in Manhattan") but the LLM collapsed both
+        # services to one location, regex's positional binding is more
+        # reliable than the LLM's semantic inference. Regex binds
+        # locations by adjacency to each service name — deterministic
+        # and correct when the phrasing provides it. The LLM's tool
+        # output often drops one of the locations.
+        #
+        # Without this carve-out, Ext-2b regressed
+        # `multi_cross_borough_food_brooklyn_shelter_manhattan` from
+        # R36 baseline 4.73 to 3.36 — the migration's headline scenario.
+        #
+        # The carve-out is narrow: it fires only when regex has distinct
+        # per-service locations AND the LLM does NOT. When both extractors
+        # preserve cross-location structure (as in
+        # `multi_cross_neighborhood_shower_les_food_chinatown` where the
+        # LLM correctly binds shower→LES and food→Chinatown), the rule
+        # does not fire and Ext-2b applies as before. This keeps the
+        # first-mentioned / priority-hierarchy benefits of Ext-2b for
+        # cases where LLM's output is trustworthy.
+        regex_primary_loc = regex_result.get("location")
+
+        def _loc_norm(x):
+            return x.lower() if isinstance(x, str) else x
+
+        regex_has_cross = any(
+            item and len(item) >= 3 and item[2] is not None
+            and _loc_norm(item[2]) != _loc_norm(regex_primary_loc)
+            for item in regex_additional
+        )
+        llm_primary_loc = llm_result.get("location")
+        llm_has_cross = llm_primary_loc is not None and any(
+            item and len(item) >= 3 and item[2] is not None
+            and _loc_norm(item[2]) != _loc_norm(llm_primary_loc)
+            for item in llm_additional
+        )
+        if regex_has_cross and not llm_has_cross:
+            logger.info(
+                f"Set-agreement: regex has cross-location, LLM collapsed — "
+                f"regex wins on primary+location+additional (set={sorted(regex_set)})"
+            )
+            return regex_primary, regex_result.get("location"), regex_additional
+
         logger.info(
             f"Set-agreement: regex set={sorted(regex_set)}, "
             f"llm set={sorted(llm_set)}, LLM wins on primary"
@@ -688,35 +726,59 @@ def merge(
         _is_additive) come directly from regex_result
       - all other fields follow their trust model's rule
     """
-    # TRUST MODEL 3: service_type, (discarded primary location), winner's additionals.
-    # The middle return — the primary-winner's location — is no longer
-    # used here. Trust Model 1's location merge now consults the LLM's
-    # raw location directly (see below) rather than the primary-winner's
-    # location, which closes the `accessibility_low_literacy` gap.
-    # Kept in the return triple because direct callers in the test
-    # suite assert on all three values.
-    service_type, _location_from_primary_unused, winner_additional = \
+    # TRUST MODEL 3: service_type, primary-winner's location, winner's additionals.
+    # The primary-winner's location is used AS-IS when it has a value —
+    # whether that's LLM (Ext-2b wins on sets-match) or regex (carve-out
+    # fires). This keeps primary-service-to-location binding consistent:
+    # when LLM wins with `(food, Brooklyn, [shelter+Manhattan])`, food
+    # stays bound to Brooklyn and does not get silently rebound to
+    # regex's Manhattan (which was regex's primary-for-shelter value).
+    service_type, location_from_primary, winner_additional = \
         _merge_service_type_and_primary_location(regex_result, llm_result, message)
 
     # TRUST MODEL 1: location (regex-literal, validator-gated LLM fallback)
-    # The regex's `_KNOWN_LOCATIONS` match always produces a canonical
-    # value, so we trust it outright. When regex finds nothing, the
-    # LLM's interpretation (which handles typos and variants the regex
-    # can't — see `accessibility_low_literacy`) is run through the
-    # canonical-form validator and used. Prior versions of this code
-    # passed `location_from_primary` — the primary-winner's location —
-    # which lost the LLM's location when regex won primary but had no
-    # location of its own. The new rule consults the LLM's raw location
-    # regardless of primary-winner.
+    # When the primary winner has a location, it's the source of truth —
+    # the location is tied to THAT service's binding in THAT extractor's
+    # output. Only when the primary winner has no location (e.g., regex
+    # won primary but regex's `_KNOWN_LOCATIONS` couldn't parse the
+    # user's phrasing — the `accessibility_low_literacy` case) do we
+    # fall back to `_merge_location`, which consults both sides with
+    # validator-gated LLM fallback.
     #
-    # Trust Model 1 still dominates when regex has a value: the regex
-    # vocabulary is intentionally curated, and LLM paraphrase drift
-    # ("lower manhattan" vs "manhattan") has caused more downstream
-    # harm than the occasional "intended location" override.
-    location = _merge_location(
-        regex_result.get("location"),
-        llm_result.get("location"),
+    # LLM-sourced locations MUST go through `_validate_location` even
+    # when LLM won primary — the LLM can hallucinate non-NYC locations
+    # ("Chicago") and the validator drops anything outside our
+    # `_KNOWN_LOCATIONS` vocabulary. Regex-sourced locations are already
+    # canonical (by construction — regex only emits values from that
+    # vocabulary), so they're used directly.
+    #
+    # Prior version (rev pre-carve-out) always called `_merge_location`
+    # with both sides' raw locations, which decoupled location from
+    # primary-service choice. That caused `multi_cross_borough` to
+    # score 3.36 (R36 baseline 4.73): when Ext-2b gave LLM's food the
+    # primary win, regex's "manhattan" (which was regex's primary-for-
+    # shelter location) overrode LLM's "Brooklyn" for food — binding
+    # food to Manhattan when the user said Brooklyn.
+    llm_won_primary = (
+        service_type is not None
+        and service_type == llm_result.get("service_type")
     )
+    if location_from_primary is None:
+        # Primary winner had no location — existing fallback via
+        # validator-gated Trust Model 1 (protects accessibility_low_literacy
+        # when regex couldn't parse the user's location phrasing).
+        location = _merge_location(
+            regex_result.get("location"),
+            llm_result.get("location"),
+        )
+    elif llm_won_primary:
+        # LLM's location needs validator-gating — it can hallucinate.
+        # If validator drops it (not in _KNOWN_LOCATIONS), fall back to
+        # regex's location (which may also be None, and that's fine).
+        location = _validate_location(location_from_primary) or regex_result.get("location")
+    else:
+        # Regex won primary; its location is already canonical.
+        location = location_from_primary
 
     # TRUST MODEL 1: _gender
     gender = _merge_regex_literal(
