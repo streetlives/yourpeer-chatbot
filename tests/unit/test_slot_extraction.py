@@ -25,6 +25,7 @@ from app.services.slot_extraction.dispatch import (
 from app.services.slot_extraction.merge import (
     _merge_additional_services,
     _merge_llm_semantic,
+    _merge_location,
     _merge_org_name,
     _merge_regex_literal,
     _merge_regex_only,
@@ -32,6 +33,7 @@ from app.services.slot_extraction.merge import (
     _merge_service_type_and_primary_location,
     _merge_union,
     _token_sort,
+    _validate_location,
     _validate_org_name,
     _validate_service_detail,
     merge,
@@ -211,6 +213,112 @@ class TestOrgNameValidatorBoundary:
     def test_validator_drops_low_similarity(self):
         # A string with zero token overlap should drop.
         assert _validate_org_name("Microsoft Corporation") is None
+
+
+# ---------------------------------------------------------------------------
+# TRUST MODEL 1 sub-case: location with canonical-form validator
+# (added for accessibility_low_literacy — R36 Category C.2)
+# ---------------------------------------------------------------------------
+
+class TestTrustModel1LocationValidator:
+    """Trust Model 1 sub-case: regex wins, LLM goes through the
+    canonical-form validator. Exact match only against `_KNOWN_LOCATIONS`."""
+
+    def test_regex_wins_no_validator_needed(self):
+        # Regex values are always canonical, so they pass through.
+        result = _merge_location("brooklyn", "manhattan")
+        assert result == "brooklyn"
+
+    def test_regex_wins_even_when_llm_disagrees(self):
+        # The Trust Model 1 rationale: regex's curated vocabulary wins
+        # when present. Caller-side concerns like "which primary is the
+        # location bound to" are upstream of this call.
+        result = _merge_location("queens", "brooklyn")
+        assert result == "queens"
+
+    def test_llm_fills_gap_exact_canonical(self):
+        # This is the motivating case: `accessibility_low_literacy`
+        # has regex missing "broklyn" and LLM returning canonical
+        # "brooklyn". Validator accepts.
+        result = _merge_location(None, "brooklyn")
+        assert result == "brooklyn"
+
+    def test_llm_fills_gap_case_insensitive(self):
+        # LLM may return title-case "Brooklyn"; validator snaps to
+        # canonical lowercase.
+        result = _merge_location(None, "Brooklyn")
+        assert result == "brooklyn"
+
+    def test_llm_fills_gap_multi_word_location(self):
+        # Multi-word neighborhoods in `_KNOWN_LOCATIONS` — "east new york"
+        # is the other scenario location (natural_long_story).
+        result = _merge_location(None, "East New York")
+        assert result == "east new york"
+
+    def test_llm_hallucinated_location_dropped(self):
+        # Values not in `_KNOWN_LOCATIONS` are dropped entirely (not
+        # snapped via fuzzy match — exact match only, per Option X2).
+        result = _merge_location(None, "Chicago")
+        assert result is None
+
+    def test_llm_paraphrase_dropped(self):
+        # "lower manhattan" is NOT in `_KNOWN_LOCATIONS` (which has
+        # "manhattan" but not "lower manhattan"). Per the exact-match
+        # policy, this drops. If R37 shows the LLM consistently
+        # returning such variants and we want to accept them, add a
+        # specific alias map — do not loosen to substring matching.
+        result = _merge_location(None, "lower manhattan")
+        assert result is None
+
+    def test_both_none(self):
+        assert _merge_location(None, None) is None
+
+
+class TestValidateLocation:
+    """Validator-level tests — direct coverage of _validate_location."""
+
+    def test_validator_drops_none(self):
+        assert _validate_location(None) is None
+
+    def test_validator_drops_empty_string(self):
+        assert _validate_location("") is None
+
+    def test_validator_drops_non_string(self):
+        # If the LLM schema malforms and returns an int or dict, drop.
+        assert _validate_location(123) is None  # type: ignore[arg-type]
+        assert _validate_location(["brooklyn"]) is None  # type: ignore[arg-type]
+
+    def test_validator_drops_whitespace_only(self):
+        assert _validate_location("   ") is None
+
+    def test_validator_normalizes_whitespace(self):
+        # Embedded whitespace in the LLM output should still match.
+        assert _validate_location("  brooklyn  ") == "brooklyn"
+        assert _validate_location("east  new  york") == "east new york"
+
+    def test_validator_accepts_canonical_exact(self):
+        assert _validate_location("brooklyn") == "brooklyn"
+        assert _validate_location("manhattan") == "manhattan"
+        assert _validate_location("staten island") == "staten island"
+
+    def test_validator_accepts_case_variants(self):
+        assert _validate_location("BROOKLYN") == "brooklyn"
+        assert _validate_location("Brooklyn") == "brooklyn"
+        assert _validate_location("bRoOkLyN") == "brooklyn"
+
+    def test_validator_drops_unknown_location(self):
+        # Non-NYC locations: drop.
+        assert _validate_location("Chicago") is None
+        assert _validate_location("Los Angeles") is None
+
+    def test_validator_drops_non_canonical_nyc_variant(self):
+        # "midtown" is not in `_KNOWN_LOCATIONS` (as of this writing —
+        # the list includes specific neighborhoods but not every
+        # regional shorthand). Strict exact-match drops.
+        # If this regresses when the list changes, update the test.
+        from app.services.slot_extractor import _KNOWN_LOCATIONS
+        if "midtown" not in _KNOWN_LOCATIONS:
+            assert _validate_location("midtown") is None
 
 
 def test_womens_shelter_location_correctly_extracted():
@@ -826,6 +934,54 @@ class TestTopLevelMerge:
         assert result["age"] == 45
         assert result["urgency"] == "high"
         assert result["_populations"] == ["disabled", "veteran"]
+
+    def test_accessibility_low_literacy_location_recovery(self):
+        """End-to-end: `accessibility_low_literacy` message
+        "were food broklyn free". Regex catches service_type=food but
+        misses location (typo "broklyn" is not in `_KNOWN_LOCATIONS`).
+        LLM interprets the typo and returns location="brooklyn". Under
+        the old code, the LLM's location was discarded because regex
+        won primary via set-equality and its `location_from_primary`
+        was None. Under the new Trust Model 1 sub-case (Option X2),
+        the LLM's raw location is validated and used when regex has
+        nothing. See R36 Category C.2 for the motivating regression.
+        """
+        regex = _empty_regex_result()
+        regex.update({
+            "service_type": "food",
+            "location": None,  # regex missed the typo'd location
+            "additional_services": [],
+        })
+        llm = _llm_result(
+            service_type="food",
+            location="brooklyn",  # LLM successfully interpreted "broklyn"
+            additional_services=[],
+        )
+        result = merge(regex, llm, message="were food broklyn free")
+        assert result["service_type"] == "food"
+        assert result["location"] == "brooklyn", (
+            "LLM's canonical location should fill the regex gap"
+        )
+
+    def test_llm_location_hallucination_dropped_end_to_end(self):
+        """Companion to the above: if LLM returns a non-NYC location
+        (hallucination), the validator drops it and the final location
+        stays None — regex's emptiness is preferred over junk.
+        """
+        regex = _empty_regex_result()
+        regex.update({
+            "service_type": "food",
+            "location": None,
+        })
+        llm = _llm_result(
+            service_type="food",
+            location="Chicago",  # not in _KNOWN_LOCATIONS
+        )
+        result = merge(regex, llm, message="I need food")
+        assert result["service_type"] == "food"
+        assert result["location"] is None, (
+            "Non-canonical LLM location should be dropped"
+        )
 
 
 # ---------------------------------------------------------------------------

@@ -174,6 +174,80 @@ def _merge_service_detail(
 
 
 # ---------------------------------------------------------------------------
+# TRUST MODEL 1 — sub-case: location with canonical-form validator
+# ---------------------------------------------------------------------------
+
+def _validate_location(llm_value: Optional[str]) -> Optional[str]:
+    """Snap LLM's location to a canonical `_KNOWN_LOCATIONS` value, or
+    drop it.
+
+    Rationale: regex's location extraction uses the curated
+    `_KNOWN_LOCATIONS` vocabulary, but only recognizes exact-match
+    tokens — it misses typos ("broklyn"), stylistic variants ("LES"),
+    and regional shorthand. When regex finds nothing, the LLM's
+    interpretation is usually correct (Haiku handles typo tolerance
+    and well-known abbreviations reliably). We want to USE that
+    interpretation downstream rather than drop the entire location
+    slot — but only if it matches our canonical vocabulary, so
+    downstream DB filters don't need to know every possible spelling.
+
+    Matching logic (intentionally strict — exact match only):
+      1. Case-insensitive, whitespace-normalized exact match against
+         the `_KNOWN_LOCATIONS` list → return the canonical form.
+      2. Otherwise → None.
+
+    No substring or fuzzy matching. If the LLM returns "lower
+    manhattan" but our canonical is "manhattan", the validator drops
+    it. Rationale: substring matches risk false positives ("I'm in
+    New Brooklyn" matching "brooklyn"), and fuzzy matches risk
+    accepting genuine junk. Keep it strict; if R37 shows the LLM
+    returning non-canonical variants we want to accept, revisit with
+    a specific list of aliases.
+
+    Motivating case: `accessibility_low_literacy` ("were food broklyn
+    free") — regex misses "broklyn", LLM returns "brooklyn"
+    (canonical), validator accepts → final location = "brooklyn".
+    """
+    if not llm_value or not isinstance(llm_value, str):
+        return None
+
+    # Local import: same pattern as _validate_service_detail — avoid
+    # forcing a slot_extractor import at package load time.
+    from app.services.slot_extractor import _KNOWN_LOCATIONS
+
+    llm_norm = _normalize_for_match(llm_value)
+    if not llm_norm:
+        return None
+
+    for canonical in _KNOWN_LOCATIONS:
+        if _normalize_for_match(canonical) == llm_norm:
+            return canonical
+
+    logger.info(
+        f"location dropped (not in _KNOWN_LOCATIONS: {llm_value!r})"
+    )
+    return None
+
+
+def _merge_location(
+    regex_value: Optional[str],
+    llm_value: Optional[str],
+) -> Optional[str]:
+    """Trust Model 1 sub-case: regex wins, validator-gated LLM fallback.
+
+    Mirrors `_merge_service_detail` and `_merge_org_name`. The regex's
+    `_KNOWN_LOCATIONS` match always produces a canonical value, so we
+    trust it outright. LLM output is run through the canonical-form
+    validator before use — the LLM is good at typo/variant recognition
+    but we only accept values that match our downstream-filter
+    vocabulary.
+    """
+    if regex_value:
+        return regex_value
+    return _validate_location(llm_value)
+
+
+# ---------------------------------------------------------------------------
 # TRUST MODEL 1 — sub-case: org_name with fuzzy-match validator
 # ---------------------------------------------------------------------------
 
@@ -605,23 +679,35 @@ def merge(
         _is_additive) come directly from regex_result
       - all other fields follow their trust model's rule
     """
-    # TRUST MODEL 3: service_type, primary location, winner's additionals
-    service_type, location_from_primary, winner_additional = \
+    # TRUST MODEL 3: service_type, (discarded primary location), winner's additionals.
+    # The middle return — the primary-winner's location — is no longer
+    # used here. Trust Model 1's location merge now consults the LLM's
+    # raw location directly (see below) rather than the primary-winner's
+    # location, which closes the `accessibility_low_literacy` gap.
+    # Kept in the return triple because direct callers in the test
+    # suite assert on all three values.
+    service_type, _location_from_primary_unused, winner_additional = \
         _merge_service_type_and_primary_location(regex_result, llm_result, message)
 
-    # TRUST MODEL 1: location (regex-literal)
-    # Note: location is Trust Model 1 by design — the regex's explicit
-    # location vocabulary (known NYC neighborhoods/boroughs) is preferred
-    # over LLM paraphrases. This has a known tradeoff: messages like
-    # "I'm in Queens but need food in Brooklyn" will regex-extract
-    # "queens" and stay there, overriding the LLM's correct "brooklyn".
-    # The Trust Model 1 rationale accepts this because paraphrase drift
-    # in location literals ("lower manhattan", "manhattan island", etc.)
-    # has caused more downstream harm than the occasional "intended
-    # location" override. If Phase 2 eval surfaces scenarios where this
-    # costs score points, revisit by moving location to Trust Model 3
-    # (follow the set-agreement winner).
-    location = _merge_regex_literal(regex_result.get("location"), location_from_primary)
+    # TRUST MODEL 1: location (regex-literal, validator-gated LLM fallback)
+    # The regex's `_KNOWN_LOCATIONS` match always produces a canonical
+    # value, so we trust it outright. When regex finds nothing, the
+    # LLM's interpretation (which handles typos and variants the regex
+    # can't — see `accessibility_low_literacy`) is run through the
+    # canonical-form validator and used. Prior versions of this code
+    # passed `location_from_primary` — the primary-winner's location —
+    # which lost the LLM's location when regex won primary but had no
+    # location of its own. The new rule consults the LLM's raw location
+    # regardless of primary-winner.
+    #
+    # Trust Model 1 still dominates when regex has a value: the regex
+    # vocabulary is intentionally curated, and LLM paraphrase drift
+    # ("lower manhattan" vs "manhattan") has caused more downstream
+    # harm than the occasional "intended location" override.
+    location = _merge_location(
+        regex_result.get("location"),
+        llm_result.get("location"),
+    )
 
     # TRUST MODEL 1: _gender
     gender = _merge_regex_literal(
