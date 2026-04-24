@@ -5587,7 +5587,7 @@ R34 sets new Opus-era records for weighted average (4.52) and critical failure c
 
 ---
 
-# YourPeer Chatbot — Eval Run 35
+# Eval Run 35
  
 **Date:** April 22, 2026 | **Scenarios:** 171 | **Passing:** 165 (96.5%) | **Failing:** 6
 **Changes in this eval:** PR #61 — Sprint 1 (multi-intent queue), Sprint 3 (foster-care + tone prefix + negation-phrase regression fix), Sprint 2 follow-up (gender suffix + LGBTQ populations)
@@ -5821,7 +5821,7 @@ Same treatment for medical-urgency (911) and mental-health-distress (988).
 
 ---
 
-# YourPeer Chatbot — Eval Run 36 (Phase 2 Parallel)
+# Eval Run 36 (Phase 2 Parallel)
 
 **Date:** April 24, 2026 | **Scenarios:** 171 | **Legacy passing:** 167 (97.7%) | **Unified passing:** 159 (93.0%)
 **Run type:** Parallel A/B — `USE_UNIFIED_EXTRACTOR=0` vs `USE_UNIFIED_EXTRACTOR=1` against identical code on identical scenarios.
