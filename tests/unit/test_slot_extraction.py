@@ -516,6 +516,146 @@ class TestHybridAdditionalServices:
         assert "food" not in types
         assert "shelter" in types
 
+    def test_per_field_merge_llm_fills_regex_missing_detail(self):
+        """Behavior #19.5 in the migration doc: on duplicate, regex
+        wins type but LLM fills detail/location when regex's is None.
+        Previously the function picked regex's tuple wholesale,
+        dropping LLM-supplied detail/location info. Now merges
+        per-field."""
+        regex_additional = [("food", None, None)]     # regex has type, no detail/loc
+        llm_additional = [("food", "food stamps", "brooklyn")]  # LLM has richer info
+        result = _merge_additional_services(
+            primary=None,
+            winner_additional=llm_additional,
+            regex_additional=regex_additional,
+            llm_additional=llm_additional,
+        )
+        # Doc-expected: regex wins type, LLM fills detail+location
+        assert result == [("food", "food stamps", "brooklyn")]
+
+    def test_per_field_merge_regex_keeps_its_set_fields(self):
+        """Flip side of the above: when regex has detail OR location,
+        keep regex's value; LLM's entry doesn't override."""
+        regex_additional = [("shelter", "emergency shelter", None)]  # regex has detail
+        llm_additional = [("shelter", "different shelter type", "manhattan")]
+        result = _merge_additional_services(
+            primary=None,
+            winner_additional=llm_additional,
+            regex_additional=regex_additional,
+            llm_additional=llm_additional,
+        )
+        # Regex's detail wins; location falls back to LLM's (regex's was None).
+        assert result == [("shelter", "emergency shelter", "manhattan")]
+
+    def test_per_field_merge_partial_regex_info(self):
+        """Regex has detail but no location; LLM has location but no
+        detail. Result should merge both — regex's detail + LLM's
+        location."""
+        regex_additional = [("medical", "dental care", None)]
+        llm_additional = [("medical", None, "bronx")]
+        result = _merge_additional_services(
+            primary=None,
+            winner_additional=llm_additional,
+            regex_additional=regex_additional,
+            llm_additional=llm_additional,
+        )
+        assert result == [("medical", "dental care", "bronx")]
+
+    def test_primary_exclusion_emits_debug_log(self, caplog):
+        """Behavior #19.3 in the migration doc: log primary-exclusion
+        at debug level for ops traceability."""
+        import logging
+        regex_additional = [("food", "groceries", "brooklyn")]  # same as primary
+        with caplog.at_level(logging.DEBUG, logger="app.services.slot_extraction.merge"):
+            result = _merge_additional_services(
+                primary="food",
+                winner_additional=[],
+                regex_additional=regex_additional,
+                llm_additional=[],
+            )
+        assert result == []
+        # Debug log was emitted with the service name
+        assert any(
+            "excluding 'food'" in rec.message and rec.levelname == "DEBUG"
+            for rec in caplog.records
+        ), f"Expected DEBUG log for 'food' exclusion; got: {[(r.levelname, r.message) for r in caplog.records]}"
+
+    def test_regex_item_with_empty_type_skipped(self):
+        """Line 452: regex_additional has entries with empty/None type —
+        skipped silently (defensive guard)."""
+        regex_additional = [
+            ("", None, None),              # empty type
+            (None, None, None),            # None type
+            ("shelter", None, None),       # valid
+        ]
+        result = _merge_additional_services(
+            primary="food",
+            winner_additional=[],
+            regex_additional=regex_additional,
+            llm_additional=[],
+        )
+        # Only shelter survives.
+        assert result == [("shelter", None, None)]
+
+    def test_regex_duplicate_type_second_occurrence_not_logged(self):
+        """Line 459->464: when svc is in seen but svc != primary (a
+        duplicate within regex_additional itself), skip silently
+        without emitting the primary-exclusion debug log. Defensive
+        guard for upstream data that shouldn't duplicate types in
+        the first place (extract_slots already dedupes)."""
+        import logging
+        regex_additional = [
+            ("shelter", "emergency", None),
+            ("shelter", "transitional", None),  # duplicate type — no log emitted
+        ]
+        caplog_messages = []
+
+        class Capturing(logging.Handler):
+            def emit(self, record):
+                caplog_messages.append((record.levelname, record.getMessage()))
+
+        handler = Capturing()
+        logger_inst = logging.getLogger("app.services.slot_extraction.merge")
+        logger_inst.addHandler(handler)
+        logger_inst.setLevel(logging.DEBUG)
+        try:
+            result = _merge_additional_services(
+                primary="food",
+                winner_additional=[],
+                regex_additional=regex_additional,
+                llm_additional=[],
+            )
+        finally:
+            logger_inst.removeHandler(handler)
+        # Only the first shelter entry was kept.
+        assert result == [("shelter", "emergency", None)]
+        # No primary-exclusion log fired (shelter != primary "food").
+        assert not any(
+            "excluding 'shelter'" in msg
+            for _, msg in caplog_messages
+        )
+
+    def test_llm_duplicate_type_second_occurrence_ignored(self):
+        """llm_by_type index uses first-wins semantics. If llm_additional
+        contains the same type twice, only the first entry's detail/
+        location are used when merging against regex."""
+        regex_additional = [("food", None, None)]
+        llm_additional = [
+            ("food", "food pantries", "brooklyn"),   # first-wins for index
+            ("food", "soup kitchens", "manhattan"),  # second entry ignored in index
+        ]
+        result = _merge_additional_services(
+            primary=None,
+            winner_additional=llm_additional,
+            regex_additional=regex_additional,
+            llm_additional=llm_additional,
+        )
+        # First LLM entry's detail/location flow into the regex tuple.
+        # Second entry is a duplicate type — since primary is None and
+        # it's not in `seen` after step 1... actually, step 1 added
+        # "food" to seen, so step 2 & 3 skip the second LLM entry.
+        assert result == [("food", "food pantries", "brooklyn")]
+
 
 # ---------------------------------------------------------------------------
 # TOP-LEVEL merge() — 13-field composition

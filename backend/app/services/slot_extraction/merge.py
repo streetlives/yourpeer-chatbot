@@ -412,8 +412,15 @@ def _merge_additional_services(
     Rule:
         For each unique service type in
         winner_additional ∪ regex_additional ∪ llm_additional:
-            if regex has it:  use regex's tuple (type, detail, location)
-            else:             use LLM's / winner's tuple
+            - `type`: regex wins
+            - `detail`: regex's value if non-None, else LLM's value
+            - `location`: regex's value if non-None, else LLM's value
+
+    In other words: regex is authoritative for TYPE (matches Trust
+    Model 1 for additional services), but for DETAIL and LOCATION
+    we prefer whichever source populated them — LLM often carries
+    detail/location info that regex missed, especially in
+    multi-borough scenarios or for implicit sub-types.
 
     Primary service_type is excluded from the result (to avoid the
     primary appearing in its own additionals).
@@ -425,21 +432,56 @@ def _merge_additional_services(
     if primary:
         seen.add(primary)
 
+    # Index LLM additionals by type so we can merge per-field when a
+    # regex item has the same type. "first match wins" for duplicates
+    # within llm_additional, which is consistent with how the rest of
+    # the function deduplicates.
+    llm_by_type: dict = {}
+    for item in llm_additional or []:
+        svc, detail, loc = _unpack_additional_item(item)
+        if svc and svc not in llm_by_type:
+            llm_by_type[svc] = (svc, detail, loc)
+
     result: list = []
 
-    # 1) Preserve regex tuples first — they have detail/location info
-    #    that LLM's may not carry.
+    # 1) Preserve regex tuples first, merging per-field with LLM's
+    #    tuple for the same type when LLM has info regex missed.
     for item in regex_additional or []:
-        svc, detail, loc = _unpack_additional_item(item)
-        if not svc or svc in seen:
+        svc, regex_detail, regex_loc = _unpack_additional_item(item)
+        if not svc:
             continue
-        result.append((svc, detail, loc))
+        if svc in seen:
+            # Behavior #19.3: log primary-exclusion at debug level for
+            # traceability. Regex's priority-sort can produce an
+            # `additional_services` entry that duplicates the promoted
+            # primary — silently dropping it is correct, but the
+            # dedup happens enough that logging helps ops diagnosis.
+            if svc == primary:
+                logger.debug(
+                    f"_merge_additional_services: excluding {svc!r} from "
+                    f"regex_additional (matches primary)"
+                )
+            continue
+
+        # Per-field merge: regex wins if non-None, else LLM fills.
+        # Behavior #19.5 in the migration doc.
+        merged_detail = regex_detail
+        merged_loc = regex_loc
+        if svc in llm_by_type:
+            _, llm_detail, llm_loc = llm_by_type[svc]
+            if merged_detail is None and llm_detail is not None:
+                merged_detail = llm_detail
+            if merged_loc is None and llm_loc is not None:
+                merged_loc = llm_loc
+
+        result.append((svc, merged_detail, merged_loc))
         seen.add(svc)
 
     # 2) For each item in winner_additional not yet seen, add it.
-    #    Step 1 already added all regex items with their richer tuples,
-    #    so winner_additional items reaching here are those regex
-    #    didn't have. We use winner_additional's tuple directly.
+    #    Step 1 already added all regex items (with LLM's fields merged
+    #    in where applicable), so winner_additional items reaching here
+    #    are those regex didn't have. We use winner_additional's tuple
+    #    directly.
     for item in winner_additional or []:
         svc, detail, loc = _unpack_additional_item(item)
         if not svc or svc in seen:
