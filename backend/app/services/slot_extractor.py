@@ -1209,10 +1209,15 @@ def _extract_age(text: str) -> Optional[int]:
         r"\bi[' ]?m (\d{1,3})\b",
         r"\bi am (\d{1,3})\b",
         r"\bage (\d{1,3})\b",
-        r"\b(\d{1,3}) years old\b",
-        # Hyphenated: "19-year-old", "21-yr-old"
-        r"\b(\d{1,2})-?year-?old\b",
-        r"\b(\d{1,2})-?yr-?old\b",
+        # "NN year old" / "NN-year-old" / "NN years old" / "NN year-old" etc.
+        # The separators between digit-year and year-old accept EITHER a
+        # hyphen OR a space (or be contiguous). Users commonly type without
+        # hyphens ("17 year old") and both patterns below must accept that.
+        # Singular "year" and plural "years" are both matched.
+        # {1,3} digits — centenarians saying "105 years old" should match;
+        # out-of-range values (>= 120) are rejected by the range check below.
+        r"\b(\d{1,3})[\s-]?years?[\s-]?old\b",
+        r"\b(\d{1,3})[\s-]?yrs?[\s-]?old\b",
         # Bare number at start or after newline, followed by comma/space+context
         # "21, LGBTQ" or "19, with a toddler"
         r"(?:^|\n)(\d{1,2})\s*,",

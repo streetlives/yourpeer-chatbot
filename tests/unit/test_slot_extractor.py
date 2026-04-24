@@ -438,6 +438,59 @@ def test_age_preserved_when_duration_and_age_coexist():
             f"Expected age={expected} for: {phrase} → {slots['age']}"
 
 
+def test_age_year_old_without_hyphen():
+    """Users commonly type 'NN year old' without the hyphens that the
+    original regex required. All natural-language variants of the
+    'year old' phrase should extract the age correctly."""
+    cases = [
+        # Core hyphen variants — must all produce age=17
+        ("17 year old", 17),
+        ("17 years old", 17),
+        ("17-year-old", 17),
+        ("17-years-old", 17),
+        ("17 year-old", 17),
+        ("17-year old", 17),
+        ("17year old", 17),  # no space before "year" either
+        # Embedded in sentences (what users actually type)
+        ("17 year old needs shelter", 17),
+        ("i am a 17 year old", 17),
+        ("my son is a 12 year old", 12),
+        ("a 19 year old from the bronx", 19),
+        ("I'm a 20 year old veteran", 20),
+        # "yr" abbreviation variants
+        ("17 yr old", 17),
+        ("17-yr-old", 17),
+        ("17yr old", 17),
+        ("17 yrs old", 17),
+        # Centenarians (3-digit ages)
+        ("105 years old", 105),
+        ("i am a 105 year old", 105),
+    ]
+    for phrase, expected in cases:
+        slots = extract_slots(phrase)
+        assert slots["age"] == expected, \
+            f"Expected age={expected} for: {phrase} → {slots['age']}"
+
+
+def test_age_year_old_edge_negatives():
+    """The 'NN year old' pattern should NOT match these nearby phrasings
+    that look similar but don't state an age."""
+    cases = [
+        "17 years ago",          # past — not age
+        "17 years experience",   # duration — not age
+        "17 yrs ago",
+        "for 17 years",          # stripped by duration filter
+        "300 year old tree",     # age out of range
+        "999 years old",
+        "a17 year old",          # no word boundary before 17
+        "17year",                # incomplete — no "old"
+    ]
+    for phrase in cases:
+        slots = extract_slots(phrase)
+        assert slots["age"] is None, \
+            f"Should not extract age from: {phrase!r} → {slots['age']}"
+
+
 # -----------------------------------------------------------------------
 # URGENCY EXTRACTION
 # -----------------------------------------------------------------------
