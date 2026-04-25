@@ -50,6 +50,21 @@ Usage:
 
     # Output JSON report
     ANTHROPIC_API_KEY=sk-... python tests/eval_llm_judge.py --output eval_report.json
+
+    # Re-run only the scenarios that failed (avg < 4.0) in a prior report.
+    # Useful after a targeted fix to verify recovery without paying for the
+    # full 171-scenario run.
+    ANTHROPIC_API_KEY=sk-... python tests/eval_llm_judge.py \\
+        --subset failing --subset-from eval_report.json
+
+    # 'borderline' uses avg < 4.5 — useful after a tone/dignity change to
+    # confirm at-risk scenarios held or improved.
+    ANTHROPIC_API_KEY=sk-... python tests/eval_llm_judge.py \\
+        --subset borderline --subset-from eval_report.json
+
+    # Combinable with --category to narrow further.
+    ANTHROPIC_API_KEY=sk-... python tests/eval_llm_judge.py \\
+        --subset failing --subset-from eval_report.json --category multi_intent
 """
 
 import sys
@@ -4030,6 +4045,98 @@ def print_report(report: dict):
 
 
 # ---------------------------------------------------------------------------
+# Subset selection (filter scenarios by score in a prior eval report)
+# ---------------------------------------------------------------------------
+
+# Default thresholds for the named subsets. Overridable via --subset-threshold.
+_SUBSET_THRESHOLDS = {
+    "failing": 4.0,    # scenarios that don't pass the ≥4.0 bar
+    "borderline": 4.5, # scenarios at risk — useful after a tone/dignity change
+}
+
+
+def _apply_subset_filter(all_scenarios, subset, subset_from, threshold_override):
+    """Filter `all_scenarios` to those that scored below a threshold in a prior run.
+
+    Parameters
+    ----------
+    all_scenarios : list of dict
+        The current SCENARIOS list.
+    subset : str
+        One of "failing" or "borderline" (caller has validated).
+    subset_from : str or None
+        Path to a prior eval report JSON (the file written via --output).
+        Required when subset != "all"; this function exits 2 if missing.
+    threshold_override : float or None
+        If set, overrides the default threshold for the named subset.
+
+    Exits with code 2 on any usage/IO error so the caller doesn't have to
+    branch on return values. Exits 0 if zero scenarios match (nothing to do).
+    """
+    from pathlib import Path
+
+    if subset_from is None:
+        print(f"ERROR: --subset {subset} requires --subset-from PATH "
+              f"(path to a prior eval report JSON, typically the file you "
+              f"wrote with --output on the previous run).", file=sys.stderr)
+        sys.exit(2)
+
+    report_path = Path(subset_from)
+    if not report_path.exists():
+        print(f"ERROR: --subset-from path does not exist: {subset_from}",
+              file=sys.stderr)
+        sys.exit(2)
+
+    try:
+        with report_path.open() as f:
+            prior = json.load(f)
+    except (json.JSONDecodeError, OSError) as e:
+        print(f"ERROR: could not read prior report at {subset_from}: {e}",
+              file=sys.stderr)
+        sys.exit(2)
+
+    if "scenarios" not in prior or not isinstance(prior["scenarios"], list):
+        print(f"ERROR: prior report at {subset_from} has no 'scenarios' "
+              f"list. Is this a valid eval report (the file written by "
+              f"--output)?", file=sys.stderr)
+        sys.exit(2)
+
+    threshold = (threshold_override if threshold_override is not None
+                 else _SUBSET_THRESHOLDS[subset])
+
+    # Pull IDs of scenarios that scored under the threshold in the prior run.
+    # Skip entries without average_score (e.g. errored scenarios) since we
+    # don't know whether they failed; they should be re-run via --scenario-id.
+    wanted_ids = {
+        s["id"] for s in prior["scenarios"]
+        if s.get("id") and s.get("average_score") is not None
+        and s["average_score"] < threshold
+    }
+
+    if not wanted_ids:
+        print(f"No scenarios in {report_path.name} scored below {threshold}. "
+              f"Nothing to run.")
+        sys.exit(0)
+
+    matched = [s for s in all_scenarios if s["id"] in wanted_ids]
+    matched_ids = {s["id"] for s in matched}
+    missing = wanted_ids - matched_ids
+
+    if missing:
+        # Stale report — scenario IDs were renamed or removed since the
+        # report was written. Warn but continue with what's matchable.
+        sample = sorted(missing)[:5]
+        suffix = f" (and {len(missing) - 5} more)" if len(missing) > 5 else ""
+        print(f"WARNING: {len(missing)} scenario ID(s) from prior report not "
+              f"found in current SCENARIOS list — likely renamed or removed: "
+              f"{sample}{suffix}", file=sys.stderr)
+
+    print(f"Subset '{subset}': {len(matched)} scenario(s) below threshold "
+          f"{threshold} in {report_path.name}")
+    return matched
+
+
+# ---------------------------------------------------------------------------
 # MAIN
 # ---------------------------------------------------------------------------
 
@@ -4043,7 +4150,41 @@ def main():
                         help="Save JSON report to this file")
     parser.add_argument("--scenario-id", type=str, default=None,
                         help="Run a single scenario by ID")
+    parser.add_argument("--subset", choices=["all", "failing", "borderline"],
+                        default="all",
+                        help="Filter to scenarios that scored below a "
+                             "threshold in a prior run (requires --subset-from). "
+                             "'failing' = avg < 4.0; 'borderline' = avg < 4.5. "
+                             "Combinable with --category.")
+    parser.add_argument("--subset-from", type=str, default=None, metavar="PATH",
+                        help="Path to a prior eval report JSON (the file "
+                             "written by --output on a previous run). "
+                             "Required when --subset is failing or borderline.")
+    parser.add_argument("--subset-threshold", type=float, default=None,
+                        metavar="FLOAT",
+                        help="Override the default --subset threshold "
+                             "(failing=4.0, borderline=4.5).")
     args = parser.parse_args()
+
+    # Validate --subset usage before any expensive setup so the user sees
+    # usage errors before "API key not set" and friends.
+    if args.subset != "all" and args.subset_from is None:
+        print(f"ERROR: --subset {args.subset} requires --subset-from PATH "
+              f"(path to a prior eval report JSON, typically the file you "
+              f"wrote with --output on the previous run).", file=sys.stderr)
+        sys.exit(2)
+    if args.subset == "all" and args.subset_from is not None:
+        print("ERROR: --subset-from is only meaningful with --subset failing "
+              "or --subset borderline.", file=sys.stderr)
+        sys.exit(2)
+    if args.subset_threshold is not None and args.subset == "all":
+        print("ERROR: --subset-threshold is only meaningful with --subset "
+              "failing or --subset borderline.", file=sys.stderr)
+        sys.exit(2)
+    if args.subset_from is not None and not os.path.exists(args.subset_from):
+        print(f"ERROR: --subset-from path does not exist: {args.subset_from}",
+              file=sys.stderr)
+        sys.exit(2)
 
     api_key = os.getenv("ANTHROPIC_API_KEY")
     if not api_key:
@@ -4072,12 +4213,24 @@ def main():
     # Select scenarios
     scenarios = SCENARIOS
     if args.scenario_id:
+        # Single-scenario debug mode — overrides subset and category
         scenarios = [s for s in scenarios if s["id"] == args.scenario_id]
         if not scenarios:
             print(f"ERROR: No scenario with ID '{args.scenario_id}'")
             sys.exit(1)
-    elif args.category:
-        scenarios = [s for s in scenarios if s["category"] == args.category]
+    else:
+        # Subset filter applied first (data-driven from a prior report)
+        if args.subset != "all":
+            scenarios = _apply_subset_filter(
+                scenarios, args.subset, args.subset_from, args.subset_threshold
+            )
+        # Category filter narrows further (e.g. failing scenarios in crisis)
+        if args.category:
+            scenarios = [s for s in scenarios if s["category"] == args.category]
+            if not scenarios:
+                print(f"ERROR: No scenarios match category={args.category!r} "
+                      f"after subset={args.subset!r} filter.", file=sys.stderr)
+                sys.exit(1)
     if args.scenarios:
         scenarios = scenarios[:args.scenarios]
 

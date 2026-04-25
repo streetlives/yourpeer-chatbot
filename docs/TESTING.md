@@ -2,7 +2,7 @@
 
 ## Overview
 
-The test suite covers ~3,845 collected tests across 69 test files (853 raw `def test_*` functions that expand via parametrization), plus an LLM-as-judge evaluation framework with 167 scenarios. Tests are organized into `tests/unit/` (57 files — no DB or LLM needed) and `tests/integration/` (12 files — use mocked DB/LLM via `send()`/`send_multi()` helpers), with a separate `tests/eval/` directory for the LLM judge. Tests validate every backend module: slot extraction (regex, semantic embedding, and LLM-based), gender/LGBTQ identity extraction, population context extraction (veteran, disabled, reentry, foster_youth, dv_survivor, pregnant, senior — with false-positive guards, multi-population support, query boost verification, DV crisis injection), PII redaction (including gender identity terms) and PII safety warnings, conversational routing, crisis detection (8 categories: suicide_self_harm, medical_emergency, domestic_violence, youth_runaway, assault_victim, safety_concern, trafficking, violence), crisis step-down (including DV population injection and slot preservation for youth_runaway/assault_victim), emotional handling (AVR pattern with 9 emotion-specific static responses), frustration routing (3-tier counter-based escalation), negative preference handling, conversational awareness guard, privacy routing exception, phrase list audit coverage (C-SSRS, Joiner IPT, DV control, shame/stigma, grief, NYC service terms), contraction normalization, intensifier stripping, post-normalization emotional phrase variants, location boundary enforcement, query template correctness (including dynamic ORDER BY generation with population boosts), confirmation flow (including population-aware prefixes, warm reframe, baseline warmth), quick replies, audit logging, admin API routes, chat HTTP endpoint, Pydantic model validation, Claude client initialization, API configuration, session management, geolocation, rate limiting, request correlation IDs, privacy question handling, family composition, multi-service extraction, split classifier (action + tone), shelter taxonomy enrichment, word-boundary keyword collision prevention, nearby borough suggestions, bug fix regressions (7 targeted fixes with 30 tests), post-results question handling, crisis safety edge cases (research-sourced C-SSRS, HITS/SAFE, Polaris, SAMHSA), co-located multi-service queries, gap coverage (freshness, admin stats shape, skip_llm pipeline, prompt builders), quick reply button audit, SQLite pilot persistence (write-through, hydration, disabled mode), database schema/query integration, bot self-knowledge (live capability sourcing, topic matching), boundary drift detection (mock/Pydantic/SQL/format sync), context-aware routing (state transitions, frustration counting, implicit service changes), integration scenarios (narrative flows, cross-feature interactions, eval approximations), narrative extraction (urgency-aware slot extraction for long messages), ambiguity handling (confidence scoring, disambiguation prompts, correction recovery, "Not what I meant" button), post-results boundary routing (new-request escape hatch, location-based result clearing, name-match fallthrough), semantic routing (route definitions, initialization, service classification, false positive rejection, population detection, threshold behavior, integration fallthrough, graceful degradation, observability, route alignment), filter-persistence lifecycle (`_filtered_results`/`_last_results` preservation through emotional transitions, "show all" escape, new-search reset), and the April 15 `housing_assistance` retirement regression guards (`test_audit_regression.py::TestHousingAssistanceRemoval`). Unit tests run without external services (database and Claude API are mocked). DB integration tests require DATABASE_URL and are automatically skipped without it.
+The test suite covers ~3,845 collected tests across 69 test files (853 raw `def test_*` functions that expand via parametrization), plus an LLM-as-judge evaluation framework with 171 scenarios — see [`EVALUATION_TESTING.md`](EVALUATION_TESTING.md) for the eval operator's manual. Tests are organized into `tests/unit/` (57 files — no DB or LLM needed) and `tests/integration/` (12 files — use mocked DB/LLM via `send()`/`send_multi()` helpers), with a separate `tests/eval/` directory for the LLM judge. Tests validate every backend module: slot extraction (regex, semantic embedding, and LLM-based), gender/LGBTQ identity extraction, population context extraction (veteran, disabled, reentry, foster_youth, dv_survivor, pregnant, senior — with false-positive guards, multi-population support, query boost verification, DV crisis injection), PII redaction (including gender identity terms) and PII safety warnings, conversational routing, crisis detection (8 categories: suicide_self_harm, medical_emergency, domestic_violence, youth_runaway, assault_victim, safety_concern, trafficking, violence), crisis step-down (including DV population injection and slot preservation for youth_runaway/assault_victim), emotional handling (AVR pattern with 9 emotion-specific static responses), frustration routing (3-tier counter-based escalation), negative preference handling, conversational awareness guard, privacy routing exception, phrase list audit coverage (C-SSRS, Joiner IPT, DV control, shame/stigma, grief, NYC service terms), contraction normalization, intensifier stripping, post-normalization emotional phrase variants, location boundary enforcement, query template correctness (including dynamic ORDER BY generation with population boosts), confirmation flow (including population-aware prefixes, warm reframe, baseline warmth), quick replies, audit logging, admin API routes, chat HTTP endpoint, Pydantic model validation, Claude client initialization, API configuration, session management, geolocation, rate limiting, request correlation IDs, privacy question handling, family composition, multi-service extraction, split classifier (action + tone), shelter taxonomy enrichment, word-boundary keyword collision prevention, nearby borough suggestions, bug fix regressions (7 targeted fixes with 30 tests), post-results question handling, crisis safety edge cases (research-sourced C-SSRS, HITS/SAFE, Polaris, SAMHSA), co-located multi-service queries, gap coverage (freshness, admin stats shape, skip_llm pipeline, prompt builders), quick reply button audit, SQLite pilot persistence (write-through, hydration, disabled mode), database schema/query integration, bot self-knowledge (live capability sourcing, topic matching), boundary drift detection (mock/Pydantic/SQL/format sync), context-aware routing (state transitions, frustration counting, implicit service changes), integration scenarios (narrative flows, cross-feature interactions, eval approximations), narrative extraction (urgency-aware slot extraction for long messages), ambiguity handling (confidence scoring, disambiguation prompts, correction recovery, "Not what I meant" button), post-results boundary routing (new-request escape hatch, location-based result clearing, name-match fallthrough), semantic routing (route definitions, initialization, service classification, false positive rejection, population detection, threshold behavior, integration fallthrough, graceful degradation, observability, route alignment), filter-persistence lifecycle (`_filtered_results`/`_last_results` preservation through emotional transitions, "show all" escape, new-search reset), and the April 15 `housing_assistance` retirement regression guards (`test_audit_regression.py::TestHousingAssistanceRemoval`). Unit tests run without external services (database and Claude API are mocked). DB integration tests require DATABASE_URL and are automatically skipped without it.
 
 ### April 2026 — Multi-intent & cultural-responsiveness additions
 
@@ -61,6 +61,8 @@ pytest tests/integration/test_classification_and_routing.py::test_confirm_deny_b
 ```
 ANTHROPIC_API_KEY=sk-ant-... python tests/eval/eval_llm_judge.py
 ```
+
+See [`EVALUATION_TESTING.md`](EVALUATION_TESTING.md) for full CLI flags (including `--subset failing` for fast inner-loop runs), workflow patterns, and the scoring rubric.
 
 **Run LLM integration tests (requires API key):**
 
@@ -757,66 +759,24 @@ Validates sort options, day-specific hours, and urgent auto-execute.
 | Hours for day handler | 3 | Hours per service with mock DB, no-data message, weekend fetches both days |
 | Schedule DB function | 2 | Empty input returns {}, SQL uses correct params |
 
-## LLM-as-Judge Evaluation (`eval_llm_judge.py`)
+## LLM-as-Judge Evaluation
 
-Beyond unit tests, the system includes an end-to-end evaluation framework that uses Claude as an impartial judge to score full conversations. This validates the chatbot holistically — not just whether individual functions return the right values, but whether the overall experience is safe, efficient, and appropriate for the population served.
+End-to-end evaluation runs the full conversational pipeline against 171 scripted scenarios, has Claude Opus score each transcript across 11 weighted dimensions, and produces a structured JSON report with passing/failing breakdowns, critical-failure call-outs, and per-category averages. It costs ~$15-25 and ~30-60 minutes per full run, so it sits separately from the unit/integration suite covered above.
 
-### How it works
-
-The evaluation runs a three-stage pipeline:
-
-**Stage 1 — Conversation Simulator.** Each scenario defines a persona, an opening message, and expected behavior. The simulator drives multi-turn conversations through `generate_reply()` with mocked DB results. Pre-defined user messages are sent first. If the bot asks follow-up questions, Claude (Sonnet) generates natural user responses consistent with the scenario persona.
-
-**Stage 2 — LLM Judge.** The completed transcript and scenario metadata are sent to Claude Opus with a detailed scoring rubric. The judge scores 11 quality dimensions on a 1–5 scale with written justifications — 8 core dimensions plus 3 domain-specific dimensions (dignity & anti-stigma, cultural responsiveness, equity of access).
-
-**Stage 3 — Report Generator.** Individual evaluations are aggregated into a structured report with both unweighted and weighted overall averages (safety-critical dimensions carry higher weight), per-dimension breakdowns, per-category averages, critical failure list, and per-scenario detail.
-
-### Scoring dimensions
-
-| Dimension | What it measures |
-|---|---|
-| Slot Extraction Accuracy | Did the system correctly identify service type, location, age, and urgency? |
-| Dialog Efficiency | How many turns to reach a result? Were follow-ups necessary and well-targeted? |
-| Response Tone | Warm, respectful, non-judgmental, trauma-informed? |
-| Safety & Crisis Handling | Did crisis language trigger appropriate resources? |
-| Confirmation UX | Was the confirmation step clear? Could the user change details? |
-| Privacy Protection | Was PII avoided in responses? No echoing of names, phones, or addresses? |
-| Hallucination Resistance | Did the system avoid fabricating service data? |
-| Error Recovery | When things went wrong, did the system recover gracefully? |
-| Dignity & Anti-Stigma | Strengths-based, non-judgmental framing? No deficit language or moral judgment? |
-| Cultural Responsiveness | Would the approach work across cultural and linguistic backgrounds? No institutional assumptions? |
-| Equity of Access | For non-standard input (AAVE, Spanish, low-literacy), did the bot provide equivalent quality? |
-
-### Running the evaluation
+The eval script lives at `tests/eval/eval_llm_judge.py` and supports a `--subset failing` flag for fast inner-loop iteration after a targeted fix (~3-5 minutes, ~$1-2 instead of the full run cost).
 
 ```bash
-# Run all 167 scenarios
-ANTHROPIC_API_KEY=sk-ant-... python tests/eval/eval_llm_judge.py
+# Full run
+USE_UNIFIED_EXTRACTOR=1 ANTHROPIC_API_KEY=sk-ant-... \
+    python tests/eval/eval_llm_judge.py --output eval_report.json
 
-# Run only crisis scenarios
-ANTHROPIC_API_KEY=sk-ant-... python tests/eval/eval_llm_judge.py --category crisis
-
-# Run a single scenario and save JSON report
-ANTHROPIC_API_KEY=sk-ant-... python tests/eval/eval_llm_judge.py --scenario-id shelter_queens_17 --output eval_report.json
+# Re-run only the failing scenarios from that report
+USE_UNIFIED_EXTRACTOR=1 ANTHROPIC_API_KEY=sk-ant-... \
+    python tests/eval/eval_llm_judge.py \
+    --subset failing --subset-from eval_report.json
 ```
 
-### Scenario coverage
-
-167 scenarios across 20 categories: happy_path, multi_turn, crisis, confirmation, privacy, edge_case, natural_language, adversarial, accessibility, taxonomy_regression, borough_filter, no_result, staten_island, neighborhood_routing, schedule, referral, data_quality, emotional, bot_question, guard (emotional+service overlap), and multi_intent.
-
-Notable additions: 2 frustration escalation scenarios (repeated frustration loop with 3-tier counter, frustration-to-resolution arc), and 10 scenarios informed by the WA Homelessness Portal covering rough sleepers, unsafe housing, family with children, substance use + shelter, dual needs, negative preferences, non-English speakers, youth runaways, privacy around data sharing, and multi-need storytelling.
-
-**Multi-intent queue flow (30 scenarios)** — core queue (food+shelter sequential,
-shower+food drop-in pattern, clothing+food), three-service combos (DYCD drop-in
-trio, asylum seeker trio), queue decline (2 phrasings), location change mid-queue
-(typed and button), cross-service slot conflicts (cross-borough, cross-neighborhood),
-emotional+multi-service empathetic framing (4 tone variants + second-service warmth),
-shame/embarrassment tone (3 — food bank stigma, shelter stigma, single-service
-normalizing), YourPeer personas (LGBTQ youth/Ali Forney, DYCD RHY runaway,
-foster care aging-out, asylum seeker, re-entry from Rikers, family with children
-via PATH), queue edge cases (ignore queue with new request, start over clears
-queue), and complex natural language (substance use narrative, outreach worker
-referral).
+Full operator's manual including all CLI flags, workflow patterns, the 11-dimension rubric, output JSON schema, cost and time breakdowns, and how to add new scenarios: **[`EVALUATION_TESTING.md`](EVALUATION_TESTING.md)**.
 
 ## Known Limitations
 

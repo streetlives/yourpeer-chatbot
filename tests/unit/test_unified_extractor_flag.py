@@ -1,4 +1,4 @@
-"""Phase 2 tests for the `USE_UNIFIED_EXTRACTOR` feature flag.
+"""Tests for the `USE_UNIFIED_EXTRACTOR` feature flag.
 
 Verifies that when the flag is on, the orchestrator and confirmation
 handler route slot extraction through the new
@@ -8,8 +8,10 @@ handler route slot extraction through the new
 These are routing tests, not eval tests — they mock the LLM so no API
 credits are spent and the parallel-run eval can be run separately.
 
-See UNIFIED_EXTRACTOR_MIGRATION.md Phase 2 for scope and acceptance
-criteria.
+See UNIFIED_EXTRACTOR_MIGRATION.md for scope. Phase 3 (2026-04-24)
+flipped the default to ON; the env var is now an opt-OUT, not opt-IN.
+The orchestrator and confirmation routing tests below directly patch
+`_USE_UNIFIED_EXTRACTOR` so they're independent of the env-var default.
 """
 
 from __future__ import annotations
@@ -48,27 +50,36 @@ class TestFlagDefinition:
         from app.services.chatbot import _USE_UNIFIED_EXTRACTOR
         assert isinstance(_USE_UNIFIED_EXTRACTOR, bool)
 
-    def test_flag_is_false_when_env_unset(self, monkeypatch):
-        """With USE_UNIFIED_EXTRACTOR unset, flag is False at import
-        time. Re-importing after modifying env vars is the mechanism
-        for exercising the flag logic."""
+    def test_flag_is_true_when_env_unset(self, monkeypatch):
+        """Phase 3 default: with USE_UNIFIED_EXTRACTOR unset, flag is True
+        at import time. Re-importing after modifying env vars is the
+        mechanism for exercising the flag logic."""
         monkeypatch.delenv("USE_UNIFIED_EXTRACTOR", raising=False)
         # Re-import the module under a fresh env
         import importlib
         import app.services.chatbot.context as ctx_module
         importlib.reload(ctx_module)
-        assert ctx_module._USE_UNIFIED_EXTRACTOR is False
+        assert ctx_module._USE_UNIFIED_EXTRACTOR is True
 
-    @pytest.mark.parametrize("truthy_value", ["1", "true", "TRUE", "yes", "YES", "on", "On"])
-    def test_flag_is_true_for_truthy_values(self, monkeypatch, truthy_value):
+    @pytest.mark.parametrize("truthy_value", [
+        "1", "true", "TRUE", "yes", "YES", "on", "On",
+        # Empty string and unrecognized values default to ON post-Phase-3.
+        # Typos shouldn't silently revert traffic to the legacy path.
+        "", "random_string", "maybe",
+    ])
+    def test_flag_is_true_for_truthy_or_unrecognized(self, monkeypatch, truthy_value):
         monkeypatch.setenv("USE_UNIFIED_EXTRACTOR", truthy_value)
         import importlib
         import app.services.chatbot.context as ctx_module
         importlib.reload(ctx_module)
         assert ctx_module._USE_UNIFIED_EXTRACTOR is True
 
-    @pytest.mark.parametrize("falsy_value", ["0", "false", "no", "off", "", "random_string"])
-    def test_flag_is_false_for_falsy_or_unrecognized(self, monkeypatch, falsy_value):
+    @pytest.mark.parametrize("falsy_value", [
+        "0", "false", "FALSE", "no", "NO", "off", "Off",
+    ])
+    def test_flag_is_false_for_explicit_falsy_values(self, monkeypatch, falsy_value):
+        """Phase 3 opt-out: only the documented falsy set turns the flag
+        off. Anything else — including typos — keeps it on."""
         monkeypatch.setenv("USE_UNIFIED_EXTRACTOR", falsy_value)
         import importlib
         import app.services.chatbot.context as ctx_module
