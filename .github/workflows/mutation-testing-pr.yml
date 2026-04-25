@@ -59,7 +59,7 @@ jobs:
           TESTS_FOR_MODULE["backend/app/services/crisis_detector.py"]="tests/unit/test_crisis_detector.py tests/unit/test_phrase_audit.py tests/unit/test_contraction_normalization.py"
           TESTS_FOR_MODULE["backend/app/services/classifier.py"]="tests/integration/test_classification_and_routing.py tests/unit/test_contraction_normalization.py"
           TESTS_FOR_MODULE["backend/app/privacy/pii_redactor.py"]="tests/unit/test_pii_redactor.py"
-          TESTS_FOR_MODULE["backend/app/services/chatbot/orchestrator.py"]="tests/integration/test_classification_and_routing.py tests/integration/test_multi_turn_and_context.py"
+          TESTS_FOR_MODULE["backend/app/services/chatbot/orchestrator.py"]="tests/integration/test_classification_and_routing.py tests/integration/test_multi_turn_and_context.py tests/integration/test_orchestrator_guards.py"
           TESTS_FOR_MODULE["backend/app/services/session_token.py"]="tests/unit/test_session_token.py"
 
           declare -A THRESHOLD_FOR_MODULE
