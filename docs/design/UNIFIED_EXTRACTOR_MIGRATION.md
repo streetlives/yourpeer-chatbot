@@ -3,10 +3,6 @@
 **Status:** Phase 3 SHIPPED — flag default flipped to ON. Phase 4 (legacy deletion) queued.
 **Owner:** Raleigh
 **Created:** 2026-04-22
-**Approved:** 2026-04-23 — schema decisions (`org_name` keep + fuzzy validator; `service_detail` Option A extend + canonical-form validator; `additional_services` extended to `[{type, detail?, location?}]`); priority-hierarchy consolidation (food ≥ mental_health); 2-hour / ~$50 parallel-run eval budget.
-**Revision:** 2026-04-24 (rev 16) — Phase 3 SHIPPED. `_USE_UNIFIED_EXTRACTOR` default flipped from False to True in `backend/app/services/chatbot/context.py`. The env var is now an opt-OUT: setting `USE_UNIFIED_EXTRACTOR=0` (or `false`/`no`/`off`, case-insensitive) routes back to the legacy `extract_slots_smart`. Unrecognized values default to ON so typos don't silently revert traffic. **`pipeline.py:149`'s `classify_unified` gap-filler is unchanged** — that call site returns `tone`/`action` keys that the unified extractor doesn't produce, so migrating it before Phase 4 would lose tone/action gap-fill signal. Phase 4 will delete `classify_unified` entirely; the gap-filler's continued utility (or removal) gets re-evaluated then. The 23 routing tests in `test_unified_extractor_flag.py` were updated for the new opt-out semantics; one `test_flag_is_false_when_env_unset` became `test_flag_is_true_when_env_unset`, and the truthy/falsy parametrize lists were swapped — empty string and unrecognized values now assert True. Repo-wide test suite under default env: 3,553 passing, 0 failures, 10 skipped, 3 xfailed. Verified opt-out works: `USE_UNIFIED_EXTRACTOR=0` runs legacy and the suite stays green.
-**Prior revisions:** rev 15 (2026-04-24) — Phase 2 VALIDATION COMPLETE. Cross-borough carve-out and primary-location decoupling fixes shipped after rev 14's flag-on path was first exercised end-to-end. Mini-eval results: 12/15 passing (4.23 avg); migration headline scenario `multi_cross_borough_food_brooklyn_shelter_manhattan` recovered 3.36 → 4.00. Confirmation-handler orphan-file wiring corrected; orchestrator awaiting-clear guard added. Test count corrected from rev-14's claimed 4,097 to actual 3,529 passing. R37 full eval (171 scenarios, flag on, post-rev-15): 167/171 passing (97.7%), 4.59 overall, 19 critical failures — beats R36 Legacy on every headline metric. rev 14 (2026-04-24) — Phase 2 wiring shipped. rev 13 (2026-04-23) — Phase 1 COMPLETE: `backend/app/services/slot_extraction/` package shipped (1,580 LOC across 4 files) with 147 unit tests achieving 100% line + branch coverage. rev 1–12 — design iteration, audits, schema decisions, Phase 0 corpus check.
-**Related:** R35 eval regression (`multi_cross_borough` 3.09 → 2.82); PR #61.
 
 ## Problem
 
@@ -252,6 +248,7 @@ Repo-wide test suite under default env (post-flip): 3,553 passing, 0 failures, 1
 - Update `tests/integration/test_service_data_llm_firewall.py` — remap the 6 direct imports from `llm_slot_extractor` to the new module; preserve Layer 4 and Layer 6 asserts; add the new `_NOTABLE_SUB_TYPES`-no-prompt-leak assertion.
 - Update or delete `tests/unit/test_unified_extractor_flag.py` — the routing tests are no longer meaningful once there's only one path. Either delete the file or repurpose it for tests of the unified path's specific behaviors.
 - Consolidate tests:
+  <!-- drift:ignore: Phase 4 will create these files; intentional forward-references -->
   - `test_llm_slot_extractor.py` → split into `test_slot_extraction_dispatch.py`, `test_slot_extraction_merge.py`, `test_slot_extraction_prompts.py`.
   - `test_narrative_extraction.py` → fold into the above.
   - `test_llm_multi_service.py` → fold into merge tests.

@@ -213,6 +213,8 @@ All backend modules and all public functions are covered. Tests are in `tests/un
 
 ## Test Suites
 
+> **Note on slot-extraction tests (Phase 3, April 2026).** The `USE_UNIFIED_EXTRACTOR` flag flipped to default-ON in Phase 3, so `app.services.slot_extraction.extract()` is now the active path. The legacy `extract_slots_smart` in `app.services.llm_slot_extractor` still exists behind `USE_UNIFIED_EXTRACTOR=0` (opt-out for emergency rollback) and is referenced in some test descriptions below — those tests run on the legacy path under the opt-out and on the unified path under the default. Phase 4 will delete the legacy modules and consolidate the tests; until then both paths are exercised. See `docs/design/UNIFIED_EXTRACTOR_MIGRATION.md`.
+
 ### `integration/test_classification_and_routing.py` — 193 tests
 
 Validates the main chatbot routing — message classification (split classifier in `classifier.py`), slot extraction routing, PII redaction integration, confirmation flow (in `confirmation.py`), quick replies, emotional awareness (responses in `responses.py`), bot questions, privacy question handling, static fallbacks, context-aware yes/no, frustration loop detection, family composition, gender/LGBTQ identity handling, combined action+tone routing, tone prefix assertions, escalation guard, nearby borough suggestions, location-unknown interceptor, service flow continuation, and LLM fallback. External dependencies are mocked.
@@ -250,7 +252,7 @@ Validates the main chatbot routing — message classification (split classifier 
 | Escalation phrase variants | 3 | "connect with a person" routes to escalation, "connect with peer navigator" routes to escalation, peer navigator label standardized |
 | Location change UX | 1 | Location change shows "Use my location" as first option |
 
-### `test_slot_extractor.py` — 113 tests
+### `test_slot_extractor.py` — 117 tests
 
 Validates the regex-based slot extraction pipeline.
 

@@ -113,6 +113,8 @@ Route every message through Claude Haiku or GPT-3.5 for intent extraction. Most 
 
 ### Integration Points
 
+> **Migration state (Phase 3, April 2026).** The Phase 0-3 unified-extractor migration changed which module the second integration point lives in. With `USE_UNIFIED_EXTRACTOR` default-ON (Phase 3), the safety-net call lives in the unified path at `app.services.slot_extraction` and the legacy `extract_slots_smart()` referenced in code snippets and tables below is still active behind `USE_UNIFIED_EXTRACTOR=0` (opt-out for emergency rollback). Phase 4 deletes the legacy module; the integration semantics described here apply to both paths until then. See `docs/design/UNIFIED_EXTRACTOR_MIGRATION.md`.
+
 The semantic router fires at **two points** in the pipeline for maximum coverage:
 
 **1. Hybrid multi-intent extraction in `backend/app/services/chatbot/pipeline.py`** (runs on every message, as part of the unified classification cascade — post-Phase-3 location; was `chatbot.py` pre-April 2026): <!-- drift:ignore: historical chatbot.py reference; package now lives at chatbot/ -->
