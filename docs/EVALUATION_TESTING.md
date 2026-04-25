@@ -6,11 +6,11 @@ End-to-end LLM-as-judge evaluation for the YourPeer chatbot. Distinct from the u
 
 ```bash
 # Full run (all 171 scenarios, save report to disk)
-USE_UNIFIED_EXTRACTOR=1 ANTHROPIC_API_KEY=sk-ant-... \
+ANTHROPIC_API_KEY=sk-ant-... \
     python tests/eval/eval_llm_judge.py --output eval_report.json
 
 # Re-run just the scenarios that failed in that report
-USE_UNIFIED_EXTRACTOR=1 ANTHROPIC_API_KEY=sk-ant-... \
+ANTHROPIC_API_KEY=sk-ant-... \
     python tests/eval/eval_llm_judge.py \
     --subset failing --subset-from eval_report.json --output eval_followup.json
 ```
@@ -65,7 +65,7 @@ A scenario passes when its unweighted average across all 11 dimensions is **≥ 
 
 `--subset` and `--category` compose: `--subset failing --category multi_intent` runs the failing scenarios in one category. `--scenario-id` overrides everything else.
 
-`USE_UNIFIED_EXTRACTOR=1` is required for measurements of the unified slot-extractor path. After Phase 4 completes the migration, the env var becomes the only path and this requirement goes away.
+As of Phase 3 (2026-04-24) the unified slot-extractor path is the default. Setting `USE_UNIFIED_EXTRACTOR=0` (or `false`/`no`/`off`, case-insensitive) is the opt-out for emergency rollback to the legacy path. Phase 4 deletes the flag entirely once the legacy modules are removed.
 
 ## Subsets — running just the scenarios that failed
 
@@ -89,7 +89,7 @@ Behavior notes:
 **Initial baseline.** Run the full suite, save the report. This establishes the comparison point for all subsequent work in the iteration cycle.
 
 ```bash
-USE_UNIFIED_EXTRACTOR=1 ANTHROPIC_API_KEY=sk-ant-... \
+ANTHROPIC_API_KEY=sk-ant-... \
     python tests/eval/eval_llm_judge.py --output r37.json
 ```
 
@@ -97,7 +97,7 @@ USE_UNIFIED_EXTRACTOR=1 ANTHROPIC_API_KEY=sk-ant-... \
 
 ```bash
 # Make code change targeting peer_diabetic_insulin
-USE_UNIFIED_EXTRACTOR=1 ANTHROPIC_API_KEY=sk-ant-... \
+ANTHROPIC_API_KEY=sk-ant-... \
     python tests/eval/eval_llm_judge.py \
     --subset failing --subset-from r37.json --output r37b.json
 ```
@@ -105,7 +105,7 @@ USE_UNIFIED_EXTRACTOR=1 ANTHROPIC_API_KEY=sk-ant-... \
 **Tone or dignity workstream.** Use the wider `borderline` band so the run includes all ≤4.5 scenarios — the population most likely to move when prompts change.
 
 ```bash
-USE_UNIFIED_EXTRACTOR=1 ANTHROPIC_API_KEY=sk-ant-... \
+ANTHROPIC_API_KEY=sk-ant-... \
     python tests/eval/eval_llm_judge.py \
     --subset borderline --subset-from r37.json --output tone_check.json
 ```
@@ -113,7 +113,7 @@ USE_UNIFIED_EXTRACTOR=1 ANTHROPIC_API_KEY=sk-ant-... \
 **Single-scenario debugging.** When a scenario keeps failing and you need to see what's happening turn-by-turn, use `--scenario-id` and read the per-turn judgment justifications in the saved report.
 
 ```bash
-USE_UNIFIED_EXTRACTOR=1 ANTHROPIC_API_KEY=sk-ant-... \
+ANTHROPIC_API_KEY=sk-ant-... \
     python tests/eval/eval_llm_judge.py \
     --scenario-id peer_diabetic_insulin --output diabetic_debug.json
 ```
@@ -123,7 +123,7 @@ For richer per-turn instrumentation (transcripts, slot states between turns), us
 **Final confirmation before merge.** Run the full suite again. The full-suite numbers are the release-decision numbers; subset runs are diagnostic, not authoritative.
 
 ```bash
-USE_UNIFIED_EXTRACTOR=1 ANTHROPIC_API_KEY=sk-ant-... \
+ANTHROPIC_API_KEY=sk-ant-... \
     python tests/eval/eval_llm_judge.py --output r38.json
 ```
 
@@ -225,5 +225,5 @@ After adding, smoke-test the scenario with `--scenario-id your_scenario_id` to c
 - `scripts/mini_eval_r36_regressions.py` and `scripts/mini_eval_r36_regressions.md` — migration-specific subset runner with R36 baselines and per-turn transcript dumps. The `--subset failing` flag in the main eval is general; the mini-eval is for the R36 regression set specifically.
 - `scripts/mini_eval_option_4.py` — short-path prompt iteration only (no Opus judge); ~30s, ~$0.01.
 - `eval-r37/YourPeer_Chatbot_Eval_Run_37.md` — the most recent full run report; example of the format used for every release-decision run.
-- `docs/design/UNIFIED_EXTRACTOR_MIGRATION.md` — context on what the unified extractor is and why `USE_UNIFIED_EXTRACTOR=1` is required.
+- `docs/design/UNIFIED_EXTRACTOR_MIGRATION.md` — context on the unified extractor and the `USE_UNIFIED_EXTRACTOR` opt-out.
 - `tests/unit/test_eval_subset_filter.py` — 20 unit tests exercising the `--subset` filter logic in isolation.

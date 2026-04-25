@@ -767,11 +767,11 @@ The eval script lives at `tests/eval/eval_llm_judge.py` and supports a `--subset
 
 ```bash
 # Full run
-USE_UNIFIED_EXTRACTOR=1 ANTHROPIC_API_KEY=sk-ant-... \
+ANTHROPIC_API_KEY=sk-ant-... \
     python tests/eval/eval_llm_judge.py --output eval_report.json
 
 # Re-run only the failing scenarios from that report
-USE_UNIFIED_EXTRACTOR=1 ANTHROPIC_API_KEY=sk-ant-... \
+ANTHROPIC_API_KEY=sk-ant-... \
     python tests/eval/eval_llm_judge.py \
     --subset failing --subset-from eval_report.json
 ```

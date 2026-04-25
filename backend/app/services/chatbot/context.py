@@ -32,23 +32,31 @@ _DISPLAY_PAGE_SIZE = 5
 _USE_LLM = bool(os.getenv("ANTHROPIC_API_KEY"))
 
 # ---------------------------------------------------------------------------
-# UNIFIED EXTRACTOR FEATURE FLAG (Phase 2 of llm_slot_extractor migration)
+# UNIFIED EXTRACTOR FEATURE FLAG (Phase 3 of llm_slot_extractor migration)
 # ---------------------------------------------------------------------------
-# When USE_UNIFIED_EXTRACTOR is set to a truthy value, the orchestrator and
-# confirmation handler route slot extraction through the new
-# `app.services.slot_extraction.extract()` pipeline instead of the legacy
-# `extract_slots_smart` in `llm_slot_extractor.py`. This exists for the
-# parallel-run eval in Phase 2; Phase 3 flips the default, Phase 4 removes
-# the flag.
+# When USE_UNIFIED_EXTRACTOR is on, the orchestrator and confirmation handler
+# route slot extraction through the new `app.services.slot_extraction.extract()`
+# pipeline instead of the legacy `extract_slots_smart` in
+# `llm_slot_extractor.py`.
 #
-# Off by default so existing prod traffic is unaffected until parallel-run
-# eval clears the acceptance criteria (`multi_cross_borough` passes; no
-# scenario currently ≥4.5 drops below 4.2; CF count on new path ≤ old).
+# DEFAULT: ON (Phase 3, 2026-04-24).
 #
-# Accepted truthy values: "1", "true", "yes", "on" (case-insensitive). Any
-# other value — including "0", "false", "", or unset — leaves the flag off.
-_USE_UNIFIED_EXTRACTOR = os.getenv("USE_UNIFIED_EXTRACTOR", "").lower() in (
-    "1", "true", "yes", "on",
+# R37 (the first full eval after the rev-15 cross-borough carve-out and
+# primary-location binding fixes) confirmed the unified path beats the legacy
+# path on every headline metric: 167/171 passing (97.7%), 4.59 overall, 19
+# critical failures vs. R36 Legacy's 4.56 / 22 CFs. The default flipped to ON.
+#
+# The env var remains as an opt-OUT for emergency rollback. Setting
+# USE_UNIFIED_EXTRACTOR=0 (or "false", "no", "off", case-insensitive) routes
+# back to the legacy `extract_slots_smart`. Phase 4 deletes the legacy path
+# entirely and removes this flag.
+#
+# Falsy values (case-insensitive): "0", "false", "no", "off"
+# Anything else — unset, empty string, "1", "true", or any other value —
+# leaves the flag ON. Unrecognized values default to the new behavior so
+# typos don't silently revert traffic to the legacy path.
+_USE_UNIFIED_EXTRACTOR = os.getenv("USE_UNIFIED_EXTRACTOR", "").lower() not in (
+    "0", "false", "no", "off",
 )
 
 # Conditional LLM imports. These are bound at module load so callers can do
