@@ -33,7 +33,6 @@ from .confirmation import (
     _handle_negative_preference,
     _handle_pending_confirmation,
     _handle_post_pending_confirmation,
-    _promote_queued_offer,
 )
 from .emotional import (
     _handle_crisis,

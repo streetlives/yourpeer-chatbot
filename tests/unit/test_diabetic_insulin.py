@@ -138,7 +138,7 @@ class TestMedicalEmergencyStepDown:
         )
         # Step-down message and quick reply should both be present.
         response_text = result.get("response", "")
-        qr_values = [qr["value"] for qr in result.get("quick_replies", [])]
+        [qr["value"] for qr in result.get("quick_replies", [])]
         qr_labels = [qr["label"] for qr in result.get("quick_replies", [])]
 
         assert "would you like me to search" in response_text.lower(), \
