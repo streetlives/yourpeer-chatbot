@@ -43,7 +43,6 @@ import logging
 import re
 from typing import Any, Optional
 
-from .dispatch import _is_narrative
 from .prompts import _SERVICE_TYPE_ENUM
 
 logger = logging.getLogger(__name__)

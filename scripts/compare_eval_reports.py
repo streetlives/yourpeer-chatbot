@@ -160,19 +160,19 @@ def diff_scenarios(legacy_idx: dict, unified_idx: dict) -> dict:
         })
 
     for sid in sorted(legacy_ids & unified_ids):
-        l = legacy_idx[sid]
+        legacy = legacy_idx[sid]
         u = unified_idx[sid]
-        l_score = l.get("average_score", 0)
+        l_score = legacy.get("average_score", 0)
         u_score = u.get("average_score", 0)
         delta = round(u_score - l_score, 2)
 
         entry = {
             "id": sid,
-            "category": l.get("category", ""),
+            "category": legacy.get("category", ""),
             "legacy_score": l_score,
             "unified_score": u_score,
             "delta": delta,
-            "legacy_weighted": l.get("weighted_score"),
+            "legacy_weighted": legacy.get("weighted_score"),
             "unified_weighted": u.get("weighted_score"),
         }
 
@@ -202,7 +202,7 @@ def diff_scenarios(legacy_idx: dict, unified_idx: dict) -> dict:
 
 def check_target_fix(legacy_idx: dict, unified_idx: dict) -> dict:
     """The specific scenario this migration exists to fix."""
-    l = legacy_idx.get(TARGET_FIX_SCENARIO)
+    legacy = legacy_idx.get(TARGET_FIX_SCENARIO)
     u = unified_idx.get(TARGET_FIX_SCENARIO)
     if u is None:
         return {
@@ -212,7 +212,7 @@ def check_target_fix(legacy_idx: dict, unified_idx: dict) -> dict:
     u_score = u.get("average_score", 0)
     return {
         "present": True,
-        "legacy_score": l.get("average_score") if l else None,
+        "legacy_score": legacy.get("average_score") if legacy else None,
         "unified_score": u_score,
         "passes_acceptance": u_score >= PASSING_THRESHOLD,
     }
@@ -227,19 +227,19 @@ def check_watch_list(legacy_idx: dict, unified_idx: dict) -> list:
     """
     out: list = []
     for sid in WATCH_LIST_SCENARIOS:
-        l = legacy_idx.get(sid)
+        legacy = legacy_idx.get(sid)
         u = unified_idx.get(sid)
-        if l is None or u is None:
+        if legacy is None or u is None:
             out.append({
                 "id": sid,
                 "present": False,
                 "reason": (
-                    "absent from legacy report" if l is None
+                    "absent from legacy report" if legacy is None
                     else "absent from unified report"
                 ),
             })
             continue
-        l_score = l.get("average_score", 0)
+        l_score = legacy.get("average_score", 0)
         u_score = u.get("average_score", 0)
         triggers_option_4 = (
             l_score >= REGRESSION_CEILING and u_score < REGRESSION_FLOOR
