@@ -80,6 +80,19 @@ def main() -> int:
     baseline.pop("D3", None)
     current.pop("D3", None)
 
+    # TOTAL is a raw `len(findings)` in the audit output, so it still
+    # includes the D3 count we just popped. Recompute it here so the
+    # TOTAL gate reflects only the categories we actually gate on —
+    # otherwise a D3 spike silently fails the build through the TOTAL
+    # comparison, defeating the "advisory" intent.
+    def _recompute_total(d: dict[str, int]) -> None:
+        real = {k: v for k, v in d.items() if k != "TOTAL"}
+        if "TOTAL" in d and real:
+            d["TOTAL"] = sum(real.values())
+
+    _recompute_total(baseline)
+    _recompute_total(current)
+
     if not baseline:
         print(f"ERROR: no entries parsed from {args.baseline}. Malformed?",
               file=sys.stderr)

@@ -2156,9 +2156,18 @@ class TestAuditLogHelpers:
         with patch(
             "app.services.audit_log.record_llm_call",
             side_effect=RuntimeError("audit store down"),
-        ):
-            # Must not raise
+        ) as mock_record:
+            # Must not raise — exception is swallowed inside the helper.
             _record_success("slot_extraction", fake_response, 100)
+
+        # Assert we actually exercised the swallow path. Without this
+        # assertion the test would pass even if the function short-
+        # circuited before reaching record_llm_call (e.g. a future
+        # refactor that early-returns on empty content).
+        assert mock_record.called, (
+            "record_llm_call should have been invoked so we know the "
+            "exception path was actually exercised"
+        )
 
     def test_record_failure_swallows_exceptions(self):
         from app.services.slot_extraction.dispatch import _record_failure
@@ -2166,8 +2175,14 @@ class TestAuditLogHelpers:
         with patch(
             "app.services.audit_log.record_llm_call",
             side_effect=RuntimeError("audit store down"),
-        ):
+        ) as mock_record:
+            # Must not raise — exception is swallowed inside the helper.
             _record_failure("slot_extraction", "timeout")
+
+        assert mock_record.called, (
+            "record_llm_call should have been invoked so we know the "
+            "exception path was actually exercised"
+        )
 
     def test_record_success_handles_response_without_usage(self):
         """Some Claude API SDK paths may omit `usage` — we should
