@@ -33,6 +33,7 @@ from .confirmation import (
     _handle_negative_preference,
     _handle_pending_confirmation,
     _handle_post_pending_confirmation,
+    _promote_queued_offer, # noqa: F841
 )
 from .emotional import (
     _handle_crisis,
@@ -88,7 +89,6 @@ __all__ = [
     "_handle_negative_preference",
     "_handle_pending_confirmation",
     "_handle_post_pending_confirmation",
-    "_promote_queued_offer",
     # post_results
     "_handle_hours_for_day",
     "_handle_post_results_interaction",
