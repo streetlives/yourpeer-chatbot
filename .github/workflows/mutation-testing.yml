@@ -81,6 +81,7 @@ jobs:
             tests: >-
               tests/integration/test_classification_and_routing.py
               tests/integration/test_multi_turn_and_context.py
+              tests/integration/test_orchestrator_guards.py
 
           - module: backend/app/services/session_token.py
             tests: >-
