@@ -347,6 +347,7 @@ def _merge_service_type_and_primary_location(
     regex_result: dict,
     llm_result: dict,
     message: Optional[str] = None,
+    extraction_source: Optional[str] = None,
 ) -> tuple[Optional[str], Optional[str], list]:
     """Trust Model 3: the set-agreement rule for `service_type` and
     its primary `location` plus `additional_services`.
@@ -355,14 +356,21 @@ def _merge_service_type_and_primary_location(
     triple, because the primary location and additional_services are
     both bound to the choice of winner.
 
+    Trust hierarchy (post Phase 4 Stage 3 follow-up):
+
+        1. Semantic router (when extraction_source == "semantic")
+        2. LLM
+        3. Regex
+
     The rule:
         R = {regex_primary} ∪ regex_additional_service_types
         L = {llm_primary}   ∪ llm_additional_service_types
 
-        if R is empty:              LLM wins
-        elif L is empty:            regex wins
-        elif R == L:                LLM wins            ← Ext-2b
-        else:                       LLM wins
+        if R is empty:                              LLM wins
+        elif L is empty:                            regex wins
+        elif R == L:                                LLM wins      ← Ext-2b
+        elif extraction_source == "semantic":       regex wins    ← semantic priority
+        else:                                       LLM wins
 
     When regex wins, we return `regex_result`'s triple verbatim.
     When LLM wins, we return the LLM-extracted triple.
@@ -393,6 +401,42 @@ def _merge_service_type_and_primary_location(
         compatibility with direct-caller unit tests and for possible
         future use; it is no longer consulted in the sets-match
         branch.
+
+    Semantic-priority carve-out (Phase 4 Stage 3 follow-up,
+    April 2026):
+
+        When `extraction_source == "semantic"`, the value sitting on
+        `regex_result["service_type"]` came from the semantic router
+        (set by `pipeline._run_early_extraction` when regex returned
+        nothing and the sentence-transformer matched a route). On
+        sets-DISAGREE, semantic-set values now win over the LLM's
+        pick. Sets-AGREE remains LLM-wins-on-primary because the
+        primary value is the same on both sides — only attribution
+        differs.
+
+        Why semantic-priority on disagree:
+          - The semantic router is a tier above the LLM in the trust
+            cascade for the cases it was designed for. It triggers
+            on phrase-embedding matches that regex misses but that
+            map to known service categories with high confidence
+            (per-route thresholds, 0.75-0.85 cosine similarity).
+          - When the LLM disagrees with a high-confidence semantic
+            classification, the LLM is more often the source of
+            error: it can over-interpret context (e.g., classifying
+            "I just got out of jail and need to find work" as
+            `reentry` population + `other` service when the route
+            embedding cleanly says `employment`).
+          - Treating semantic as authoritative for service_type also
+            matches user intuition: phrases like "aging out of
+            foster care" or "I have a criminal record" reliably
+            map to `foster_youth`/`reentry` populations and the
+            corresponding service categories. Letting the LLM
+            override the route classification on these would be a
+            regression on the cases the router was tuned for.
+
+        The carve-out only changes the sets-disagree branch.
+        Empty-regex still lets LLM win (no semantic input to defer
+        to). Empty-LLM still lets regex win (no LLM signal to weigh).
     """
     regex_primary = regex_result.get("service_type")
     regex_additional = regex_result.get("additional_services") or []
@@ -505,10 +549,24 @@ def _merge_service_type_and_primary_location(
         )
         return llm_primary, llm_result.get("location"), llm_additional
 
-    # Sets disagree. LLM's filtering (context vs request) or coverage
-    # (missing regex keyword) is the signal we trust.
+    # Sets disagree.
+    if extraction_source == "semantic":
+        # The value on regex_result["service_type"] came from the
+        # semantic router. Treat it as authoritative — see the
+        # "Semantic-priority carve-out" docstring section above.
+        # location and additional_services come from regex_result
+        # (semantic router doesn't set those).
+        logger.info(
+            f"Set-disagreement: regex/semantic set={sorted(regex_set)}, "
+            f"llm set={sorted(llm_set)}, semantic source — "
+            f"semantic-set primary wins"
+        )
+        return regex_primary, regex_result.get("location"), regex_additional
+
+    # Default: LLM's filtering (context vs request) or coverage
+    # (missing regex keyword) is the signal we trust on disagree.
     logger.info(
-        f"Set-agreement: regex set={sorted(regex_set)}, llm set={sorted(llm_set)}, "
+        f"Set-disagreement: regex set={sorted(regex_set)}, llm set={sorted(llm_set)}, "
         f"LLM wins"
     )
     return llm_primary, llm_result.get("location"), llm_additional
@@ -701,6 +759,7 @@ def merge(
     regex_result: dict,
     llm_result: dict,
     message: Optional[str] = None,
+    extraction_source: Optional[str] = None,
 ) -> dict:
     """Merge regex and LLM extraction results into the 15-field dict
     the orchestrator expects.
@@ -718,6 +777,13 @@ def merge(
         rule. When None, the original sets-match rule (regex priority
         wins) applies — this preserves backward compatibility for
         unit tests that call `merge()` without the path distinction.
+      - `extraction_source` (optional): one of "regex" / "semantic" /
+        "llm_gate" / None, identifying where `regex_result.service_type`
+        came from. Trust Model 3 uses this to give semantic-router
+        classifications priority over the LLM on sets-disagree (see
+        `_merge_service_type_and_primary_location` docstring).
+        Default None means "treat as regex" — backwards-compatible
+        with callers that don't track source.
 
     Postconditions:
       - returned dict has 15 keys: the 13 fields from regex_result
@@ -736,7 +802,9 @@ def merge(
     # stays bound to Brooklyn and does not get silently rebound to
     # regex's Manhattan (which was regex's primary-for-shelter value).
     service_type, location_from_primary, winner_additional = \
-        _merge_service_type_and_primary_location(regex_result, llm_result, message)
+        _merge_service_type_and_primary_location(
+            regex_result, llm_result, message, extraction_source
+        )
 
     # TRUST MODEL 1: location (regex-literal, validator-gated LLM fallback)
     # When the primary winner has a location, it's the source of truth —

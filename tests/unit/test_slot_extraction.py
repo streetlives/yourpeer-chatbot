@@ -760,6 +760,185 @@ class TestTrustModel3CrossBoroughCarveOut:
         assert loc == "brooklyn"
 
 
+class TestMergeServiceTypeWithExtractionSource:
+    """Direct unit tests for `_merge_service_type_and_primary_location`'s
+    new `extraction_source` parameter (Phase 4 Stage 3 follow-up,
+    April 2026).
+
+    These complement the integration tests in
+    `tests/unit/test_semantic_router.py::TestIntegrationFallthrough`
+    by probing the merge function in isolation, without LLM mocking
+    or dispatch logic. A regression here surfaces the specific branch
+    that broke without the noise of the larger pipeline.
+    """
+
+    def test_default_none_behaves_as_regex_source(self):
+        """When extraction_source is unspecified, behavior matches
+        the legacy default — LLM wins on disagree (R36 Ext-2b)."""
+        regex = dict(
+            service_type="medical",
+            location=None,
+            additional_services=[],
+        )
+        llm = dict(
+            service_type="other",
+            location="manhattan",
+            additional_services=[],
+        )
+        primary, loc, additional = \
+            _merge_service_type_and_primary_location(regex, llm)
+        assert primary == "other"  # LLM wins
+        assert loc == "manhattan"
+
+    def test_explicit_regex_source_behaves_as_default(self):
+        """`extraction_source="regex"` is equivalent to None — the
+        special branch only fires for `"semantic"`."""
+        regex = dict(
+            service_type="medical",
+            location=None,
+            additional_services=[],
+        )
+        llm = dict(
+            service_type="other",
+            location="manhattan",
+            additional_services=[],
+        )
+        primary, loc, additional = \
+            _merge_service_type_and_primary_location(
+                regex, llm, None, "regex"
+            )
+        assert primary == "other"  # LLM still wins
+
+    def test_semantic_source_disagree_regex_wins_primary(self):
+        """When extraction_source="semantic" and sets disagree, the
+        semantic-set primary (sitting on regex_result.service_type)
+        wins over the LLM's pick."""
+        regex = dict(
+            service_type="medical",  # set by semantic
+            location=None,
+            additional_services=[],
+        )
+        llm = dict(
+            service_type="other",
+            location="manhattan",
+            additional_services=[],
+        )
+        primary, loc, additional = \
+            _merge_service_type_and_primary_location(
+                regex, llm, None, "semantic"
+            )
+        # Semantic wins on primary
+        assert primary == "medical"
+        # Triple's location slot is regex's None (LLM's location is
+        # picked up by Trust Model 1 location-merge in the merge()
+        # caller, not in this function)
+        assert loc is None
+        assert additional == []
+
+    def test_semantic_source_sets_agree_unchanged(self):
+        """Sets-AGREE branch is unchanged. When semantic and LLM pick
+        the same service, Ext-2b returns LLM's triple. Same result
+        whether extraction_source is `"semantic"` or `None` since the
+        primary value matches."""
+        regex = dict(
+            service_type="medical",
+            location=None,
+            additional_services=[],
+        )
+        llm = dict(
+            service_type="medical",
+            location="manhattan",
+            additional_services=[],
+        )
+        # Both with semantic source and without should produce identical results
+        primary_sem, loc_sem, additional_sem = \
+            _merge_service_type_and_primary_location(
+                regex, llm, None, "semantic"
+            )
+        primary_def, loc_def, additional_def = \
+            _merge_service_type_and_primary_location(regex, llm)
+        assert primary_sem == primary_def == "medical"
+        assert loc_sem == loc_def == "manhattan"
+
+    def test_semantic_source_empty_regex_branch_unchanged(self):
+        """The empty-regex branch (R is empty → LLM wins) fires
+        before the sets-disagree semantic check, so semantic source
+        with an empty regex still gives LLM the win.
+
+        This case is impossible by construction (semantic only fires
+        when regex is non-empty in `_run_early_extraction`), but the
+        merge function is called directly by tests too — so the
+        defensive ordering matters."""
+        regex = dict(
+            service_type=None,
+            location=None,
+            additional_services=[],
+        )
+        llm = dict(
+            service_type="food",
+            location="brooklyn",
+            additional_services=[],
+        )
+        primary, loc, additional = \
+            _merge_service_type_and_primary_location(
+                regex, llm, None, "semantic"
+            )
+        # Empty-regex branch fires first — LLM wins
+        assert primary == "food"
+        assert loc == "brooklyn"
+
+    def test_semantic_source_empty_llm_branch_unchanged(self):
+        """The empty-LLM branch (L is empty → regex wins) also fires
+        before the sets-disagree semantic check. Regex's value (which
+        carries the semantic-set service_type) wins regardless."""
+        regex = dict(
+            service_type="medical",  # set by semantic
+            location="manhattan",
+            additional_services=[],
+        )
+        llm = dict(
+            service_type=None,
+            location=None,
+            additional_services=[],
+        )
+        primary, loc, additional = \
+            _merge_service_type_and_primary_location(
+                regex, llm, None, "semantic"
+            )
+        # Empty-LLM branch fires — regex wins (carries semantic value)
+        assert primary == "medical"
+        assert loc == "manhattan"
+
+    def test_unknown_extraction_source_falls_through_to_default(self):
+        """Only the literal string `"semantic"` triggers the special
+        branch. Unknown values (typos, future enum additions) fall
+        through to the default LLM-wins behavior — fail-safe under
+        caller error."""
+        regex = dict(
+            service_type="medical",
+            location=None,
+            additional_services=[],
+        )
+        llm = dict(
+            service_type="other",
+            location="manhattan",
+            additional_services=[],
+        )
+        # "Semantic" with capital S — case-sensitive
+        primary, loc, additional = \
+            _merge_service_type_and_primary_location(
+                regex, llm, None, "Semantic"
+            )
+        assert primary == "other"  # falls through to default
+
+        # llm_gate (a real value used elsewhere, but not the special branch)
+        primary, loc, additional = \
+            _merge_service_type_and_primary_location(
+                regex, llm, None, "llm_gate"
+            )
+        assert primary == "other"  # falls through to default
+
+
 class TestPrimaryLocationBinding:
     """When the primary-winner has a location, the top-level `merge()`
     must use it — not re-compute via `_merge_location` on the raw sides.

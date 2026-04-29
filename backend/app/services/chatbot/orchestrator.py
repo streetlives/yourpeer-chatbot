@@ -450,12 +450,19 @@ def generate_reply(
             # extraction now always routes through the unified
             # `app.services.slot_extraction.extract()`. See
             # UNIFIED_EXTRACTOR_MIGRATION.md.
+            #
+            # Pass `extraction_source` so Trust Model 3 can give the
+            # semantic router priority when its classification
+            # disagrees with the LLM's pick (Phase 4 Stage 3
+            # follow-up). When the source is "regex" or None, merge
+            # behaves as before.
             from app.services.slot_extraction import extract as extract_unified
             extracted = extract_unified(
                 message,
                 early_extracted,
                 conversation_history=existing.get("transcript", []),
                 api_key_available=True,  # gated by _USE_LLM above
+                extraction_source=_extraction_source,
             )
     else:
         extracted = early_extracted

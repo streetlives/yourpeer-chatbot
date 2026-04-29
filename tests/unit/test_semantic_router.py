@@ -13,7 +13,8 @@ Test categories:
     4. False positive rejection — no misrouting on ambiguous inputs
     5. Population detection — cross-cutting identity extraction
     6. Threshold behavior — confidence boundaries
-    7. Integration — extract_slots_smart() with semantic routing
+    7. Integration — `pipeline._run_early_extraction()` (regex+semantic)
+       and `slot_extraction.extract()` (LLM merge) with semantic routing
     8. Graceful degradation — behavior when model unavailable
     9. Observability — diagnostics output
 """
@@ -859,37 +860,17 @@ class TestIntegrationFallthrough:
             assert result["service_type"] == "shelter"
             assert source == "semantic"
 
-    def test_semantic_service_type_through_extract_merge(self, mock_model):
-        """Trust Model 3 contract for semantic-set service_type when
-        the LLM also runs on a non-simple message.
+    def test_extract_merge_sets_agree_llm_value_flows_through(self, mock_model):
+        """Trust Model 3 sets-AGREE branch is unchanged.
 
-        Two cases:
-          (A) Sets agree (both pick the same service): LLM's primary
-              wins in Ext-2b. For semantic-set service_type, this means
-              the LLM's value flows through — same value, but routed
-              via LLM's pick.
-          (B) Sets disagree: LLM wins (line 510-514 of merge.py),
-              because LLM filtering (context vs. request) is the
-              signal Trust Model 3 trusts when the two sources
-              diverge. The semantic-set value does NOT override.
-
-        This test pins both branches. The earlier legacy test
-        (`test_semantic_service_type_preserved_through_llm_merge`)
-        asserted that semantic always wins on disagree — that behavior
-        belonged to the legacy `extract_slots_smart`'s post-LLM regex
-        override hack and was intentionally retired in R36 when Trust
-        Model 3 unified the merge logic. The unified contract: sets
-        disagree → LLM wins. Documented in `merge.py:_merge_service_type_and_primary_location`
-        and the migration doc rev 17.
+        When regex (or semantic) and LLM pick the same service_type,
+        Ext-2b says LLM's primary wins on the merge. With matching
+        primaries, this is observationally identical regardless of
+        source — the value is the same. Pinning the branch here so
+        any future change to Ext-2b surfaces clearly.
         """
-        initialize_with_routes(
-            mock_model,
-            {"medical": ["I need insulin"]},
-        )
+        initialize_with_routes(mock_model, {"medical": ["I need insulin"]})
 
-        # --- Case A: sets agree (both medical) ---
-        # Semantic set regex_result["service_type"] = "medical"; LLM
-        # also picks medical. Result: medical (LLM's pick, but value matches).
         regex_with_semantic = _regex_shape(service_type="medical")
         llm_agrees = {
             "service_type": "medical",
@@ -911,24 +892,207 @@ class TestIntegrationFallthrough:
         ):
             from app.services.slot_extraction import extract
             message = "I am a diabetic and I ran out of my insulin today"
-            result = extract(message, regex_with_semantic, api_key_available=True)
+            result = extract(
+                message, regex_with_semantic,
+                api_key_available=True,
+                extraction_source="semantic",
+            )
             assert result["service_type"] == "medical"
+            # LLM's location flows through (it had one, regex didn't)
             assert result["location"] == "manhattan"
             assert result["age"] == 45
 
-        # --- Case B: sets disagree (LLM wins per Trust Model 3) ---
-        # Semantic set "medical"; LLM returns "other" — sets diverge,
-        # LLM's filtering signal is trusted. Result: other.
-        llm_disagrees = {**llm_agrees, "service_type": "other"}
+    def test_extract_merge_sets_disagree_no_semantic_source_llm_wins(
+        self, mock_model
+    ):
+        """Trust Model 3 sets-DISAGREE branch when no semantic source.
+
+        When regex (not semantic) put the value on regex_result and
+        the LLM disagrees, the LLM wins — its filtering (context vs.
+        request) is the trusted signal in this default case. This
+        is the original R36 Ext-2b behavior and is unchanged by the
+        Phase 4 Stage 3 follow-up.
+        """
+        initialize_with_routes(mock_model, {"medical": ["I need insulin"]})
+
+        # extraction_source="regex" or None → LLM wins on disagree
+        regex_only = _regex_shape(service_type="medical")
+        llm_disagrees = {
+            "service_type": "other",
+            "service_detail": None,
+            "additional_services": [],
+            "location": "manhattan",
+            "age": 45,
+            "urgency": "high",
+            "_gender": None,
+            "family_status": None,
+            "_populations": [],
+            "org_name": None,
+            "tone": None,
+            "action": None,
+        }
         with patch(
             "app.services.slot_extraction.extract_slots_short",
             return_value=llm_disagrees,
         ):
-            result = extract(message, regex_with_semantic, api_key_available=True)
-            # LLM wins on disagreement (Trust Model 3 sets-disagree branch)
-            assert result["service_type"] == "other"
+            from app.services.slot_extraction import extract
+            message = "I am a diabetic and I ran out of my insulin today"
+
+            # Case 1: extraction_source not passed (default None)
+            result = extract(message, regex_only, api_key_available=True)
+            assert result["service_type"] == "other", (
+                "Default behavior: LLM wins on disagree when no source tag"
+            )
+
+            # Case 2: extraction_source="regex" explicitly
+            result = extract(
+                message, regex_only,
+                api_key_available=True,
+                extraction_source="regex",
+            )
+            assert result["service_type"] == "other", (
+                "Explicit regex source: LLM wins on disagree"
+            )
+
+    def test_extract_merge_sets_disagree_semantic_source_wins(
+        self, mock_model
+    ):
+        """Trust Model 3 sets-DISAGREE with semantic source.
+
+        Phase 4 Stage 3 follow-up (April 2026): when
+        `extraction_source="semantic"` and the LLM's primary
+        disagrees with the semantic-router's pick, semantic wins.
+        Trust hierarchy is now semantic > LLM > regex.
+
+        Rationale: the semantic router's per-route confidence
+        thresholds (0.75-0.85 cosine similarity) make its
+        classifications high-trust for the cases it was tuned for.
+        Letting the LLM override its picks regresses the scenarios
+        the router was designed to fix (e.g., insulin → medical
+        via the medical route, even when the LLM might over-
+        interpret context).
+        """
+        initialize_with_routes(mock_model, {"medical": ["I need insulin"]})
+
+        # Semantic put "medical" on regex_result; LLM returns "other".
+        regex_with_semantic = _regex_shape(service_type="medical")
+        llm_disagrees = {
+            "service_type": "other",
+            "service_detail": None,
+            "additional_services": [],
+            "location": "manhattan",
+            "age": 45,
+            "urgency": "high",
+            "_gender": None,
+            "family_status": None,
+            "_populations": [],
+            "org_name": None,
+            "tone": None,
+            "action": None,
+        }
+        with patch(
+            "app.services.slot_extraction.extract_slots_short",
+            return_value=llm_disagrees,
+        ):
+            from app.services.slot_extraction import extract
+            message = "I am a diabetic and I ran out of my insulin today"
+            result = extract(
+                message, regex_with_semantic,
+                api_key_available=True,
+                extraction_source="semantic",
+            )
+            # Semantic wins on primary
+            assert result["service_type"] == "medical", (
+                "Semantic source must override LLM on sets-disagree"
+            )
+            # Semantic doesn't extract location, so the merge falls
+            # through Trust Model 3's "primary winner's location is
+            # None" branch into Trust Model 1's `_merge_location`,
+            # which consults both sides with validator-gating. The
+            # LLM's "manhattan" passes the validator and flows
+            # through. This is correct: semantic-priority on
+            # service_type does NOT mean we discard the LLM's
+            # location signal — they're independent slots.
             assert result["location"] == "manhattan"
+            # LLM-only fields still flow through (Trust Models 1, 2)
             assert result["age"] == 45
+            assert result["urgency"] == "high"
+
+    def test_extract_merge_semantic_source_per_slot_trust_contract(
+        self, mock_model
+    ):
+        """Pin the per-slot trust contract when semantic wins primary.
+
+        When `extraction_source="semantic"` and sets disagree, the
+        intended behavior is:
+
+          - service_type     → semantic (high-trust keyword/embedding match)
+          - location         → LLM-friendly: when regex caught a canonical
+                               location, regex wins (it's already canonical
+                               from `_KNOWN_LOCATIONS`); otherwise the
+                               post-merge Trust Model 1 fallback picks up
+                               LLM's location with validator-gating.
+          - additional_services → LLM-friendly: `_merge_additional_services`
+                               dedup-unions both sides regardless of who
+                               won primary, so LLM additions always flow
+                               through.
+
+        This test exercises a realistic semantic scenario:
+        "I need insulin and a shower in Bed-Stuy."
+          - regex catches "Bed-Stuy" (location), misses both services
+          - semantic catches "insulin" → medical
+          - LLM correctly catches both: medical + personal_care additional
+
+        Sets disagree (regex={medical from semantic}, LLM={medical, personal_care}).
+        Expected merge: semantic's medical for primary, regex's
+        bedford-stuyvesant for location, LLM's shower captured in additionals.
+        """
+        initialize_with_routes(mock_model, {"medical": ["I need insulin"]})
+
+        regex_with_semantic = _regex_shape(
+            service_type="medical",         # set by semantic (regex missed)
+            location="bedford-stuyvesant",  # set by regex
+        )
+        llm_caught_both = {
+            "service_type": "other",  # disagrees with semantic
+            "service_detail": None,
+            "additional_services": [
+                ("personal_care", None, "bedford-stuyvesant"),
+            ],
+            "location": "bedford-stuyvesant",
+            "age": None,
+            "urgency": None,
+            "_gender": None,
+            "family_status": None,
+            "_populations": [],
+            "org_name": None,
+            "tone": None,
+            "action": None,
+        }
+        with patch(
+            "app.services.slot_extraction.extract_slots_short",
+            return_value=llm_caught_both,
+        ):
+            from app.services.slot_extraction import extract
+            result = extract(
+                "I need insulin and a shower in Bed-Stuy",
+                regex_with_semantic,
+                api_key_available=True,
+                extraction_source="semantic",
+            )
+
+        # service_type: semantic wins
+        assert result["service_type"] == "medical"
+        # location: regex's canonical match preserved (more specific
+        # than LLM's "brooklyn" would have been)
+        assert result["location"] == "bedford-stuyvesant"
+        # additional_services: LLM's shower flows through via
+        # _merge_additional_services's dedup-union, even though regex
+        # had no additional services and the merge's "winner_additional"
+        # came from regex
+        assert len(result["additional_services"]) == 1
+        assert result["additional_services"][0][0] == "personal_care"
+
 
 # ---------------------------------------------------------------------------
 # 16. ROUTE DEFINITION ALIGNMENT

@@ -55,6 +55,7 @@ def extract(
     regex_result: dict,
     conversation_history: Optional[list] = None,
     api_key_available: bool = True,
+    extraction_source: Optional[str] = None,
 ) -> dict:
     """Extract slots from a user message.
 
@@ -73,6 +74,14 @@ def extract(
         api_key_available: If False, skip all LLM calls and return
             regex_result unchanged (minus the narrative regex-fallback
             urgency augmentation for narrative-length messages).
+        extraction_source: Optional source tag for
+            `regex_result.service_type` — one of "regex" / "semantic"
+            / "llm_gate" / None. When "semantic", Trust Model 3 in
+            the merge layer gives the semantic-router classification
+            priority over the LLM on sets-disagree (Phase 4 Stage 3
+            follow-up, April 2026). Default None means "treat as
+            regex" — backwards-compatible with callers that don't
+            track source.
 
     Returns:
         A dict with 15 fields: the same 13 slot fields as
@@ -135,7 +144,7 @@ def extract(
                 _narrative_regex_fallback(regex_result, message),
                 llm_result,
             )
-        return merge(regex_result, _filter_valid_service_types(llm_result), message)
+        return merge(regex_result, _filter_valid_service_types(llm_result), message, extraction_source)
 
     # Short path, non-simple: call the short LLM and merge its output
     # with the caller's regex_result using per-field trust models.
@@ -160,7 +169,7 @@ def extract(
         # Preserve LLM tone/action even when slots are empty.
         return _with_classification(dict(regex_result), llm_result)
 
-    return merge(regex_result, _filter_valid_service_types(llm_result), message)
+    return merge(regex_result, _filter_valid_service_types(llm_result), message, extraction_source)
 
 
 # ---------------------------------------------------------------------------

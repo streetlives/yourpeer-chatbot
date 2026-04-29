@@ -339,7 +339,7 @@ Validates crisis detection across five categories with correct hotline resources
 
 ### Slot extraction tests
 
-The slot extractor tests live in `test_slot_extraction.py` (215 unit tests, mocked-LLM) and `tests/integration/test_slot_extraction_live.py` (5 live tests, requires API key). These cover the unified extractor architecture introduced in the rev 17 migration.
+The slot extractor tests live in `test_slot_extraction.py` (246 unit tests, mocked-LLM) and `tests/integration/test_slot_extraction_live.py` (5 live tests, requires API key). These cover the unified extractor architecture introduced in the rev 17 migration.
 
 <!-- drift:ignore: deletion-of-files historical references -->
 The legacy `test_llm_slot_extractor.py`, `test_llm_classifier.py`, `test_llm_multi_service.py`, and `test_narrative_extraction.py` files were deleted in Phase 4 Stage 4a (April 2026); their coverage was ported into `test_slot_extraction.py` as part of the migration. See `docs/design/UNIFIED_EXTRACTOR_MIGRATION.md` for the full mapping.
@@ -364,7 +364,7 @@ Validates all 13 public functions in the audit log module.
 | Log conversation turn | 5 | Correct fields, internal slot stripping (`_pending_confirmation`, `transcript`, None values), quick reply label extraction, None slots, conversation registration |
 | Request correlation IDs | 4 | request_id stored in turn events, defaults to None, stored in query execution, stored in crisis events |
 
-### `test_semantic_router.py` — 38 tests
+### `test_semantic_router.py` — 41 tests
 
 Validates the Tier 2 semantic routing module: route definitions, model initialization, classification, threshold behavior, population detection, integration with `pipeline._run_early_extraction()` (regex + semantic) and `slot_extraction.extract()` (LLM merge), graceful degradation, and observability. Uses mock embedding models with controlled vectors for deterministic testing — no real model download required.
 
@@ -379,7 +379,7 @@ Validates the Tier 2 semantic routing module: route definitions, model initializ
 | Diagnostics correctness | 2 | get_status returns scores for all routes sorted by max_similarity, includes population routes |
 | Route alignment | 3 | SERVICE_ROUTES keys match SERVICE_KEYWORDS keys, no cross-route duplicates, all routes covered by SERVICE_KEYWORDS |
 | Integration with `_run_early_extraction` | 5 | Semantic fills missing service_type, population merged with regex (set union), skips when regex resolves, short message LLM-gate short-circuits when semantic resolves, semantic miss leaves source=None |
-| Integration fallthrough | 4 | Semantic returns None falls through, semantic unavailable falls through, narrative messages still run semantic (behavior change vs. legacy), Trust Model 3 sets-agree/disagree merge contract |
+| Integration fallthrough | 7 | Semantic returns None falls through, semantic unavailable falls through, narrative messages still run semantic (behavior change vs. legacy), Trust Model 3 sets-agree branch, sets-disagree without semantic source (LLM wins), sets-disagree with semantic source (semantic wins, Phase 4 Stage 3 follow-up), per-slot trust contract under semantic source (semantic→service_type, regex/LLM→location, LLM→additional_services) |
 
 ### `test_audit_log.py` (continued — the table below shows the audit log tests that follow the semantic router section)
 
