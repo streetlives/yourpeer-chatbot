@@ -284,13 +284,23 @@ Test count after Stage 2: 3,539 unit tests passing (−27 from the deleted flag-
 - Remap the 6 direct imports from `llm_slot_extractor` in `tests/integration/test_service_data_llm_firewall.py` to the new module; preserve Layer 4 and Layer 6 asserts.
 - Update `tests/integration/test_targeted_bug_regressions.py`, `tests/unit/test_populations.py`, and `tests/unit/test_semantic_router.py` import paths.
 
-#### Stage 4 — Consolidate tests (~1 hour, PENDING)
+#### Stage 4 — Consolidate tests (PARTIALLY COMPLETE — Stage 4a done early to de-risk Stage 3)
 
-<!-- drift:ignore: Phase 4 will create these files; intentional forward-references -->
-- `test_llm_slot_extractor.py` → split into `test_slot_extraction_dispatch.py`, `test_slot_extraction_merge.py`, `test_slot_extraction_prompts.py` (or fold relevant cases into the existing `test_slot_extraction.py`).
-- `test_narrative_extraction.py` → fold into the above.
-- `test_llm_multi_service.py` → fold into merge tests.
-- `test_llm_classifier.py` → delete or fold into prompts tests.
+**Stage 4a (DONE, 2026-04-25):** Deleted four legacy test files whose coverage was already replicated in `test_slot_extraction.py` and the new live-tests file:
+
+<!-- drift:ignore: deletion-of-file historical references -->
+- `tests/unit/test_llm_slot_extractor.py` (27 tests) — coverage in `TestExtract*` classes (16 tests), `TestBuildMessagesWithHistory` (6), Trust Model 3 tests (regex bias overrides), and `tests/integration/test_slot_extraction_live.py` (5 ported live tests).
+<!-- drift:ignore: deletion-of-file historical reference -->
+- `tests/unit/test_llm_classifier.py` (30 tests) — coverage in `TestNormalizeToolOutputValidation` (29 tests added in Pass 1) and `TestRunLLMGate.test_skip_*`.
+<!-- drift:ignore: deletion-of-file historical reference -->
+- `tests/unit/test_llm_multi_service.py` (11 tests) — coverage in `TestHybridAdditionalServices` (11) and `TestNormalizeToolOutput.test_all_none_input`.
+<!-- drift:ignore: deletion-of-file historical reference -->
+- `tests/unit/test_narrative_extraction.py` (17 tests) — coverage in `TestNarrativeRegexFallback` + `TestNarrativeRegexFallbackRealisticScenarios` (4 ported in Pass 2) + `TestExtractEndToEndNarrative` (4 ported) + `TestIsNarrative` + `TestAugmentUrgencyFromClues`.
+
+Total deletion: 80 tests (4,190 → 4,110). All coverage preserved in the unified test file or migrated to the integration suite. Done early so Stage 3 (legacy module deletion) doesn't have to handle orphaned test imports atomically.
+
+<!-- drift:ignore: Stage 4b future-file references; not yet created -->
+**Stage 4b (PENDING):** Optional further consolidation — split `test_slot_extraction.py` (now 215 tests, 4,000+ lines) into `test_slot_extraction_dispatch.py`, `test_slot_extraction_merge.py`, `test_slot_extraction_prompts.py` for navigability. Defer until the file's size becomes a real friction point; the single-file structure is workable for now.
 
 Exit criterion (full Phase 4 complete): `llm_slot_extractor.py` and `llm_classifier.py` don't exist; the `_USE_UNIFIED_EXTRACTOR` flag is gone; all tests green including the 38 in `test_service_data_llm_firewall.py`; one full eval run passes.
 

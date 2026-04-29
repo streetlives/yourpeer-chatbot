@@ -67,7 +67,7 @@ See [`EVALUATION_TESTING.md`](EVALUATION_TESTING.md) for full CLI flags (includi
 **Run LLM integration tests (requires API key):**
 
 ```
-ANTHROPIC_API_KEY=sk-ant-... pytest tests/unit/test_llm_slot_extractor.py -v
+ANTHROPIC_API_KEY=sk-ant-... pytest tests/integration/test_slot_extraction_live.py -v
 ```
 
 Without `ANTHROPIC_API_KEY`, the 5 live LLM tests are automatically skipped.
@@ -192,10 +192,9 @@ All backend modules and all public functions are covered. Tests are in `tests/un
 | `query_executor.py` | `unit/test_location_boundaries.py`, `unit/test_edge_cases.py` | 65 | Full |
 | `audit_log.py` | `unit/test_audit_log.py`, `unit/test_location_feedback.py`, `integration/test_targeted_bug_regressions.py`, `integration/test_admin_api_routes.py`, `unit/test_audit_regression.py` | 77+ | Full |
 | `crisis_detector.py` | `unit/test_crisis_detector.py`, `integration/test_targeted_bug_regressions.py`, `unit/test_phrase_audit.py` | 60+ | Full |
-| `llm_slot_extractor.py` | `unit/test_llm_slot_extractor.py`, `unit/test_narrative_extraction.py`, `unit/test_semantic_router.py` | 44+ | Full |
+| `slot_extraction/` (package) | `unit/test_slot_extraction.py`, `integration/test_slot_extraction_live.py`, `unit/test_semantic_router.py` | 215+ | Full |
 | `semantic_router.py` | `unit/test_semantic_router.py` | 54 | Full |
 | `semantic_routes.py` | `unit/test_semantic_router.py` | 54 | Full |
-| `llm_classifier.py` | `unit/test_llm_classifier.py` | 30 | Full |
 | `bot_knowledge.py` | `unit/test_bot_knowledge.py` | 44 | Full |
 | `post_results.py` | `unit/test_post_results.py`, `unit/test_post_results_boundary.py`, `unit/test_results_enhancements.py` | 125 | Full |
 | `pii_redactor.py` | `unit/test_pii_redactor.py`, `unit/test_gender_extraction.py`, `unit/test_edge_cases.py` | 38+ | Full |
@@ -338,17 +337,23 @@ Validates crisis detection across five categories with correct hotline resources
 | False positive prevention | 3 | Service requests, conversational messages, "hurt" in non-crisis context |
 | Priority / integration | 3 | `is_crisis()` helper, crisis in longer messages, crisis alongside service requests |
 
-### `test_llm_slot_extractor.py` — 27 unit + 5 live tests
+### Slot extraction tests
 
-Validates the LLM-based slot extractor including conversation history passing. Live tests require `ANTHROPIC_API_KEY` and are automatically skipped without it.
+The slot extractor tests live in `test_slot_extraction.py` (215 unit tests, mocked-LLM) and `tests/integration/test_slot_extraction_live.py` (5 live tests, requires API key). These cover the unified extractor architecture introduced in the rev 17 migration.
 
-| Category | Tests | What's covered |
+<!-- drift:ignore: deletion-of-files historical references -->
+The legacy `test_llm_slot_extractor.py`, `test_llm_classifier.py`, `test_llm_multi_service.py`, and `test_narrative_extraction.py` files were deleted in Phase 4 Stage 4a (April 2026); their coverage was ported into `test_slot_extraction.py` as part of the migration. See `docs/design/UNIFIED_EXTRACTOR_MIGRATION.md` for the full mapping.
+
+| Category | Tests | Class in `test_slot_extraction.py` |
 |---|---|---|
-| LLM extraction (mocked) | 6 | Service+location, age+gender+urgency, third-person, contradicting locations, empty messages, API failure |
-| Smart extractor (tiered) | 5 | Regex sufficient → LLM skipped, regex partial → LLM called, ambiguous → LLM, merge logic, LLM failure falls back |
-| Complexity routing | 3 | Short messages → simple, long messages → complex, unknown locations → complex |
-| Conversation history | 5 | History passed to LLM, alternating messages enforced, None and empty handled, truncated to six messages, smart extractor passes history |
-| Integration (live) | 5 | End-to-end extraction, skipped without API key |
+| Trust-model merge logic | 60+ | `TestTrustModel1*` through `TestTrustModel5*` |
+| Tool output normalization | 35 | `TestNormalizeToolOutput`, `TestNormalizeToolOutputValidation` (age range, case + whitespace, empty-string handling) |
+| Dispatch decisions | 16 | `TestExtract[NoApiKey|SimpleFastPath|NarrativePath|ShortPath]`, `TestIsNarrative`, `TestIsSimpleMessage` |
+| Conversation history | 6 | `TestBuildMessagesWithHistory` (alternation enforcement, truncation, placeholder padding) |
+| Multi-service extraction | 11 | `TestHybridAdditionalServices` (regex+LLM merge, dedup, primary exclusion) |
+| Narrative regex fallback | 11 | `TestNarrativeRegexFallback` + `TestNarrativeRegexFallbackRealisticScenarios` (hospital/housing, runaway youth, eviction, reentry) |
+| End-to-end narrative dispatch | 4 | `TestExtractEndToEndNarrative` (no-mock fallback chain) |
+| Live API extraction | 5 | `tests/integration/test_slot_extraction_live.py` (skipped without API key) |
 
 ### `test_audit_log.py` — 70 tests
 
@@ -545,10 +550,6 @@ Validates `_normalize_contractions()`, `_strip_intensifiers()`, and their integr
 
 Regression tests for structural fixes across 8 test classes. Covers: PII safety warnings (SSN strong warning, phone light heads-up, combined with service flow), foster youth population (aging out → foster_youth not reentry, confirmation shows youth-friendly), pregnant ≠ with_children (pregnancy sets population tag only), youth_runaway crisis category (Runaway Safeline + Covenant House, distinct from DV), assault_victim crisis category (Safe Horizon Victim Services), safety_concern response de-DV'd (988 + 311, no DV hotlines), confirmation warm reframe ("I'll look for..." format), results personalization ("I found X option(s) for you"), and baseline warmth prefixes (random_warmth_prefix fires on routine service flows, doesn't override emotional/shame/urgent contexts).
 
-### `test_llm_multi_service.py` — 11 tests
-
-Validates PR 4's LLM multi-service extraction. Covers `additional_service_types` in the LLM tool response, single-service returns empty additional list, multiple additional services, null handling, failure fallback, `extract_slots_smart` merging LLM and regex additional services, deduplication of primary service, and key cleanup.
-
 ### `test_targeted_bug_regressions.py` — 30 tests
 
 Targeted regression tests for bugs 8–14 identified during PR 19 review. Organized by bug number:
@@ -643,17 +644,6 @@ Integration tests that send messages through the full `generate_reply` pipeline.
 | PII in narratives | 4 | Phone, name, SSN, multiple PII in narrative messages |
 | Session isolation | 2 | Two sessions independent, emotional state doesn't leak |
 | Eval scenario approximations | 12 | Emotional scared/feeling-down/rough-day, change mind, yes after escalation, frustration loop, long story, tell my story, re-entry, fake service, nonsense service, shame shelter stigma |
-
-### `test_narrative_extraction.py` — 17 tests
-
-Validates narrative extraction — urgency-aware slot extraction for long messages (20+ words). Tests both the LLM path (mocked) and the regex fallback path.
-
-| Category | Tests | What's covered |
-|---|---|---|
-| Narrative detection | 3 | Short message not narrative, long message is narrative, threshold boundary |
-| Urgency hierarchy | 3 | Shelter highest, medical above food, food above employment |
-| Regex fallback | 7 | Hospital/housing prioritizes shelter, runaway youth, eviction, re-entry all prioritize shelter, urgency inferred from context, single service no change, location preserved |
-| Smart extractor narrative path | 4 | Narrative uses fallback without LLM, doesn't regex-override, short message uses standard path, additional services preserved |
 
 ### `test_post_results_boundary.py` — 31 tests
 
@@ -790,21 +780,18 @@ These are documented behaviors, not bugs:
 - **Borough typos (regex only):** Misspellings like "brookyln" are not corrected by regex. LLM extraction handles these.
 - **Two boroughs in one message (regex only):** "I'm in Queens but looking for food in Brooklyn" extracts "Queens" (first preposition match), not Brooklyn. LLM extraction picks the intended location.
 - **Manhattan / "New York" ambiguity:** Manhattan normalizes to DB city value "New York." PostGIS proximity search mitigates this for neighborhood-level queries.
-- **Regex override vs LLM for contextual keywords:** The smart extractor prefers regex `service_type` when regex finds an explicit keyword, even when the LLM disagrees. This is correct for deterministic keywords ("dental" is literally in the text) but incorrect when a keyword appears as context, not the user's need (e.g., "I just got out of the hospital and need somewhere to stay" — "hospital" triggers medical via regex, but the user needs shelter). Two tests are marked `xfail` for this.
+- **Regex override vs LLM for contextual keywords:** The unified extractor prefers regex `service_type` when regex finds an explicit keyword, even when the LLM disagrees. This is correct for deterministic keywords ("dental" is literally in the text) but is a known edge case when a keyword appears as context, not the user's need (e.g., "I just got out of the hospital and need somewhere to stay" — "hospital" triggers medical via regex, but the user needs shelter). The narrative path's urgency reprioritization handles this for messages over 20 words; short messages still surface the regex pick. See `TestNarrativeRegexFallbackRealisticScenarios` for end-to-end coverage.
 - **Audit log persistence:** Set `PILOT_DB_PATH` to enable SQLite persistence for pilot testing. When unset, data is in-memory only and lost on restart.
 - **Frontend untested:** No frontend test infrastructure exists yet. The Next.js components in `frontend-next/` (chat UI, admin console, hooks, Zustand store) have no automated tests. Consider adding Playwright for E2E tests or Vitest for component tests when stabilizing for production.
 
 ### Expected Failures (xfail)
 
-38 tests are marked `@pytest.mark.xfail` — they document known limitations, not regressions:
+3 tests are marked `@pytest.mark.xfail` — they document known limitations, not regressions:
 
 | Tests | File | Reason |
 |---|---|---|
 | `test_spoken_number_age_extraction` | `test_slot_extractor.py` | Word-to-number conversion ("seventeen" → 17) not implemented in regex extractor |
-| `test_family_status_with_children_prepositional` | `test_slot_extractor.py` | Prepositional family phrases ("for me and my kids", "I have a baby") not matched by current phrase list |
-| `test_smart_uses_llm_for_long_messages` | `test_llm_slot_extractor.py` | Regex override replaces LLM's correct "shelter" with "medical" because "hospital" matches a medical keyword |
-| `test_smart_regex_does_not_override_when_no_regex_match` | `test_llm_slot_extractor.py` | Same regex override issue — "hospital" is contextual, not the user's need |
-| 34 parametrized xfails | `test_phrase_audit.py` (consolidated) | LLM-dependent crisis phrases (C-SSRS indirect ideation, euphemistic language, method-specific plans, perceived burdensomeness) that regex can't catch without context. Each xfail has a research citation. Promoting a phrase to the regex list upgrades it to instant detection |
+| `test_auto_execute_urgent_query` (×2) | `test_results_enhancements.py` | Auto-execute for urgent queries not yet implemented — chatbot always confirms |
 
 ## Adding New Tests
 

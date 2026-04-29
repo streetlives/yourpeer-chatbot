@@ -208,7 +208,7 @@ Shared fixtures and helpers live in `tests/conftest.py` (use `send()`, `send_mul
 `assert_classified()`). For live LLM integration tests:
 
 ```bash
-ANTHROPIC_API_KEY=... pytest tests/unit/test_llm_slot_extractor.py -k live
+ANTHROPIC_API_KEY=... pytest tests/integration/test_slot_extraction_live.py -v
 ```
 
 ## Code Conventions

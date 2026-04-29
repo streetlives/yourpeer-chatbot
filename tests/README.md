@@ -29,10 +29,7 @@ tests/
 │   ├── test_session_token.py           # Session token signing
 │   ├── test_rate_limiter.py            # Rate limiting logic
 │   ├── test_claude_client.py           # Claude API client mocking
-│   ├── test_llm_slot_extractor.py      # LLM-based slot extraction
-│   ├── test_llm_classifier.py          # Unified LLM classifier
-│   ├── test_llm_multi_service.py       # Multi-service LLM extraction
-│   ├── test_narrative_extraction.py    # Long-message narrative handling
+│   ├── test_slot_extraction.py         # Unified slot extractor (Phase 4 consolidated)
 │   ├── test_edge_cases.py              # Slot extractor edge cases
 │   ├── test_persistence.py             # SQLite pilot persistence
 │   ├── test_main.py                    # FastAPI app initialization, health check, CORS
@@ -118,8 +115,7 @@ pytest tests/unit/ --cov=app.services.slot_extractor
 | `pii_redactor.py` | `unit/test_pii_redactor.py` |
 | `query_templates.py` | `unit/test_query_templates.py` |
 | `crisis_detector.py` | `unit/test_crisis_detector.py` |
-| `llm_slot_extractor.py` | `unit/test_llm_slot_extractor.py`, `unit/test_narrative_extraction.py` |
-| `llm_classifier.py` | `unit/test_llm_classifier.py` |
+| `slot_extraction/` (package) | `unit/test_slot_extraction.py`, `integration/test_slot_extraction_live.py` |
 | `post_results.py` | `unit/test_post_results.py`, `unit/test_post_results_boundary.py` |
 | `routes/chat.py` | `integration/test_http_routes_and_models.py` |
 | `routes/admin.py` | `integration/test_admin_api_routes.py` |
