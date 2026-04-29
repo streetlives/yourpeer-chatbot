@@ -2,9 +2,15 @@
 
 These tests target the three code blocks added in PR #62 — the
 queue-accept fast path, the ``_awaiting_service_after_clear`` guard,
-and the ``_USE_UNIFIED_EXTRACTOR`` flag branch — because that's where
-the surviving mutants live (mutation score 68% on this file, threshold
+and the unified-extractor call site — because that's where the
+surviving mutants live (mutation score 68% on this file, threshold
 70%).
+
+Note: Phase 4 (April 2026) deleted the legacy ``extract_slots_smart``
+path and the ``_USE_UNIFIED_EXTRACTOR`` feature flag. Slot extraction
+in the service-flow branch is now an unconditional call into
+``app.services.slot_extraction.extract``. Tests here exercise that
+unconditional path; there is no flag to flip.
 
 The strategy is: for every conjunction, equality, index, and argument
 shape in those blocks, write at least one positive test (path taken,
@@ -18,9 +24,9 @@ Each test docstring names the mutant(s) it kills so future readers can
 preserve the coverage when refactoring.
 
 These tests deliberately mock at a high level (``_promote_queued_offer``,
-``extract_slots_smart``, ``extract_unified``) so failures point at the
-orchestrator's routing logic, not at downstream behavior already covered
-by ``test_slot_extraction.py`` and ``test_multi_intent_queue.py``.
+``extract_unified``) so failures point at the orchestrator's routing
+logic, not at downstream behavior already covered by
+``test_slot_extraction.py`` and ``test_multi_intent_queue.py``.
 """
 
 from unittest.mock import MagicMock, patch
@@ -413,7 +419,7 @@ class TestQueueAcceptFastPath:
 class TestAwaitingServiceAfterClearGuard:
     """Block B: regex bypass when user just cleared service slot.
 
-    Source code under test:
+    Source code under test::
 
         awaiting_clear = existing.get("_awaiting_service_after_clear")
         regex_confident = (
@@ -424,10 +430,10 @@ class TestAwaitingServiceAfterClearGuard:
             extracted = dict(early_extracted)
             existing.pop("_awaiting_service_after_clear", None)
             save_session_slots(session_id, existing)
-        elif _USE_UNIFIED_EXTRACTOR:
-            ...
         else:
-            ...
+            # Phase 4: unconditional unified-extract call (legacy
+            # branch and feature flag both deleted).
+            extracted = extract_unified(...)
     """
 
     def _setup_for_service_flow(self, mock_session, stub_pipeline, sid, slots):
@@ -465,28 +471,25 @@ class TestAwaitingServiceAfterClearGuard:
             "location": None,
         }
 
-        # Patch BOTH extractors so we can assert neither is called.
-        # (The unified path is the current default per Phase 3.)
+        # Patch the unified extractor so we can assert it isn't called.
+        # (Phase 4 deleted the legacy ``extract_slots_smart`` path and
+        # the ``_USE_UNIFIED_EXTRACTOR`` flag — unified is now the only
+        # extractor.)
         unified_mock = MagicMock(return_value={"service_type": "wrong"})
-        legacy_mock = MagicMock(return_value={"service_type": "wrong"})
         monkeypatch.setattr(
             "app.services.slot_extraction.extract", unified_mock
         )
-        monkeypatch.setattr(
-            "app.services.llm_slot_extractor.extract_slots_smart", legacy_mock
-        )
 
-        # Force _USE_LLM=True and _USE_UNIFIED_EXTRACTOR=True so the
-        # bypass branch is the only path that produces "no LLM call".
+        # ``_USE_LLM`` still exists on the orchestrator (gates the
+        # whole service-flow LLM branch). Force it on so the bypass
+        # branch is the only path that produces "no extract call".
         monkeypatch.setattr(orchestrator, "_USE_LLM", True)
-        monkeypatch.setattr(orchestrator, "_USE_UNIFIED_EXTRACTOR", True)
 
         generate_reply("Shelter", session_id=sid)
 
         assert not unified_mock.called, (
             "bypass should skip unified extractor when regex is confident"
         )
-        assert not legacy_mock.called
 
     def test_bypass_clears_awaiting_flag_after_firing(
         self, mock_session, stub_pipeline, monkeypatch
@@ -513,7 +516,6 @@ class TestAwaitingServiceAfterClearGuard:
             "location": None,
         }
         monkeypatch.setattr(orchestrator, "_USE_LLM", True)
-        monkeypatch.setattr(orchestrator, "_USE_UNIFIED_EXTRACTOR", True)
 
         generate_reply("Shelter", session_id=sid)
 
@@ -550,7 +552,6 @@ class TestAwaitingServiceAfterClearGuard:
             "app.services.slot_extraction.extract", unified_mock
         )
         monkeypatch.setattr(orchestrator, "_USE_LLM", True)
-        monkeypatch.setattr(orchestrator, "_USE_UNIFIED_EXTRACTOR", True)
 
         generate_reply("Shelter", session_id=sid)
 
@@ -593,7 +594,6 @@ class TestAwaitingServiceAfterClearGuard:
             "app.services.slot_extraction.extract", unified_mock
         )
         monkeypatch.setattr(orchestrator, "_USE_LLM", True)
-        monkeypatch.setattr(orchestrator, "_USE_UNIFIED_EXTRACTOR", True)
 
         generate_reply("Shelter and food", session_id=sid)
 
@@ -634,7 +634,6 @@ class TestAwaitingServiceAfterClearGuard:
             "app.services.slot_extraction.extract", unified_mock
         )
         monkeypatch.setattr(orchestrator, "_USE_LLM", True)
-        monkeypatch.setattr(orchestrator, "_USE_UNIFIED_EXTRACTOR", True)
 
         generate_reply("In Brooklyn", session_id=sid)
 
@@ -672,7 +671,6 @@ class TestAwaitingServiceAfterClearGuard:
         }
         stub_pipeline.early_extracted = early
         monkeypatch.setattr(orchestrator, "_USE_LLM", True)
-        monkeypatch.setattr(orchestrator, "_USE_UNIFIED_EXTRACTOR", True)
 
         # merge_slots will read from `extracted`. If the orchestrator
         # held a reference instead of a copy, downstream merge_slots
@@ -689,11 +687,12 @@ class TestAwaitingServiceAfterClearGuard:
 
 
 # ===========================================================================
-# Block C — _USE_UNIFIED_EXTRACTOR flag branch (orchestrator-level only)
+# Block C — Unified extract() call shape
 # ===========================================================================
-# The env-var parsing is already covered by
-# ``test_unified_extractor_flag.py``. The two mutants likely surviving
-# here are at the call-site:
+# Phase 4 deleted the ``_USE_UNIFIED_EXTRACTOR`` flag and the
+# ``test_unified_extractor_flag.py`` file that used to cover env-var
+# parsing. The two argument-shape mutants on the call site are still
+# worth covering here:
 #   - ``api_key_available=True`` → ``=False``
 #   - the second positional arg being ``early_extracted`` specifically
 
@@ -734,7 +733,6 @@ class TestUnifiedExtractorCallShape:
             "app.services.slot_extraction.extract", unified_mock
         )
         monkeypatch.setattr(orchestrator, "_USE_LLM", True)
-        monkeypatch.setattr(orchestrator, "_USE_UNIFIED_EXTRACTOR", True)
 
         generate_reply("I need shelter", session_id=sid)
 
@@ -775,7 +773,6 @@ class TestUnifiedExtractorCallShape:
             "app.services.slot_extraction.extract", unified_mock
         )
         monkeypatch.setattr(orchestrator, "_USE_LLM", True)
-        monkeypatch.setattr(orchestrator, "_USE_UNIFIED_EXTRACTOR", True)
 
         generate_reply("I need shelter", session_id=sid)
 
