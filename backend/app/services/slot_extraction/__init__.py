@@ -16,11 +16,12 @@ The module consolidates four concerns that were previously scattered:
        messages skip), and if so, which prompt (short vs narrative).
        See `dispatch.py`.
     2. LLM call: a single function per prompt, returning the normalized
-       10-field dict shape (the schema fields; Trust Model 5's
-       three regex-only fields aren't asked of the LLM). See
-       `dispatch.py`.
+       12-field dict shape (10 slot fields plus the `tone` and `action`
+       advisory classification fields; Trust Model 5's three regex-only
+       fields aren't asked of the LLM). See `dispatch.py`.
     3. Merge: apply per-field trust-model rules to combine regex and
-       LLM output into the 13-field result. See `merge.py`.
+       LLM output into the 15-field result (13 slot fields + tone +
+       action). See `merge.py`.
     4. Prompts: tool schema + short + narrative system prompts kept
        close to the merge logic they pair with. See `prompts.py`.
 
@@ -74,7 +75,10 @@ def extract(
             urgency augmentation for narrative-length messages).
 
     Returns:
-        A dict with the same 13 fields as regex_result.
+        A dict with 15 fields: the same 13 slot fields as
+        regex_result, plus the advisory classification fields `tone`
+        and `action` (always present, populated only on LLM-success
+        paths).
 
     This function never mutates its inputs.
 
@@ -177,8 +181,15 @@ def _is_empty_llm_result(result: dict) -> bool:
 
     Criterion: no service_type, no service_detail, no location, no
     age, no urgency, no gender, no family_status, no org_name, empty
-    additional_services, empty populations. All ten must be empty
-    for this to fire.
+    additional_services, empty populations. All ten slot fields must
+    be empty for this to fire.
+
+    Note: `tone` and `action` are intentionally NOT checked. The
+    fallback paths in `extract()` preserve LLM-classified tone/action
+    via `_with_classification(d, llm_result)` even when slot
+    extraction returned nothing — matching legacy `classify_unified`
+    behavior, where tone/action and slots were returned independently.
+    See the Bug 5 regression tests in `test_slot_extraction.py`.
     """
     if result.get("service_type"):
         return False

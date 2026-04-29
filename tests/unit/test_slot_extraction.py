@@ -1122,7 +1122,8 @@ class TestHybridAdditionalServices:
 # ---------------------------------------------------------------------------
 
 class TestTopLevelMerge:
-    """Full merge() invocations producing the 13-field result shape."""
+    """Full merge() invocations producing the 15-field result shape
+    (13 slot fields + tone + action)."""
 
     def test_result_has_15_fields(self):
         """13 canonical slot fields + 2 advisory classification outputs
@@ -1728,6 +1729,36 @@ class TestPromptSanity:
         assert "type" in item_schema["properties"]
         assert "detail" in item_schema["properties"]
         assert "location" in item_schema["properties"]
+
+    def test_tool_schema_has_tone_with_correct_enum(self):
+        """Phase 4 Stage 1: tone is an advisory classification output of
+        the unified extractor, read by `pipeline._run_llm_gate`. If the
+        field were accidentally removed from the schema, the gap-filler
+        would silently lose tone-driven routing for messages that fall
+        through regex/semantic classification.
+
+        The enum must match `dispatch._VALID_TONES` exactly — drift
+        between the two would coerce LLM-returned values to None at the
+        validation layer.
+        """
+        from app.services.slot_extraction.dispatch import _VALID_TONES
+        schema = _EXTRACT_SLOTS_TOOL["input_schema"]["properties"]
+        assert "tone" in schema, "tone field missing from schema"
+        assert schema["tone"]["type"] == "string"
+        assert set(schema["tone"]["enum"]) == set(_VALID_TONES), \
+            "tone enum in schema must match _VALID_TONES"
+
+    def test_tool_schema_has_action_with_correct_enum(self):
+        """Phase 4 Stage 1: same rationale as tone — action is the dialog
+        action gap-filler signal. The enum must match
+        `dispatch._VALID_ACTIONS` exactly.
+        """
+        from app.services.slot_extraction.dispatch import _VALID_ACTIONS
+        schema = _EXTRACT_SLOTS_TOOL["input_schema"]["properties"]
+        assert "action" in schema, "action field missing from schema"
+        assert schema["action"]["type"] == "string"
+        assert set(schema["action"]["enum"]) == set(_VALID_ACTIONS), \
+            "action enum in schema must match _VALID_ACTIONS"
 
     # -----------------------------------------------------------------
     # Option 4 hardening (Phase 2 contingency)

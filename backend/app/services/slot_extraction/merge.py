@@ -43,7 +43,6 @@ import logging
 import re
 from typing import Any, Optional
 
-from .dispatch import _is_narrative
 from .prompts import _SERVICE_TYPE_ENUM
 
 logger = logging.getLogger(__name__)
@@ -703,15 +702,15 @@ def merge(
     llm_result: dict,
     message: Optional[str] = None,
 ) -> dict:
-    """Merge regex and LLM extraction results into the 13-field dict
+    """Merge regex and LLM extraction results into the 15-field dict
     the orchestrator expects.
 
     Preconditions:
       - `regex_result` has all 13 fields (regex-side produces the
         canonical shape via slot_extractor.extract_slots).
-      - `llm_result` has the 10 LLM-contributed fields populated where
-        possible (the 3 regex-only Trust Model 5 fields are not
-        present).
+      - `llm_result` has the 12 LLM-contributed fields populated where
+        possible — the 10 slot fields plus `tone` and `action`. The 3
+        regex-only Trust Model 5 fields are not present.
       - `message` (optional) is the original user message. When
         supplied, Trust Model 3 uses it to distinguish narrative-path
         messages (≥ _NARRATIVE_THRESHOLD words) from short-path ones
@@ -721,9 +720,12 @@ def merge(
         unit tests that call `merge()` without the path distinction.
 
     Postconditions:
-      - returned dict has the same 13 keys as regex_result
+      - returned dict has 15 keys: the 13 fields from regex_result
+        plus the advisory `tone` and `action` (LLM-only)
       - all Trust Model 5 fields (no_requirements, _contradiction,
         _is_additive) come directly from regex_result
+      - `tone` and `action` come directly from llm_result (the regex
+        side doesn't classify them)
       - all other fields follow their trust model's rule
     """
     # TRUST MODEL 3: service_type, primary-winner's location, winner's additionals.

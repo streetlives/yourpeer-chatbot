@@ -124,10 +124,12 @@ def extract_slots_short(
 ) -> dict:
     """Call Claude's short-path slot extractor.
 
-    Used for messages under the narrative threshold (< 20 words). Returns
-    the 10-field dict shape (the schema fields; Trust Model 5's three
-    regex-only fields aren't asked of the LLM). The merge layer
-    combines it with the 13-field regex result.
+    Used for messages under the narrative threshold (< 20 words).
+    Returns the 12-field dict shape (10 slot fields plus the `tone`
+    and `action` advisory classification fields; Trust Model 5's
+    three regex-only fields aren't asked of the LLM). The merge layer
+    combines it with the 13-field regex result to produce the
+    15-field output.
 
     On any LLM failure (API error, no tool_use block, token budget) the
     function returns the empty-slots dict. The caller is responsible for
