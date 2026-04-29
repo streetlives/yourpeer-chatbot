@@ -31,46 +31,8 @@ _DISPLAY_PAGE_SIZE = 5
 # to branch on LLM availability imports this single flag.
 _USE_LLM = bool(os.getenv("ANTHROPIC_API_KEY"))
 
-# ---------------------------------------------------------------------------
-# UNIFIED EXTRACTOR FEATURE FLAG (Phase 3 of llm_slot_extractor migration)
-# ---------------------------------------------------------------------------
-# When USE_UNIFIED_EXTRACTOR is on, the orchestrator and confirmation handler
-# route slot extraction through the new `app.services.slot_extraction.extract()`
-# pipeline instead of the legacy `extract_slots_smart` in
-# `llm_slot_extractor.py`.
-#
-# DEFAULT: ON (Phase 3, 2026-04-24).
-#
-# R37 (the first full eval after the rev-15 cross-borough carve-out and
-# primary-location binding fixes) confirmed the unified path beats the legacy
-# path on every headline metric: 167/171 passing (97.7%), 4.59 overall, 19
-# critical failures vs. R36 Legacy's 4.56 / 22 CFs. The default flipped to ON.
-#
-# The env var remains as an opt-OUT for emergency rollback. Setting
-# USE_UNIFIED_EXTRACTOR=0 (or "false", "no", "off", case-insensitive) routes
-# back to the legacy `extract_slots_smart`. Phase 4 deletes the legacy path
-# entirely and removes this flag.
-#
-# Falsy values (case-insensitive): "0", "false", "no", "off"
-# Anything else — unset, empty string, "1", "true", or any other value —
-# leaves the flag ON. Unrecognized values default to the new behavior so
-# typos don't silently revert traffic to the legacy path.
-_USE_UNIFIED_EXTRACTOR = os.getenv("USE_UNIFIED_EXTRACTOR", "").lower() not in (
-    "0", "false", "no", "off",
-)
-
-# Conditional LLM imports. These are bound at module load so callers can do
-# ``from app.services.chatbot.context import extract_slots_smart`` without
-# worrying about whether the key is present — when it's absent, the names
-# simply don't exist and callers must guard on ``_USE_LLM``.
 if _USE_LLM:
-    from app.services.llm_slot_extractor import extract_slots_smart  # noqa: F401
-    from app.services.llm_classifier import classify_unified  # noqa: F401
-    from app.llm.claude_client import classify_message_llm  # noqa: F401
-    logger.info(
-        f"LLM features enabled (ANTHROPIC_API_KEY found); "
-        f"unified_extractor={'on' if _USE_UNIFIED_EXTRACTOR else 'off'}"
-    )
+    logger.info("LLM features enabled (ANTHROPIC_API_KEY found)")
 else:
     logger.info("LLM features disabled — using regex only")
 

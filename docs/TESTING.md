@@ -213,7 +213,7 @@ All backend modules and all public functions are covered. Tests are in `tests/un
 
 ## Test Suites
 
-> **Note on slot-extraction tests (Phase 3, April 2026).** The `USE_UNIFIED_EXTRACTOR` flag flipped to default-ON in Phase 3, so `app.services.slot_extraction.extract()` is now the active path. The legacy `extract_slots_smart` in `app.services.llm_slot_extractor` still exists behind `USE_UNIFIED_EXTRACTOR=0` (opt-out for emergency rollback) and is referenced in some test descriptions below — those tests run on the legacy path under the opt-out and on the unified path under the default. Phase 4 will delete the legacy modules and consolidate the tests; until then both paths are exercised. See `docs/design/UNIFIED_EXTRACTOR_MIGRATION.md`.
+> **Note on slot-extraction tests (Phase 4, April 2026).** The `USE_UNIFIED_EXTRACTOR` flag was deleted in Stage 2; `app.services.slot_extraction.extract()` is now the only path. The legacy `extract_slots_smart` in `app.services.llm_slot_extractor` still exists on disk but has no production callers — Stage 3 deletes that module. Test references to `extract_slots_smart` below are scheduled for migration in Stage 4. See `docs/design/UNIFIED_EXTRACTOR_MIGRATION.md`.
 
 ### `integration/test_classification_and_routing.py` — 193 tests
 

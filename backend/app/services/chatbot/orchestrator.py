@@ -41,7 +41,7 @@ from app.services.slot_extractor import (
     next_follow_up_question,
 )
 
-from .context import _USE_LLM, _USE_UNIFIED_EXTRACTOR, _empty_reply
+from .context import _USE_LLM, _empty_reply
 from .handlers import (
     _handle_bot_capability_question,
     _handle_bot_identity,
@@ -444,23 +444,18 @@ def generate_reply(
             extracted = dict(early_extracted)
             existing.pop("_awaiting_service_after_clear", None)
             save_session_slots(session_id, existing)
-        # Feature flag for Phase 2 of the llm_slot_extractor migration.
-        # When USE_UNIFIED_EXTRACTOR=1, route through the new
-        # `slot_extraction.extract()`; otherwise use the legacy
-        # `extract_slots_smart`. See UNIFIED_EXTRACTOR_MIGRATION.md.
-        elif _USE_UNIFIED_EXTRACTOR:
+        else:
+            # Phase 4 (April 2026): the legacy `extract_slots_smart`
+            # path was removed and the feature flag deleted; slot
+            # extraction now always routes through the unified
+            # `app.services.slot_extraction.extract()`. See
+            # UNIFIED_EXTRACTOR_MIGRATION.md.
             from app.services.slot_extraction import extract as extract_unified
             extracted = extract_unified(
                 message,
                 early_extracted,
                 conversation_history=existing.get("transcript", []),
                 api_key_available=True,  # gated by _USE_LLM above
-            )
-        else:
-            from app.services.llm_slot_extractor import extract_slots_smart
-            extracted = extract_slots_smart(
-                message,
-                conversation_history=existing.get("transcript", []),
             )
     else:
         extracted = early_extracted

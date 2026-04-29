@@ -29,7 +29,7 @@ from app.services.slot_extractor import (
     next_follow_up_question,
 )
 
-from ..context import _USE_LLM, _USE_UNIFIED_EXTRACTOR, _empty_reply
+from ..context import _USE_LLM, _empty_reply
 from ..execution import _execute_and_respond
 from ..logging import _log_turn
 
@@ -680,28 +680,20 @@ def _handle_post_pending_confirmation(session_id, message, redacted_message, exi
     """
     existing.pop("_pending_confirmation", None)
     if _USE_LLM:
-        # Feature flag for Phase 2 of the llm_slot_extractor migration.
-        # When USE_UNIFIED_EXTRACTOR=1, route through
-        # `slot_extraction.extract()`. The new extractor requires a
-        # regex_result parameter, so we run regex here first
-        # (cheap — the caller's `_run_early_extraction` isn't in
-        # scope at this post-pending path). See
-        # UNIFIED_EXTRACTOR_MIGRATION.md for the full Phase 2 context.
-        if _USE_UNIFIED_EXTRACTOR:
-            from app.services.slot_extraction import extract as extract_unified
-            regex_result = extract_slots(message)
-            pending_extracted = extract_unified(
-                message,
-                regex_result,
-                conversation_history=existing.get("transcript", []),
-                api_key_available=True,  # gated by _USE_LLM above
-            )
-        else:
-            from app.services.llm_slot_extractor import extract_slots_smart
-            pending_extracted = extract_slots_smart(
-                message,
-                conversation_history=existing.get("transcript", []),
-            )
+        # Phase 4 (April 2026): the legacy `extract_slots_smart` path
+        # was removed and the feature flag deleted; the unified
+        # extractor is the only LLM path. It requires a `regex_result`
+        # parameter, so we run regex here first (cheap — the caller's
+        # `_run_early_extraction` isn't in scope at this post-pending
+        # path). See UNIFIED_EXTRACTOR_MIGRATION.md.
+        from app.services.slot_extraction import extract as extract_unified
+        regex_result = extract_slots(message)
+        pending_extracted = extract_unified(
+            message,
+            regex_result,
+            conversation_history=existing.get("transcript", []),
+            api_key_available=True,  # gated by _USE_LLM above
+        )
     else:
         pending_extracted = extract_slots(message)
     # no_requirements is always present as False when not set — exclude it

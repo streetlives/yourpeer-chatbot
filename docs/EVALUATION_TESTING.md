@@ -65,8 +65,6 @@ A scenario passes when its unweighted average across all 11 dimensions is **≥ 
 
 `--subset` and `--category` compose: `--subset failing --category multi_intent` runs the failing scenarios in one category. `--scenario-id` overrides everything else.
 
-As of Phase 3 (2026-04-24) the unified slot-extractor path is the default. Setting `USE_UNIFIED_EXTRACTOR=0` (or `false`/`no`/`off`, case-insensitive) is the opt-out for emergency rollback to the legacy path. Phase 4 deletes the flag entirely once the legacy modules are removed.
-
 ## Subsets — running just the scenarios that failed
 
 The `--subset` flag is the inner-loop tool for iterating on fixes. After a fix targeted at a specific scenario, re-running 4-5 affected scenarios produces signal in 3-5 minutes for ~$1-2, instead of 30-60 minutes and ~$20 for the full suite.
@@ -225,5 +223,5 @@ After adding, smoke-test the scenario with `--scenario-id your_scenario_id` to c
 - `scripts/mini_eval_r36_regressions.py` and `scripts/mini_eval_r36_regressions.md` — migration-specific subset runner with R36 baselines and per-turn transcript dumps. The `--subset failing` flag in the main eval is general; the mini-eval is for the R36 regression set specifically.
 - `scripts/mini_eval_option_4.py` — short-path prompt iteration only (no Opus judge); ~30s, ~$0.01.
 - `eval-r37/YourPeer_Chatbot_Eval_Run_37.md` — the most recent full run report; example of the format used for every release-decision run.
-- `docs/design/UNIFIED_EXTRACTOR_MIGRATION.md` — context on the unified extractor and the `USE_UNIFIED_EXTRACTOR` opt-out.
+- `docs/design/UNIFIED_EXTRACTOR_MIGRATION.md` — context on the unified extractor migration.
 - `tests/unit/test_eval_subset_filter.py` — 20 unit tests exercising the `--subset` filter logic in isolation.

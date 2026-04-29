@@ -42,7 +42,7 @@ The gate skips for short messages and messages where regex already found somethi
 
 The prompt instructs the LLM to distinguish **intent from mention**: "I saw a doctor on TV" → null (not medical), "I need to see a doctor" → medical. This addresses the 50% false positive rate found in the regex audit.
 
-> **Migration state (Phase 3, April 2026).** `classify_unified()` is now used only by this gap-filler at `pipeline.py:_run_llm_gate`. The main slot-extraction paths in `orchestrator.py` and `handlers/confirmation.py` route through the unified extractor at `app.services.slot_extraction.extract()` (default-on; `USE_UNIFIED_EXTRACTOR=0` opts out for emergency rollback). Phase 4 deletes `llm_classifier.py` and resolves this gap-filler — either by removing it (if regex + semantic routing covers enough) or by adding `tone`/`action` outputs to the unified extractor and migrating the call site. See `docs/design/UNIFIED_EXTRACTOR_MIGRATION.md`.
+> **Migration state (Phase 4, April 2026).** Stage 1 migrated `pipeline.py:_run_llm_gate` from `classify_unified()` to `app.services.slot_extraction.extract()` — `tone` and `action` are now advisory outputs of the unified extractor, and the gap-filler reads them from there. Stage 2 deleted the `_USE_UNIFIED_EXTRACTOR` feature flag; slot extraction now routes unconditionally through the unified path. The legacy `llm_classifier.py` and `llm_slot_extractor.py` modules still exist on disk but have no production callers; Stage 3 deletes them. See `docs/design/UNIFIED_EXTRACTOR_MIGRATION.md`.
 
 ### Stage 2 — Split Classification
 

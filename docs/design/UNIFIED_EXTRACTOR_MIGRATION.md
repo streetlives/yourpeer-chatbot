@@ -1,8 +1,13 @@
 # Unified LLM Extractor Migration
 
-**Status:** Phase 3 SHIPPED — flag default flipped to ON. Phase 4 (legacy deletion) queued.
+**Status:** Phase 4 IN PROGRESS — Stages 1 (gap-filler migration) + 2 (flag removal) SHIPPED. Stages 3 (legacy module deletion) and 4 (test consolidation) queued.
 **Owner:** Raleigh
 **Created:** 2026-04-22
+**Approved:** 2026-04-23 — schema decisions (`org_name` keep + fuzzy validator; `service_detail` Option A extend + canonical-form validator; `additional_services` extended to `[{type, detail?, location?}]`); priority-hierarchy consolidation (food ≥ mental_health); 2-hour / ~$50 parallel-run eval budget.
+<!-- drift:ignore: rev banner references files deleted in this migration -->
+**Revision:** 2026-04-25 (rev 17) — Phase 4 Stages 1 + 2 SHIPPED. Stage 1 migrated `pipeline._run_llm_gate` from `classify_unified` to `slot_extraction.extract` after extending the unified extractor with advisory `tone` / `action` outputs; five bugs surfaced in self-review and were fixed (populations enrichment beyond legacy, `has_new_slots` exclusion, `merge_slots` session leak, twin `pending_has_new` exclusion, lost LLM tone/action on empty-slot fallback). Stage 2 deleted the `_USE_UNIFIED_EXTRACTOR` feature flag entirely; the orphan `chatbot/confirmation.py` and obsolete `tests/unit/test_unified_extractor_flag.py` were removed. Post-Stage-2 audit pass: doc field-count staleness fixed (10/13 → 12/15 throughout `slot_extraction/*.py` and merge.py docstrings), pre-existing dead `_is_narrative` import removed from `merge.py`, two structural schema-presence tests added (`test_tool_schema_has_tone/action_with_correct_enum`) to catch silent drift between `prompts.py` and `dispatch.py` enum lists, and the dead noqa F401 re-exports in `chatbot/__init__.py` and `chatbot/context.py` were trimmed — `claude_reply`, `detect_crisis`, `random_warmth_prefix`, and `classify_unified` had zero consumers and were removed; `_build_confirmation_message` (consumed by `test_gender_extraction.py:162`) and `save_session_slots` (patched at 9 sites in `test_chatbot_extracted_helpers.py`) are kept. Test counts: post-Stage-1 3,566 unit / 611 integration; post-Stage-2 3,539 unit (−27 from deleted flag-test file) / 611 integration; post-audit 3,541 unit (+2 schema tests) / 611 integration. The legacy `llm_slot_extractor.py` and `llm_classifier.py` modules still exist on disk with no remaining importers; Stage 3 deletes them.
+**Prior revisions:** rev 16 (2026-04-24) — Phase 3 SHIPPED, flag default flipped to ON. rev 15 (2026-04-24) — Phase 2 VALIDATION COMPLETE. Cross-borough carve-out and primary-location decoupling fixes shipped after rev 14's flag-on path was first exercised end-to-end. Mini-eval results: 12/15 passing (4.23 avg); migration headline scenario `multi_cross_borough_food_brooklyn_shelter_manhattan` recovered 3.36 → 4.00. Confirmation-handler orphan-file wiring corrected; orchestrator awaiting-clear guard added. R37 full eval (171 scenarios, flag on, post-rev-15): 167/171 passing (97.7%), 4.59 overall, 19 critical failures — beats R36 Legacy on every headline metric. rev 14 (2026-04-24) — Phase 2 wiring shipped. rev 13 (2026-04-23) — Phase 1 COMPLETE: `backend/app/services/slot_extraction/` package shipped (1,580 LOC across 4 files) with 147 unit tests achieving 100% line + branch coverage. rev 1–12 — design iteration, audits, schema decisions, Phase 0 corpus check.
+**Related:** R35 eval regression (`multi_cross_borough` 3.09 → 2.82); PR #61.
 
 ## Problem
 
@@ -218,6 +223,7 @@ Schema decisions, priority-hierarchy consolidation, parallel-run budget all appr
 
 ### Phase 2 — Feature flag + parallel-run validation (COMPLETE, 2026-04-24)
 
+<!-- drift:ignore: Phase 2 history — references file deleted in Phase 4 Stage 2 -->
 Wiring shipped in rev 14 (with the integration gap documented under "Bug 3" above, closed in rev 15). 23 routing tests in `test_unified_extractor_flag.py` cover flag env-var parsing, both-call-site routing on/off, and the no-API-key bypass.
 
 R36 parallel-run eval (167 scenarios, both flag states):
@@ -231,31 +237,62 @@ Rev-15 fixes (cross-borough carve-out + primary-location binding) addressed the 
 
 ### Phase 3 — Flip the flag default (COMPLETE, 2026-04-24)
 
+<!-- drift:ignore: Phase 3 history — references file deleted in Phase 4 Stage 2 -->
 `_USE_UNIFIED_EXTRACTOR` default flipped from `False` to `True` in `backend/app/services/chatbot/context.py`. The env var is now an opt-OUT — `USE_UNIFIED_EXTRACTOR=0` (or `false`/`no`/`off`, case-insensitive) reverts to legacy. Unrecognized values default to ON so typos don't silently revert traffic. The 23 routing tests in `test_unified_extractor_flag.py` were updated for the new semantics: empty string and unrecognized values now assert True; only the explicit falsy set asserts False.
 
 **`pipeline.py:149` (`classify_unified` gap-filler) deliberately unchanged.** The original Phase 3 plan called for migrating this call site to `slot_extraction.extract()`, but the gap-filler reads `tone` and `action` keys from `classify_unified`'s output that the unified extractor doesn't produce — `slot_extraction.extract()` returns slots only. Migrating before Phase 4 would lose the tone/action gap-fill signal. Phase 4 deletes `classify_unified` entirely, at which point this site needs to either be removed (if regex/early-extraction catches enough on its own) or have tone/action support added to the unified extractor.
 
 Repo-wide test suite under default env (post-flip): 3,553 passing, 0 failures, 10 skipped, 3 xfailed. Verified the opt-out path: `USE_UNIFIED_EXTRACTOR=0` runs the legacy path and the suite stays green.
 
-### Phase 4 — Delete old code (~1 day)
+### Phase 4 — Delete old code
+
+Phase 4 is split into four stages, each independently shippable.
+
+#### Stage 1 — Migrate the gap-filler (COMPLETE, 2026-04-25)
+
+`pipeline.py:_run_llm_gate` was migrated from `classify_unified()` to `app.services.slot_extraction.extract()`. The unified extractor's tool schema gained two advisory output fields, `tone` (enum: emotional, frustrated, urgent, confused) and `action` (13-value dialog action enum), validated in `dispatch._normalize_tool_output` and passed through `merge()` as LLM-only fields. `_with_classification(d, llm_result=None)` ensures every `extract()` return path has the `tone`/`action` keys present, including the `_is_empty_llm_result` fallback paths which preserve LLM tone/action even when slot extraction returned nothing — matching legacy `classify_unified` behavior.
+
+Five bugs were found and fixed during the Stage 1 self-review:
+1. New `_populations` enrichment in the gate that wasn't in the legacy code path — reverted to keep Stage 1 a strict 1:1 swap.
+2. `orchestrator.py:has_new_slots` `any()` comprehension iterated over all keys; tone/action were not in the exclusion tuple so a tone classification would falsely register as a "new slot." Fixed by adding `tone, action` to the exclusion.
+3. `slot_extractor.merge_slots` persisted every non-empty key into session state; tone/action would leak into session across turns. Fixed by adding tone/action to the transient-skip pattern that already covers `_contradiction` and `_is_additive`.
+4. Same `any()` bug in `handlers/confirmation.py:712` (`pending_has_new`). Fixed by the same exclusion-list addition.
+5. `_is_empty_llm_result` returned True on tone-only/no-slots LLM responses, and `_with_classification` then defaulted tone/action to None — losing the LLM classification. Fixed by passing `llm_result` to `_with_classification` on both fallback paths and locked in with two regression tests.
+
+Test count after Stage 1: 3,566 unit tests passing (+2 regression tests for bug 5), 611 integration tests passing.
+
+#### Stage 2 — Remove flag branches (COMPLETE, 2026-04-25)
+
+The `_USE_UNIFIED_EXTRACTOR` feature flag was deleted entirely. Slot extraction now routes unconditionally through `app.services.slot_extraction.extract()`. Changes:
+- `chatbot/context.py` — removed the flag definition and the `unified_extractor=on/off` log suffix; the conditional `extract_slots_smart` and `classify_unified` re-exports remain (noqa F401) until Stage 3 deletes the legacy modules.
+- `chatbot/__init__.py` — dropped `_USE_UNIFIED_EXTRACTOR` from imports and `__all__`; updated the stale comment about test fixtures patching `pipeline.classify_unified`.
+- `chatbot/orchestrator.py:447–464` — collapsed the three-branch `if/elif/else` into a single unified path.
+- `chatbot/handlers/confirmation.py:683–706` — same collapse.
+- `chatbot/confirmation.py` — orphan file deleted (zero importers; the live `_handle_pending_confirmation` is in `handlers/confirmation.py`).
+<!-- drift:ignore: deletion-of-file historical reference -->
+- `tests/unit/test_unified_extractor_flag.py` — deleted; the flag the tests covered no longer exists.
+
+Doc updates: `docs/CHATBOT_BEHAVIOR.md`, `docs/TESTING.md`, `docs/EVALUATION_TESTING.md` migration callouts updated to Phase 4 Stage 2 status.
+
+Test count after Stage 2: 3,539 unit tests passing (−27 from the deleted flag-test file), 611 integration tests passing.
+
+#### Stage 3 — Delete legacy modules (~1 hour, PENDING)
 
 - Delete `backend/app/services/llm_slot_extractor.py`.
 - Delete `backend/app/services/llm_classifier.py`.
-- **Resolve `pipeline.py:149`'s `classify_unified` gap-filler**: either delete the entire `_run_llm_gate` function if regex + semantic-router coverage is sufficient on its own, or extend `slot_extraction.extract()` to produce `tone` and `action` keys and migrate the call site to use it.
-- Delete the feature-flag branches in `orchestrator.py` and `handlers/confirmation.py`.
-- Update `chatbot/context.py` re-exports — drop the `extract_slots_smart` and `classify_unified` conditional imports.
-- Remove the `_USE_UNIFIED_EXTRACTOR` flag itself (no opt-out path needed once legacy is gone).
-- Update `tests/integration/test_service_data_llm_firewall.py` — remap the 6 direct imports from `llm_slot_extractor` to the new module; preserve Layer 4 and Layer 6 asserts; add the new `_NOTABLE_SUB_TYPES`-no-prompt-leak assertion.
-- Update or delete `tests/unit/test_unified_extractor_flag.py` — the routing tests are no longer meaningful once there's only one path. Either delete the file or repurpose it for tests of the unified path's specific behaviors.
-- Consolidate tests:
-  <!-- drift:ignore: Phase 4 will create these files; intentional forward-references -->
-  - `test_llm_slot_extractor.py` → split into `test_slot_extraction_dispatch.py`, `test_slot_extraction_merge.py`, `test_slot_extraction_prompts.py`.
-  - `test_narrative_extraction.py` → fold into the above.
-  - `test_llm_multi_service.py` → fold into merge tests.
-  - `test_llm_classifier.py` → delete or fold into prompts tests.
-- Update import paths across the repo.
+- Drop the conditional `extract_slots_smart` and `classify_unified` imports in `chatbot/context.py` and `chatbot/__init__.py`.
+- Remap the 6 direct imports from `llm_slot_extractor` in `tests/integration/test_service_data_llm_firewall.py` to the new module; preserve Layer 4 and Layer 6 asserts.
+- Update `tests/integration/test_targeted_bug_regressions.py`, `tests/unit/test_populations.py`, and `tests/unit/test_semantic_router.py` import paths.
 
-Exit criterion: `llm_slot_extractor.py` and `llm_classifier.py` don't exist; the `_USE_UNIFIED_EXTRACTOR` flag is gone; all tests green including the 38 in `test_service_data_llm_firewall.py`; one full eval run passes.
+#### Stage 4 — Consolidate tests (~1 hour, PENDING)
+
+<!-- drift:ignore: Phase 4 will create these files; intentional forward-references -->
+- `test_llm_slot_extractor.py` → split into `test_slot_extraction_dispatch.py`, `test_slot_extraction_merge.py`, `test_slot_extraction_prompts.py` (or fold relevant cases into the existing `test_slot_extraction.py`).
+- `test_narrative_extraction.py` → fold into the above.
+- `test_llm_multi_service.py` → fold into merge tests.
+- `test_llm_classifier.py` → delete or fold into prompts tests.
+
+Exit criterion (full Phase 4 complete): `llm_slot_extractor.py` and `llm_classifier.py` don't exist; the `_USE_UNIFIED_EXTRACTOR` flag is gone; all tests green including the 38 in `test_service_data_llm_firewall.py`; one full eval run passes.
 
 ### Phase 5 — Cleanup + retrospective (~0.5 days)
 
