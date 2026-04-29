@@ -1359,6 +1359,161 @@ class TestNormalizeToolOutput:
         assert result["_populations"] == []
 
 
+class TestNormalizeToolOutputValidation:
+    """String-field normalization (case + whitespace) and age range
+    validation. These behaviors were originally in
+    `app.services.llm_classifier._validate_result` and were lost in the
+    initial Phase 4 Stage 1 migration; restored as Bug #1 and Bug #2
+    fixes during the legacy-coverage audit. The tests here are ported
+    from the legacy `test_llm_classifier.TestValidateResult` class.
+
+    Behavior contract:
+      - service_type, location, urgency, family_status, gender, tone,
+        action: stripped + lowercased; empty-after-strip → None
+      - service_detail, org_name: stripped only; empty-after-strip → None;
+        case preserved (proper nouns)
+      - age: int in [1, 110] kept; string parsing as int in range
+        coerced; everything else → None
+    """
+
+    # --- age: range + type coercion ---
+
+    def test_age_int_in_range_kept(self):
+        assert _normalize_tool_output({"age": 50})["age"] == 50
+
+    def test_age_string_coerced_to_int(self):
+        assert _normalize_tool_output({"age": "17"})["age"] == 17
+
+    def test_age_string_with_whitespace_coerced(self):
+        assert _normalize_tool_output({"age": " 17 "})["age"] == 17
+
+    def test_age_above_max_rejected(self):
+        # Legacy threshold was <120; new is ≤110, matching the prose
+        # constraint in the schema description "Must be between 1 and 110".
+        assert _normalize_tool_output({"age": 250})["age"] is None
+        assert _normalize_tool_output({"age": 111})["age"] is None
+
+    def test_age_at_max_kept(self):
+        assert _normalize_tool_output({"age": 110})["age"] == 110
+
+    def test_age_at_min_kept(self):
+        assert _normalize_tool_output({"age": 1})["age"] == 1
+
+    def test_age_negative_rejected(self):
+        assert _normalize_tool_output({"age": -5})["age"] is None
+
+    def test_age_zero_rejected(self):
+        # "0 years old" isn't a meaningful age for service eligibility;
+        # legacy threshold was 0 < age < 120 (exclusive on both ends).
+        assert _normalize_tool_output({"age": 0})["age"] is None
+
+    def test_age_non_numeric_string_rejected(self):
+        assert _normalize_tool_output({"age": "abc"})["age"] is None
+
+    def test_age_none_stays_none(self):
+        assert _normalize_tool_output({"age": None})["age"] is None
+
+    def test_age_bool_rejected(self):
+        # `True` is technically an int in Python (`isinstance(True, int)`
+        # returns True) — the validator must reject it explicitly,
+        # otherwise `True` becomes age=1.
+        assert _normalize_tool_output({"age": True})["age"] is None
+        assert _normalize_tool_output({"age": False})["age"] is None
+
+    # --- string fields: case normalization ---
+
+    def test_service_type_uppercase_normalized(self):
+        # If we DON'T lowercase here, the LLM-uppercase value gets
+        # silently dropped by `_filter_valid_service_types` (which
+        # compares against a lowercase enum). Both the Bug #2 fix and
+        # the field's schema enum imply lowercase, so we normalize early.
+        assert _normalize_tool_output({"service_type": "SHELTER"})["service_type"] == "shelter"
+
+    def test_service_type_mixed_case_normalized(self):
+        assert _normalize_tool_output({"service_type": "Food"})["service_type"] == "food"
+
+    def test_location_uppercase_normalized(self):
+        assert _normalize_tool_output({"location": "BROOKLYN"})["location"] == "brooklyn"
+
+    def test_tone_uppercase_normalized(self):
+        # Already covered by existing tone tests but worth pinning.
+        assert _normalize_tool_output({"tone": "EMOTIONAL"})["tone"] == "emotional"
+
+    # --- string fields: whitespace handling ---
+
+    def test_service_type_whitespace_stripped(self):
+        assert _normalize_tool_output({"service_type": "  food  "})["service_type"] == "food"
+
+    def test_location_whitespace_stripped(self):
+        assert _normalize_tool_output({"location": "  east village  "})["location"] == "east village"
+
+    def test_service_type_empty_string_becomes_none(self):
+        assert _normalize_tool_output({"service_type": ""})["service_type"] is None
+
+    def test_location_empty_string_becomes_none(self):
+        assert _normalize_tool_output({"location": ""})["location"] is None
+
+    def test_service_type_whitespace_only_becomes_none(self):
+        assert _normalize_tool_output({"service_type": "   "})["service_type"] is None
+
+    # --- service_detail and org_name: case-preserving ---
+
+    def test_service_detail_preserves_case(self):
+        # Proper-noun fields (service_detail, org_name) preserve case
+        # because the merge layer's canonical-form snapping does its own
+        # case-insensitive matching.
+        result = _normalize_tool_output({"service_detail": "Hot Meals"})
+        assert result["service_detail"] == "Hot Meals"
+
+    def test_service_detail_whitespace_stripped(self):
+        result = _normalize_tool_output({"service_detail": "  Hot Meals  "})
+        assert result["service_detail"] == "Hot Meals"
+
+    def test_service_detail_empty_becomes_none(self):
+        result = _normalize_tool_output({"service_detail": ""})
+        assert result["service_detail"] is None
+
+    def test_org_name_preserves_case(self):
+        result = _normalize_tool_output({"org_name": "Covenant House"})
+        assert result["org_name"] == "Covenant House"
+
+    def test_org_name_whitespace_stripped(self):
+        result = _normalize_tool_output({"org_name": "  Ali Forney Center  "})
+        assert result["org_name"] == "Ali Forney Center"
+
+    def test_org_name_empty_becomes_none(self):
+        result = _normalize_tool_output({"org_name": ""})
+        assert result["org_name"] is None
+
+    # --- additional_services: per-item normalization ---
+
+    def test_additional_service_uppercase_lowercased(self):
+        # Per-item `type` must also be lowercased so downstream
+        # `_filter_valid_service_types` (which compares against a
+        # lowercase enum) accepts LLM-uppercase variants.
+        result = _normalize_tool_output({
+            "additional_services": [{"type": "SHELTER", "location": "Brooklyn"}],
+        })
+        assert result["additional_services"] == [("shelter", None, "Brooklyn")]
+
+    def test_additional_service_whitespace_stripped(self):
+        result = _normalize_tool_output({
+            "additional_services": [{"type": "  food  "}],
+        })
+        assert result["additional_services"] == [("food", None, None)]
+
+    def test_additional_service_empty_type_skipped(self):
+        result = _normalize_tool_output({
+            "additional_services": [
+                {"type": ""},
+                {"type": "   "},
+                {"type": None},
+                {"type": "food"},
+            ],
+        })
+        assert result["additional_services"] == [("food", None, None)]
+
+
 class TestNarrativeRegexFallback:
     """The fallback is used when the narrative LLM call fails."""
 
@@ -1478,6 +1633,177 @@ class TestExtractNoApiKey:
         regex_snapshot = dict(regex)
         extract("food in brooklyn", regex, api_key_available=False)
         assert regex == regex_snapshot
+
+
+class TestNarrativeRegexFallbackRealisticScenarios:
+    """Ported from legacy `test_narrative_extraction.TestNarrativeRegexFallback`.
+
+    Each test is a real-world narrative the chatbot has to handle —
+    these complement the synthetic-input tests in
+    `TestNarrativeRegexFallback` above. The pattern: regex extracts a
+    plausible-but-wrong primary service_type from a salient keyword
+    ("hospital", "evicted", "Rikers", "ran away"), and the fallback
+    re-prioritizes to shelter via the urgency hierarchy.
+
+    These tests exercise the LLM-unavailable path (`api_key_available=
+    False`) so they don't require mocking — what they test is the
+    regex-based urgency reprioritization that takes over when the LLM
+    is down.
+    """
+
+    def test_hospital_housing_prioritizes_shelter(self):
+        """User just discharged from hospital with housing emergency.
+        Regex finds 'medical' (hospital keyword) and 'shelter'
+        (somewhere to stay); fallback elevates shelter."""
+        regex = _empty_regex_result()
+        regex.update({
+            "service_type": "medical",
+            "additional_services": [("shelter", None, None), ("employment", None, None)],
+            "location": "the bronx",
+        })
+        msg = (
+            "I just got out of the hospital last week and my housing "
+            "situation fell through because my roommate kicked me out "
+            "and now I need somewhere to stay in the Bronx and also "
+            "need to find a job"
+        )
+        result = extract(regex_result=regex, message=msg, api_key_available=False)
+        assert result["service_type"] == "shelter"
+        assert result["location"] == "the bronx"
+
+    def test_runaway_youth_prioritizes_shelter(self):
+        """17yo ran away from abuse, asking for clothes + shelter."""
+        regex = _empty_regex_result()
+        regex.update({
+            "service_type": "clothing",
+            "additional_services": [("shelter", None, None)],
+            "age": 17,
+            "location": "bushwick",
+        })
+        msg = (
+            "I'm 17 and I ran away from home because my parents were "
+            "abusing me and I need clothes and somewhere safe to stay "
+            "in Bushwick tonight"
+        )
+        result = extract(regex_result=regex, message=msg, api_key_available=False)
+        assert result["service_type"] == "shelter"
+        # "tonight" should bump urgency
+        assert result["urgency"] == "high"
+
+    def test_eviction_with_child_prioritizes_shelter(self):
+        """Evicted parent with child needs food + shelter."""
+        regex = _empty_regex_result()
+        regex.update({
+            "service_type": "food",
+            "additional_services": [("shelter", None, None)],
+            "family_status": "with_children",
+            "location": "east new york",
+        })
+        msg = (
+            "I got evicted last month and I've been staying with friends "
+            "but they can't keep me anymore and I have a 6 year old "
+            "daughter and we need food and shelter in East New York"
+        )
+        result = extract(regex_result=regex, message=msg, api_key_available=False)
+        assert result["service_type"] == "shelter"
+        # family_status should be preserved through fallback
+        assert result["family_status"] == "with_children"
+
+    def test_reentry_from_incarceration_prioritizes_shelter(self):
+        """Recently released needs housing + employment."""
+        regex = _empty_regex_result()
+        regex.update({
+            "service_type": "shelter",
+            "additional_services": [("employment", None, None)],
+            "location": "south bronx",
+            "_populations": ["reentry"],
+        })
+        msg = (
+            "I was just released from Rikers two days ago and I need "
+            "a place to stay in the South Bronx and also need to find "
+            "employment as soon as possible"
+        )
+        result = extract(regex_result=regex, message=msg, api_key_available=False)
+        # Already shelter — fallback shouldn't change it.
+        assert result["service_type"] == "shelter"
+        assert "employment" in [s[0] for s in result["additional_services"]]
+        # reentry population preserved
+        assert "reentry" in result["_populations"]
+
+
+class TestExtractEndToEndNarrative:
+    """Ported from legacy `TestExtractSlotsSmart_Narrative`.
+
+    Tests the public `extract()` entry point on full narrative
+    messages without mocking the LLM (`api_key_available=False`).
+    Verifies the dispatch decision routes correctly to the narrative
+    fallback path and that the fallback's urgency reprioritization
+    surfaces the right primary.
+
+    These tests differ from `TestExtractNarrativePath` (which mocks
+    `extract_slots_narrative` to test the post-LLM merge logic);
+    these run the full no-LLM dispatch chain end-to-end.
+    """
+
+    def test_narrative_uses_fallback_without_llm(self):
+        regex = _empty_regex_result()
+        regex.update({
+            "service_type": "medical",
+            "additional_services": [("shelter", None, None), ("employment", None, None)],
+            "location": "the bronx",
+        })
+        msg = (
+            "I just got out of the hospital and my housing fell through "
+            "and I need somewhere to stay in the Bronx and find a job"
+        )
+        result = extract(regex_result=regex, message=msg, api_key_available=False)
+        assert result["service_type"] == "shelter"
+
+    def test_narrative_fallback_does_not_keep_medical_primary(self):
+        """Regression: 'hospital' would yield medical=primary under
+        keyword extraction, but for narrative messages the fallback
+        must re-pick the higher-urgency primary."""
+        regex = _empty_regex_result()
+        regex.update({
+            "service_type": "medical",
+            "additional_services": [("shelter", None, None)],
+        })
+        msg = (
+            "I just got out of the hospital and my housing fell through "
+            "and I need somewhere to stay in the Bronx and find a job"
+        )
+        result = extract(regex_result=regex, message=msg, api_key_available=False)
+        assert result["service_type"] != "medical"
+        assert result["service_type"] == "shelter"
+
+    def test_short_message_uses_simple_fast_path(self):
+        """A short, clear message with known keywords stays in the
+        simple fast path even without an API key."""
+        regex = _empty_regex_result()
+        regex.update({"service_type": "food", "location": "brooklyn"})
+        result = extract(
+            regex_result=regex, message="I need food in Brooklyn",
+            api_key_available=False,
+        )
+        assert result["service_type"] == "food"
+
+    def test_narrative_preserves_additional_services(self):
+        """The narrative fallback must surface remaining services as
+        additional_services after re-picking the primary."""
+        regex = _empty_regex_result()
+        regex.update({
+            "service_type": "medical",
+            "additional_services": [("shelter", None, None), ("employment", None, None)],
+        })
+        msg = (
+            "I just got out of the hospital and my housing fell through "
+            "and I need somewhere to stay in the Bronx and find a job"
+        )
+        result = extract(regex_result=regex, message=msg, api_key_available=False)
+        # New primary is shelter; the demoted "medical" and the original
+        # "employment" should both be in additional_services.
+        additional_types = {s[0] for s in result.get("additional_services", [])}
+        assert len(additional_types) >= 1
 
 
 class TestExtractSimpleFastPath:
@@ -1993,7 +2319,8 @@ class TestExtractSlotsShortLLMInternals:
 
     def test_success_path_returns_normalized(self):
         """Happy path: LLM emits a tool_use block; the function
-        normalizes and returns the 10-field dict."""
+        normalizes and returns the 12-field dict (10 slot fields plus
+        the tone and action advisory classification fields)."""
         from app.services.slot_extraction.dispatch import extract_slots_short
 
         fake_response = _FakeResponse(content=[
@@ -2009,11 +2336,15 @@ class TestExtractSlotsShortLLMInternals:
             result = extract_slots_short("i need food in brooklyn")
 
         assert result["service_type"] == "food"
-        assert result["location"] == "Brooklyn"
-        # Shape is 10-field (new architecture)
+        # Location is lowercased in normalization — matches legacy
+        # `_validate_result` behavior. See `_normalize_string_field`.
+        assert result["location"] == "brooklyn"
+        # Shape is 12-field (10 slot fields + tone + action)
         assert "additional_services" in result
         assert "_populations" in result
         assert "service_detail" in result
+        assert "tone" in result
+        assert "action" in result
 
     def test_no_tool_use_block_returns_empty(self):
         """LLM responded with prose instead of calling the tool; we

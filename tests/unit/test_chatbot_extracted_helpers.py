@@ -230,6 +230,23 @@ class TestRunLLMGate:
         )
         llm_enabled.assert_not_called()
 
+    def test_skip_when_regex_tone_already_classified(self, llm_enabled):
+        """When the regex tone classifier already found a tone (e.g.
+        emotional, frustrated), the gate must NOT fire — the gap-filler
+        only exists to backfill what regex/keyword classification
+        missed. Ported from legacy
+        `test_llm_classifier.test_regex_found_tone_skips_gate`.
+        """
+        _run_llm_gate(
+            message="i'm so scared and i don't know what to do anymore",
+            early_extracted={},
+            has_service_intent=False,
+            action_pre=None,
+            regex_tone_pre="emotional",  # regex classifier resolved
+            extraction_source=None,
+        )
+        llm_enabled.assert_not_called()
+
     @pytest.mark.parametrize("action", sorted(_SKIP_UNIFIED_ACTIONS))
     def test_skip_unified_actions_short_circuit(self, action, llm_enabled):
         """Each member of _SKIP_UNIFIED_ACTIONS must actually short-circuit."""

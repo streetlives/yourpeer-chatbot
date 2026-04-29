@@ -374,6 +374,54 @@ _VALID_ACTIONS = frozenset({
 })
 
 
+def _coerce_age(raw_age: object) -> int | None:
+    """Validate and coerce an age value to an int in the range [1, 110].
+
+    Mirrors the legacy `_validate_result` age handling:
+      - int in [1, 110] → keep as-is
+      - str that parses as int in [1, 110] → coerce to int
+      - anything else (negative, 0, >110, non-numeric, None) → None
+
+    The tool schema declares `age` as integer with prose constraints
+    "Must be between 1 and 110", but JSON Schema doesn't enforce
+    `minimum`/`maximum` on tool_use the way it does for body validation,
+    and Anthropic's API doesn't reject out-of-range integers — they
+    flow through as the LLM produced them. This coercion is the
+    enforcement layer.
+    """
+    if isinstance(raw_age, int) and not isinstance(raw_age, bool):
+        return raw_age if 1 <= raw_age <= 110 else None
+    if isinstance(raw_age, str):
+        try:
+            age_int = int(raw_age.strip())
+        except (ValueError, AttributeError):
+            return None
+        return age_int if 1 <= age_int <= 110 else None
+    return None
+
+
+def _normalize_string_field(raw: object) -> str | None:
+    """Normalize a string-valued LLM output field.
+
+    Strips surrounding whitespace and lowercases. Empty strings (after
+    stripping) become None. Non-strings become None.
+
+    Used for service_type, location, urgency, family_status, gender —
+    fields where downstream code matches against lowercase enums and
+    where leading/trailing whitespace from the LLM should not cause
+    silent enum-miss drops.
+
+    `service_detail` and `org_name` are NOT routed through this
+    helper — they preserve case (proper nouns) and only need
+    whitespace handling, which their merge-layer validators do
+    independently.
+    """
+    if not isinstance(raw, str):
+        return None
+    cleaned = raw.strip().lower()
+    return cleaned if cleaned else None
+
+
 def _normalize_tool_output(raw: dict) -> dict:
     """Translate the tool_use input dict into the 12-field result shape.
 
@@ -382,11 +430,16 @@ def _normalize_tool_output(raw: dict) -> dict:
     `(type, detail, location)` for consistency with the regex side's
     `additional_services` representation.
 
-    `tone` and `action` are validated against the dialog-classification
-    enums (`_VALID_TONES`, `_VALID_ACTIONS`); unrecognized values are
-    coerced to None. These fields are populated by the LLM as a fallback
-    classification signal — `pipeline._run_llm_gate` reads them when the
-    fast regex/keyword classifiers in `classifier.py` missed.
+    String-valued enum fields (service_type, location, urgency,
+    family_status, gender, tone, action) are routed through
+    `_normalize_string_field` for case + whitespace normalization;
+    unknown enum values for tone/action become None. The age field
+    is routed through `_coerce_age` for int range + string-coercion
+    handling.
+
+    `service_detail` and `org_name` preserve case (proper nouns,
+    organization names) — their canonical-form snapping happens in
+    the merge layer's per-field validators.
 
     Note on field count: the regex side produces a 13-field dict
     (adding `no_requirements`, `_contradiction`, `_is_additive` per
@@ -395,39 +448,55 @@ def _normalize_tool_output(raw: dict) -> dict:
     slot fields plus `tone` and `action` as advisory classification
     outputs).
     """
+    # additional_services: items normalized to 3-tuples; per-item
+    # `type` is lowercased so downstream enum comparisons in
+    # `_filter_valid_service_types` accept LLM-uppercased variants.
     additional_raw = raw.get("additional_services") or []
     normalized_additional: list[tuple] = []
     for item in additional_raw:
         if not isinstance(item, dict):
             continue
         svc = item.get("type")
-        if not svc:
+        if not isinstance(svc, str):
+            continue
+        svc_clean = svc.strip().lower()
+        if not svc_clean:
             continue
         detail = item.get("detail") or None
         loc = item.get("location") or None
-        normalized_additional.append((svc, detail, loc))
+        normalized_additional.append((svc_clean, detail, loc))
 
-    tone = raw.get("tone")
-    if isinstance(tone, str):
-        tone = tone.strip().lower()
+    tone = _normalize_string_field(raw.get("tone"))
     tone = tone if tone in _VALID_TONES else None
 
-    action = raw.get("action")
-    if isinstance(action, str):
-        action = action.strip().lower()
+    action = _normalize_string_field(raw.get("action"))
     action = action if action in _VALID_ACTIONS else None
 
+    # service_detail and org_name preserve case but should still
+    # collapse empty strings to None.
+    service_detail = raw.get("service_detail")
+    if isinstance(service_detail, str):
+        service_detail = service_detail.strip() or None
+    elif service_detail is not None:
+        service_detail = None
+
+    org_name = raw.get("org_name")
+    if isinstance(org_name, str):
+        org_name = org_name.strip() or None
+    elif org_name is not None:
+        org_name = None
+
     return {
-        "service_type": raw.get("service_type"),
-        "service_detail": raw.get("service_detail"),
+        "service_type": _normalize_string_field(raw.get("service_type")),
+        "service_detail": service_detail,
         "additional_services": normalized_additional,
-        "location": raw.get("location"),
-        "age": raw.get("age"),
-        "urgency": raw.get("urgency"),
-        "_gender": raw.get("gender"),
-        "family_status": raw.get("family_status"),
+        "location": _normalize_string_field(raw.get("location")),
+        "age": _coerce_age(raw.get("age")),
+        "urgency": _normalize_string_field(raw.get("urgency")),
+        "_gender": _normalize_string_field(raw.get("gender")),
+        "family_status": _normalize_string_field(raw.get("family_status")),
         "_populations": raw.get("populations") or [],
-        "org_name": raw.get("org_name"),
+        "org_name": org_name,
         "tone": tone,
         "action": action,
     }
