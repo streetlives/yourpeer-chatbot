@@ -1,6 +1,8 @@
 # Unified LLM Extractor Migration
 
-**Status:** Phase 4 IN PROGRESS — Stages 1 (gap-filler migration) + 2 (flag removal) SHIPPED. Stages 3 (legacy module deletion) and 4 (test consolidation) queued.
+<!-- drift:ignore-file: this doc is about the deletion of llm_slot_extractor.py and llm_classifier.py — references to those files are intentional. -->
+
+**Status:** Phase 4 IN PROGRESS — Stages 1 (gap-filler migration) + 2 (flag removal) + 4a (legacy test deletion) + 3 (legacy module deletion) SHIPPED. Stage 4b (test file split) is optional and deferred.
 **Owner:** Raleigh
 **Created:** 2026-04-22
 **Approved:** 2026-04-23 — schema decisions (`org_name` keep + fuzzy validator; `service_detail` Option A extend + canonical-form validator; `additional_services` extended to `[{type, detail?, location?}]`); priority-hierarchy consolidation (food ≥ mental_health); 2-hour / ~$50 parallel-run eval budget.
@@ -276,13 +278,28 @@ Doc updates: `docs/CHATBOT_BEHAVIOR.md`, `docs/TESTING.md`, `docs/EVALUATION_TES
 
 Test count after Stage 2: 3,539 unit tests passing (−27 from the deleted flag-test file), 611 integration tests passing.
 
-#### Stage 3 — Delete legacy modules (~1 hour, PENDING)
+#### Stage 3 — Delete legacy modules (DONE, 2026-04-29)
 
-- Delete `backend/app/services/llm_slot_extractor.py`.
-- Delete `backend/app/services/llm_classifier.py`.
-- Drop the conditional `extract_slots_smart` and `classify_unified` imports in `chatbot/context.py` and `chatbot/__init__.py`.
-- Remap the 6 direct imports from `llm_slot_extractor` in `tests/integration/test_service_data_llm_firewall.py` to the new module; preserve Layer 4 and Layer 6 asserts.
-- Update `tests/integration/test_targeted_bug_regressions.py`, `tests/unit/test_populations.py`, and `tests/unit/test_semantic_router.py` import paths.
+Deleted:
+- `backend/app/services/llm_slot_extractor.py`
+- `backend/app/services/llm_classifier.py`
+
+Surviving import sites remapped (10 imports across 4 files):
+
+- `tests/integration/test_service_data_llm_firewall.py` (4 imports + 1 patch site, 56 firewall asserts preserved): `classify_unified` → `slot_extraction.extract`; `extract_slots_llm` → `slot_extraction.dispatch.extract_slots_short`; `_UNIFIED_SYSTEM_PROMPT` and `_SYSTEM_PROMPT` → both `_SHORT_SYSTEM_PROMPT` and `_NARRATIVE_SYSTEM_PROMPT` (the audit now spans both prompts since the unified architecture splits them by message length).
+- `tests/integration/test_targeted_bug_regressions.py` (Bug 14, 2 tests, 6 patch sites): regex-passthrough-on-empty-LLM behavior verified against the unified `extract()` instead of `extract_slots_smart()`.
+- `tests/unit/test_populations.py` (3 imports): schema-presence verified against `slot_extraction.prompts._EXTRACT_SLOTS_TOOL`; the legacy `TestLLMClassifierPopulations` (which checked `_UNIFIED_SYSTEM_PROMPT` for keyword strings) replaced with `TestUnifiedExtractorPopulationsContract` that verifies the schema enum has the canonical population set + the narrative prompt mentions populations.
+- `tests/unit/test_semantic_router.py` (10+ patch sites across 8 tests): `TestIntegration` and `TestIntegrationFallthrough` rewritten to drive `pipeline._run_early_extraction(message, session_id)` (regex + semantic) and `slot_extraction.extract(message, regex_result)` (LLM merge) separately, since the legacy `extract_slots_smart` orchestrator that did all three internally no longer exists. One legacy test (`test_semantic_service_type_preserved_through_llm_merge`) was retired and replaced with `test_semantic_service_type_through_extract_merge`, which pins both Trust Model 3 branches: sets-agree → LLM's primary value flows through; sets-disagree → LLM wins per Trust Model 3 (line 510-514 of `merge.py`). The legacy expectation that semantic always preserves through disagreement was a holdover from the legacy `extract_slots_smart` post-LLM regex override hack, retired in R36.
+- `tests/unit/test_response_escalation.py` (1 patch site): `extract_slots_smart` patch redirected to `slot_extraction.extract`; signature updated to accept `regex_result=None` kwarg.
+
+Behavior changes worth noting (all intentional):
+
+- Narrative messages no longer bypass the semantic router. In the legacy architecture, `extract_slots_smart` short-circuited to `extract_slots_narrative` before the semantic step. In the unified architecture, `_run_early_extraction` runs regex + semantic unconditionally; narrative-vs-short routing happens later inside `slot_extraction.extract`. The semantic router is fast (~5ms, idempotent) and this simplification was deliberate.
+- Trust Model 3's sets-disagree branch now lets the LLM win unconditionally. The legacy `extract_slots_smart` had a post-LLM regex-override hack that preserved regex/semantic's `service_type` when LLM disagreed. R36 retired that hack in favor of cleaner Trust Model 3 logic.
+
+Doc updates: `docs/CHATBOT_BEHAVIOR.md` (Stage 1b prose), `docs/CLAUDE.md` (production-code mapping table, housing_assistance limitation note, Common Pitfalls), `docs/FEATURES.md` (gate reference), `docs/ONBOARDING.md` (two reference blocks), `docs/design/CRISIS_DETECTION.md` (lazy-init reference), `docs/design/SEMANTIC_ROUTING_DESIGN.md` (rewrote the safety-net section to match unified pipeline), `docs/ops/METRICS.md` (instrumentation list).
+
+Test count after Stage 3: 3,494 unit (no change in count — same imports, different targets) + 611 integration = 4,105 total + 5 live skipped = 4,110.
 
 #### Stage 4 — Consolidate tests (PARTIALLY COMPLETE — Stage 4a done early to de-risk Stage 3)
 
@@ -302,7 +319,7 @@ Total deletion: 80 tests (4,190 → 4,110). All coverage preserved in the unifie
 <!-- drift:ignore: Stage 4b future-file references; not yet created -->
 **Stage 4b (PENDING):** Optional further consolidation — split `test_slot_extraction.py` (now 215 tests, 4,000+ lines) into `test_slot_extraction_dispatch.py`, `test_slot_extraction_merge.py`, `test_slot_extraction_prompts.py` for navigability. Defer until the file's size becomes a real friction point; the single-file structure is workable for now.
 
-Exit criterion (full Phase 4 complete): `llm_slot_extractor.py` and `llm_classifier.py` don't exist; the `_USE_UNIFIED_EXTRACTOR` flag is gone; all tests green including the 38 in `test_service_data_llm_firewall.py`; one full eval run passes.
+Exit criterion (full Phase 4 complete): all tests green including the 56-asserts firewall in `test_service_data_llm_firewall.py`; one full eval run passes.
 
 ### Phase 5 — Cleanup + retrospective (~0.5 days)
 

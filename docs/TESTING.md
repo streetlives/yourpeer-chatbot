@@ -364,9 +364,9 @@ Validates all 13 public functions in the audit log module.
 | Log conversation turn | 5 | Correct fields, internal slot stripping (`_pending_confirmation`, `transcript`, None values), quick reply label extraction, None slots, conversation registration |
 | Request correlation IDs | 4 | request_id stored in turn events, defaults to None, stored in query execution, stored in crisis events |
 
-### `test_semantic_router.py` — 53 tests
+### `test_semantic_router.py` — 38 tests
 
-Validates the Tier 2 semantic routing module: route definitions, model initialization, classification, threshold behavior, population detection, integration with `extract_slots_smart()`, graceful degradation, and observability. Uses mock embedding models with controlled vectors for deterministic testing — no real model download required.
+Validates the Tier 2 semantic routing module: route definitions, model initialization, classification, threshold behavior, population detection, integration with `pipeline._run_early_extraction()` (regex + semantic) and `slot_extraction.extract()` (LLM merge), graceful degradation, and observability. Uses mock embedding models with controlled vectors for deterministic testing — no real model download required.
 
 | Category | Tests | What's covered |
 |---|---|---|
@@ -376,14 +376,15 @@ Validates the Tier 2 semantic routing module: route definitions, model initializ
 | False positive rejection | 2 | Casual greeting no match (orthogonal embeddings), per-route threshold for "other" |
 | Population detection | 2 | Population detected alongside service, lower threshold than service routes |
 | Threshold behavior | 2 | Exact threshold passes, below threshold rejected (controlled cosine similarity) |
-| Per-route thresholds | 2 | Score 0.76 accepted for food (threshold 0.75) but rejected for other (threshold 0.78); legacy-route elevated thresholds (housing_assistance route retained for threshold-behavior test cases only — the category itself was retired April 15) |
-| Multiple populations | 1 | Highest-scoring population selected when multiple exceed threshold |
-| Edge cases | 4 | Single route → runner_up is None, empty string input, whitespace-only input, model-None-while-initialized guard |
-| Initialize robustness | 2 | Idempotent second call, exception during init cleans state |
-| Integration (extract_slots_smart) | 9 | Semantic fills missing service_type, population merged with regex, skips when regex has service, short message skips LLM, long message still calls LLM, semantic None falls through to LLM, unavailable falls through to LLM, narrative bypasses semantic, semantic service_type preserved through LLM merge |
-| Graceful degradation | 3 | Returns None when not initialized, handles missing sentence-transformers, handles encode exception |
-| Observability | 4 | Diagnostics returns scores for all routes, sorted by max_similarity, includes population routes, error when not available |
-| Dataclass | 2 | Basic creation with defaults, full creation with population and runner-up |
+| Diagnostics correctness | 2 | get_status returns scores for all routes sorted by max_similarity, includes population routes |
+| Route alignment | 3 | SERVICE_ROUTES keys match SERVICE_KEYWORDS keys, no cross-route duplicates, all routes covered by SERVICE_KEYWORDS |
+| Integration with `_run_early_extraction` | 5 | Semantic fills missing service_type, population merged with regex (set union), skips when regex resolves, short message LLM-gate short-circuits when semantic resolves, semantic miss leaves source=None |
+| Integration fallthrough | 4 | Semantic returns None falls through, semantic unavailable falls through, narrative messages still run semantic (behavior change vs. legacy), Trust Model 3 sets-agree/disagree merge contract |
+
+### `test_audit_log.py` (continued — the table below shows the audit log tests that follow the semantic router section)
+
+| Category | Tests | What's covered |
+|---|---|---|
 | Log query execution | 1 | Dual insertion (events + query log), `max_results` stripped |
 | Log crisis detected | 1 | Event fields, session association |
 | Log session reset | 1 | Event logged |
@@ -662,7 +663,7 @@ Validates the boundary between post-results follow-up questions and new service 
 
 The four industry-recommended ambiguity handling patterns — confidence scoring, disambiguation prompts, correction recovery, and ambiguity logging — are now exercised across `tests/unit/test_audit_regression.py` (regression guards for the individual behaviors) and `tests/eval/eval_llm_judge.py` (end-to-end scoring of ambiguous scenarios). Behaviors covered: confidence scoring for regex/reset/keyword/correction/disambiguation cases, unmatched-name disambiguation prompts, the 5 correction phrases with their slot-clearing semantics, "Not what I meant" button wiring, and audit-event logging of the correction/disambiguation categories with confidence fields.
 
-### `test_populations.py` — 88 tests
+### `test_populations.py` — 89 tests
 
 Validates Phase 3 (population context extraction and query boosts) and Phase 5 (DV crisis → population injection). Covers the full pipeline: regex extraction → session merge → query parameter generation → ORDER BY SQL → confirmation message → LLM schema compliance.
 
@@ -681,7 +682,7 @@ Validates Phase 3 (population context extraction and query boosts) and Phase 5 (
 | No-boost guard | 2 | Empty list and None both produce no boost params |
 | Accessibility on cards | 2 | Present and absent cases |
 | has_new_slots guard | 2 | Empty _populations doesn't trigger, population + service_type does |
-| LLM schema | 3 | Tool schema includes populations, empty_slots returns [], classifier prompt mentions populations |
+| Unified extractor schema | 4 | Tool schema includes populations field, _empty_slots returns [_populations], populations enum has canonical set, narrative prompt mentions populations |
 | Word boundary | 7 | "vet" matches, not in veterinarian/veto/vetted, "army" matches, not in salvation army (2 variants) |
 | Service keyword overlap | 6 | "disabled" as both service and population, disability services, wheelchair + food, disabled veteran food, reentry + employment |
 | Confirmation prefix integrity | 3 | LGBTQ + veteran (LGBTQ wins), LGBTQ + disabled, no gender + veteran |

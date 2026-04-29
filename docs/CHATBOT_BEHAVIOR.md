@@ -32,9 +32,9 @@ Route definitions live in `semantic_routes.py` — 10–20 example utterances pe
 
 Runtime cost: ~2-5ms per message (embedding + cosine similarity). Model load: ~1-2 seconds at startup (amortized). Memory: ~100 MB.
 
-### Stage 1b — Unified LLM Classification Gate (Run 23+)
+### Stage 1b — Unified LLM Classification Gate (Run 23+, post Phase 4)
 
-When regex finds **no service_type AND no action AND no tone AND 4+ words**, a single Haiku call (`classify_unified()` in `llm_classifier.py`) returns all classification dimensions in one JSON response: service_type, location, additional_services, tone, action, urgency, age, family_status, populations.
+When regex finds **no service_type AND no action AND no tone AND 4+ words**, a single Haiku call (`extract()` in `app/services/slot_extraction/__init__.py`) returns all classification dimensions in one tool_use response: service_type, location, additional_services, tone, action, urgency, age, family_status, populations.
 
 This replaces two separate LLM calls (Phase 2 slot enrichment + LLM category fallback) with one combined call. It fires on ~25% of messages — the ones where regex has nothing useful. The other ~75% are handled by regex alone at zero cost.
 
@@ -42,7 +42,8 @@ The gate skips for short messages and messages where regex already found somethi
 
 The prompt instructs the LLM to distinguish **intent from mention**: "I saw a doctor on TV" → null (not medical), "I need to see a doctor" → medical. This addresses the 50% false positive rate found in the regex audit.
 
-> **Migration state (Phase 4, April 2026).** Stage 1 migrated `pipeline.py:_run_llm_gate` from `classify_unified()` to `app.services.slot_extraction.extract()` — `tone` and `action` are now advisory outputs of the unified extractor, and the gap-filler reads them from there. Stage 2 deleted the `_USE_UNIFIED_EXTRACTOR` feature flag; slot extraction now routes unconditionally through the unified path. The legacy `llm_classifier.py` and `llm_slot_extractor.py` modules still exist on disk but have no production callers; Stage 3 deletes them. See `docs/design/UNIFIED_EXTRACTOR_MIGRATION.md`.
+<!-- drift:ignore: migration callout legitimately names the deleted modules -->
+> **Migration state (Phase 4 complete, April 2026).** Stage 1 migrated `pipeline.py:_run_llm_gate` from `classify_unified()` to `app.services.slot_extraction.extract()` — `tone` and `action` are now advisory outputs of the unified extractor, and the gap-filler reads them from there. Stage 2 deleted the `_USE_UNIFIED_EXTRACTOR` feature flag; slot extraction routes unconditionally through the unified path. Stage 3 deleted the legacy `llm_classifier.py` and `llm_slot_extractor.py` modules. See `docs/design/UNIFIED_EXTRACTOR_MIGRATION.md`.
 
 ### Stage 2 — Split Classification
 

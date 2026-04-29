@@ -414,30 +414,49 @@ class TestStructuredLLMOutputs:
             assert response_text == _LLM_CATEGORY_RESPONSES.get(category, _FAILOPEN_RESPONSE)
 
     def test_classifier_returns_structured_data_only(self):
-        """LLM classifier returns action/tone/slots — never user-facing text."""
-        from app.services.llm_classifier import classify_unified
-        mock_response = MagicMock()
-        mock_response.content = [MagicMock(text=json.dumps({
-            "action": "service_request",
-            "tone": "urgent",
+        """Unified extractor returns slot/tone/action — never user-facing text.
+
+        Phase 4 Stage 3 (April 2026): the legacy `classify_unified` was
+        deleted. The unified replacement is `slot_extraction.extract`,
+        which returns a 15-field dict (12 slot fields + tone + action +
+        Trust Model 5 internals). The firewall property is the same:
+        no `"response"` key, no user-facing text.
+        """
+        from app.services.slot_extraction import extract
+        from app.services.slot_extractor import extract_slots as regex_extract
+        # Mock the inner LLM call; result must be a dict, never text.
+        mock_block = MagicMock()
+        mock_block.type = "tool_use"
+        mock_block.name = "extract_intake_slots"
+        mock_block.input = {
             "service_type": "shelter",
             "location": "Brooklyn",
-        }))]
+            "tone": "urgent",
+        }
+        mock_response = MagicMock()
+        mock_response.content = [mock_block]
         mock_client = MagicMock()
         mock_client.messages.create.return_value = mock_response
-        # llm_classifier imports get_client inside the function body,
-        # so patch at the source module
         with patch("app.llm.claude_client.get_client", return_value=mock_client):
-            result = classify_unified("I need shelter in Brooklyn")
-        # Result should be a dict of structured fields, not a response string
-        if result is not None:
-            assert isinstance(result, dict)
-            assert "response" not in result  # No user-facing text generated
+            regex_result = regex_extract("I need shelter in Brooklyn")
+            result = extract(
+                "I need shelter in Brooklyn",
+                regex_result,
+                api_key_available=True,
+            )
+        assert isinstance(result, dict)
+        assert "response" not in result  # No user-facing text generated
 
     def test_slot_extractor_uses_tool_use_not_text(self):
         """LLM slot extractor uses Anthropic's tool_use API — the LLM
-        never generates free text, only structured tool call arguments."""
-        from app.services.llm_slot_extractor import extract_slots_llm
+        never generates free text, only structured tool call arguments.
+
+        Phase 4 Stage 3 (April 2026): the legacy `extract_slots_llm`
+        was deleted. The unified replacement is
+        `slot_extraction.dispatch.extract_slots_short` (short path);
+        same tool_use contract.
+        """
+        from app.services.slot_extraction.dispatch import extract_slots_short
         mock_block = MagicMock()
         mock_block.type = "tool_use"
         mock_block.name = "extract_intake_slots"
@@ -451,8 +470,11 @@ class TestStructuredLLMOutputs:
         mock_response.content = [mock_block]
         mock_client = MagicMock()
         mock_client.messages.create.return_value = mock_response
-        with patch("app.services.llm_slot_extractor.get_client", return_value=mock_client):
-            result = extract_slots_llm("I need food in Manhattan")
+        with patch(
+            "app.services.slot_extraction.dispatch.get_client",
+            return_value=mock_client,
+        ):
+            result = extract_slots_short("I need food in Manhattan")
         # Result is structured slot data, not user-facing text
         assert isinstance(result, dict)
         assert result.get("service_type") == "food"
@@ -574,18 +596,52 @@ class TestSystemPromptAudit:
         assert "service_type" not in _LLM_SYSTEM_PROMPT  # no slot keys
 
     def test_classifier_system_prompt_has_no_service_data(self):
-        from app.services.llm_classifier import _UNIFIED_SYSTEM_PROMPT
-        # The classifier prompt may list valid service_type ENUM values
-        # (food, shelter, etc.) as classification targets — that's the
-        # LLM's job. But it should not contain specific service NAMES,
-        # addresses, or phone numbers.
-        assert "212-" not in _UNIFIED_SYSTEM_PROMPT
-        assert "https://yourpeer" not in _UNIFIED_SYSTEM_PROMPT
+        """Phase 4 Stage 3: the legacy single `_UNIFIED_SYSTEM_PROMPT`
+        was split into `_SHORT_SYSTEM_PROMPT` (used by short-message
+        path) and `_NARRATIVE_SYSTEM_PROMPT` (used by long-message
+        path). The firewall property is the same — neither prompt may
+        contain user-specific data — so we audit both.
+
+        The classifier's job is to map messages to enum values; the
+        prompts may legitimately list valid `service_type` ENUM values
+        (food, shelter, etc.) as classification targets. They must
+        not contain specific service NAMES, addresses, or phone numbers.
+        """
+        from app.services.slot_extraction.prompts import (
+            _NARRATIVE_SYSTEM_PROMPT,
+            _SHORT_SYSTEM_PROMPT,
+        )
+        for prompt_name, prompt_text in (
+            ("_SHORT_SYSTEM_PROMPT", _SHORT_SYSTEM_PROMPT),
+            ("_NARRATIVE_SYSTEM_PROMPT", _NARRATIVE_SYSTEM_PROMPT),
+        ):
+            assert "212-" not in prompt_text, (
+                f"{prompt_name} contains a phone number"
+            )
+            assert "https://yourpeer" not in prompt_text, (
+                f"{prompt_name} contains a YourPeer URL"
+            )
 
     def test_slot_extractor_system_prompt_has_no_service_data(self):
-        from app.services.llm_slot_extractor import _SYSTEM_PROMPT
-        assert "212-" not in _SYSTEM_PROMPT
-        assert "https://yourpeer" not in _SYSTEM_PROMPT
+        """Phase 4 Stage 3: legacy `_SYSTEM_PROMPT` from
+        `llm_slot_extractor` is now split into `_SHORT_SYSTEM_PROMPT`
+        and `_NARRATIVE_SYSTEM_PROMPT` in `slot_extraction.prompts`.
+        Audit both for the same firewall property.
+        """
+        from app.services.slot_extraction.prompts import (
+            _NARRATIVE_SYSTEM_PROMPT,
+            _SHORT_SYSTEM_PROMPT,
+        )
+        for prompt_name, prompt_text in (
+            ("_SHORT_SYSTEM_PROMPT", _SHORT_SYSTEM_PROMPT),
+            ("_NARRATIVE_SYSTEM_PROMPT", _NARRATIVE_SYSTEM_PROMPT),
+        ):
+            assert "212-" not in prompt_text, (
+                f"{prompt_name} contains a phone number"
+            )
+            assert "https://yourpeer" not in prompt_text, (
+                f"{prompt_name} contains a YourPeer URL"
+            )
 
 
 # =====================================================================

@@ -1,5 +1,7 @@
 # Extractor-override consumer audit
 
+<!-- drift:ignore-file: historical audit of the override behavior of llm_slot_extractor.py before Phase 4 deleted it -->
+
 **Revision history:**
 - 2026-04-24 (rev 2): corrected the Trust Model 3 rule direction in the
   "What 'the override' actually is" section. Earlier drafts described

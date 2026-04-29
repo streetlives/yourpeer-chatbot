@@ -558,38 +558,68 @@ class TestHasNewSlotsGuard:
 
 
 # -----------------------------------------------------------------------
-# LLM SLOT EXTRACTOR SCHEMA
+# UNIFIED SLOT EXTRACTOR SCHEMA
 # -----------------------------------------------------------------------
 
-class TestLLMSlotExtractorSchema:
-    """Verify the LLM extractor tool schema includes populations."""
+class TestUnifiedSlotExtractorSchema:
+    """Verify the unified extractor's tool schema includes populations.
+
+    Phase 4 Stage 3 (April 2026): the legacy `llm_slot_extractor` and
+    `llm_classifier` modules were deleted. The unified replacement is
+    `app.services.slot_extraction`; the tool schema and empty-slots
+    helper now live in `slot_extraction.prompts` and
+    `slot_extraction.dispatch` respectively.
+    """
 
     def test_populations_in_tool_schema(self):
-        from app.services.llm_slot_extractor import _EXTRACT_SLOTS_TOOL
+        from app.services.slot_extraction.prompts import _EXTRACT_SLOTS_TOOL
         props = _EXTRACT_SLOTS_TOOL["input_schema"]["properties"]
         assert "populations" in props
         assert props["populations"]["type"] == "array"
 
     def test_empty_slots_includes_populations(self):
-        from app.services.llm_slot_extractor import _empty_slots
+        from app.services.slot_extraction.dispatch import _empty_slots
         empty = _empty_slots()
         assert "_populations" in empty
         assert empty["_populations"] == []
 
 
 # -----------------------------------------------------------------------
-# LLM CLASSIFIER SCHEMA
+# UNIFIED EXTRACTOR PROMPT — POPULATIONS
 # -----------------------------------------------------------------------
 
-class TestLLMClassifierPopulations:
-    """Verify the unified classifier handles populations."""
+class TestUnifiedExtractorPopulationsContract:
+    """Verify the unified extractor tells the LLM about populations.
 
-    def test_classifier_prompt_mentions_populations(self):
-        from app.services.llm_classifier import _UNIFIED_SYSTEM_PROMPT
-        assert "populations" in _UNIFIED_SYSTEM_PROMPT
-        assert "veteran" in _UNIFIED_SYSTEM_PROMPT
-        assert "disabled" in _UNIFIED_SYSTEM_PROMPT
-        assert "reentry" in _UNIFIED_SYSTEM_PROMPT
+    Replaces the legacy `TestLLMClassifierPopulations`. In the unified
+    architecture the LLM gets population guidance from two places:
+      1. The tool schema's `populations` field, whose `enum` carries
+         the canonical value list (this is what the LLM sees during
+         tool_use validation).
+      2. The narrative system prompt, which mentions populations
+         as a slot to extract.
+
+    The schema enum is the load-bearing surface — verifying the prompt
+    text mentions specific values like "veteran" is brittle and not
+    needed because the schema enum is what Anthropic enforces.
+    """
+
+    def test_populations_enum_in_schema(self):
+        """Schema enum must list the full canonical population set."""
+        from app.services.slot_extraction.prompts import _EXTRACT_SLOTS_TOOL
+        pops_field = _EXTRACT_SLOTS_TOOL["input_schema"]["properties"]["populations"]
+        enum = pops_field.get("items", {}).get("enum", [])
+        # These six were the legacy set; foster_youth was added in Phase 4
+        # Stage 1 (foster youth ≠ reentry fix).
+        for value in ("veteran", "disabled", "reentry", "dv_survivor",
+                      "pregnant", "senior"):
+            assert value in enum, f"populations enum missing '{value}'"
+
+    def test_narrative_prompt_mentions_populations(self):
+        """The narrative path's system prompt should mention
+        populations so the LLM knows to extract them on long messages."""
+        from app.services.slot_extraction.prompts import _NARRATIVE_SYSTEM_PROMPT
+        assert "populations" in _NARRATIVE_SYSTEM_PROMPT
 
 
 # -----------------------------------------------------------------------

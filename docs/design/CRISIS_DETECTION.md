@@ -85,7 +85,7 @@ Each response is a static string constant — never LLM-generated. To update the
 | `_LLM_SYSTEM_PROMPT` | Prompt sent to Claude Sonnet for classification |
 | `_CRISIS_CATEGORIES` | Ordered list of `(category, phrases, response)` tuples used by the regex loop |
 
-The LLM stage uses a lazy-initialized Anthropic client, consistent with `llm_slot_extractor.py`. It activates automatically when `ANTHROPIC_API_KEY` is present in the environment.
+The LLM stage uses a lazy-initialized Anthropic client, consistent with `slot_extraction/dispatch.py`. It activates automatically when `ANTHROPIC_API_KEY` is present in the environment.
 
 ## Detection Flow
 
