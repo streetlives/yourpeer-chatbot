@@ -362,22 +362,36 @@ def _build_messages_with_history(
     return messages
 
 
-def _normalize_tool_output(raw: dict) -> dict:
-    """Translate the tool_use input dict into the 10-field result shape.
+_VALID_TONES = frozenset({"emotional", "frustrated", "urgent", "confused"})
+_VALID_ACTIONS = frozenset({
+    "greeting", "thanks", "help", "escalation", "reset",
+    "bot_identity", "bot_question",
+    "confirm_yes", "confirm_deny",
+    "confirm_change_service", "confirm_change_location",
+    "correction", "negative_preference",
+})
 
-    The tool schema now returns `additional_services` as a list of
-    objects `{type, detail?, location?}`. We convert those to 3-tuples
+
+def _normalize_tool_output(raw: dict) -> dict:
+    """Translate the tool_use input dict into the 12-field result shape.
+
+    The tool schema returns `additional_services` as a list of objects
+    `{type, detail?, location?}`. We convert those to 3-tuples
     `(type, detail, location)` for consistency with the regex side's
     `additional_services` representation.
 
-    `service_detail` is captured here (new field in this migration's
-    schema — see Behavior #24 in the migration doc). The merge layer
-    snaps it to a canonical value or drops it.
+    `tone` and `action` are validated against the dialog-classification
+    enums (`_VALID_TONES`, `_VALID_ACTIONS`); unrecognized values are
+    coerced to None. These fields are populated by the LLM as a fallback
+    classification signal — `pipeline._run_llm_gate` reads them when the
+    fast regex/keyword classifiers in `classifier.py` missed.
 
     Note on field count: the regex side produces a 13-field dict
     (adding `no_requirements`, `_contradiction`, `_is_additive` per
     Trust Model 5 — those aren't asked of the LLM). The merge layer
-    stitches LLM's 10 + regex's 3 → 13 fields.
+    stitches LLM's 12 + regex's 3 → 15-field result (the canonical 13
+    slot fields plus `tone` and `action` as advisory classification
+    outputs).
     """
     additional_raw = raw.get("additional_services") or []
     normalized_additional: list[tuple] = []
@@ -391,6 +405,16 @@ def _normalize_tool_output(raw: dict) -> dict:
         loc = item.get("location") or None
         normalized_additional.append((svc, detail, loc))
 
+    tone = raw.get("tone")
+    if isinstance(tone, str):
+        tone = tone.strip().lower()
+    tone = tone if tone in _VALID_TONES else None
+
+    action = raw.get("action")
+    if isinstance(action, str):
+        action = action.strip().lower()
+    action = action if action in _VALID_ACTIONS else None
+
     return {
         "service_type": raw.get("service_type"),
         "service_detail": raw.get("service_detail"),
@@ -402,11 +426,13 @@ def _normalize_tool_output(raw: dict) -> dict:
         "family_status": raw.get("family_status"),
         "_populations": raw.get("populations") or [],
         "org_name": raw.get("org_name"),
+        "tone": tone,
+        "action": action,
     }
 
 
 def _empty_slots() -> dict:
-    """The ten-field all-None/empty dict. Returned when an LLM call
+    """The twelve-field all-None/empty dict. Returned when an LLM call
     fails and the caller needs a well-shaped dict before deciding
     whether to fall back to regex wholesale."""
     return {
@@ -420,6 +446,8 @@ def _empty_slots() -> dict:
         "family_status": None,
         "_populations": [],
         "org_name": None,
+        "tone": None,
+        "action": None,
     }
 
 

@@ -43,6 +43,7 @@ import logging
 import re
 from typing import Any, Optional
 
+from .dispatch import _is_narrative
 from .prompts import _SERVICE_TYPE_ENUM
 
 logger = logging.getLogger(__name__)
@@ -830,6 +831,16 @@ def merge(
     contradiction = _merge_regex_only(regex_result.get("_contradiction"))
     is_additive = _merge_regex_only(regex_result.get("_is_additive"))
 
+    # ADVISORY CLASSIFICATION OUTPUTS: tone, action.
+    # These are LLM-only — the regex side classifies tone and action in a
+    # separate step (`classifier.py`'s `_classify_tone` / `_classify_action`)
+    # which runs before slot extraction. Including them in the merge result
+    # lets `pipeline._run_llm_gate` read the LLM's view as a fallback when
+    # the regex classifiers missed. Most callers ignore these fields; the
+    # gate is the only consumer.
+    tone = llm_result.get("tone")
+    action = llm_result.get("action")
+
     return {
         # Trust Model 3
         "service_type": service_type,
@@ -850,6 +861,9 @@ def merge(
         "no_requirements": no_requirements,
         "_contradiction": contradiction,
         "_is_additive": is_additive,
+        # Advisory (LLM-only, gap-filler consumers)
+        "tone": tone,
+        "action": action,
     }
 
 

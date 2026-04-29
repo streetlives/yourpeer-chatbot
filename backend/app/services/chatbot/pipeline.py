@@ -14,14 +14,11 @@ from app.services.slot_extractor import NEAR_ME_SENTINEL, extract_slots
 from .context import _USE_LLM
 
 
-# When the LLM gate is enabled, ``classify_unified`` is imported at module
-# top so ``_run_llm_gate`` can reference it as a module-level name — which
-# is what makes ``monkeypatch.setattr(pipeline, "classify_unified", ...)``
-# effective in tests (a lazy import inside the function would rebind a
-# local each time and bypass the patch). In regex-only mode the name
-# remains unbound and the gate never reaches the call site.
-if _USE_LLM:
-    from app.services.llm_classifier import classify_unified  # noqa: F401
+# Phase 4 (April 2026): the gap-filler at `_run_llm_gate` now routes
+# through `app.services.slot_extraction.extract()` for both slot
+# enrichment (service_type, location, demographics) and advisory
+# classification (tone, action). The legacy `classify_unified` is no
+# longer imported here. See UNIFIED_EXTRACTOR_MIGRATION.md.
 
 
 logger = logging.getLogger(__name__)
@@ -143,10 +140,18 @@ def _run_llm_gate(
     llm_tone = None
     llm_action = None
     try:
-        # ``classify_unified`` is bound at module top under ``if _USE_LLM`` —
-        # using the module-level name here (not a fresh ``from ... import``
-        # each call) is what makes test monkeypatching effective.
-        unified = classify_unified(message)
+        # Route through the unified extractor — Phase 4 replacement for
+        # the legacy `classify_unified` call. `slot_extraction.extract()`
+        # accepts the regex-side result and returns the merged 15-field
+        # dict (13 slots + tone, action). The gate condition guarantees
+        # `early_extracted.service_type is None`, so when the result has
+        # a service_type, the LLM contributed it.
+        from app.services import slot_extraction
+        unified = slot_extraction.extract(
+            message,
+            regex_result=early_extracted,
+            api_key_available=True,
+        )
         if unified:
             if unified.get("service_type"):
                 logger.info(
@@ -167,8 +172,17 @@ def _run_llm_gate(
                     early_extracted["age"] = unified["age"]
                 if unified.get("family_status"):
                     early_extracted["family_status"] = unified["family_status"]
-                if unified.get("gender"):
-                    early_extracted["_gender"] = unified["gender"]
+                # Note: extract() returns merged shape with `_gender` (the
+                # internal key); legacy `classify_unified` returned `gender`
+                # (API key). Read from the merged-shape key here.
+                if unified.get("_gender"):
+                    early_extracted["_gender"] = unified["_gender"]
+                # Note on _populations: the legacy `classify_unified` gate
+                # ignored populations from the LLM (the prompt declared the
+                # field but the gate didn't read it). Phase 4 Stage 1 keeps
+                # that behavior bit-for-bit — populations enrichment in the
+                # gate is deferred to a future intentional change with its
+                # own eval validation.
                 has_service_intent = True
 
             if unified.get("tone"):

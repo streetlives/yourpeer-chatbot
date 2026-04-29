@@ -466,7 +466,7 @@ def generate_reply(
         extracted = early_extracted
 
     has_new_slots = any(v is not None and v != [] for k, v in extracted.items()
-                        if k not in ("additional_services", "_populations", "_contradiction", "_is_additive"))
+                        if k not in ("additional_services", "_populations", "_contradiction", "_is_additive", "tone", "action"))
 
     merged = merge_slots(existing, extracted)
 

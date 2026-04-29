@@ -709,7 +709,7 @@ def _handle_post_pending_confirmation(session_id, message, redacted_message, exi
     pending_has_new = any(
         v is not None and v != [] and v is not False
         for k, v in pending_extracted.items()
-        if k not in ("additional_services", "_populations", "_contradiction", "_is_additive", "no_requirements")
+        if k not in ("additional_services", "_populations", "_contradiction", "_is_additive", "no_requirements", "tone", "action")
     )
 
     # Path 1+2: something changed or filled

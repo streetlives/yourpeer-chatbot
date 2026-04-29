@@ -1821,6 +1821,14 @@ def merge_slots(existing: dict, new_values: dict) -> dict:
         # never persist it in session state.
         if key == "_is_additive":
             continue
+        # tone / action are advisory classification outputs from the
+        # unified extractor (Phase 4, April 2026). They're consumed by
+        # `pipeline._run_llm_gate` for routing decisions on the same
+        # turn and never persisted in session state — classification
+        # is recomputed per-message by the regex tone/action
+        # classifiers in `classifier.py`.
+        if key in ("tone", "action"):
+            continue
         # _populations is a list — merge by union, not replace.
         if key == "_populations":
             if value:

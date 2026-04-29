@@ -216,6 +216,50 @@ _EXTRACT_SLOTS_TOOL = {
                     "Use the canonical name (e.g. 'Ali Forney Center' not 'ali forney')."
                 ),
             },
+            "tone": {
+                "type": "string",
+                "enum": ["emotional", "frustrated", "urgent", "confused"],
+                "description": (
+                    "The emotional tone the user is conveying, if clearly present. "
+                    "emotional = expressing feelings of fear, sadness, shame, grief, "
+                    "loneliness, or distrust. "
+                    "frustrated = annoyed with the bot or the situation, restating, "
+                    "expressing impatience. "
+                    "urgent = communicating time-sensitivity in their need (tonight, "
+                    "right now, ASAP). "
+                    "confused = doesn't understand what to do or where to start. "
+                    "Omit when the message is neutral, transactional, or matter-of-fact. "
+                    "Used as a fallback when fast regex/keyword tone classification "
+                    "missed a clearer LLM-readable signal."
+                ),
+            },
+            "action": {
+                "type": "string",
+                "enum": [
+                    "greeting", "thanks", "help", "escalation", "reset",
+                    "bot_identity", "bot_question",
+                    "confirm_yes", "confirm_deny",
+                    "confirm_change_service", "confirm_change_location",
+                    "correction", "negative_preference",
+                ],
+                "description": (
+                    "The dialog action the user is performing, if clearly present. "
+                    "greeting = hi, hello. thanks = thank you, thanks. "
+                    "help = asking for help in general (no specific service). "
+                    "escalation = asking to speak to a person. reset = start over. "
+                    "bot_identity = asking who/what the bot is. "
+                    "bot_question = asking about the bot's capabilities or "
+                    "limitations. "
+                    "confirm_yes / confirm_deny = answering a pending yes/no. "
+                    "confirm_change_service / confirm_change_location = changing a "
+                    "previously-stated service or location. "
+                    "correction = correcting prior info. "
+                    "negative_preference = stating what they DON'T want. "
+                    "Omit when the message is a normal service request without one of "
+                    "these dialog roles. Used as a fallback when fast regex/keyword "
+                    "action classification missed an LLM-readable signal."
+                ),
+            },
         },
         "required": [],
     },

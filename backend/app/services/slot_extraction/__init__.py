@@ -77,20 +77,42 @@ def extract(
         A dict with the same 13 fields as regex_result.
 
     This function never mutates its inputs.
+
+    The result always contains the 13 canonical slot fields plus two
+    advisory classification fields, `tone` and `action`. Both default
+    to `None` on the regex-only / fallback paths and are populated only
+    when the LLM is invoked AND returned valid enum values. See
+    `pipeline._run_llm_gate` for the only consumer.
     """
+    # Helper: ensure every return path produces a dict with `tone` and
+    # `action` keys present. The regex side never sets these, so on the
+    # non-LLM paths they default to None; on the LLM-succeeded path they
+    # come from `merge()`. On LLM-empty-result paths (see
+    # `_is_empty_llm_result`), the slot extraction failed but tone/action
+    # classification may still have succeeded — pass `llm_result` so we
+    # preserve those values, matching legacy `classify_unified` behavior.
+    def _with_classification(d: dict, llm_result: dict | None = None) -> dict:
+        if llm_result is not None:
+            d.setdefault("tone", llm_result.get("tone"))
+            d.setdefault("action", llm_result.get("action"))
+        else:
+            d.setdefault("tone", None)
+            d.setdefault("action", None)
+        return d
+
     # Fast path: no API key means we can't invoke the LLM. Long
     # narratives still get the urgency-clue augmentation from the
     # regex fallback, matching legacy `extract_slots_smart` behavior.
     if not api_key_available:
         if _is_narrative(message):
-            return _narrative_regex_fallback(regex_result, message)
-        return dict(regex_result)
+            return _with_classification(_narrative_regex_fallback(regex_result, message))
+        return _with_classification(dict(regex_result))
 
     # Fast path: simple messages trust regex entirely. Four-criteria
     # check: ≤ 8 words, has service + location, location is a known
     # NYC location, only one service-keyword category matched.
     if _is_simple_message(message, regex_result):
-        return dict(regex_result)
+        return _with_classification(dict(regex_result))
 
     # Narrative path: LLM is fully authoritative on service_type.
     # Regex remains authoritative for location, _gender, and the
@@ -102,7 +124,13 @@ def extract(
             logger.warning(
                 "Narrative LLM returned empty — falling back to regex"
             )
-            return _narrative_regex_fallback(regex_result, message)
+            # Preserve LLM tone/action even when slots are empty — the
+            # gap-filler consumer cares about those classifications
+            # independently of slot extraction success.
+            return _with_classification(
+                _narrative_regex_fallback(regex_result, message),
+                llm_result,
+            )
         return merge(regex_result, _filter_valid_service_types(llm_result), message)
 
     # Short path, non-simple: call the short LLM and merge its output
@@ -125,7 +153,8 @@ def extract(
         logger.warning(
             "Short-path LLM returned empty — falling back to regex"
         )
-        return dict(regex_result)
+        # Preserve LLM tone/action even when slots are empty.
+        return _with_classification(dict(regex_result), llm_result)
 
     return merge(regex_result, _filter_valid_service_types(llm_result), message)
 

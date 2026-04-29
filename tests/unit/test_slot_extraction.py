@@ -1124,7 +1124,9 @@ class TestHybridAdditionalServices:
 class TestTopLevelMerge:
     """Full merge() invocations producing the 13-field result shape."""
 
-    def test_result_has_13_fields(self):
+    def test_result_has_15_fields(self):
+        """13 canonical slot fields + 2 advisory classification outputs
+        (tone, action) added for the gap-filler use case."""
         regex = _empty_regex_result()
         llm = _llm_result()
         result = merge(regex, llm)
@@ -1133,6 +1135,8 @@ class TestTopLevelMerge:
             "location", "age", "urgency", "_gender", "family_status",
             "_populations", "org_name", "no_requirements",
             "_contradiction", "_is_additive",
+            # Advisory classification (LLM-only; pipeline._run_llm_gate reads).
+            "tone", "action",
         }
         assert set(result.keys()) == expected_fields
 
@@ -1569,7 +1573,64 @@ class TestExtractShortPath:
             mock_short.return_value = _empty_slots()
             result = extract("i need food and something else", regex)
 
-        assert result == regex  # wholesale fallback
+        # Result is regex + advisory classification fields set to None
+        # (regex doesn't classify tone/action; the gap-filler use case
+        # is the only consumer and treats None as "no signal").
+        expected = dict(regex)
+        expected["tone"] = None
+        expected["action"] = None
+        assert result == expected
+
+    def test_short_llm_empty_preserves_llm_tone_and_action(self):
+        """Bug 5 regression lock: when `_is_empty_llm_result` fires on
+        the short path (LLM extracted no slots), any tone/action the
+        LLM *did* classify must still propagate to the caller.
+
+        This matches legacy `classify_unified` behavior — that function
+        returned tone/action independent of slot extraction success,
+        and `pipeline._run_llm_gate` depends on that behavior to route
+        tone-driven messages ("i'm so frustrated and confused") to the
+        frustration/emotional handlers.
+        """
+        regex = _empty_regex_result()
+        llm_tone_only = _empty_slots()
+        llm_tone_only["tone"] = "frustrated"
+        llm_tone_only["action"] = "help"
+
+        with patch(
+            "app.services.slot_extraction.extract_slots_short",
+        ) as mock_short:
+            mock_short.return_value = llm_tone_only
+            result = extract("i am so frustrated please help", regex)
+
+        assert result["tone"] == "frustrated"
+        assert result["action"] == "help"
+        # Slots still came from regex (all None).
+        assert result["service_type"] is None
+        assert result["location"] is None
+
+    def test_narrative_llm_empty_preserves_llm_tone_and_action(self):
+        """Same as the short-path test above, but for the narrative path
+        fallback (`_narrative_regex_fallback`). Both paths must preserve
+        LLM classification signals when slot extraction fell through.
+        """
+        regex = _empty_regex_result()
+        llm_tone_only = _empty_slots()
+        llm_tone_only["tone"] = "confused"
+        llm_tone_only["action"] = "help"
+        long_msg = (
+            "i don't really understand what to do and i'm not sure where "
+            "to even begin looking for any kind of help at all right now"
+        )
+
+        with patch(
+            "app.services.slot_extraction.extract_slots_narrative",
+        ) as mock_narrative:
+            mock_narrative.return_value = llm_tone_only
+            result = extract(long_msg, regex)
+
+        assert result["tone"] == "confused"
+        assert result["action"] == "help"
 
 
 # ---------------------------------------------------------------------------
@@ -1617,19 +1678,27 @@ class TestPromptSanity:
 
     def test_narrative_prompt_enumerates_all_schema_fields(self):
         """Behavior #23 fix: the "Extract ALL slots" directive must list
-        all fields in the tool schema. Derived dynamically so adding a
+        all SLOT fields in the tool schema. Derived dynamically so adding a
         new schema field without updating the prompt surfaces here.
 
         Note: the schema uses 'gender' / 'populations' (API names),
         which is what the prompt must reference — the returned dict
         uses '_gender' / '_populations' (internal shape), but that's
         a dispatch-level concern, not a prompt concern.
+
+        `tone` and `action` are excluded — they're advisory
+        classification outputs (Phase 4, gap-filler use case), not slot
+        fields. The LLM is instructed about them via the tool-schema
+        descriptions, not via a separate "Extract ALL" directive.
         """
-        schema_fields = list(
-            _EXTRACT_SLOTS_TOOL["input_schema"]["properties"].keys()
-        )
+        _ADVISORY_CLASSIFICATION_FIELDS = {"tone", "action"}
+        schema_fields = [
+            f for f in _EXTRACT_SLOTS_TOOL["input_schema"]["properties"].keys()
+            if f not in _ADVISORY_CLASSIFICATION_FIELDS
+        ]
         assert len(schema_fields) == 10, \
-            f"Expected 10 fields in schema, got {len(schema_fields)}"
+            f"Expected 10 slot fields in schema (excluding advisory " \
+            f"classification fields), got {len(schema_fields)}"
         for field in schema_fields:
             assert field in _NARRATIVE_SYSTEM_PROMPT, \
                 f"Narrative prompt missing '{field}' in extract-all directive"
