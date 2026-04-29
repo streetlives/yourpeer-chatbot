@@ -26,7 +26,6 @@ from dataclasses import dataclass
 from app.services.semantic_router import (
     SemanticMatch,
     classify_service,
-    initialize,
     is_available,
     reset,
     initialize_with_routes,
@@ -127,6 +126,34 @@ def reset_router():
 def mock_model():
     """Provide a basic mock embedding model."""
     return MockEmbeddingModel(dim=32)
+
+
+def _regex_shape(**overrides) -> dict:
+    """Build a 13-field regex_result dict, the shape produced by
+    `slot_extractor.extract_slots`. Pass field overrides as kwargs.
+
+    Centralizing the shape here means a 14th regex field (added in
+    some future sprint) only needs updating in one place. Otherwise
+    every integration test in this file would carry its own copy of
+    the dict and silently drift.
+    """
+    base = {
+        "service_type": None,
+        "service_detail": None,
+        "additional_services": [],
+        "location": None,
+        "age": None,
+        "urgency": None,
+        "_gender": None,
+        "family_status": None,
+        "_populations": [],
+        "org_name": None,
+        "no_requirements": False,
+        "_contradiction": False,
+        "_is_additive": False,
+    }
+    base.update(overrides)
+    return base
 
 
 # ---------------------------------------------------------------------------
@@ -604,21 +631,7 @@ class TestIntegration:
         with patch("app.services.chatbot.pipeline.extract_slots") as mock_regex, \
              patch("app.services.semantic_router.classify_service") as mock_classify:
 
-            mock_regex.return_value = {
-                "service_type": None,
-                "location": "manhattan",
-                "age": None,
-                "urgency": None,
-                "_gender": None,
-                "family_status": None,
-                "_populations": [],
-                "additional_services": [],
-                "service_detail": None,
-                "org_name": None,
-                "no_requirements": False,
-                "_contradiction": False,
-                "_is_additive": False,
-            }
+            mock_regex.return_value = _regex_shape(location="manhattan")
 
             mock_classify.return_value = SemanticMatch(
                 service_type="medical",
@@ -644,21 +657,7 @@ class TestIntegration:
         with patch("app.services.chatbot.pipeline.extract_slots") as mock_regex, \
              patch("app.services.semantic_router.classify_service") as mock_classify:
 
-            mock_regex.return_value = {
-                "service_type": None,
-                "location": None,
-                "age": None,
-                "urgency": None,
-                "_gender": None,
-                "family_status": None,
-                "_populations": ["veteran"],  # regex found veteran
-                "additional_services": [],
-                "service_detail": None,
-                "org_name": None,
-                "no_requirements": False,
-                "_contradiction": False,
-                "_is_additive": False,
-            }
+            mock_regex.return_value = _regex_shape(_populations=["veteran"])
 
             mock_classify.return_value = SemanticMatch(
                 service_type="employment",
@@ -685,21 +684,10 @@ class TestIntegration:
         with patch("app.services.chatbot.pipeline.extract_slots") as mock_regex, \
              patch("app.services.semantic_router.classify_service") as mock_classify:
 
-            mock_regex.return_value = {
-                "service_type": "food",
-                "location": "brooklyn",
-                "age": None,
-                "urgency": None,
-                "_gender": None,
-                "family_status": None,
-                "_populations": [],
-                "additional_services": [],
-                "service_detail": None,
-                "org_name": None,
-                "no_requirements": False,
-                "_contradiction": False,
-                "_is_additive": False,
-            }
+            mock_regex.return_value = _regex_shape(
+                service_type="food",
+                location="brooklyn",
+            )
 
             from app.services.chatbot.pipeline import _run_early_extraction
             result, source = _run_early_extraction("food in Brooklyn", "test-session")
@@ -726,21 +714,7 @@ class TestIntegration:
         with patch("app.services.chatbot.pipeline.extract_slots") as mock_regex, \
              patch("app.services.semantic_router.classify_service") as mock_classify:
 
-            mock_regex.return_value = {
-                "service_type": None,
-                "location": None,
-                "age": None,
-                "urgency": None,
-                "_gender": None,
-                "family_status": None,
-                "_populations": [],
-                "additional_services": [],
-                "service_detail": None,
-                "org_name": None,
-                "no_requirements": False,
-                "_contradiction": False,
-                "_is_additive": False,
-            }
+            mock_regex.return_value = _regex_shape()
 
             mock_classify.return_value = SemanticMatch(
                 service_type="medical",
@@ -784,21 +758,7 @@ class TestIntegration:
              patch("app.services.semantic_router.classify_service", return_value=None):
 
             # Regex finds nothing; semantic returns None.
-            mock_regex.return_value = {
-                "service_type": None,
-                "location": None,
-                "age": None,
-                "urgency": None,
-                "_gender": None,
-                "family_status": None,
-                "_populations": [],
-                "additional_services": [],
-                "service_detail": None,
-                "org_name": None,
-                "no_requirements": False,
-                "_contradiction": False,
-                "_is_additive": False,
-            }
+            mock_regex.return_value = _regex_shape()
 
             from app.services.chatbot.pipeline import _run_early_extraction
 
@@ -833,21 +793,7 @@ class TestIntegrationFallthrough:
                  return_value=None,
              ) as mock_classify:
 
-            mock_regex.return_value = {
-                "service_type": None,
-                "location": None,
-                "age": None,
-                "urgency": None,
-                "_gender": None,
-                "family_status": None,
-                "_populations": [],
-                "additional_services": [],
-                "service_detail": None,
-                "org_name": None,
-                "no_requirements": False,
-                "_contradiction": False,
-                "_is_additive": False,
-            }
+            mock_regex.return_value = _regex_shape()
 
             from app.services.chatbot.pipeline import _run_early_extraction
             result, source = _run_early_extraction(
@@ -868,21 +814,7 @@ class TestIntegrationFallthrough:
              patch("app.services.semantic_router.is_available", return_value=False), \
              patch("app.services.semantic_router.classify_service") as mock_classify:
 
-            mock_regex.return_value = {
-                "service_type": None,
-                "location": None,
-                "age": None,
-                "urgency": None,
-                "_gender": None,
-                "family_status": None,
-                "_populations": [],
-                "additional_services": [],
-                "service_detail": None,
-                "org_name": None,
-                "no_requirements": False,
-                "_contradiction": False,
-                "_is_additive": False,
-            }
+            mock_regex.return_value = _regex_shape()
 
             from app.services.chatbot.pipeline import _run_early_extraction
             result, source = _run_early_extraction("some message here", "test-session")
@@ -906,21 +838,7 @@ class TestIntegrationFallthrough:
         with patch("app.services.chatbot.pipeline.extract_slots") as mock_regex, \
              patch("app.services.semantic_router.classify_service") as mock_classify:
 
-            mock_regex.return_value = {
-                "service_type": None,
-                "location": None,
-                "age": None,
-                "urgency": None,
-                "_gender": None,
-                "family_status": None,
-                "_populations": [],
-                "additional_services": [],
-                "service_detail": None,
-                "org_name": None,
-                "no_requirements": False,
-                "_contradiction": False,
-                "_is_additive": False,
-            }
+            mock_regex.return_value = _regex_shape()
 
             mock_classify.return_value = SemanticMatch(
                 service_type="shelter",
@@ -972,21 +890,7 @@ class TestIntegrationFallthrough:
         # --- Case A: sets agree (both medical) ---
         # Semantic set regex_result["service_type"] = "medical"; LLM
         # also picks medical. Result: medical (LLM's pick, but value matches).
-        regex_with_semantic = {
-            "service_type": "medical",
-            "location": None,
-            "age": None,
-            "urgency": None,
-            "_gender": None,
-            "family_status": None,
-            "_populations": [],
-            "additional_services": [],
-            "service_detail": None,
-            "org_name": None,
-            "no_requirements": False,
-            "_contradiction": False,
-            "_is_additive": False,
-        }
+        regex_with_semantic = _regex_shape(service_type="medical")
         llm_agrees = {
             "service_type": "medical",
             "service_detail": None,

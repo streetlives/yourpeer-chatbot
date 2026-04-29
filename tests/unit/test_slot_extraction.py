@@ -1384,8 +1384,15 @@ class TestNormalizeToolOutputValidation:
     def test_age_string_coerced_to_int(self):
         assert _normalize_tool_output({"age": "17"})["age"] == 17
 
-    def test_age_string_with_whitespace_coerced(self):
+    def test_age_string_with_whitespace_accepted(self):
+        """Whitespace-padded numeric strings coerce cleanly. Note that
+        Python's `int()` strips whitespace internally, so this test
+        passes whether or not `_coerce_age` calls `.strip()` first —
+        it asserts the contract (whitespace tolerated) not the
+        implementation detail.
+        """
         assert _normalize_tool_output({"age": " 17 "})["age"] == 17
+        assert _normalize_tool_output({"age": "\t17\t"})["age"] == 17
 
     def test_age_above_max_rejected(self):
         # Legacy threshold was <120; new is ≤110, matching the prose
@@ -1512,6 +1519,68 @@ class TestNormalizeToolOutputValidation:
             ],
         })
         assert result["additional_services"] == [("food", None, None)]
+
+    # --- populations coercion (Bug 1 fix) ---
+
+    def test_populations_valid_list_passes_through(self):
+        """Valid canonical values are kept and sorted."""
+        result = _normalize_tool_output({
+            "populations": ["veteran", "disabled"],
+        })
+        assert result["_populations"] == ["disabled", "veteran"]
+
+    def test_populations_mixed_validity_filtered(self):
+        """Per-item filter: invalid items dropped, valid items kept."""
+        result = _normalize_tool_output({
+            "populations": [
+                "veteran",      # valid
+                123,            # not a string
+                None,           # not a string
+                "  Reentry  ",  # valid after strip + lowercase
+                "fake_pop",     # not in enum
+                "",             # empty after strip
+            ],
+        })
+        assert result["_populations"] == ["reentry", "veteran"]
+
+    def test_populations_dedup(self):
+        """Duplicates are deduplicated via set semantics."""
+        result = _normalize_tool_output({
+            "populations": ["veteran", "VETERAN", "  veteran  ", "veteran"],
+        })
+        assert result["_populations"] == ["veteran"]
+
+    def test_populations_scalar_string_returns_empty(self):
+        """A scalar string (LLM returned `"veteran"` instead of
+        `["veteran"]`) must NOT iterate as characters; it must return
+        []. This is the core regression vs. the legacy validator —
+        without `_coerce_populations`, downstream `_merge_union` would
+        iterate the string and produce nonsense like `["e", "n", ...]`.
+        """
+        result = _normalize_tool_output({"populations": "veteran"})
+        assert result["_populations"] == []
+
+    def test_populations_dict_returns_empty(self):
+        """A dict input (malformed LLM output) must return []."""
+        result = _normalize_tool_output({"populations": {"a": "b"}})
+        assert result["_populations"] == []
+
+    def test_populations_none_returns_empty(self):
+        """None or missing populations field returns []."""
+        assert _normalize_tool_output({"populations": None})["_populations"] == []
+        assert _normalize_tool_output({})["_populations"] == []
+
+    def test_populations_empty_list_returns_empty(self):
+        """Empty list input returns empty list (not None)."""
+        result = _normalize_tool_output({"populations": []})
+        assert result["_populations"] == []
+
+    def test_populations_foster_youth_accepted(self):
+        """foster_youth was added in Phase 4 Stage 1 (foster youth
+        ≠ reentry fix); confirm the schema-derived enum picks it up
+        rather than relying on a hard-coded list."""
+        result = _normalize_tool_output({"populations": ["foster_youth"]})
+        assert result["_populations"] == ["foster_youth"]
 
 
 class TestNarrativeRegexFallback:

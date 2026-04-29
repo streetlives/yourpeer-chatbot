@@ -21,7 +21,6 @@ Layers tested:
 Run: pytest tests/integration/test_llm_isolation.py -v
 """
 
-import json
 import re
 import pytest
 from unittest.mock import patch, MagicMock, call

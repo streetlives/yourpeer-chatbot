@@ -373,6 +373,17 @@ _VALID_ACTIONS = frozenset({
     "correction", "negative_preference",
 })
 
+# Derive the canonical populations set from the tool schema rather than
+# duplicating the enum. The schema in `prompts.py` is the single source
+# of truth (it's also what the LLM is constrained against during
+# tool_use validation); reading it here ensures that adding a new
+# population value (e.g. `foster_youth` was added in Stage 1 of the
+# Phase 4 migration) automatically propagates to the validator.
+_VALID_POPULATIONS = frozenset(
+    _EXTRACT_SLOTS_TOOL["input_schema"]["properties"]
+    ["populations"]["items"]["enum"]
+)
+
 
 def _coerce_age(raw_age: object) -> int | None:
     """Validate and coerce an age value to an int in the range [1, 110].
@@ -394,10 +405,42 @@ def _coerce_age(raw_age: object) -> int | None:
     if isinstance(raw_age, str):
         try:
             age_int = int(raw_age.strip())
-        except (ValueError, AttributeError):
+        except ValueError:
             return None
         return age_int if 1 <= age_int <= 110 else None
     return None
+
+
+def _coerce_populations(raw: object) -> list[str]:
+    """Validate and coerce a populations value to a sorted list of
+    canonical lowercase population strings.
+
+    Mirrors the legacy `_validate_result` populations handling:
+      - non-list inputs (None, scalar string, dict, etc.) → []
+      - per-item: must be str; strip + lowercase; must be in
+        `_VALID_POPULATIONS` (the schema enum).
+      - dedup via set, then sort for deterministic output.
+
+    Without this defense, a non-list LLM output (e.g. the LLM returning
+    `populations="veteran"` as a scalar instead of `["veteran"]`) would
+    flow downstream as a string, and `_merge_union` would iterate it
+    character-by-character — producing nonsense like `["e", "n", "t",
+    "v"]` after dedup + sort. Even with a list input, mixed-validity
+    items (`123`, `None`, padded strings, fake values) need filtering;
+    the schema enum is supposed to constrain the LLM but is enforced
+    only as a soft guardrail at tool_use time, not as a strict reject.
+    Symmetric with `additional_services`'s per-item validation in
+    `_normalize_tool_output` (both are array-shaped LLM outputs).
+    """
+    if not isinstance(raw, list):
+        return []
+    out: set[str] = set()
+    for item in raw:
+        if isinstance(item, str):
+            cleaned = item.strip().lower()
+            if cleaned in _VALID_POPULATIONS:
+                out.add(cleaned)
+    return sorted(out)
 
 
 def _normalize_string_field(raw: object) -> str | None:
@@ -435,7 +478,9 @@ def _normalize_tool_output(raw: dict) -> dict:
     `_normalize_string_field` for case + whitespace normalization;
     unknown enum values for tone/action become None. The age field
     is routed through `_coerce_age` for int range + string-coercion
-    handling.
+    handling. The populations field is routed through
+    `_coerce_populations` for list-shape + per-item enum filtering
+    + lowercase + dedup + sort.
 
     `service_detail` and `org_name` preserve case (proper nouns,
     organization names) — their canonical-form snapping happens in
@@ -495,7 +540,7 @@ def _normalize_tool_output(raw: dict) -> dict:
         "urgency": _normalize_string_field(raw.get("urgency")),
         "_gender": _normalize_string_field(raw.get("gender")),
         "family_status": _normalize_string_field(raw.get("family_status")),
-        "_populations": raw.get("populations") or [],
+        "_populations": _coerce_populations(raw.get("populations")),
         "org_name": org_name,
         "tone": tone,
         "action": action,

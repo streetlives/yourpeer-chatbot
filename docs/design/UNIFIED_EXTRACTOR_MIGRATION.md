@@ -2,7 +2,7 @@
 
 <!-- drift:ignore-file: this doc is about the deletion of llm_slot_extractor.py and llm_classifier.py — references to those files are intentional. -->
 
-**Status:** Phase 4 IN PROGRESS — Stages 1 (gap-filler migration) + 2 (flag removal) + 4a (legacy test deletion) + 3 (legacy module deletion) SHIPPED. Stage 4b (test file split) is optional and deferred.
+**Status:** Phase 4 SHIPPED — Stages 1 (gap-filler migration) + 2 (flag removal) + 4a (legacy test deletion) + 3 (legacy module deletion) all merged. Stage 4b (test file split) is optional and deferred.
 **Owner:** Raleigh
 **Created:** 2026-04-22
 **Approved:** 2026-04-23 — schema decisions (`org_name` keep + fuzzy validator; `service_detail` Option A extend + canonical-form validator; `additional_services` extended to `[{type, detail?, location?}]`); priority-hierarchy consolidation (food ≥ mental_health); 2-hour / ~$50 parallel-run eval budget.
