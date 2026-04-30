@@ -68,7 +68,6 @@ from .handlers import (
     _immigration_acknowledgment,
     _promote_queued_offer,
 )
-from .logging import _log_turn
 from .pipeline import (
     _apply_session_geo,
     _compute_routing_category,
@@ -76,6 +75,7 @@ from .pipeline import (
     _run_early_extraction,
     _run_llm_gate,
 )
+from .result_builder import _build_follow_up_response
 from .session_helpers import (
     _append_to_transcript,
     _clear_awaiting_service_after_clear,
@@ -533,51 +533,49 @@ def generate_reply(
         save_session_slots(session_id, merged)
 
         confirm_msg = _tone_prefix + _build_confirmation_message(merged)
-        result = {
-            "session_id": session_id,
-            "response": confirm_msg,
-            "follow_up_needed": True,
-            "slots": merged,
-            "services": [],
-            "result_count": 0,
-            "relaxed_search": False,
-            "quick_replies": _confirmation_quick_replies(merged),
-        }
-        _log_turn(session_id, redacted_message, result, "confirmation",
-                  request_id=request_id, tone=tone)
-        return result
+        return _build_follow_up_response(
+            session_id=session_id,
+            redacted_message=redacted_message,
+            response_text=confirm_msg,
+            merged=merged,
+            quick_replies=_confirmation_quick_replies(merged),
+            log_category="confirmation",
+            request_id=request_id,
+            tone=tone,
+        )
 
     # Need more slots — service request
     if category == "service":
         follow_up = _tone_prefix + next_follow_up_question(merged)
-        result = {
-            "session_id": session_id,
-            "response": follow_up,
-            "follow_up_needed": True,
-            "slots": merged,
-            "services": [],
-            "result_count": 0,
-            "relaxed_search": False,
-            "quick_replies": _follow_up_quick_replies(merged),
-        }
-        _log_turn(session_id, redacted_message, result, category, request_id=request_id, tone=tone)
-        return result
+        return _build_follow_up_response(
+            session_id=session_id,
+            redacted_message=redacted_message,
+            response_text=follow_up,
+            merged=merged,
+            quick_replies=_follow_up_quick_replies(merged),
+            log_category=category,
+            request_id=request_id,
+            tone=tone,
+        )
 
     # Service flow continuation
     if has_new_slots and existing.get("service_type") and not existing.get("_pending_confirmation"):
+        # NOTE: ``response_text`` does NOT include ``_tone_prefix`` here,
+        # unlike the two follow-up paths above. The asymmetry is
+        # pre-existing — see ``ORCHESTRATOR_AUDIT.md`` "Suspect 1" —
+        # and is preserved by this refactor; whether to add the prefix
+        # is an open product/UX question, not a code-shape question.
         follow_up = next_follow_up_question(merged)
-        result = {
-            "session_id": session_id,
-            "response": follow_up,
-            "follow_up_needed": True,
-            "slots": merged,
-            "services": [],
-            "result_count": 0,
-            "relaxed_search": False,
-            "quick_replies": _follow_up_quick_replies(merged),
-        }
-        _log_turn(session_id, redacted_message, result, "service", request_id=request_id, tone=tone)
-        return result
+        return _build_follow_up_response(
+            session_id=session_id,
+            redacted_message=redacted_message,
+            response_text=follow_up,
+            merged=merged,
+            quick_replies=_follow_up_quick_replies(merged),
+            log_category="service",
+            request_id=request_id,
+            tone=tone,
+        )
 
     # --- General conversation / unrecognized service ---
     return _handle_general_conversation(
