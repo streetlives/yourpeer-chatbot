@@ -17,7 +17,6 @@ All the heavy lifting is delegated:
 import logging
 import uuid
 
-from app.privacy.pii_redactor import redact_pii  # noqa: F401  (re-exported below)
 from app.services.classifier import (
     _CRISIS_NOT_CHECKED,
     _classify_action,
@@ -77,6 +76,15 @@ from .pipeline import (
     _run_early_extraction,
     _run_llm_gate,
 )
+from .session_helpers import (
+    _append_to_transcript,
+    _clear_awaiting_service_after_clear,
+    _clear_stale_last_action,
+    _consume_last_action,
+    _persist_emotional_context_early,
+    _persist_emotional_context_late,
+    _update_queued_services,
+)
 from .tone import _compute_tone_prefix
 
 
@@ -121,7 +129,6 @@ def generate_reply(
     existing = get_session_slots(session_id)
 
     # Store browser geolocation coords in session if provided.
-    has_coords = latitude is not None and longitude is not None  # noqa: F841
     _apply_session_geo(session_id, existing, latitude, longitude)
 
     # --- EARLY SLOT EXTRACTION (regex + semantic, before LLM gate) ---
@@ -233,10 +240,7 @@ def generate_reply(
     # help, thanks, a new service request), the context has shifted and
     # _last_action should not persist — otherwise it would incorrectly
     # affect a confirm_yes/confirm_deny many turns later.
-    _CONSUMES_LAST_ACTION = {"confirm_yes", "confirm_deny"}
-    if existing.get("_last_action") and category not in _CONSUMES_LAST_ACTION:
-        existing.pop("_last_action", None)
-        save_session_slots(session_id, existing)
+    _clear_stale_last_action(session_id, existing, category)
 
     # --- Crisis ---
     if category == "crisis":
@@ -282,9 +286,7 @@ def generate_reply(
     # Persist emotional context for subsequent turns (needed here, not
     # just at the service-flow site below, because help/confused
     # handlers can now set sensitive context on the first turn).
-    if _emotional_context_update is not None:
-        existing["_emotional_context"] = _emotional_context_update
-        save_session_slots(session_id, existing)
+    _persist_emotional_context_early(session_id, existing, _emotional_context_update)
 
     # --- Reset ---
     if category == "reset":
@@ -384,9 +386,7 @@ def generate_reply(
         return context_result
 
     # Clear the last_action tracker now that we've checked it
-    if last_action:
-        existing.pop("_last_action", None)
-        save_session_slots(session_id, existing)
+    _consume_last_action(session_id, existing, last_action)
 
     # --- Handle "change location" / "change service" outside pending ---
     if not existing.get("_pending_confirmation"):
@@ -442,8 +442,7 @@ def generate_reply(
         )
         if awaiting_clear and regex_confident:
             extracted = dict(early_extracted)
-            existing.pop("_awaiting_service_after_clear", None)
-            save_session_slots(session_id, existing)
+            _clear_awaiting_service_after_clear(session_id, existing)
         else:
             # Phase 4 (April 2026): the legacy `extract_slots_smart`
             # path was removed and the feature flag deleted; slot
@@ -472,25 +471,8 @@ def generate_reply(
 
     merged = merge_slots(existing, extracted)
 
-    # Store redacted transcript
-    if "transcript" not in merged:
-        merged["transcript"] = []
-    merged["transcript"].append({"role": "user", "text": redacted_message})
-    _MAX_TRANSCRIPT = 20
-    if len(merged["transcript"]) > _MAX_TRANSCRIPT:
-        merged["transcript"] = merged["transcript"][-_MAX_TRANSCRIPT:]
-
-    # Queue additional services
-    additional = extracted.get("additional_services", [])
-    _is_additive = extracted.get("_is_additive", False)
-    if additional and "_queued_services" not in merged:
-        merged["_queued_services"] = additional
-    if (extracted.get("service_type")
-            and existing.get("service_type")
-            and extracted["service_type"] != existing.get("service_type")
-            and not additional
-            and not _is_additive):
-        merged.pop("_queued_services", None)
+    _append_to_transcript(merged, redacted_message)
+    _update_queued_services(merged, extracted, existing)
 
     save_session_slots(session_id, merged)
 
@@ -524,14 +506,13 @@ def generate_reply(
     # computation if B.2 promoted — e.g., shame prefix only fires for
     # service flow, so the context could transition from None early to
     # "shame" here).
-    if _emotional_context_update is not None:
-        merged["_emotional_context"] = _emotional_context_update
-
-    # Re-save if emotional context was set after the initial save.
-    # Without this, emotional context is lost on the follow-up path where
-    # save_session_slots isn't called again before returning.
-    if merged.get("_emotional_context") and not existing.get("_emotional_context"):
-        save_session_slots(session_id, merged)
+    #
+    # NOTE: this helper preserves the late-site save bug (Bug 1 in
+    # ORCHESTRATOR_AUDIT.md): saves only on a None→non-None
+    # transition, not on value→different-value. Fix is queued as PR-γ.
+    _persist_emotional_context_late(
+        session_id, merged, existing, _emotional_context_update
+    )
 
     # Prepend PII safety warning, Spanish acknowledgment, and/or
     # immigration-context acknowledgment before the tone prefix so they

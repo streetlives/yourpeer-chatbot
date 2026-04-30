@@ -776,8 +776,55 @@ class TestUnifiedExtractorCallShape:
 
         generate_reply("I need shelter", session_id=sid)
 
-        # Signature: extract(message, regex_result, *, conversation_history, api_key_available)
+        # Signature: extract(message, regex_result, *, conversation_history, api_key_available, extraction_source)
         positional = unified_mock.call_args.args
         assert positional[1] == early, (
             "regex_result (second positional arg) must be early_extracted"
         )
+
+    def test_unified_extract_receives_extraction_source_from_pipeline(
+        self, mock_session, stub_pipeline, monkeypatch
+    ):
+        """``extraction_source`` kwarg carries the pipeline's source label.
+
+        Added in Phase 4 Stage 3: when the semantic router classified
+        intent rather than the regex-only path, Trust Model 3 needs to
+        know so it can give the router priority over the LLM's pick.
+        The orchestrator forwards whatever ``_run_llm_gate`` returned
+        for ``_extraction_source`` (here ``"regex"``, set by the stub).
+
+        Kills mutants that drop the kwarg entirely (silently breaks
+        Trust Model 3 router-priority handling), hardcode it to
+        ``None`` (same effect), or hardcode a wrong literal like
+        ``"semantic_router"``.
+        """
+        from app.services.chatbot import orchestrator
+        from app.services.chatbot.orchestrator import generate_reply
+
+        sid = "sess-extraction-source"
+        mock_session[sid] = {}
+        stub_pipeline.has_service_intent = True
+        stub_pipeline.action = "service"
+        stub_pipeline.early_extracted = {
+            "service_type": "shelter",
+            "additional_services": [],
+            "location": None,
+        }
+
+        unified_mock = MagicMock(
+            return_value={
+                "service_type": "shelter",
+                "additional_services": [],
+            }
+        )
+        monkeypatch.setattr(
+            "app.services.slot_extraction.extract", unified_mock
+        )
+        monkeypatch.setattr(orchestrator, "_USE_LLM", True)
+
+        generate_reply("I need shelter", session_id=sid)
+
+        # The stub_pipeline fixture's _early and _llm_gate both return
+        # "regex" as the source. Whatever they return must be forwarded.
+        kwargs = unified_mock.call_args.kwargs
+        assert kwargs["extraction_source"] == "regex"
