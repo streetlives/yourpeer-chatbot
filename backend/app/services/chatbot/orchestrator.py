@@ -75,6 +75,7 @@ from .pipeline import (
     _run_early_extraction,
     _run_llm_gate,
 )
+from .contextual_acknowledgments import _combined_contextual_acknowledgments
 from .result_builder import _build_follow_up_response
 from .session_helpers import (
     _append_to_transcript,
@@ -514,13 +515,16 @@ def generate_reply(
         session_id, merged, existing, _emotional_context_update
     )
 
-    # Prepend PII safety warning, Spanish acknowledgment, and/or
-    # immigration-context acknowledgment before the tone prefix so they
+    # Prepend PII safety warning, Spanish acknowledgment, immigration-
+    # context acknowledgment, and the four contextual acknowledgments
+    # (personal-story warmth, PATH intake, rough sleeper outreach,
+    # substance-use shelter framing) before the tone prefix so they
     # appear first in confirmations and follow-ups.
     _prefix_prepend = (
         _pii_warning
         + _spanish_acknowledgment
         + _immigration_acknowledgment(merged)
+        + _combined_contextual_acknowledgments(merged, redacted_message)
     )
     if _prefix_prepend:
         _tone_prefix = _prefix_prepend + _tone_prefix

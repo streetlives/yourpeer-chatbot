@@ -4,6 +4,29 @@
 **Inputs:** 171 scenarios in `tests/eval/eval_llm_judge.py` + latest eval report + design docs + WA/Cornell queries the suite was informed by.
 **Purpose:** Treat the eval suite as the living artifact it is — review every scenario for continued relevance, flag gaps, recommend specific additions/retirements.
 
+> **Status update — 2026-04-30:**
+> Since this audit was written, the audit-driven hygiene PR (Smells 1, 6, 7
+> from `ORCHESTRATOR_AUDIT.md`) has shipped, and a Stage 3 sub-eval has been
+> run on 2026-04-29 covering 99 scenarios across 6 categories (confirm, edge,
+> emotion, multi-intent, multi-turn, natural). Several items in this audit
+> have moved or resolved:
+>
+> - **§2B `peer_diabetic_insulin`** — RESOLVED. Now scores 4.45 with zero
+>   CFs. See section for details. The R37 framing as "longest-standing
+>   failure" is obsolete.
+> - **§2A multi-intent co-locate vs sequential** — Stage 3 multi-intent
+>   shows 33/34 passing; the two scenarios flagged here have not been
+>   re-checked against current behavior. Re-validate before acting.
+> - **The "honest headline" numbers (161/171, 10 failing)** are R37 era and
+>   no longer reflect current state. Stage 3 partial run: 95/99 passing
+>   across 6 categories with 13 critical failures clustered in three
+>   patterns (functional-but-flat tone, multi-need extraction failures,
+>   one isolated recovery-feature gap).
+>
+> The Retire (§1) and Add (§3) recommendations are largely unaffected —
+> those are scenario-design judgments, not status claims. Re-check
+> Update (§2) sections before acting on them.
+
 ## The honest headline
 
 **The suite is healthy and load-bearing.** 161/171 passing, 10 failing — of which 5 represent real bugs and the other 5 are borderline or scenario-design questions. Nothing is egregiously broken. But the suite has accumulated over ~30 eval runs and some scenarios no longer earn their place, some key coverage is missing, and the file organization doesn't reflect where the product has landed.
@@ -103,22 +126,28 @@ Note: `emotional` dropping to 2 is intentional — it'll rebuild with the three 
 
 Per the multi-intent plan, this is a product decision. **Mark these two scenarios for update pending decision.** If product chose the original sequential-always design intentionally, they stay and A2 becomes a code fix. If product actually prefers the current optimization, they need update.
 
-### 2B. `peer_diabetic_insulin` — longest-standing failure
+### 2B. `peer_diabetic_insulin` — RESOLVED 2026-04-30
 
-Has been stuck at 2.64-3.25 across R25-R33. The scenario is legitimate (insulin is urgent medical) but the bug it exercises (`confirmation flow breaks on "Yes, search"`) is a known narrow issue. The scenario's `expected` dict says `should_reach_confirmation: true`, which gets reached; the failure is on the response AFTER confirmation.
+**Status update:** This scenario is now passing. Stage 3 eval (2026-04-29) scored
+4.45 with zero critical failures. Slot extraction scored 5 ("correctly
+identified 'medical' as service type, extracted 'diabetes / insulin care' as
+service detail, flagged urgency as 'high'"). Confirmation flow scored 5 ("clearly
+stated what would be searched and offered clear quick-reply options").
 
-**Update the scenario** to include a turn-by-turn expected sequence that points at the actual bug:
+The two root causes documented in earlier runs — (a) `insulin` not mapping to
+medical and (b) confirmation flow breaking on "Yes, search" — are both fixed.
+The semantic router (active since R31) handles the keyword gap; the unified
+extractor + confirmation refactor closed the post-confirm flow.
 
-```python
-"expected": {
-    "service_type": "medical",
-    "should_reach_confirmation": True,
-    "should_execute_after_yes_search": True,  # NEW — this is the specific bug
-    "should_treat_as_urgent": True,
-}
-```
+The single sub-4 dimension is `safety_crisis: 3` — judge wanted proactive ER/911
+guidance for the urgency level. That's a Group B / proactive-resources pattern
+shared with `wa_rough_sleeper_urgent`, `multi_family_with_children_path`, and
+others. Tracked under PR 2 (contextual acknowledgments + proactive resources)
+in the post-merge follow-up plan, not a per-scenario fix.
 
-The judge can then score specifically on the confirm-flow-post-yes dimension.
+The scenario-update recommendation that previously lived here (add
+`should_execute_after_yes_search` to test the post-confirm bug specifically)
+is no longer needed — that bug is resolved.
 
 ### 2C. `wa_negative_preference` — borderline forever
 

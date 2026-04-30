@@ -1,0 +1,463 @@
+"""Contextual acknowledgments and proactive NYC resource surfacing.
+
+Four prefix builders that produce a short string to prepend to the bot's
+response when the user's slots and/or message text match a scenario where
+a generic "Here are your results" reply would miss the human context:
+
+* ``_personal_story_acknowledgment`` — long, narrative disclosure
+  (WA portal's "My Story in My Words" pattern). Acknowledges the
+  disclosure briefly before the bot moves into slot-filling or
+  results delivery.
+
+* ``_path_intake_acknowledgment`` — family with children + urgent
+  shelter need. Surfaces NYC's PATH intake center (the only intake
+  point for family shelter in NYC).
+
+* ``_rough_sleeper_acknowledgment`` — user is sleeping outside
+  tonight or has nowhere to go. Surfaces 24/7 outreach (HOME-STAT
+  via 311, SHELTER text line) and Safe Haven beds.
+
+* ``_substance_use_shelter_acknowledgment`` — user discloses
+  substance use AND is asking for shelter. Surfaces low-barrier
+  / harm-reduction framing and SAMHSA's national helpline.
+
+Each function returns either an empty string (signal not detected) or
+a short prefix ending with ``\\n\\n`` so the orchestrator can safely
+concatenate them unconditionally — same pattern as
+``_immigration_acknowledgment``.
+
+The combined prefix order is documented in
+``_combined_contextual_acknowledgments``; the orchestrator calls that
+single entry point.
+
+Detection design:
+    Slot-only signals are preferred — they ride on the unified
+    extractor's structured output and don't depend on message text
+    surviving redaction. Where slot signals aren't available
+    (substance-use disclosure, "sleeping on the street" phrasing,
+    long personal narrative), regex on ``redacted_message`` is used.
+    Conservative thresholds are chosen so these don't fire on
+    short transactional requests.
+
+Tone guidance:
+    Each acknowledgment is two sentences max. Resource-surfacing
+    prefixes mention the specific NYC contact point (PATH address,
+    311, SAMHSA line) so users can act without waiting on the
+    search results. They do NOT replace the bot's normal
+    slot-filling or results — they are additive context.
+"""
+
+import re
+
+# Word sets and regexes intentionally module-scoped — built once at
+# import time, not per-message.
+
+# ---------------------------------------------------------------------------
+# Apostrophe normalization
+# ---------------------------------------------------------------------------
+
+# Mobile users frequently send curly apostrophes (U+2019) where the
+# regexes below expect straight (U+0027). Without normalization, a
+# detector like ``won'?t kick me out`` would silently miss messages
+# typed on iOS/Android. Normalize once at the start of each detector
+# rather than authoring multi-codepoint character classes inside every
+# regex, which is harder to read and easier to forget.
+#
+# Codepoints normalized:
+#   U+2019  RIGHT SINGLE QUOTATION MARK   '   (most common autocorrect)
+#   U+2018  LEFT SINGLE QUOTATION MARK    '   (some keyboards)
+#   U+02BC  MODIFIER LETTER APOSTROPHE    ʼ   (rarer; some locales)
+#   U+0060  GRAVE ACCENT                  `   (typed by accident)
+_NON_STANDARD_APOSTROPHES = ("\u2019", "\u2018", "\u02bc", "\u0060")
+
+
+def _normalize_apostrophes(text: str) -> str:
+    """Replace non-standard apostrophes with straight ASCII apostrophe.
+
+    Returns the input unchanged when ``text`` is None or empty so callers
+    can pass through and check truthiness afterward.
+    """
+    if not text:
+        return text
+    for ch in _NON_STANDARD_APOSTROPHES:
+        if ch in text:
+            text = text.replace(ch, "'")
+    return text
+
+
+# ---------------------------------------------------------------------------
+# Personal-story disclosure
+# ---------------------------------------------------------------------------
+
+# The signal is a long, multi-sentence, situationally-specific
+# disclosure — distinct from a short request like "I need food in
+# Brooklyn." We require BOTH word count AND multiple personal-narrative
+# markers to fire, so we don't trigger on long but transactional
+# messages.
+_PERSONAL_STORY_MIN_WORDS = 40
+
+# Personal-narrative markers — phrases that signal the user is telling
+# their story, not just stating a request.
+#
+# Substring-overlap discipline: the substring-membership check below
+# (``marker in lower``) double-counts when one marker is a substring of
+# another. Concretely, the longer markers below CONTAIN the shorter
+# ones (or each other) lexically, but each remaining marker matches a
+# distinct conceptual signal — overlaps have been removed:
+#
+#   - "my situation" was dropped (substring of "here's my situation"
+#     and "explain my situation"). Conservative tradeoff: we lose the
+#     ability to trigger on bare "My situation is…" openers, but we
+#     prevent double-counting on the longer phrasings.
+#   - "he can't keep" was dropped (substring of "she can't keep").
+#     The "He can't keep us" case is still reachable via the
+#     "can't keep us" marker.
+_PERSONAL_STORY_MARKERS = (
+    # Narrative openers
+    "let me explain", "let me tell you", "here's my situation",
+    "tell you my story", "explain my situation",
+    # Loss/displacement (past-tense personal events)
+    "got evicted", "kicked out", "thrown out",
+    "lost my job", "lost my apartment", "lost my home",
+    "had to leave", "they took",
+    "we've been staying", "i've been staying", "been sleeping in",
+    "couldn't stay", "can't keep us", "can't stay here",
+    "she can't keep", "they can't keep",
+    # Relationship breakdown
+    "broke up with", "left him", "left her", "left my partner",
+)
+
+# ---------------------------------------------------------------------------
+# PATH (family shelter intake)
+# ---------------------------------------------------------------------------
+
+# PATH is the single NYC intake point for family-with-children
+# emergency shelter. Surfacing it is critical because families that
+# don't go through PATH can't access DHS family shelter — leading to
+# wasted time and continued unsheltered status. Address from NYC DHS
+# and matches the multi_family_with_children_path scenario expectation.
+
+# ---------------------------------------------------------------------------
+# Rough sleeper / outdoor disclosure
+# ---------------------------------------------------------------------------
+
+# Distinctive phrasings that indicate the user is currently/imminently
+# unsheltered, distinct from a generic "I need shelter" request which
+# could be preventive. Conservative match — both keyword and tense
+# patterns must indicate present/imminent outdoor status.
+_ROUGH_SLEEPER_RE = re.compile(
+    r"\b("
+    # Currently sleeping outside
+    r"sleep(?:ing)? (?:on|in) the street|"
+    r"sleep(?:ing)? outside|"
+    r"sleep(?:ing)? rough|"
+    r"rough sleeper|"
+    r"out on the street|"
+    r"on the street tonight|"
+    r"outside tonight|"
+    # Nowhere to go (paired with tonight or now)
+    r"(?:no|nowhere|not anywhere)\s*(?:place|where)?\s*to (?:sleep|go|stay) tonight|"
+    r"(?:no|nowhere|not anywhere)\s*(?:place|where)?\s*to (?:sleep|go|stay) right now|"
+    r"homeless tonight|"
+    # Direct disclosure
+    r"i'?m sleeping on the street|"
+    r"i'?m on the street|"
+    r"i don'?t have (?:anywhere|any place|nowhere) to (?:go|sleep|stay)"
+    r")\b",
+    re.IGNORECASE,
+)
+
+# ---------------------------------------------------------------------------
+# Substance use disclosure (shelter context)
+# ---------------------------------------------------------------------------
+
+# Substance-use disclosure paired with a shelter ask. The detection has
+# two paths because users phrase this two ways:
+#
+# 1. "Struggling with alcohol", "in recovery", "actively using" — a
+#    direct statement of substance use status, paired with a substance
+#    word.
+# 2. "Won't kick me out for drinking", "harm reduction shelter",
+#    "low-barrier" — the user already knows the shelter framing they
+#    need, even without disclosing details.
+#
+# Both paths require service_type == "shelter" to fire, so a generic
+# "I drink water" doesn't trigger substance-use framing.
+
+_SUBSTANCE_DISCLOSURE_RE = re.compile(
+    r"\b("
+    r"struggl(?:e|ing) with|"
+    r"trouble with|"
+    r"issues? with|"
+    r"problems? with|"
+    r"in recovery|"
+    r"active(?:ly)? using|"
+    r"trying to (?:get|stay) sober|"
+    r"trying to (?:get|stay) clean|"
+    r"using again|"
+    r"relapsed?|"
+    r"(?:my|the) (?:addiction|drinking|drug use)"
+    r")\b",
+    re.IGNORECASE,
+)
+
+_SUBSTANCE_NOUNS_RE = re.compile(
+    r"\b("
+    r"alcohol|"
+    r"drug|drugs|"
+    r"drinking|"
+    r"opiates?|opioids?|"
+    r"heroin|methadone|fentanyl|"
+    r"cocaine|crack|meth|"
+    r"substance"
+    r")\b",
+    re.IGNORECASE,
+)
+
+_HARM_REDUCTION_RE = re.compile(
+    r"\b("
+    r"won'?t kick (?:me|us) out|"
+    r"won'?t throw (?:me|us) out|"
+    r"don'?t kick (?:me|us) out|"
+    r"harm reduction|"
+    r"low[\s-]barrier|"
+    r"wet shelter|"
+    r"won'?t make me (?:be|stay) sober|"
+    r"won'?t require sobriety"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+# ===========================================================================
+# Detectors and acknowledgment builders
+# ===========================================================================
+
+
+def _is_personal_story(redacted_message: str) -> bool:
+    """True when the user's message looks like a personal-narrative
+    disclosure rather than a transactional request.
+
+    Two thresholds, both required:
+    - Length: at least ``_PERSONAL_STORY_MIN_WORDS`` words.
+    - Markers: at least 2 personal-narrative phrases from
+      ``_PERSONAL_STORY_MARKERS``.
+
+    The double threshold is what keeps this from firing on long but
+    transactional asks (e.g., "I need food in Brooklyn but also
+    looking for shelter and a place to shower and maybe somewhere
+    to do laundry…" — long, but no personal-narrative markers).
+    """
+    if not redacted_message:
+        return False
+    redacted_message = _normalize_apostrophes(redacted_message)
+    words = redacted_message.split()
+    if len(words) < _PERSONAL_STORY_MIN_WORDS:
+        return False
+    lower = redacted_message.lower()
+    marker_hits = sum(1 for marker in _PERSONAL_STORY_MARKERS if marker in lower)
+    return marker_hits >= 2
+
+
+def _personal_story_acknowledgment(slots: dict, redacted_message: str) -> str:
+    """Empathetic prefix for a long personal-narrative disclosure.
+
+    Brief by design — two sentences. The prefix names what the user
+    just did (sharing) and signals the bot is going to focus on
+    helping, not interrogating. It does NOT slot-fill or ask
+    follow-ups; that responsibility stays with the orchestrator.
+
+    Returns empty string when ``_is_personal_story`` doesn't fire.
+    """
+    if not _is_personal_story(redacted_message):
+        return ""
+    return (
+        "Thank you for telling me what's going on — I know that's a lot to share. "
+        "Let me focus on what you need most.\n\n"
+    )
+
+
+def _is_family_with_children_urgent_shelter(slots: dict) -> bool:
+    """True when slots indicate a family-with-children unit needs
+    shelter urgently — the case where NYC's PATH intake (Bronx) is
+    the only legitimate path to family shelter.
+
+    Three conditions, all required:
+    - ``family_status == "with_children"``
+    - ``urgency == "high"``
+    - ``service_type == "shelter"`` OR shelter is in the queued
+      additional services (multi-intent case where shelter isn't
+      primary but is being requested).
+
+    Pure slot check — no message-text dependency. Reliable when the
+    extractor has populated these fields.
+    """
+    if slots.get("family_status") != "with_children":
+        return False
+    if slots.get("urgency") != "high":
+        return False
+    if slots.get("service_type") == "shelter":
+        return True
+    # Multi-intent case: shelter as additional/queued service
+    for queue_key in ("additional_services", "_queued_services"):
+        for svc in slots.get(queue_key) or []:
+            if len(svc) >= 1 and svc[0] == "shelter":
+                return True
+    return False
+
+
+def _path_intake_acknowledgment(slots: dict, redacted_message: str) -> str:
+    """Surface NYC PATH intake center for families needing emergency shelter.
+
+    PATH (Prevention Assistance and Temporary Housing) is the ONLY
+    intake point for family-with-children emergency shelter in NYC.
+    Families that bypass PATH cannot access DHS family shelter —
+    surfacing this proactively prevents wasted time tonight.
+
+    Returns empty string when the trigger conditions aren't met.
+    """
+    if not _is_family_with_children_urgent_shelter(slots):
+        return ""
+    return (
+        "For families with children needing shelter in NYC, the intake point "
+        "is the PATH center in the Bronx (151 East 151st Street, open 24/7) — "
+        "you can call 311 to be connected. Let me also search for nearby "
+        "options.\n\n"
+    )
+
+
+def _is_rough_sleeper(redacted_message: str) -> bool:
+    """True when the message indicates the user is currently or
+    imminently sleeping outside.
+
+    Regex-based detection on ``redacted_message`` (PII redaction
+    doesn't strip these phrases). Conservative — matches present-tense
+    or tonight-tense phrasings only, not generic past or hypothetical
+    references.
+    """
+    if not redacted_message:
+        return False
+    redacted_message = _normalize_apostrophes(redacted_message)
+    return bool(_ROUGH_SLEEPER_RE.search(redacted_message))
+
+
+def _rough_sleeper_acknowledgment(slots: dict, redacted_message: str) -> str:
+    """Surface NYC outreach teams + low-barrier shelter options for
+    someone unsheltered tonight.
+
+    HOME-STAT (Homeless Outreach and Mobile Engagement Street Action
+    Team) is the city's 24/7 mobile outreach. Safe Haven beds are the
+    low-barrier (no sobriety requirement) shelter option, which
+    matters because rough sleepers often won't accept high-barrier
+    shelter referrals. Surfacing both gives the user actionable
+    options independent of the bot's search.
+    """
+    if not _is_rough_sleeper(redacted_message):
+        return ""
+    return (
+        "If you're outside tonight, NYC has 24/7 mobile outreach — call 311 "
+        "and ask for HOME-STAT, or text SHELTER to 67283. Safe Haven beds "
+        "(low-barrier, no sobriety required) are also available. Let me "
+        "look for what's nearby.\n\n"
+    )
+
+
+def _is_substance_use_shelter(slots: dict, redacted_message: str) -> bool:
+    """True when the user is asking about shelter AND has disclosed
+    substance use OR has named the harm-reduction shelter framing.
+
+    Two paths, EITHER triggers (so long as service_type is shelter):
+    - Substance disclosure: ``_SUBSTANCE_DISCLOSURE_RE`` matches AND
+      a substance noun also matches ("struggling with alcohol",
+      "trouble with drugs"). Pairing avoids matching "struggling
+      with rent" etc.
+    - Harm-reduction phrasing: ``_HARM_REDUCTION_RE`` matches alone
+      ("won't kick me out", "harm reduction"). The user already
+      knows the framing they need.
+
+    Both require ``service_type == "shelter"`` (or shelter queued)
+    so that "I drink alcohol but need food" doesn't trigger.
+    """
+    if not redacted_message:
+        return False
+    redacted_message = _normalize_apostrophes(redacted_message)
+    # Service-type gate — must be asking about shelter
+    if slots.get("service_type") != "shelter":
+        # Allow shelter as queued service (multi-intent case)
+        is_queued = any(
+            len(svc) >= 1 and svc[0] == "shelter"
+            for queue_key in ("additional_services", "_queued_services")
+            for svc in (slots.get(queue_key) or [])
+        )
+        if not is_queued:
+            return False
+    # Path 1: explicit disclosure paired with substance noun
+    has_disclosure = bool(_SUBSTANCE_DISCLOSURE_RE.search(redacted_message))
+    has_substance_noun = bool(_SUBSTANCE_NOUNS_RE.search(redacted_message))
+    if has_disclosure and has_substance_noun:
+        return True
+    # Path 2: harm-reduction phrasing alone
+    if _HARM_REDUCTION_RE.search(redacted_message):
+        return True
+    return False
+
+
+def _substance_use_shelter_acknowledgment(
+    slots: dict, redacted_message: str
+) -> str:
+    """Surface low-barrier / harm-reduction shelter framing + SAMHSA
+    helpline for someone disclosing substance use while asking for shelter.
+
+    Two pieces of information:
+    - Low-barrier / harm-reduction shelters (e.g., Safe Haven beds)
+      do not require sobriety. The user's "won't kick me out for
+      drinking" concern has a category of services that addresses it.
+    - SAMHSA's free 24/7 line (1-800-662-4357) connects to
+      treatment, support, or just a listening ear — independent of
+      shelter.
+    """
+    if not _is_substance_use_shelter(slots, redacted_message):
+        return ""
+    return (
+        "Some NYC shelters are 'low-barrier' or 'harm reduction' — meaning "
+        "they don't require sobriety. SAMHSA's free 24/7 helpline "
+        "(1-800-662-4357) can also help find substance-use-friendly "
+        "resources. Let me look for shelter options now.\n\n"
+    )
+
+
+# ===========================================================================
+# Combined entry point
+# ===========================================================================
+
+
+def _combined_contextual_acknowledgments(
+    slots: dict, redacted_message: str
+) -> str:
+    """Concatenate all contextual acknowledgments that fire for this
+    turn, in a deliberate order:
+
+    1. Personal-story warmth (if applicable) — comes first because
+       it's about acknowledging what the user just shared, before
+       the bot launches into resources or slot-filling.
+    2. PATH intake (if applicable) — most directive and most
+       time-critical (family + tonight).
+    3. Rough sleeper outreach (if applicable) — also time-critical.
+    4. Substance-use shelter framing (if applicable) — informational.
+
+    Each helper is independently empty-string-safe, so the
+    concatenation is always safe to call. Order matters when
+    multiple fire: the user reads the warmth first, then the
+    most actionable resource pointers, then the framing notes.
+
+    Note: the existing ``_immigration_acknowledgment`` is NOT folded
+    in here — it's already wired into the orchestrator's prefix
+    chain and we're not moving it. This helper covers the four new
+    prefixes only.
+    """
+    return (
+        _personal_story_acknowledgment(slots, redacted_message)
+        + _path_intake_acknowledgment(slots, redacted_message)
+        + _rough_sleeper_acknowledgment(slots, redacted_message)
+        + _substance_use_shelter_acknowledgment(slots, redacted_message)
+    )
