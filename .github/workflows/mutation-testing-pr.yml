@@ -39,7 +39,7 @@ jobs:
       matrix: ${{ steps.build-matrix.outputs.matrix }}
       any-changed: ${{ steps.build-matrix.outputs.any-changed }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           # Need full history to diff against the base branch.
           fetch-depth: 0
@@ -154,7 +154,7 @@ jobs:
       DATABASE_URL: postgresql://test:test@localhost/test_ci
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
