@@ -49,6 +49,82 @@ class TestConfirmChangeServicePatterns:
         has_prompt = "what kind" in resp or "what do you need" in resp
         assert has_shelter or has_prompt
 
+    def test_pending_change_service_sets_awaiting_clear_flag(self):
+        """Regression guard for `confirm_multi_change` (R36 unified 3.55).
+
+        The `_awaiting_service_after_clear` flag tells the orchestrator's
+        service-extraction stage to trust the regex on the next turn and
+        skip the LLM, so that a bare "Shelter" reply doesn't get
+        mis-extracted by the LLM as `{service_type: food (stale from
+        history), additional: [shelter]}` — that mis-extraction was the
+        root cause of the confirmation displaying "food and shelter"
+        instead of just "shelter" after a "Change service" turn.
+
+        Both change-service code paths must set this flag:
+          1. `_handle_change_service_request` — standalone, fires when
+             there is no pending confirmation (rare).
+          2. The `confirm_change_service` branch inside
+             `_handle_pending_confirmation` — fires when there IS a
+             pending confirmation (the common path, and the one
+             `confirm_multi_change` exercises).
+
+        Path 1 always set the flag; path 2 did not, and the two drifted
+        out of sync. This test pins path 2's behavior.
+        """
+        import uuid
+        from app.services.session_store import get_session_slots
+        sid = f"test-{uuid.uuid4().hex[:8]}"
+        # Turn 1 establishes pending_confirmation=True.
+        # Turn 2 routes through _handle_pending_confirmation's
+        # confirm_change_service branch (not the standalone handler).
+        send_multi([
+            "I need food in Brooklyn",
+            "Change service",
+        ], session_id=sid)
+        slots = get_session_slots(sid)
+        assert slots.get("service_type") is None, (
+            "Change service should clear service_type"
+        )
+        assert slots.get("_pending_confirmation") is None, (
+            "Change service should clear pending confirmation"
+        )
+        assert slots.get("_awaiting_service_after_clear") is True, (
+            "Change service (in pending path) must set "
+            "_awaiting_service_after_clear=True so the next-turn LLM "
+            "guard engages. Without it, a bare 'Shelter' reply next "
+            "turn hits the LLM with stale food-in-history and gets "
+            "mis-extracted as {service_type: food, additional: "
+            "[shelter]} — the confirm_multi_change failure shape."
+        )
+
+    def test_pending_change_service_flag_recovers_scenario(self):
+        """End-to-end regression: the confirm_multi_change scenario flow.
+        Turn 3's 'Shelter' must cleanly replace service_type, not
+        append to it. The awaiting-clear flag set on turn 2 is what
+        makes this work under the unified extractor path (where the
+        LLM's stale-history mis-extraction would otherwise stick)."""
+        import uuid
+        from app.services.session_store import get_session_slots
+        sid = f"test-{uuid.uuid4().hex[:8]}"
+        send_multi([
+            "I need food in Brooklyn",
+            "Change service",
+            "Shelter",
+        ], session_id=sid)
+        slots = get_session_slots(sid)
+        assert slots.get("service_type") == "shelter", (
+            f"After Change service → Shelter, service_type should be "
+            f"'shelter' (replaced), not food-with-shelter-added. Got "
+            f"{slots.get('service_type')!r}."
+        )
+        # Note: the `_awaiting_service_after_clear` flag is consumed by
+        # the orchestrator's service-extraction guard at
+        # orchestrator.py:445, but only when `_USE_LLM` is True (i.e.
+        # when an `ANTHROPIC_API_KEY` is set). In the test environment
+        # `_USE_LLM` is False so the guard never runs — the flag stays
+        # harmlessly set. This doesn't affect correctness since the
+        # regex path gives the same result as the guard.
+
 
 # -----------------------------------------------------------------------
 # CONFIRM DENY + NEW SERVICE INTENT

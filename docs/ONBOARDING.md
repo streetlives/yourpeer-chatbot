@@ -164,8 +164,7 @@ When both Tiers 1 and 2 find nothing — no service keyword, no semantic match, 
 This costs money per call and adds 1-3 seconds of latency, which is why it's the last resort rather than the first step.
 
 → `backend/app/llm/claude_client.py` — the Anthropic API client
-→ `backend/app/services/llm_classifier.py` — the unified LLM classification gate
-→ `backend/app/services/llm_slot_extractor.py` — LLM-based slot extraction via tool calling
+→ `backend/app/services/slot_extraction/` — the unified LLM extractor (Phase 4): tool-use slot extraction + classification (action, tone) in one call. Internal modules: `dispatch.py`, `merge.py`, `prompts.py`.
 
 ### Why three tiers?
 
@@ -365,7 +364,7 @@ The package exports `generate_reply()` from its `__init__.py` so existing caller
 
 | Handler module | Catches |
 |---|---|
-| `handlers/emotional.py` | Frustration, shame, sadness, distrust, undeserving. The AVR pattern lives here, plus the crisis dispatcher (`_handle_crisis`) for the 4-category step-down (`safety_concern`, `domestic_violence`, `youth_runaway`, `assault_victim` — the categories where crisis resources fire alongside an offer to search). Filter-aware cleanup at the tail of `_handle_frustration` reconciles "preserve `_last_results` through routing" with "leave a clean session afterward." |
+| `handlers/emotional.py` | Frustration, shame, sadness, distrust, undeserving. The AVR pattern lives here, plus the crisis dispatcher (`_handle_crisis`) for the 5-category step-down (`safety_concern`, `domestic_violence`, `youth_runaway`, `assault_victim`, `medical_emergency` — the categories where crisis resources fire alongside an offer to search; `medical_emergency` was added in Sprint 1, April 2026 for chronic medical needs like medication shortage). Filter-aware cleanup at the tail of `_handle_frustration` reconciles "preserve `_last_results` through routing" with "leave a clean session afterward." |
 | `handlers/confirmation.py` | The "Food in Brooklyn — sound good?" flow. Contradiction auto-execute logic, optional-slot re-nudge path, and context-aware `confirm_yes` / `confirm_deny` routing during pending confirmations. |
 | `handlers/post_results.py` | Everything after results are shown: "show more" pagination (through `_filtered_results` when filter is active, else `_last_results`), sort variants, questions about specific cards, filter phrase detection, filter-escape on "no thanks", new-search state reset. |
 | `handlers/general.py` | Greetings, resets, help questions, "what can you do", bot-identity questions. |
@@ -398,9 +397,8 @@ These modules sit alongside the `chatbot/` package:
 
 **`post_results.py`** — the filter-subcategory engine. `_handle_filter_subcategory()` is the big one; it returns both the page-sliced `services` and the `_full_filtered` set for session persistence. Also contains the refinement classifier (`classify_post_results_question`) that disambiguates "more like those" / "ones for families" / "refine the results" / "exclude DHS" from ordinary follow-up questions.
 
-**`llm_classifier.py`** — the unified LLM classification gate. Single Haiku call returning service_type, location, tone, action when the regex and semantic tiers both miss.
-
-**`llm_slot_extractor.py`** — LLM slot extraction via Claude Haiku tool calling, used inside the 3-tier cascade.
+<!-- drift:ignore: prose legitimately names the deleted legacy pair this package replaced -->
+**`slot_extraction/`** — the unified Tier 3 LLM extractor (Phase 4, April 2026). Single Haiku tool_use call returning slot fields plus advisory `tone` and `action` classification outputs; replaces the legacy `llm_classifier.py` + `llm_slot_extractor.py` pair. The package's `extract()` is called by `pipeline._run_llm_gate` when regex and semantic miss.
 
 **`session_store.py`** — in-memory session state with 30-minute TTL (max 500 sessions).
 

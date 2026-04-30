@@ -10,11 +10,12 @@ name: Mutation Testing (Weekly)
 #   orchestrator, session_token. Thresholds 50-85%. Below-threshold
 #   opens an issue.
 #
-#   Tier 2 (5 modules) — high blast-radius: pipeline, execution,
-#   slot_extractor, query_templates, handlers/confirmation. Thresholds
-#   55-60% (lenient initial bar; walk up over quarters).
+#   Tier 2 (7 modules) — high blast-radius: pipeline, execution,
+#   slot_extractor, query_templates, handlers/confirmation,
+#   slot_extraction/merge, slot_extraction/dispatch. Thresholds
+#   55-70% (lenient initial bar; walk up over quarters).
 #
-# Matrix runs all 10 modules in parallel. Each is capped at 90 min via
+# Matrix runs all 12 modules in parallel. Each is capped at 90 min via
 # timeout-minutes. Total wall-clock is limited by the slowest module,
 # not the sum — so weekly cost is roughly one long worker-hour per tier.
 #
@@ -81,6 +82,18 @@ jobs:
             tests: >-
               tests/integration/test_classification_and_routing.py
               tests/integration/test_multi_turn_and_context.py
+            # PAIRING NOTE (2026-04-29): considered adding
+            # test_semantic_router.py for the new extraction_source
+            # kwarg threading (Phase 4 Stage 3 follow-up), but the
+            # pairing-guard correctly rejected it: that file mocks
+            # `extract_slots` and `classify_service` at the boundary
+            # and never reaches orchestrator's logic. The semantic-
+            # priority behavior is exercised end-to-end through this
+            # pair via the conftest harness — which is what cosmic-ray
+            # actually mutates against. Coverage of `extraction_source`
+            # is via direct unit tests in test_slot_extraction.py
+            # (TestMergeServiceTypeWithExtractionSource, 7 tests)
+            # paired with merge.py.
 
           - module: backend/app/services/session_token.py
             tests: >-
@@ -176,6 +189,38 @@ jobs:
               tests/unit/test_frustration_and_crisis.py
               tests/integration/test_multi_turn_and_context.py
 
+          - module: backend/app/services/slot_extraction/merge.py
+            tests: >-
+              tests/unit/test_slot_extraction.py
+            # Phase 4 Stage 3 (April 2026): the unified slot extractor
+            # replaced llm_slot_extractor.py + llm_classifier.py. Trust
+            # Model 3 (set-agreement, semantic-priority on disagree,
+            # cross-borough carve-out) lives here, plus the per-field
+            # merge functions for location, additional_services, gender,
+            # populations, etc. Pure functions — no LLM calls, no I/O —
+            # so high killability expected. Paired with test_slot_extraction.py
+            # which directly imports `_merge_service_type_and_primary_location`,
+            # `_merge_location`, `_merge_additional_services`, etc., and
+            # contains 246 tests with 122 merge-related call sites — every
+            # Trust Model branch directly exercised. Threshold 70% matches
+            # Tier-1 pure-logic modules — see TEST_QUALITY_PLAN.md §4.
+
+          - module: backend/app/services/slot_extraction/dispatch.py
+            tests: >-
+              tests/unit/test_slot_extraction.py
+            # Phase 4 Stage 3 (April 2026): companion to merge.py. Holds
+            # the LLM call wrappers (extract_slots_short / narrative),
+            # validators (_normalize_tool_output, _coerce_populations),
+            # path classifiers (_is_simple_message, _is_narrative), and
+            # the regex urgency-hierarchy fallback for narrative messages
+            # when the LLM returns empty. test_slot_extraction.py imports
+            # `extract_slots_short`, `extract_slots_narrative`,
+            # `_narrative_regex_fallback`, `_VALID_TONES`, `_VALID_ACTIONS`
+            # directly. Mixed-purity module: the LLM call paths produce
+            # unkillable mutants on retry/error branches under mocking,
+            # which is why the threshold is 60% (matches slot_extractor.py).
+            # Walk up if real scores come in higher.
+
     env:
       SESSION_SECRET: test-session-secret-for-ci-only
       ADMIN_API_KEY: test-admin-key-for-ci-only
@@ -257,6 +302,14 @@ jobs:
               "backend/app/services/slot_extractor.py": 60,   # more pure logic
               "backend/app/rag/query_templates.py": 60,       # more pure logic
               "backend/app/services/chatbot/handlers/confirmation.py": 55,
+              # Phase 4 Stage 3 follow-up — slot_extraction/ replacements
+              # for the deleted llm_slot_extractor.py + llm_classifier.py.
+              # merge.py is pure logic, no LLM/IO — same threshold as
+              # Tier-1 pure-logic modules. dispatch.py contains LLM call
+              # wrappers (unkillable retry/error branches under mocking),
+              # so it gets the more lenient bar.
+              "backend/app/services/slot_extraction/merge.py": 70,
+              "backend/app/services/slot_extraction/dispatch.py": 60,
           }
           module = "${{ matrix.module }}"
           threshold = THRESHOLDS.get(module, 70)

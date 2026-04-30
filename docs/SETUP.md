@@ -172,7 +172,7 @@ pytest -s                             # show print output
 To run LLM integration tests against the real Claude API:
 
 ```
-ANTHROPIC_API_KEY=sk-ant-... pytest tests/unit/test_llm_slot_extractor.py -k live
+ANTHROPIC_API_KEY=sk-ant-... pytest tests/integration/test_slot_extraction_live.py -v
 ```
 
 ## IDE Setup (Cursor / VS Code)

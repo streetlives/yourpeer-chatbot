@@ -289,22 +289,55 @@ class TestBug13FrustrationNormalization:
 
 
 # -----------------------------------------------------------------------
-# BUG 14 — extract_slots_smart redundant rebuild on LLM fallback
+# BUG 14 — slot_extraction.extract regex passthrough on LLM fallback
 # -----------------------------------------------------------------------
+#
+# Phase 4 Stage 3 (April 2026): the legacy `extract_slots_smart` was
+# deleted. The unified equivalent of "regex passthrough when the LLM
+# returns nothing" lives in `slot_extraction.extract`: when the
+# inner `extract_slots_short` (or `_narrative`) returns an empty
+# result, the outer `extract()` returns the regex_result via
+# `_with_classification`. These two regression tests verify that
+# pathway with realistic regex results.
 
 class TestBug14SmartExtractorFallback:
-    """When LLM returns nothing, regex result should pass through unchanged."""
+    """When LLM returns empty, regex result should pass through unchanged."""
 
     def test_fallback_preserves_additional_services(self):
-        """Regex additional_services should survive the LLM fallback path."""
-        from app.services.llm_slot_extractor import extract_slots_smart
+        """Regex additional_services must survive the LLM fallback path."""
+        from app.services.slot_extraction import extract
+        from app.services.slot_extractor import extract_slots as regex_extract
 
-        with patch("app.services.llm_slot_extractor._is_simple_message", return_value=False), \
-             patch("app.services.llm_slot_extractor.extract_slots_llm",
-                   return_value={"service_type": None, "additional_service_types": [],
-                                 "location": None, "age": None, "urgency": None,
-                                 "gender": None, "family_status": None}):
-            result = extract_slots_smart("I need food and shelter in Brooklyn")
+        # Regex extraction first (unified architecture: caller does
+        # this and passes regex_result into extract()).
+        regex_result = regex_extract("I need food and shelter in Brooklyn")
+
+        empty_llm_result = {
+            "service_type": None,
+            "service_detail": None,
+            "additional_services": [],
+            "location": None,
+            "age": None,
+            "urgency": None,
+            "_gender": None,
+            "family_status": None,
+            "_populations": [],
+            "org_name": None,
+            "tone": None,
+            "action": None,
+        }
+        with patch(
+            "app.services.slot_extraction.dispatch._is_simple_message",
+            return_value=False,
+        ), patch(
+            "app.services.slot_extraction.extract_slots_short",
+            return_value=empty_llm_result,
+        ):
+            result = extract(
+                "I need food and shelter in Brooklyn",
+                regex_result,
+                api_key_available=True,
+            )
 
         # Housing First: shelter (tier 1) wins primary over food (tier 2)
         assert result.get("service_type") == "shelter"
@@ -314,17 +347,39 @@ class TestBug14SmartExtractorFallback:
         assert any(svc == "food" for svc, *_ in additional)
 
     def test_fallback_returns_regex_result_directly(self):
-        """On LLM fallback, the returned dict should be the regex result itself."""
-        from app.services.llm_slot_extractor import extract_slots_smart
+        """On LLM-empty fallback, the returned dict should match regex's
+        choices for primary fields (service_type, location)."""
+        from app.services.slot_extraction import extract
         from app.services.slot_extractor import extract_slots as regex_extract
 
-        with patch("app.services.llm_slot_extractor._is_simple_message", return_value=False), \
-             patch("app.services.llm_slot_extractor.extract_slots_llm",
-                   return_value={"service_type": None, "additional_service_types": [],
-                                 "location": None, "age": None, "urgency": None,
-                                 "gender": None, "family_status": None}):
-            result = extract_slots_smart("I need food in Queens")
+        regex_result = regex_extract("I need food in Queens")
 
-        expected = regex_extract("I need food in Queens")
-        assert result["service_type"] == expected["service_type"]
-        assert result["location"] == expected["location"]
+        empty_llm_result = {
+            "service_type": None,
+            "service_detail": None,
+            "additional_services": [],
+            "location": None,
+            "age": None,
+            "urgency": None,
+            "_gender": None,
+            "family_status": None,
+            "_populations": [],
+            "org_name": None,
+            "tone": None,
+            "action": None,
+        }
+        with patch(
+            "app.services.slot_extraction.dispatch._is_simple_message",
+            return_value=False,
+        ), patch(
+            "app.services.slot_extraction.extract_slots_short",
+            return_value=empty_llm_result,
+        ):
+            result = extract(
+                "I need food in Queens",
+                regex_result,
+                api_key_available=True,
+            )
+
+        assert result["service_type"] == regex_result["service_type"]
+        assert result["location"] == regex_result["location"]

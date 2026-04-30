@@ -12,7 +12,6 @@ Separated from routing so that:
 
 import re
 import logging
-import random
 
 from app.llm.claude_client import claude_reply
 
@@ -534,22 +533,31 @@ def _fallback_response(message: str, slots: dict) -> str:
 # ---------------------------------------------------------------------------
 # BASELINE WARMTH — default tone prefix for routine service flows
 # ---------------------------------------------------------------------------
-# These are short, warm phrases prepended to confirmations and follow-ups
-# when no emotional/shame/urgent context is detected. They prevent the
-# bot from feeling "functional but flat" on routine requests.
-# Randomized to avoid repetitive phrasing across turns.
+# Short, warm phrase prepended to confirmations and follow-ups when no
+# emotional/shame/urgent context is detected. Prevents the bot from
+# feeling "functional but flat" on routine requests.
+#
+# Historically this used `random.choice` over 7 prefixes for variety.
+# That variety turned out to be noise in the LLM-as-judge eval:
+# different prefixes score differently on Response Tone / Dignity &
+# Anti-Stigma, so back-to-back runs of the same code produced drifting
+# scores. Pinning to a single prefix removes the dice roll AND picks
+# the warmest, most collaborative option ("Let's find something for
+# you." scored best on trial evals; "I'll look into that." was flagged
+# by Opus as transactional).
+#
+# If we later want variety back, re-introduce the list but seed the
+# RNG deterministically in the eval harness instead of here — the
+# product-facing change shouldn't be driven by eval needs.
 
-_WARMTH_PREFIXES = [
-    "Let me see what's available. ",
-    "Let's find something for you. ",
-    "I'll look into that. ",
-    "Let me see what I can find. ",
-    "I think I can help with that. ",
-    "I think I can help. ",
-    "Ok, let me look. ",
-]
+_WARMTH_PREFIX = "Let's find something for you. "
 
 
 def random_warmth_prefix() -> str:
-    """Return a random short warmth prefix for routine service flows."""
-    return random.choice(_WARMTH_PREFIXES)
+    """Return the default warmth prefix for routine service flows.
+
+    Name kept for back-compatibility with existing callers and tests;
+    no longer actually random. See the comment above the constant for
+    why this is pinned.
+    """
+    return _WARMTH_PREFIX

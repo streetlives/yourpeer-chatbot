@@ -253,6 +253,16 @@ def _handle_crisis(
 
     _step_down_categories = (
         "safety_concern", "domestic_violence", "youth_runaway", "assault_victim",
+        # Sprint 1 fix (peer_diabetic_insulin): when crisis fires alongside
+        # chronic-medical service intent (e.g. ran out of insulin, regex
+        # already extracted service_type=medical, urgency=high), preserve
+        # the slots and offer the clinic search the medical_emergency
+        # response already promises ("Once you're safe, I can help you find
+        # nearby clinics or health services"). For genuine life-threats —
+        # heart attack, can't breathe, seizure — the user is on the phone
+        # with 911 and the "Yes, search for medical clinic" quick reply is
+        # ignored, same trade-off the other 4 categories already make.
+        "medical_emergency",
     )
     if has_service_intent and crisis_category in _step_down_categories:
         merged_crisis = merge_slots(existing, early_extracted)

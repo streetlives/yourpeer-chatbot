@@ -85,7 +85,7 @@ Each response is a static string constant — never LLM-generated. To update the
 | `_LLM_SYSTEM_PROMPT` | Prompt sent to Claude Sonnet for classification |
 | `_CRISIS_CATEGORIES` | Ordered list of `(category, phrases, response)` tuples used by the regex loop |
 
-The LLM stage uses a lazy-initialized Anthropic client, consistent with `llm_slot_extractor.py`. It activates automatically when `ANTHROPIC_API_KEY` is present in the environment.
+The LLM stage uses a lazy-initialized Anthropic client, consistent with `slot_extraction/dispatch.py`. It activates automatically when `ANTHROPIC_API_KEY` is present in the environment.
 
 ## Detection Flow
 
@@ -187,7 +187,9 @@ User: "My family kicked me out and I need shelter in Brooklyn"
                   _last_action="crisis" SET
 ```
 
-**Which categories get step-down:** `safety_concern`, `domestic_violence`, `youth_runaway`, and `assault_victim` (Run 31+). These are situations where the user may need both safety resources AND practical help finding services. A 17-year-old runaway needs crisis hotline numbers AND shelter — the step-down provides both. Acute categories (`suicide_self_harm`, `medical_emergency`, `trafficking`, `violence`) always show crisis resources only — the immediate safety concern overrides everything.
+**Which categories get step-down:** `safety_concern`, `domestic_violence`, `youth_runaway`, `assault_victim`, and `medical_emergency` (Run 31+, with `medical_emergency` added in Sprint 1, April 2026). These are situations where the user may need both safety resources AND practical help finding services. A 17-year-old runaway needs crisis hotline numbers AND shelter — the step-down provides both. For `medical_emergency` specifically, the step-down covers chronic medical needs that fire the crisis path (e.g. "ran out of insulin") — the user gets the 911 disclaimer and an offer to search clinics. Acute categories (`suicide_self_harm`, `trafficking`, `violence`) always show crisis resources only — the immediate safety concern overrides everything.
+
+**`medical_emergency` carve-out for chronic medication needs (Sprint 1, April 2026):** The LLM crisis classifier was previously over-classifying messages like "I'm diabetic and ran out of insulin" as `medical_emergency`, because the prompt said only "immediate physical danger requiring 911" and Sonnet reasonably read out-of-medication as medically dangerous. The prompt now carves out chronic medication shortage explicitly: medication needs without active emergency symptoms (collapsed, can't breathe, severe pain, confusion) are routine medical service requests, not crises. For genuine medication-related emergencies (e.g. "ran out of insulin and I'm passing out"), the symptom anchor brings classification back to `medical_emergency`, where the new step-down then offers clinic search alongside 911 — honoring the response-text promise "Once you're safe, I can help you find nearby clinics or health services."
 
 **"Yes" after step-down:** Executes the service search using the preserved slots. If enough slots are present, goes directly to results. If not, asks the follow-up question for the missing slot.
 

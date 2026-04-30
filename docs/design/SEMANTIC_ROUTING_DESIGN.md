@@ -113,6 +113,8 @@ Route every message through Claude Haiku or GPT-3.5 for intent extraction. Most 
 
 ### Integration Points
 
+> **Migration state (Phase 3, April 2026).** The Phase 0-3 unified-extractor migration changed which module the second integration point lives in. With `USE_UNIFIED_EXTRACTOR` default-ON (Phase 3), the safety-net call lives in the unified path at `app.services.slot_extraction` and the legacy `extract_slots_smart()` referenced in code snippets and tables below is still active behind `USE_UNIFIED_EXTRACTOR=0` (opt-out for emergency rollback). Phase 4 deletes the legacy module; the integration semantics described here apply to both paths until then. See `docs/design/UNIFIED_EXTRACTOR_MIGRATION.md`.
+
 The semantic router fires at **two points** in the pipeline for maximum coverage:
 
 **1. Hybrid multi-intent extraction in `backend/app/services/chatbot/pipeline.py`** (runs on every message, as part of the unified classification cascade — post-Phase-3 location; was `chatbot.py` pre-April 2026): <!-- drift:ignore: historical chatbot.py reference; package now lives at chatbot/ -->
@@ -141,17 +143,17 @@ if is_available():
 
 The `exclude` parameter skips routes that regex already found, avoiding duplicate work. The embedding is computed once (~5ms); scoring against ~10 routes is <0.1ms. This enables multi-intent extraction: regex catches "eat" → food, while semantic catches "anywhere to sleep" → shelter from the same message.
 
-**2. Inside `extract_slots_smart()` in `llm_slot_extractor.py`** (safety net, single-match fallback):
+**2. Inside `pipeline._run_early_extraction()` in `chatbot/pipeline.py`** (single-match fallback after regex misses):
 
 ```python
-# After regex, before LLM — single-match for backward compat
-if regex_result.get("service_type") is None:
+# After regex, before LLM gate — single-match
+if early_extracted.get("service_type") is None:
     match = classify_service(message)
     if match:
-        regex_result["service_type"] = match.service_type
+        early_extracted["service_type"] = match.service_type
 ```
 
-This provides redundant coverage when `extract_slots_smart()` is called later in the service handling flow.
+This is the unified architecture's invocation point (Phase 4, April 2026). The legacy `extract_slots_smart()` orchestration that previously hosted this fallback was deleted; semantic routing now runs unconditionally in `_run_early_extraction` for every message that regex didn't resolve.
 
 ### Health Check API
 

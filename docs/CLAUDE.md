@@ -92,8 +92,8 @@ information, preventing hallucination.
 | `backend/app/services/post_results.py` | Filter-subcategory engine: `_handle_filter_subcategory()` returns paginated `services` + full `_full_filtered` set for session persistence; `classify_post_results_question()` disambiguates refinement phrases ("ones for families", "more like those", "exclude DHS") via two-phase regex |
 | `backend/app/services/semantic_router.py` | Tier 2 semantic routing: `all-MiniLM-L6-v2` sentence embedding model, cosine similarity against pre-embedded route utterances, per-route confidence thresholds, population detection, `get_status()` for health checks, `SentenceTransformer = None` fallback for mocking |
 | `backend/app/services/semantic_routes.py` | Route definitions: example utterances per service category and population category. No code changes needed to add utterances — just edit and restart |
-| `backend/app/services/llm_slot_extractor.py` | LLM slot extraction via Claude Haiku tool calling, 3-tier cascade integration (regex → semantic → LLM) |
-| `backend/app/services/llm_classifier.py` | Unified LLM classification gate — single Haiku call returning service_type, location, tone, action when regex fails |
+<!-- drift:ignore: this row describes the unified package that REPLACED the named legacy modules -->
+| `backend/app/services/slot_extraction/` | Unified Tier 3 LLM slot extractor (Phase 4, April 2026). Single Haiku tool_use call returning service_type, location, tone, action, and full slot set; replaces the legacy `llm_slot_extractor.py` + `llm_classifier.py` pair. Internal modules: `dispatch.py` (path selection + LLM calls), `merge.py` (5-trust-model merge), `prompts.py` (tool schema + system prompts), `__init__.py` (public `extract()` entry point). |
 | `backend/app/services/session_store.py` | In-memory session state with 30-min TTL (max 500 sessions) |
 | `backend/app/services/session_token.py` | Anonymous HMAC-signed session token generation/validation (no user identity) |
 | `backend/app/services/persistence.py` | Optional SQLite write-through for session state — set `PILOT_DB_PATH` to enable survival across deploys |
@@ -187,7 +187,7 @@ information, preventing hallucination.
 - **Sort by nearest** — not implemented. Would require PostGIS distance calculation stored on service cards for client-side re-sort. Current sort options are "recently verified" and "most services"
 - **LLM call instrumentation** — `log_llm_call()` was removed as dead code. LLM calls are tracked via `_track_llm_call()` in `claude_client.py` with daily call counting and budget warnings, but not persisted to the audit log. Add a `log_llm_call()` integration if per-call audit logging is needed.
 - **Persistent storage** — when `PILOT_DB_PATH` is set, audit events and sessions are persisted to SQLite (WAL mode) and hydrated on startup. When unset, in-memory only
-- **`housing_assistance` not in LLM enum** — the `_SERVICE_TYPE_ENUM` in `llm_slot_extractor.py` has 9 values (no `housing_assistance`). Housing assistance keywords are routed via regex only. The LLM routes these to `other` or `shelter`. Low-impact since the regex keywords are specific ("rental assistance", "help with rent")
+- **`housing_assistance` not in LLM enum** — the `_SERVICE_TYPE_ENUM` in `slot_extraction/prompts.py` has 9 values (no `housing_assistance`). Housing assistance keywords are routed via regex only. The LLM routes these to `other` or `shelter`. Low-impact since the regex keywords are specific ("rental assistance", "help with rent")
 - **Disabled/service keyword overlap** — "disabled" exists in both `SERVICE_KEYWORDS["other"]` and `_POPULATION_PHRASES`. "I'm disabled" extracts both `service_type=other` and `_populations=["disabled"]`. Functionally correct but could cause unexpected primary service routing when combined with other services
 
 ## Running Tests
@@ -208,7 +208,7 @@ Shared fixtures and helpers live in `tests/conftest.py` (use `send()`, `send_mul
 `assert_classified()`). For live LLM integration tests:
 
 ```bash
-ANTHROPIC_API_KEY=... pytest tests/unit/test_llm_slot_extractor.py -k live
+ANTHROPIC_API_KEY=... pytest tests/integration/test_slot_extraction_live.py -v
 ```
 
 ## Code Conventions
@@ -251,7 +251,8 @@ See `docs/TESTING.md` → Drift Guards for the full catalog, decision table, and
 ## Common Pitfalls
 
 - Editing slot extraction logic without updating both `slot_extractor.py` (regex) **and**
-  `llm_slot_extractor.py` (LLM) — they must stay in sync on supported slot names/values.
+  `slot_extraction/` (LLM, Phase 4 unified) — they must stay in sync on supported slot
+  names/values. The LLM tool schema lives in `slot_extraction/prompts.py:_EXTRACT_SLOTS_TOOL`.
 - Adding a new service category requires updates in `query_templates.py` (SQL template),
   `slot_extractor.py` (keywords), `semantic_routes.py` (example utterances), and
   `phrase_lists.py` (service label). The semantic route definitions must use the same

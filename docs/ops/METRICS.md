@@ -385,7 +385,7 @@ These metrics answer the ultimate question: did the referral work? They require 
 |---|---|
 | **Definition** | Total calls, tokens, estimated cost, latency p50/p95, failure rate, breakdown by task and model |
 | **Target** | p50 ≤ 600ms, failure rate ≤ 2% |
-| **Method** | `record_llm_call()` in `audit_log.py` logs task, model, input/output tokens, latency, and success for each LLM call. Instrumented in `claude_client.py` (conversational + classification), `crisis_detector.py`, and `llm_slot_extractor.py`. ✅ Tracked in admin dashboard. |
+| **Method** | `record_llm_call()` in `audit_log.py` logs task, model, input/output tokens, latency, and success for each LLM call. Instrumented in `claude_client.py` (conversational + classification), `crisis_detector.py`, and `slot_extraction/dispatch.py`. ✅ Tracked in admin dashboard. |
 | **Why** | Essential for capacity planning. At 36,000 sessions/month, LLM cost per session determines monthly spend |
 
 ---

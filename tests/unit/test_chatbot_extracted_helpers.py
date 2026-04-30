@@ -36,26 +36,26 @@ from app.services.chatbot.handlers.accessibility import (
 
 @pytest.fixture
 def llm_enabled(monkeypatch):
-    """Enable the LLM gate for a test and inject a mockable ``classify_unified``.
+    """Enable the LLM gate for a test and inject a mockable
+    ``slot_extraction.extract``.
 
-    ``classify_unified`` is imported at the top of ``chatbot.pipeline``
-    under an ``if _USE_LLM`` guard — only when ``ANTHROPIC_API_KEY`` is
-    set does the name get bound. In CI (no key), the name isn't there
-    and the gate short-circuits on the ``_USE_LLM`` check before ever
-    referencing it. This fixture flips both on the pipeline module so
-    the gate's downstream behavior is exercised under test.
+    Phase 4 (April 2026): the gate now routes through
+    ``app.services.slot_extraction.extract()`` rather than the
+    legacy ``classify_unified``. The fixture monkey-patches the
+    ``extract`` symbol on the slot_extraction package so the gate
+    sees a controllable mock when it does its lazy import.
 
-    Note on target modules (Phase 3 decomposition, April 2026): the LLM
-    gate lives in ``chatbot.pipeline`` now, not the top-level package.
-    Attribute patches must target pipeline directly so the name lookup
-    inside ``_run_llm_gate`` picks them up.
+    The gate also checks ``_USE_LLM`` on the pipeline module to
+    decide whether to fire — flip that to True so the test exercises
+    the full gate-fires path even without an API key.
     """
+    from app.services import slot_extraction as slot_extraction_module
     from app.services.chatbot import pipeline as pipeline_module
-    mock_classify = MagicMock(return_value=None)
+    mock_extract = MagicMock(return_value=None)
     monkeypatch.setattr(pipeline_module, "_USE_LLM", True)
-    monkeypatch.setattr(pipeline_module, "classify_unified", mock_classify,
+    monkeypatch.setattr(slot_extraction_module, "extract", mock_extract,
                         raising=False)
-    return mock_classify
+    return mock_extract
 
 
 # -----------------------------------------------------------------------
@@ -226,6 +226,23 @@ class TestRunLLMGate:
             has_service_intent=False,
             action_pre=None,
             regex_tone_pre=None,
+            extraction_source=None,
+        )
+        llm_enabled.assert_not_called()
+
+    def test_skip_when_regex_tone_already_classified(self, llm_enabled):
+        """When the regex tone classifier already found a tone (e.g.
+        emotional, frustrated), the gate must NOT fire — the gap-filler
+        only exists to backfill what regex/keyword classification
+        missed. Ported from legacy
+        `test_llm_classifier.test_regex_found_tone_skips_gate`.
+        """
+        _run_llm_gate(
+            message="i'm so scared and i don't know what to do anymore",
+            early_extracted={},
+            has_service_intent=False,
+            action_pre=None,
+            regex_tone_pre="emotional",  # regex classifier resolved
             extraction_source=None,
         )
         llm_enabled.assert_not_called()

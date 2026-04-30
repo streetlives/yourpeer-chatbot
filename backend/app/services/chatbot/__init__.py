@@ -107,22 +107,35 @@ from .handlers import (  # noqa: F401
     _validate_emotional_enhancement,
 )
 
-# --- PACKAGE-LEVEL RE-EXPORTS ------------------------------------------------
+# --- PACKAGE-LEVEL RE-EXPORTS (for legacy test imports + patches) ----------
 #
-# These imports bind the names on the package (`app.services.chatbot.X`).
-# In production they exist mostly for import-path convenience. In tests they
-# are a known footgun — read this before writing new patches.
+# Two names are re-exported at the package level. Removing either breaks
+# tests; everything else previously re-exported here had no consumers and
+# was removed in the Phase 4 Stage 2 cleanup.
 #
-# Why the footgun: `patch("app.services.chatbot.X", ...)` only affects the
-# name bound here. Submodules like `orchestrator.py` do
-# `from app.services.crisis_detector import detect_crisis` at module-load
-# time — that statement binds `orchestrator.detect_crisis` to the real
-# function. Patching the package-level `detect_crisis` does NOT change
-# what `orchestrator.detect_crisis` points to, so the real function
-# runs in the hot path and the mock is never called. Tests "pass" only
-# because the real function returns benign defaults for typical inputs
-# (None from detect_crisis, etc.); the day you send a crisis-shaped
-# input or set ANTHROPIC_API_KEY, they fail in confusing ways.
+#   `_build_confirmation_message`
+#       Imported directly via `from app.services.chatbot import
+#       _build_confirmation_message` by `tests/unit/test_gender_extraction.py`
+#       (TestConfirmationGender fixture). The test verifies LGBTQ labelling
+#       via the confirmation builder; removing this re-export breaks 15
+#       tests in that file.
+#
+#   `save_session_slots`
+#       Patched via `monkeypatch.setattr(chatbot_module, "save_session_slots",
+#       ...)` at nine sites in `tests/unit/test_chatbot_extracted_helpers.py`
+#       to stub out session writes. The setattr pattern requires the name
+#       to exist as a module attribute of `app.services.chatbot`.
+#
+# Footgun warning for any future re-export:
+# `patch("app.services.chatbot.X", ...)` only affects the name bound
+# here. Submodules like `orchestrator.py` do
+# `from app.services.session_store import save_session_slots` at module-
+# load time — that statement binds `orchestrator.save_session_slots` to
+# the real function. Patching the package-level name does NOT change
+# what the submodule's local name points to, so the real function runs
+# in the hot path and the mock is never called. Tests "pass" only
+# because the real function returns benign defaults; the day inputs
+# exercise the patched path, they fail in confusing ways.
 #
 # CORRECT patch targets (patch where the function is looked up, not
 # where it's defined):
@@ -135,32 +148,12 @@ from .handlers import (  # noqa: F401
 #   _USE_LLM (dispatch gate)    → app.services.chatbot.orchestrator._USE_LLM
 #   _USE_LLM (classifier gate)  → app.services.chatbot.pipeline._USE_LLM
 #   query_services              → app.services.chatbot.execution.query_services
-#   classify_unified            → app.services.chatbot.pipeline.classify_unified
-#                                 (bound only when _USE_LLM; see below)
-#   save_session_slots          → the specific submodule using it; search
-#                                 for `from app.services.session_store import
-#                                 save_session_slots` to find bind sites
 #
 # The `send()` and `send_multi()` helpers in tests/conftest.py use the
 # correct targets and should be the template for any new helpers.
 #
-# Why we still re-export here: some legacy unit tests and a codemod-
-# applied rewrite target these names. Removing the re-exports would
-# break those tests without improving anything. The fix belongs in
-# the tests — migrate them to the correct targets listed above and
-# eventually these `# noqa: F401` lines can go.
-#
-# classify_unified is bound conditionally (only when _USE_LLM is truthy,
-# ie ANTHROPIC_API_KEY is set). In regex-only mode it's left unbound
-# and test fixtures should patch `app.services.chatbot.pipeline.classify_unified`.
-#
-from app.llm.claude_client import claude_reply  # noqa: F401
 from app.services.confirmation import _build_confirmation_message  # noqa: F401
-from app.services.crisis_detector import detect_crisis  # noqa: F401
-from app.services.responses import random_warmth_prefix  # noqa: F401
 from app.services.session_store import save_session_slots  # noqa: F401
-if _USE_LLM:
-    from app.services.llm_classifier import classify_unified  # noqa: F401
 
 
 __all__ = [
@@ -228,9 +221,7 @@ __all__ = [
     "_handle_spanish_detection",
     "_handle_thanks",
     "_validate_emotional_enhancement",
-    # Monkeypatch targets
-    "claude_reply",
-    "detect_crisis",
-    "random_warmth_prefix",
+    # Package-level re-exports (consumed by tests; see file-top comment)
     "_build_confirmation_message",
+    "save_session_slots",
 ]

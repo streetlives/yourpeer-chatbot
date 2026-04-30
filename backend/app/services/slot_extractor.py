@@ -1189,14 +1189,35 @@ def _extract_urgency(text: str) -> Optional[str]:
 
 def _extract_age(text: str) -> Optional[int]:
     # e.g. "I am 17", "age 22", "22 years old", "I'm 22", "19-year-old", "21, LGBTQ"
+    #
+    # Preventive hardening (April 2026): before running any pattern, strip
+    # "for NN <time-unit>" duration phrases. Today's patterns don't match
+    # "for 3 years" (all require prefixes like "i'm" / "age" / "N years old"),
+    # so this is a no-op on current eval scenarios. But it's cheap defense
+    # against two failure modes:
+    #   1. Future patterns added to this list that could accidentally match
+    #      a duration — e.g. a bare "\b(\d{1,3}) years\b" without "old".
+    #   2. Natural-language inputs that combine duration + age in ways
+    #      today's regex doesn't disambiguate (e.g. the `, NN, ` list-format
+    #      pattern landing on a bare number that belongs to a duration).
+    # Strips: "for 3 years", "for 6 months", "for 2 weeks", "for 10 days".
+    # Preserves legitimate age matches elsewhere in the text:
+    #   "I've lived here for 3 years and I'm 45" → strips "for 3 years",
+    #   leaves "and I'm 45" → age=45 ✓
+    text_for_age = _DURATION_STRIP_RE.sub("", text)
     patterns = [
         r"\bi[' ]?m (\d{1,3})\b",
         r"\bi am (\d{1,3})\b",
         r"\bage (\d{1,3})\b",
-        r"\b(\d{1,3}) years old\b",
-        # Hyphenated: "19-year-old", "21-yr-old"
-        r"\b(\d{1,2})-?year-?old\b",
-        r"\b(\d{1,2})-?yr-?old\b",
+        # "NN year old" / "NN-year-old" / "NN years old" / "NN year-old" etc.
+        # The separators between digit-year and year-old accept EITHER a
+        # hyphen OR a space (or be contiguous). Users commonly type without
+        # hyphens ("17 year old") and both patterns below must accept that.
+        # Singular "year" and plural "years" are both matched.
+        # {1,3} digits — centenarians saying "105 years old" should match;
+        # out-of-range values (>= 120) are rejected by the range check below.
+        r"\b(\d{1,3})[\s-]?years?[\s-]?old\b",
+        r"\b(\d{1,3})[\s-]?yrs?[\s-]?old\b",
         # Bare number at start or after newline, followed by comma/space+context
         # "21, LGBTQ" or "19, with a toddler"
         r"(?:^|\n)(\d{1,2})\s*,",
@@ -1205,12 +1226,22 @@ def _extract_age(text: str) -> Optional[int]:
         r",\s*(\d{1,2})\s*,",
     ]
     for p in patterns:
-        m = re.search(p, text.lower())
+        m = re.search(p, text_for_age.lower())
         if m:
             age = int(m.group(1))
             if 0 < age < 120:
                 return age
     return None
+
+
+# Duration phrase stripper for _extract_age. Matches "for NN <year|month|
+# day|week>s?" with optional trailing 's'. Intentionally narrow — only
+# the most common time units — to avoid accidentally eating legitimate
+# text.
+_DURATION_STRIP_RE = re.compile(
+    r"\bfor\s+\d{1,3}\s+(?:year|month|day|week)s?\b",
+    re.IGNORECASE,
+)
 
 
 def _extract_family_status(text: str) -> Optional[str]:
@@ -1789,6 +1820,14 @@ def merge_slots(existing: dict, new_values: dict) -> dict:
         # _is_additive is a transient extraction flag —
         # never persist it in session state.
         if key == "_is_additive":
+            continue
+        # tone / action are advisory classification outputs from the
+        # unified extractor (Phase 4, April 2026). They're consumed by
+        # `pipeline._run_llm_gate` for routing decisions on the same
+        # turn and never persisted in session state — classification
+        # is recomputed per-message by the regex tone/action
+        # classifiers in `classifier.py`.
+        if key in ("tone", "action"):
             continue
         # _populations is a list — merge by union, not replace.
         if key == "_populations":

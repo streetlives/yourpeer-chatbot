@@ -17,7 +17,6 @@ All the heavy lifting is delegated:
 import logging
 import uuid
 
-from app.privacy.pii_redactor import redact_pii  # noqa: F401  (re-exported below)
 from app.services.classifier import (
     _CRISIS_NOT_CHECKED,
     _classify_action,
@@ -67,14 +66,24 @@ from .handlers import (
     _handle_spanish_detection,
     _handle_thanks,
     _immigration_acknowledgment,
+    _promote_queued_offer,
 )
-from .logging import _log_turn
 from .pipeline import (
     _apply_session_geo,
     _compute_routing_category,
     _redact_with_safety_warning,
     _run_early_extraction,
     _run_llm_gate,
+)
+from .result_builder import _build_follow_up_response
+from .session_helpers import (
+    _append_to_transcript,
+    _clear_awaiting_service_after_clear,
+    _clear_stale_last_action,
+    _consume_last_action,
+    _persist_emotional_context_early,
+    _persist_emotional_context_late,
+    _update_queued_services,
 )
 from .tone import _compute_tone_prefix
 
@@ -120,7 +129,6 @@ def generate_reply(
     existing = get_session_slots(session_id)
 
     # Store browser geolocation coords in session if provided.
-    has_coords = latitude is not None and longitude is not None  # noqa: F841
     _apply_session_geo(session_id, existing, latitude, longitude)
 
     # --- EARLY SLOT EXTRACTION (regex + semantic, before LLM gate) ---
@@ -166,6 +174,43 @@ def generate_reply(
     if tone == "crisis":
         pass  # handled below in routing
     else:
+        # --- QUEUE-ACCEPT FAST PATH ---
+        # When the user has a pending queue offer (from a prior multi-
+        # intent search) AND the current message's extracted service
+        # matches the offered service, treat this as queue-accept: promote
+        # the offer and search immediately. Covers both the button-click
+        # path (quick reply sends "I need <queued_service> in <loc>") and
+        # the typed re-statement path ("I need food").
+        #
+        # Must run BEFORE `_handle_post_results_interaction` because that
+        # handler wipes `_queue_offer_pending` and other queue state when
+        # it sees `has_service_intent` (it treats any new service intent
+        # as a fresh search). It must also run BEFORE the normal service
+        # flow, whose `merge_slots` hits its "service change" guard
+        # (`slot_extractor.py:1804-1809`) and also wipes queue state,
+        # resulting in a redundant re-confirmation of the queued service.
+        #
+        # Without this fast path, `multi_accept_queued_shelter`-style
+        # flows score a critical failure because the scenario expects an
+        # immediate search on turn 3 ("I need food" accepts the queued
+        # offer), not another "I'll look for food in Brooklyn — sound
+        # right?" turn.
+        #
+        # Delegates to `_promote_queued_offer`, the same helper the
+        # `confirm_yes`-on-queue path uses — both are "user accepts the
+        # queued offer," expressed either as a bare `yes` or as a
+        # service-phrased sentence.
+        if (has_service_intent
+                and existing.get("_queue_offer_pending")
+                and existing.get("_queued_offer")
+                and early_extracted.get("service_type") == existing["_queued_offer"][0]):
+            offer = existing["_queued_offer"]
+            return _promote_queued_offer(
+                session_id, message, redacted_message, existing, offer,
+                request_id, tone,
+                location_override=early_extracted.get("location"),
+            )
+
         # --- POST-RESULTS QUESTION CHECK ---
         _post_result = _handle_post_results_interaction(
             session_id, message, redacted_message, existing,
@@ -195,10 +240,7 @@ def generate_reply(
     # help, thanks, a new service request), the context has shifted and
     # _last_action should not persist — otherwise it would incorrectly
     # affect a confirm_yes/confirm_deny many turns later.
-    _CONSUMES_LAST_ACTION = {"confirm_yes", "confirm_deny"}
-    if existing.get("_last_action") and category not in _CONSUMES_LAST_ACTION:
-        existing.pop("_last_action", None)
-        save_session_slots(session_id, existing)
+    _clear_stale_last_action(session_id, existing, category)
 
     # --- Crisis ---
     if category == "crisis":
@@ -244,9 +286,7 @@ def generate_reply(
     # Persist emotional context for subsequent turns (needed here, not
     # just at the service-flow site below, because help/confused
     # handlers can now set sensitive context on the first turn).
-    if _emotional_context_update is not None:
-        existing["_emotional_context"] = _emotional_context_update
-        save_session_slots(session_id, existing)
+    _persist_emotional_context_early(session_id, existing, _emotional_context_update)
 
     # --- Reset ---
     if category == "reset":
@@ -346,9 +386,7 @@ def generate_reply(
         return context_result
 
     # Clear the last_action tracker now that we've checked it
-    if last_action:
-        existing.pop("_last_action", None)
-        save_session_slots(session_id, existing)
+    _consume_last_action(session_id, existing, last_action)
 
     # --- Handle "change location" / "change service" outside pending ---
     if not existing.get("_pending_confirmation"):
@@ -380,38 +418,61 @@ def generate_reply(
 
     # --- Service request or general conversation ---
     if _USE_LLM and category == "service":
-        from app.services.llm_slot_extractor import extract_slots_smart
-        extracted = extract_slots_smart(
-            message,
-            conversation_history=existing.get("transcript", []),
+        # Post-change-service bypass: if the user just said "change
+        # service" on the prior turn and regex confidently extracted a
+        # single service on this turn (no ambiguity — no additional
+        # services, service_type set), trust regex and skip the LLM.
+        #
+        # Rationale: the transcript stores only user messages, so the
+        # bot's "What kind of help do you need?" prompt is missing from
+        # the history the LLM sees. A bare "Shelter" reply then gets
+        # interpreted with the stale prior request still in view, and
+        # the LLM can bundle the cleared-out service back in as either
+        # primary (with the new one as additional) or as additional
+        # (with the new one as primary) — both break the expected
+        # "service_type replaced" state. Covers confirm_multi_change.
+        #
+        # The guard on `early_extracted.additional_services` keeps this
+        # from firing when the user names multiple services on this
+        # turn ("shelter and food") — those cases still need the LLM.
+        awaiting_clear = existing.get("_awaiting_service_after_clear")
+        regex_confident = (
+            early_extracted.get("service_type") is not None
+            and not early_extracted.get("additional_services")
         )
+        if awaiting_clear and regex_confident:
+            extracted = dict(early_extracted)
+            _clear_awaiting_service_after_clear(session_id, existing)
+        else:
+            # Phase 4 (April 2026): the legacy `extract_slots_smart`
+            # path was removed and the feature flag deleted; slot
+            # extraction now always routes through the unified
+            # `app.services.slot_extraction.extract()`. See
+            # UNIFIED_EXTRACTOR_MIGRATION.md.
+            #
+            # Pass `extraction_source` so Trust Model 3 can give the
+            # semantic router priority when its classification
+            # disagrees with the LLM's pick (Phase 4 Stage 3
+            # follow-up). When the source is "regex" or None, merge
+            # behaves as before.
+            from app.services.slot_extraction import extract as extract_unified
+            extracted = extract_unified(
+                message,
+                early_extracted,
+                conversation_history=existing.get("transcript", []),
+                api_key_available=True,  # gated by _USE_LLM above
+                extraction_source=_extraction_source,
+            )
     else:
         extracted = early_extracted
 
     has_new_slots = any(v is not None and v != [] for k, v in extracted.items()
-                        if k not in ("additional_services", "_populations", "_contradiction", "_is_additive"))
+                        if k not in ("additional_services", "_populations", "_contradiction", "_is_additive", "tone", "action"))
 
     merged = merge_slots(existing, extracted)
 
-    # Store redacted transcript
-    if "transcript" not in merged:
-        merged["transcript"] = []
-    merged["transcript"].append({"role": "user", "text": redacted_message})
-    _MAX_TRANSCRIPT = 20
-    if len(merged["transcript"]) > _MAX_TRANSCRIPT:
-        merged["transcript"] = merged["transcript"][-_MAX_TRANSCRIPT:]
-
-    # Queue additional services
-    additional = extracted.get("additional_services", [])
-    _is_additive = extracted.get("_is_additive", False)
-    if additional and "_queued_services" not in merged:
-        merged["_queued_services"] = additional
-    if (extracted.get("service_type")
-            and existing.get("service_type")
-            and extracted["service_type"] != existing.get("service_type")
-            and not additional
-            and not _is_additive):
-        merged.pop("_queued_services", None)
+    _append_to_transcript(merged, redacted_message)
+    _update_queued_services(merged, extracted, existing)
 
     save_session_slots(session_id, merged)
 
@@ -445,14 +506,13 @@ def generate_reply(
     # computation if B.2 promoted — e.g., shame prefix only fires for
     # service flow, so the context could transition from None early to
     # "shame" here).
-    if _emotional_context_update is not None:
-        merged["_emotional_context"] = _emotional_context_update
-
-    # Re-save if emotional context was set after the initial save.
-    # Without this, emotional context is lost on the follow-up path where
-    # save_session_slots isn't called again before returning.
-    if merged.get("_emotional_context") and not existing.get("_emotional_context"):
-        save_session_slots(session_id, merged)
+    #
+    # NOTE: this helper preserves the late-site save bug (Bug 1 in
+    # ORCHESTRATOR_AUDIT.md): saves only on a None→non-None
+    # transition, not on value→different-value. Fix is queued as PR-γ.
+    _persist_emotional_context_late(
+        session_id, merged, existing, _emotional_context_update
+    )
 
     # Prepend PII safety warning, Spanish acknowledgment, and/or
     # immigration-context acknowledgment before the tone prefix so they
@@ -473,51 +533,49 @@ def generate_reply(
         save_session_slots(session_id, merged)
 
         confirm_msg = _tone_prefix + _build_confirmation_message(merged)
-        result = {
-            "session_id": session_id,
-            "response": confirm_msg,
-            "follow_up_needed": True,
-            "slots": merged,
-            "services": [],
-            "result_count": 0,
-            "relaxed_search": False,
-            "quick_replies": _confirmation_quick_replies(merged),
-        }
-        _log_turn(session_id, redacted_message, result, "confirmation",
-                  request_id=request_id, tone=tone)
-        return result
+        return _build_follow_up_response(
+            session_id=session_id,
+            redacted_message=redacted_message,
+            response_text=confirm_msg,
+            merged=merged,
+            quick_replies=_confirmation_quick_replies(merged),
+            log_category="confirmation",
+            request_id=request_id,
+            tone=tone,
+        )
 
     # Need more slots — service request
     if category == "service":
         follow_up = _tone_prefix + next_follow_up_question(merged)
-        result = {
-            "session_id": session_id,
-            "response": follow_up,
-            "follow_up_needed": True,
-            "slots": merged,
-            "services": [],
-            "result_count": 0,
-            "relaxed_search": False,
-            "quick_replies": _follow_up_quick_replies(merged),
-        }
-        _log_turn(session_id, redacted_message, result, category, request_id=request_id, tone=tone)
-        return result
+        return _build_follow_up_response(
+            session_id=session_id,
+            redacted_message=redacted_message,
+            response_text=follow_up,
+            merged=merged,
+            quick_replies=_follow_up_quick_replies(merged),
+            log_category=category,
+            request_id=request_id,
+            tone=tone,
+        )
 
     # Service flow continuation
     if has_new_slots and existing.get("service_type") and not existing.get("_pending_confirmation"):
+        # NOTE: ``response_text`` does NOT include ``_tone_prefix`` here,
+        # unlike the two follow-up paths above. The asymmetry is
+        # pre-existing — see ``ORCHESTRATOR_AUDIT.md`` "Suspect 1" —
+        # and is preserved by this refactor; whether to add the prefix
+        # is an open product/UX question, not a code-shape question.
         follow_up = next_follow_up_question(merged)
-        result = {
-            "session_id": session_id,
-            "response": follow_up,
-            "follow_up_needed": True,
-            "slots": merged,
-            "services": [],
-            "result_count": 0,
-            "relaxed_search": False,
-            "quick_replies": _follow_up_quick_replies(merged),
-        }
-        _log_turn(session_id, redacted_message, result, "service", request_id=request_id, tone=tone)
-        return result
+        return _build_follow_up_response(
+            session_id=session_id,
+            redacted_message=redacted_message,
+            response_text=follow_up,
+            merged=merged,
+            quick_replies=_follow_up_quick_replies(merged),
+            log_category="service",
+            request_id=request_id,
+            tone=tone,
+        )
 
     # --- General conversation / unrecognized service ---
     return _handle_general_conversation(

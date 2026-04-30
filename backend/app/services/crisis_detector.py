@@ -408,7 +408,12 @@ mugged, or assaulted. They are the VICTIM, not the attacker.
 - safety_concern: feeling unsafe, being followed, in danger — general \
 safety concerns that don't fit the more specific categories above
 - trafficking: being controlled, unable to leave, documents taken
-- medical_emergency: immediate physical danger requiring 911
+- medical_emergency: an immediate physical danger requiring 911 — heart \
+attack, stroke, choking, severe injury, overdose, unconsciousness. \
+NOT chronic medication needs ("ran out of insulin", "need a refill", \
+"out of my prescription") unless paired with active emergency symptoms \
+(collapsed, can't breathe, severe pain, confusion). Medication shortage \
+without acute symptoms is a routine medical service request, not a crisis.
 - violence: threats to harm others (the person is a potential aggressor)
 
 Respond with ONLY a JSON object, no other text:

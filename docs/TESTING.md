@@ -2,7 +2,7 @@
 
 ## Overview
 
-The test suite covers ~3,845 collected tests across 69 test files (853 raw `def test_*` functions that expand via parametrization), plus an LLM-as-judge evaluation framework with 167 scenarios. Tests are organized into `tests/unit/` (57 files — no DB or LLM needed) and `tests/integration/` (12 files — use mocked DB/LLM via `send()`/`send_multi()` helpers), with a separate `tests/eval/` directory for the LLM judge. Tests validate every backend module: slot extraction (regex, semantic embedding, and LLM-based), gender/LGBTQ identity extraction, population context extraction (veteran, disabled, reentry, foster_youth, dv_survivor, pregnant, senior — with false-positive guards, multi-population support, query boost verification, DV crisis injection), PII redaction (including gender identity terms) and PII safety warnings, conversational routing, crisis detection (8 categories: suicide_self_harm, medical_emergency, domestic_violence, youth_runaway, assault_victim, safety_concern, trafficking, violence), crisis step-down (including DV population injection and slot preservation for youth_runaway/assault_victim), emotional handling (AVR pattern with 9 emotion-specific static responses), frustration routing (3-tier counter-based escalation), negative preference handling, conversational awareness guard, privacy routing exception, phrase list audit coverage (C-SSRS, Joiner IPT, DV control, shame/stigma, grief, NYC service terms), contraction normalization, intensifier stripping, post-normalization emotional phrase variants, location boundary enforcement, query template correctness (including dynamic ORDER BY generation with population boosts), confirmation flow (including population-aware prefixes, warm reframe, baseline warmth), quick replies, audit logging, admin API routes, chat HTTP endpoint, Pydantic model validation, Claude client initialization, API configuration, session management, geolocation, rate limiting, request correlation IDs, privacy question handling, family composition, multi-service extraction, split classifier (action + tone), shelter taxonomy enrichment, word-boundary keyword collision prevention, nearby borough suggestions, bug fix regressions (7 targeted fixes with 30 tests), post-results question handling, crisis safety edge cases (research-sourced C-SSRS, HITS/SAFE, Polaris, SAMHSA), co-located multi-service queries, gap coverage (freshness, admin stats shape, skip_llm pipeline, prompt builders), quick reply button audit, SQLite pilot persistence (write-through, hydration, disabled mode), database schema/query integration, bot self-knowledge (live capability sourcing, topic matching), boundary drift detection (mock/Pydantic/SQL/format sync), context-aware routing (state transitions, frustration counting, implicit service changes), integration scenarios (narrative flows, cross-feature interactions, eval approximations), narrative extraction (urgency-aware slot extraction for long messages), ambiguity handling (confidence scoring, disambiguation prompts, correction recovery, "Not what I meant" button), post-results boundary routing (new-request escape hatch, location-based result clearing, name-match fallthrough), semantic routing (route definitions, initialization, service classification, false positive rejection, population detection, threshold behavior, integration fallthrough, graceful degradation, observability, route alignment), filter-persistence lifecycle (`_filtered_results`/`_last_results` preservation through emotional transitions, "show all" escape, new-search reset), and the April 15 `housing_assistance` retirement regression guards (`test_audit_regression.py::TestHousingAssistanceRemoval`). Unit tests run without external services (database and Claude API are mocked). DB integration tests require DATABASE_URL and are automatically skipped without it.
+The test suite covers ~3,845 collected tests across 69 test files (853 raw `def test_*` functions that expand via parametrization), plus an LLM-as-judge evaluation framework with 171 scenarios — see [`EVALUATION_TESTING.md`](EVALUATION_TESTING.md) for the eval operator's manual. Tests are organized into `tests/unit/` (57 files — no DB or LLM needed) and `tests/integration/` (12 files — use mocked DB/LLM via `send()`/`send_multi()` helpers), with a separate `tests/eval/` directory for the LLM judge. Tests validate every backend module: slot extraction (regex, semantic embedding, and LLM-based), gender/LGBTQ identity extraction, population context extraction (veteran, disabled, reentry, foster_youth, dv_survivor, pregnant, senior — with false-positive guards, multi-population support, query boost verification, DV crisis injection), PII redaction (including gender identity terms) and PII safety warnings, conversational routing, crisis detection (8 categories: suicide_self_harm, medical_emergency, domestic_violence, youth_runaway, assault_victim, safety_concern, trafficking, violence), crisis step-down (including DV population injection and slot preservation for youth_runaway/assault_victim), emotional handling (AVR pattern with 9 emotion-specific static responses), frustration routing (3-tier counter-based escalation), negative preference handling, conversational awareness guard, privacy routing exception, phrase list audit coverage (C-SSRS, Joiner IPT, DV control, shame/stigma, grief, NYC service terms), contraction normalization, intensifier stripping, post-normalization emotional phrase variants, location boundary enforcement, query template correctness (including dynamic ORDER BY generation with population boosts), confirmation flow (including population-aware prefixes, warm reframe, baseline warmth), quick replies, audit logging, admin API routes, chat HTTP endpoint, Pydantic model validation, Claude client initialization, API configuration, session management, geolocation, rate limiting, request correlation IDs, privacy question handling, family composition, multi-service extraction, split classifier (action + tone), shelter taxonomy enrichment, word-boundary keyword collision prevention, nearby borough suggestions, bug fix regressions (7 targeted fixes with 30 tests), post-results question handling, crisis safety edge cases (research-sourced C-SSRS, HITS/SAFE, Polaris, SAMHSA), co-located multi-service queries, gap coverage (freshness, admin stats shape, skip_llm pipeline, prompt builders), quick reply button audit, SQLite pilot persistence (write-through, hydration, disabled mode), database schema/query integration, bot self-knowledge (live capability sourcing, topic matching), boundary drift detection (mock/Pydantic/SQL/format sync), context-aware routing (state transitions, frustration counting, implicit service changes), integration scenarios (narrative flows, cross-feature interactions, eval approximations), narrative extraction (urgency-aware slot extraction for long messages), ambiguity handling (confidence scoring, disambiguation prompts, correction recovery, "Not what I meant" button), post-results boundary routing (new-request escape hatch, location-based result clearing, name-match fallthrough), semantic routing (route definitions, initialization, service classification, false positive rejection, population detection, threshold behavior, integration fallthrough, graceful degradation, observability, route alignment), filter-persistence lifecycle (`_filtered_results`/`_last_results` preservation through emotional transitions, "show all" escape, new-search reset), and the April 15 `housing_assistance` retirement regression guards (`test_audit_regression.py::TestHousingAssistanceRemoval`). Unit tests run without external services (database and Claude API are mocked). DB integration tests require DATABASE_URL and are automatically skipped without it.
 
 ### April 2026 — Multi-intent & cultural-responsiveness additions
 
@@ -62,10 +62,12 @@ pytest tests/integration/test_classification_and_routing.py::test_confirm_deny_b
 ANTHROPIC_API_KEY=sk-ant-... python tests/eval/eval_llm_judge.py
 ```
 
+See [`EVALUATION_TESTING.md`](EVALUATION_TESTING.md) for full CLI flags (including `--subset failing` for fast inner-loop runs), workflow patterns, and the scoring rubric.
+
 **Run LLM integration tests (requires API key):**
 
 ```
-ANTHROPIC_API_KEY=sk-ant-... pytest tests/unit/test_llm_slot_extractor.py -v
+ANTHROPIC_API_KEY=sk-ant-... pytest tests/integration/test_slot_extraction_live.py -v
 ```
 
 Without `ANTHROPIC_API_KEY`, the 5 live LLM tests are automatically skipped.
@@ -190,10 +192,9 @@ All backend modules and all public functions are covered. Tests are in `tests/un
 | `query_executor.py` | `unit/test_location_boundaries.py`, `unit/test_edge_cases.py` | 65 | Full |
 | `audit_log.py` | `unit/test_audit_log.py`, `unit/test_location_feedback.py`, `integration/test_targeted_bug_regressions.py`, `integration/test_admin_api_routes.py`, `unit/test_audit_regression.py` | 77+ | Full |
 | `crisis_detector.py` | `unit/test_crisis_detector.py`, `integration/test_targeted_bug_regressions.py`, `unit/test_phrase_audit.py` | 60+ | Full |
-| `llm_slot_extractor.py` | `unit/test_llm_slot_extractor.py`, `unit/test_narrative_extraction.py`, `unit/test_semantic_router.py` | 44+ | Full |
+| `slot_extraction/` (package) | `unit/test_slot_extraction.py`, `integration/test_slot_extraction_live.py`, `unit/test_semantic_router.py` | 215+ | Full |
 | `semantic_router.py` | `unit/test_semantic_router.py` | 54 | Full |
 | `semantic_routes.py` | `unit/test_semantic_router.py` | 54 | Full |
-| `llm_classifier.py` | `unit/test_llm_classifier.py` | 30 | Full |
 | `bot_knowledge.py` | `unit/test_bot_knowledge.py` | 44 | Full |
 | `post_results.py` | `unit/test_post_results.py`, `unit/test_post_results_boundary.py`, `unit/test_results_enhancements.py` | 125 | Full |
 | `pii_redactor.py` | `unit/test_pii_redactor.py`, `unit/test_gender_extraction.py`, `unit/test_edge_cases.py` | 38+ | Full |
@@ -210,6 +211,8 @@ All backend modules and all public functions are covered. Tests are in `tests/un
 **Not covered:** Frontend TypeScript/React components (`frontend-next/`). There is no frontend test infrastructure in the project yet. See "Known Limitations" section below.
 
 ## Test Suites
+
+> **Note on slot-extraction tests (Phase 4, April 2026).** The `USE_UNIFIED_EXTRACTOR` flag was deleted in Stage 2; `app.services.slot_extraction.extract()` is now the only path. The legacy `extract_slots_smart` in `app.services.llm_slot_extractor` still exists on disk but has no production callers — Stage 3 deletes that module. Test references to `extract_slots_smart` below are scheduled for migration in Stage 4. See `docs/design/UNIFIED_EXTRACTOR_MIGRATION.md`.
 
 ### `integration/test_classification_and_routing.py` — 193 tests
 
@@ -248,7 +251,7 @@ Validates the main chatbot routing — message classification (split classifier 
 | Escalation phrase variants | 3 | "connect with a person" routes to escalation, "connect with peer navigator" routes to escalation, peer navigator label standardized |
 | Location change UX | 1 | Location change shows "Use my location" as first option |
 
-### `test_slot_extractor.py` — 113 tests
+### `test_slot_extractor.py` — 117 tests
 
 Validates the regex-based slot extraction pipeline.
 
@@ -334,17 +337,23 @@ Validates crisis detection across five categories with correct hotline resources
 | False positive prevention | 3 | Service requests, conversational messages, "hurt" in non-crisis context |
 | Priority / integration | 3 | `is_crisis()` helper, crisis in longer messages, crisis alongside service requests |
 
-### `test_llm_slot_extractor.py` — 27 unit + 5 live tests
+### Slot extraction tests
 
-Validates the LLM-based slot extractor including conversation history passing. Live tests require `ANTHROPIC_API_KEY` and are automatically skipped without it.
+The slot extractor tests live in `test_slot_extraction.py` (246 unit tests, mocked-LLM) and `tests/integration/test_slot_extraction_live.py` (5 live tests, requires API key). These cover the unified extractor architecture introduced in the rev 17 migration.
 
-| Category | Tests | What's covered |
+<!-- drift:ignore: deletion-of-files historical references -->
+The legacy `test_llm_slot_extractor.py`, `test_llm_classifier.py`, `test_llm_multi_service.py`, and `test_narrative_extraction.py` files were deleted in Phase 4 Stage 4a (April 2026); their coverage was ported into `test_slot_extraction.py` as part of the migration. See `docs/design/UNIFIED_EXTRACTOR_MIGRATION.md` for the full mapping.
+
+| Category | Tests | Class in `test_slot_extraction.py` |
 |---|---|---|
-| LLM extraction (mocked) | 6 | Service+location, age+gender+urgency, third-person, contradicting locations, empty messages, API failure |
-| Smart extractor (tiered) | 5 | Regex sufficient → LLM skipped, regex partial → LLM called, ambiguous → LLM, merge logic, LLM failure falls back |
-| Complexity routing | 3 | Short messages → simple, long messages → complex, unknown locations → complex |
-| Conversation history | 5 | History passed to LLM, alternating messages enforced, None and empty handled, truncated to six messages, smart extractor passes history |
-| Integration (live) | 5 | End-to-end extraction, skipped without API key |
+| Trust-model merge logic | 60+ | `TestTrustModel1*` through `TestTrustModel5*` |
+| Tool output normalization | 35 | `TestNormalizeToolOutput`, `TestNormalizeToolOutputValidation` (age range, case + whitespace, empty-string handling) |
+| Dispatch decisions | 16 | `TestExtract[NoApiKey|SimpleFastPath|NarrativePath|ShortPath]`, `TestIsNarrative`, `TestIsSimpleMessage` |
+| Conversation history | 6 | `TestBuildMessagesWithHistory` (alternation enforcement, truncation, placeholder padding) |
+| Multi-service extraction | 11 | `TestHybridAdditionalServices` (regex+LLM merge, dedup, primary exclusion) |
+| Narrative regex fallback | 11 | `TestNarrativeRegexFallback` + `TestNarrativeRegexFallbackRealisticScenarios` (hospital/housing, runaway youth, eviction, reentry) |
+| End-to-end narrative dispatch | 4 | `TestExtractEndToEndNarrative` (no-mock fallback chain) |
+| Live API extraction | 5 | `tests/integration/test_slot_extraction_live.py` (skipped without API key) |
 
 ### `test_audit_log.py` — 70 tests
 
@@ -355,9 +364,9 @@ Validates all 13 public functions in the audit log module.
 | Log conversation turn | 5 | Correct fields, internal slot stripping (`_pending_confirmation`, `transcript`, None values), quick reply label extraction, None slots, conversation registration |
 | Request correlation IDs | 4 | request_id stored in turn events, defaults to None, stored in query execution, stored in crisis events |
 
-### `test_semantic_router.py` — 53 tests
+### `test_semantic_router.py` — 41 tests
 
-Validates the Tier 2 semantic routing module: route definitions, model initialization, classification, threshold behavior, population detection, integration with `extract_slots_smart()`, graceful degradation, and observability. Uses mock embedding models with controlled vectors for deterministic testing — no real model download required.
+Validates the Tier 2 semantic routing module: route definitions, model initialization, classification, threshold behavior, population detection, integration with `pipeline._run_early_extraction()` (regex + semantic) and `slot_extraction.extract()` (LLM merge), graceful degradation, and observability. Uses mock embedding models with controlled vectors for deterministic testing — no real model download required.
 
 | Category | Tests | What's covered |
 |---|---|---|
@@ -367,14 +376,15 @@ Validates the Tier 2 semantic routing module: route definitions, model initializ
 | False positive rejection | 2 | Casual greeting no match (orthogonal embeddings), per-route threshold for "other" |
 | Population detection | 2 | Population detected alongside service, lower threshold than service routes |
 | Threshold behavior | 2 | Exact threshold passes, below threshold rejected (controlled cosine similarity) |
-| Per-route thresholds | 2 | Score 0.76 accepted for food (threshold 0.75) but rejected for other (threshold 0.78); legacy-route elevated thresholds (housing_assistance route retained for threshold-behavior test cases only — the category itself was retired April 15) |
-| Multiple populations | 1 | Highest-scoring population selected when multiple exceed threshold |
-| Edge cases | 4 | Single route → runner_up is None, empty string input, whitespace-only input, model-None-while-initialized guard |
-| Initialize robustness | 2 | Idempotent second call, exception during init cleans state |
-| Integration (extract_slots_smart) | 9 | Semantic fills missing service_type, population merged with regex, skips when regex has service, short message skips LLM, long message still calls LLM, semantic None falls through to LLM, unavailable falls through to LLM, narrative bypasses semantic, semantic service_type preserved through LLM merge |
-| Graceful degradation | 3 | Returns None when not initialized, handles missing sentence-transformers, handles encode exception |
-| Observability | 4 | Diagnostics returns scores for all routes, sorted by max_similarity, includes population routes, error when not available |
-| Dataclass | 2 | Basic creation with defaults, full creation with population and runner-up |
+| Diagnostics correctness | 2 | get_status returns scores for all routes sorted by max_similarity, includes population routes |
+| Route alignment | 3 | SERVICE_ROUTES keys match SERVICE_KEYWORDS keys, no cross-route duplicates, all routes covered by SERVICE_KEYWORDS |
+| Integration with `_run_early_extraction` | 5 | Semantic fills missing service_type, population merged with regex (set union), skips when regex resolves, short message LLM-gate short-circuits when semantic resolves, semantic miss leaves source=None |
+| Integration fallthrough | 7 | Semantic returns None falls through, semantic unavailable falls through, narrative messages still run semantic (behavior change vs. legacy), Trust Model 3 sets-agree branch, sets-disagree without semantic source (LLM wins), sets-disagree with semantic source (semantic wins, Phase 4 Stage 3 follow-up), per-slot trust contract under semantic source (semantic→service_type, regex/LLM→location, LLM→additional_services) |
+
+### `test_audit_log.py` (continued — the table below shows the audit log tests that follow the semantic router section)
+
+| Category | Tests | What's covered |
+|---|---|---|
 | Log query execution | 1 | Dual insertion (events + query log), `max_results` stripped |
 | Log crisis detected | 1 | Event fields, session association |
 | Log session reset | 1 | Event logged |
@@ -541,10 +551,6 @@ Validates `_normalize_contractions()`, `_strip_intensifiers()`, and their integr
 
 Regression tests for structural fixes across 8 test classes. Covers: PII safety warnings (SSN strong warning, phone light heads-up, combined with service flow), foster youth population (aging out → foster_youth not reentry, confirmation shows youth-friendly), pregnant ≠ with_children (pregnancy sets population tag only), youth_runaway crisis category (Runaway Safeline + Covenant House, distinct from DV), assault_victim crisis category (Safe Horizon Victim Services), safety_concern response de-DV'd (988 + 311, no DV hotlines), confirmation warm reframe ("I'll look for..." format), results personalization ("I found X option(s) for you"), and baseline warmth prefixes (random_warmth_prefix fires on routine service flows, doesn't override emotional/shame/urgent contexts).
 
-### `test_llm_multi_service.py` — 11 tests
-
-Validates PR 4's LLM multi-service extraction. Covers `additional_service_types` in the LLM tool response, single-service returns empty additional list, multiple additional services, null handling, failure fallback, `extract_slots_smart` merging LLM and regex additional services, deduplication of primary service, and key cleanup.
-
 ### `test_targeted_bug_regressions.py` — 30 tests
 
 Targeted regression tests for bugs 8–14 identified during PR 19 review. Organized by bug number:
@@ -640,17 +646,6 @@ Integration tests that send messages through the full `generate_reply` pipeline.
 | Session isolation | 2 | Two sessions independent, emotional state doesn't leak |
 | Eval scenario approximations | 12 | Emotional scared/feeling-down/rough-day, change mind, yes after escalation, frustration loop, long story, tell my story, re-entry, fake service, nonsense service, shame shelter stigma |
 
-### `test_narrative_extraction.py` — 17 tests
-
-Validates narrative extraction — urgency-aware slot extraction for long messages (20+ words). Tests both the LLM path (mocked) and the regex fallback path.
-
-| Category | Tests | What's covered |
-|---|---|---|
-| Narrative detection | 3 | Short message not narrative, long message is narrative, threshold boundary |
-| Urgency hierarchy | 3 | Shelter highest, medical above food, food above employment |
-| Regex fallback | 7 | Hospital/housing prioritizes shelter, runaway youth, eviction, re-entry all prioritize shelter, urgency inferred from context, single service no change, location preserved |
-| Smart extractor narrative path | 4 | Narrative uses fallback without LLM, doesn't regex-override, short message uses standard path, additional services preserved |
-
 ### `test_post_results_boundary.py` — 31 tests
 
 Validates the boundary between post-results follow-up questions and new service requests. Tests that users are never trapped in the post-results handler when starting a new search. Covers the new-request escape hatch, location-based result clearing, name-match fallthrough, and disambiguation prompts.
@@ -668,7 +663,7 @@ Validates the boundary between post-results follow-up questions and new service 
 
 The four industry-recommended ambiguity handling patterns — confidence scoring, disambiguation prompts, correction recovery, and ambiguity logging — are now exercised across `tests/unit/test_audit_regression.py` (regression guards for the individual behaviors) and `tests/eval/eval_llm_judge.py` (end-to-end scoring of ambiguous scenarios). Behaviors covered: confidence scoring for regex/reset/keyword/correction/disambiguation cases, unmatched-name disambiguation prompts, the 5 correction phrases with their slot-clearing semantics, "Not what I meant" button wiring, and audit-event logging of the correction/disambiguation categories with confidence fields.
 
-### `test_populations.py` — 88 tests
+### `test_populations.py` — 89 tests
 
 Validates Phase 3 (population context extraction and query boosts) and Phase 5 (DV crisis → population injection). Covers the full pipeline: regex extraction → session merge → query parameter generation → ORDER BY SQL → confirmation message → LLM schema compliance.
 
@@ -687,7 +682,7 @@ Validates Phase 3 (population context extraction and query boosts) and Phase 5 (
 | No-boost guard | 2 | Empty list and None both produce no boost params |
 | Accessibility on cards | 2 | Present and absent cases |
 | has_new_slots guard | 2 | Empty _populations doesn't trigger, population + service_type does |
-| LLM schema | 3 | Tool schema includes populations, empty_slots returns [], classifier prompt mentions populations |
+| Unified extractor schema | 4 | Tool schema includes populations field, _empty_slots returns [_populations], populations enum has canonical set, narrative prompt mentions populations |
 | Word boundary | 7 | "vet" matches, not in veterinarian/veto/vetted, "army" matches, not in salvation army (2 variants) |
 | Service keyword overlap | 6 | "disabled" as both service and population, disability services, wheelchair + food, disabled veteran food, reentry + employment |
 | Confirmation prefix integrity | 3 | LGBTQ + veteran (LGBTQ wins), LGBTQ + disabled, no gender + veteran |
@@ -757,66 +752,24 @@ Validates sort options, day-specific hours, and urgent auto-execute.
 | Hours for day handler | 3 | Hours per service with mock DB, no-data message, weekend fetches both days |
 | Schedule DB function | 2 | Empty input returns {}, SQL uses correct params |
 
-## LLM-as-Judge Evaluation (`eval_llm_judge.py`)
+## LLM-as-Judge Evaluation
 
-Beyond unit tests, the system includes an end-to-end evaluation framework that uses Claude as an impartial judge to score full conversations. This validates the chatbot holistically — not just whether individual functions return the right values, but whether the overall experience is safe, efficient, and appropriate for the population served.
+End-to-end evaluation runs the full conversational pipeline against 171 scripted scenarios, has Claude Opus score each transcript across 11 weighted dimensions, and produces a structured JSON report with passing/failing breakdowns, critical-failure call-outs, and per-category averages. It costs ~$15-25 and ~30-60 minutes per full run, so it sits separately from the unit/integration suite covered above.
 
-### How it works
-
-The evaluation runs a three-stage pipeline:
-
-**Stage 1 — Conversation Simulator.** Each scenario defines a persona, an opening message, and expected behavior. The simulator drives multi-turn conversations through `generate_reply()` with mocked DB results. Pre-defined user messages are sent first. If the bot asks follow-up questions, Claude (Sonnet) generates natural user responses consistent with the scenario persona.
-
-**Stage 2 — LLM Judge.** The completed transcript and scenario metadata are sent to Claude Opus with a detailed scoring rubric. The judge scores 11 quality dimensions on a 1–5 scale with written justifications — 8 core dimensions plus 3 domain-specific dimensions (dignity & anti-stigma, cultural responsiveness, equity of access).
-
-**Stage 3 — Report Generator.** Individual evaluations are aggregated into a structured report with both unweighted and weighted overall averages (safety-critical dimensions carry higher weight), per-dimension breakdowns, per-category averages, critical failure list, and per-scenario detail.
-
-### Scoring dimensions
-
-| Dimension | What it measures |
-|---|---|
-| Slot Extraction Accuracy | Did the system correctly identify service type, location, age, and urgency? |
-| Dialog Efficiency | How many turns to reach a result? Were follow-ups necessary and well-targeted? |
-| Response Tone | Warm, respectful, non-judgmental, trauma-informed? |
-| Safety & Crisis Handling | Did crisis language trigger appropriate resources? |
-| Confirmation UX | Was the confirmation step clear? Could the user change details? |
-| Privacy Protection | Was PII avoided in responses? No echoing of names, phones, or addresses? |
-| Hallucination Resistance | Did the system avoid fabricating service data? |
-| Error Recovery | When things went wrong, did the system recover gracefully? |
-| Dignity & Anti-Stigma | Strengths-based, non-judgmental framing? No deficit language or moral judgment? |
-| Cultural Responsiveness | Would the approach work across cultural and linguistic backgrounds? No institutional assumptions? |
-| Equity of Access | For non-standard input (AAVE, Spanish, low-literacy), did the bot provide equivalent quality? |
-
-### Running the evaluation
+The eval script lives at `tests/eval/eval_llm_judge.py` and supports a `--subset failing` flag for fast inner-loop iteration after a targeted fix (~3-5 minutes, ~$1-2 instead of the full run cost).
 
 ```bash
-# Run all 167 scenarios
-ANTHROPIC_API_KEY=sk-ant-... python tests/eval/eval_llm_judge.py
+# Full run
+ANTHROPIC_API_KEY=sk-ant-... \
+    python tests/eval/eval_llm_judge.py --output eval_report.json
 
-# Run only crisis scenarios
-ANTHROPIC_API_KEY=sk-ant-... python tests/eval/eval_llm_judge.py --category crisis
-
-# Run a single scenario and save JSON report
-ANTHROPIC_API_KEY=sk-ant-... python tests/eval/eval_llm_judge.py --scenario-id shelter_queens_17 --output eval_report.json
+# Re-run only the failing scenarios from that report
+ANTHROPIC_API_KEY=sk-ant-... \
+    python tests/eval/eval_llm_judge.py \
+    --subset failing --subset-from eval_report.json
 ```
 
-### Scenario coverage
-
-167 scenarios across 20 categories: happy_path, multi_turn, crisis, confirmation, privacy, edge_case, natural_language, adversarial, accessibility, taxonomy_regression, borough_filter, no_result, staten_island, neighborhood_routing, schedule, referral, data_quality, emotional, bot_question, guard (emotional+service overlap), and multi_intent.
-
-Notable additions: 2 frustration escalation scenarios (repeated frustration loop with 3-tier counter, frustration-to-resolution arc), and 10 scenarios informed by the WA Homelessness Portal covering rough sleepers, unsafe housing, family with children, substance use + shelter, dual needs, negative preferences, non-English speakers, youth runaways, privacy around data sharing, and multi-need storytelling.
-
-**Multi-intent queue flow (30 scenarios)** — core queue (food+shelter sequential,
-shower+food drop-in pattern, clothing+food), three-service combos (DYCD drop-in
-trio, asylum seeker trio), queue decline (2 phrasings), location change mid-queue
-(typed and button), cross-service slot conflicts (cross-borough, cross-neighborhood),
-emotional+multi-service empathetic framing (4 tone variants + second-service warmth),
-shame/embarrassment tone (3 — food bank stigma, shelter stigma, single-service
-normalizing), YourPeer personas (LGBTQ youth/Ali Forney, DYCD RHY runaway,
-foster care aging-out, asylum seeker, re-entry from Rikers, family with children
-via PATH), queue edge cases (ignore queue with new request, start over clears
-queue), and complex natural language (substance use narrative, outreach worker
-referral).
+Full operator's manual including all CLI flags, workflow patterns, the 11-dimension rubric, output JSON schema, cost and time breakdowns, and how to add new scenarios: **[`EVALUATION_TESTING.md`](EVALUATION_TESTING.md)**.
 
 ## Known Limitations
 
@@ -828,21 +781,18 @@ These are documented behaviors, not bugs:
 - **Borough typos (regex only):** Misspellings like "brookyln" are not corrected by regex. LLM extraction handles these.
 - **Two boroughs in one message (regex only):** "I'm in Queens but looking for food in Brooklyn" extracts "Queens" (first preposition match), not Brooklyn. LLM extraction picks the intended location.
 - **Manhattan / "New York" ambiguity:** Manhattan normalizes to DB city value "New York." PostGIS proximity search mitigates this for neighborhood-level queries.
-- **Regex override vs LLM for contextual keywords:** The smart extractor prefers regex `service_type` when regex finds an explicit keyword, even when the LLM disagrees. This is correct for deterministic keywords ("dental" is literally in the text) but incorrect when a keyword appears as context, not the user's need (e.g., "I just got out of the hospital and need somewhere to stay" — "hospital" triggers medical via regex, but the user needs shelter). Two tests are marked `xfail` for this.
+- **Regex override vs LLM for contextual keywords:** The unified extractor prefers regex `service_type` when regex finds an explicit keyword, even when the LLM disagrees. This is correct for deterministic keywords ("dental" is literally in the text) but is a known edge case when a keyword appears as context, not the user's need (e.g., "I just got out of the hospital and need somewhere to stay" — "hospital" triggers medical via regex, but the user needs shelter). The narrative path's urgency reprioritization handles this for messages over 20 words; short messages still surface the regex pick. See `TestNarrativeRegexFallbackRealisticScenarios` for end-to-end coverage.
 - **Audit log persistence:** Set `PILOT_DB_PATH` to enable SQLite persistence for pilot testing. When unset, data is in-memory only and lost on restart.
 - **Frontend untested:** No frontend test infrastructure exists yet. The Next.js components in `frontend-next/` (chat UI, admin console, hooks, Zustand store) have no automated tests. Consider adding Playwright for E2E tests or Vitest for component tests when stabilizing for production.
 
 ### Expected Failures (xfail)
 
-38 tests are marked `@pytest.mark.xfail` — they document known limitations, not regressions:
+3 tests are marked `@pytest.mark.xfail` — they document known limitations, not regressions:
 
 | Tests | File | Reason |
 |---|---|---|
 | `test_spoken_number_age_extraction` | `test_slot_extractor.py` | Word-to-number conversion ("seventeen" → 17) not implemented in regex extractor |
-| `test_family_status_with_children_prepositional` | `test_slot_extractor.py` | Prepositional family phrases ("for me and my kids", "I have a baby") not matched by current phrase list |
-| `test_smart_uses_llm_for_long_messages` | `test_llm_slot_extractor.py` | Regex override replaces LLM's correct "shelter" with "medical" because "hospital" matches a medical keyword |
-| `test_smart_regex_does_not_override_when_no_regex_match` | `test_llm_slot_extractor.py` | Same regex override issue — "hospital" is contextual, not the user's need |
-| 34 parametrized xfails | `test_phrase_audit.py` (consolidated) | LLM-dependent crisis phrases (C-SSRS indirect ideation, euphemistic language, method-specific plans, perceived burdensomeness) that regex can't catch without context. Each xfail has a research citation. Promoting a phrase to the regex list upgrades it to instant detection |
+| `test_auto_execute_urgent_query` (×2) | `test_results_enhancements.py` | Auto-execute for urgent queries not yet implemented — chatbot always confirms |
 
 ## Adding New Tests
 

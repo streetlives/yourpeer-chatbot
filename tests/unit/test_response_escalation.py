@@ -15,9 +15,17 @@ from app.services.slot_extractor import extract_slots as _regex_extract
 
 # Patch LLM slot extraction to use regex-only, so unrecognized-service
 # routing is deterministic (not subject to LLM nondeterminism).
+#
+# Phase 4 Stage 3 (April 2026): the legacy
+# `app.services.llm_slot_extractor.extract_slots_smart` was deleted.
+# The unified replacement is `app.services.slot_extraction.extract`,
+# which takes `(message, regex_result, **kwargs)` — so the side_effect
+# must accept that signature. We ignore the regex_result and
+# api_key_available kwargs and return a fresh regex extraction so the
+# test stays deterministic regardless of caller-side wiring.
 _PATCH_SLOTS = patch(
-    "app.services.llm_slot_extractor.extract_slots_smart",
-    side_effect=lambda msg, **kw: _regex_extract(msg),
+    "app.services.slot_extraction.extract",
+    side_effect=lambda msg, regex_result=None, **kw: _regex_extract(msg),
 )
 
 
