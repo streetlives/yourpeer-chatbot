@@ -52,6 +52,15 @@ class MessageContext:
     Built once at the start of ``generate_reply``, consumed by handler
     functions. Replaces the 15+ local variables that were previously shared
     via closure inside the monolithic generate_reply().
+
+    Most fields are populated when the dataclass is instantiated. A few
+    are set after computation later in ``generate_reply``:
+
+    * ``tone_prefix`` — built by ``_compute_tone_prefix`` and set onto
+      the existing ctx instance via direct attribute assignment. Some
+      handlers fire before the prefix is computed (e.g. crisis), in
+      which case the field stays at its default ``""`` and they don't
+      use it. Handlers that DO use it run after the assignment.
     """
     # --- Identifiers ---
     session_id: str
@@ -83,6 +92,10 @@ class MessageContext:
     # --- Language ---
     spanish_detected: bool    # True if Spanish phrases found in message
     spanish_acknowledgment: str  # bilingual prefix if Spanish + service intent
+    # --- Tone prefix (set late — see class docstring) ---
+    tone_prefix: str = ""     # sensitive-context / warmth prefix from _compute_tone_prefix
+    # --- Merged slot state (set late, after merge_slots in service flow) ---
+    merged: Optional[dict] = None  # post-merge dict; same identity as orchestrator's `merged`
 
 
 # ---------------------------------------------------------------------------

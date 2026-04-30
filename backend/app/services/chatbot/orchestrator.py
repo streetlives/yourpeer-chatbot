@@ -40,7 +40,7 @@ from app.services.slot_extractor import (
     next_follow_up_question,
 )
 
-from .context import _USE_LLM, _empty_reply
+from .context import MessageContext, _USE_LLM, _empty_reply
 from .handlers import (
     _handle_bot_capability_question,
     _handle_bot_identity,
@@ -243,17 +243,57 @@ def generate_reply(
     # affect a confirm_yes/confirm_deny many turns later.
     _clear_stale_last_action(session_id, existing, category)
 
+    # --- Build MessageContext for handler dispatch ---
+    # ORCHESTRATOR_AUDIT.md PR-α: handlers progressively migrating from
+    # positional args to ctx-only signatures. Constructed here (earliest
+    # point all not-late-set fields are available) so it's visible to
+    # crisis dispatch immediately below. Three fields are LATE-SET via
+    # direct attribute assignment as their values are computed downstream:
+    #   * spanish_acknowledgment — set after _handle_spanish_detection
+    #   * tone_prefix            — set after _compute_tone_prefix
+    #   * merged                 — set after merge_slots in service flow
+    # Handlers that fire before each setter runs see the default ("" / None)
+    # — that's safe because no handler reads a field before it's populated.
+    ctx = MessageContext(
+        session_id=session_id,
+        request_id=request_id,
+        message=message,
+        redacted_message=redacted_message,
+        pii_warning=_pii_warning,
+        existing=existing,
+        category=category,
+        action=action,
+        tone=tone,
+        confidence=_confidence,
+        extraction_source=_extraction_source,
+        early_extracted=early_extracted,
+        has_service_intent=has_service_intent,
+        crisis_result=_crisis_result,
+        last_results=existing.get("_last_results"),
+        is_confirmation_action=action in (
+            "confirm_yes", "confirm_deny", "confirm_change_service",
+            "confirm_change_location", "reset", "greeting",
+        ),
+        has_coords=(
+            existing.get("_latitude") is not None
+            and existing.get("_longitude") is not None
+        ),
+        latitude=latitude,
+        longitude=longitude,
+        spanish_detected=False,           # late-set after spanish detection
+        spanish_acknowledgment="",         # late-set after spanish detection
+        tone_prefix="",                    # late-set after _compute_tone_prefix
+        merged=None,                       # late-set after merge_slots (service flow)
+    )
+
     # --- Crisis ---
     if category == "crisis":
-        result = _handle_crisis(
-            session_id, message, redacted_message, existing,
-            early_extracted, has_service_intent, _crisis_result,
-            tone, request_id,
-        )
+        result = _handle_crisis(ctx)
         if result:
             return result
         # If _crisis_result was None (classification disagreed), fall through
         category = "general"
+        ctx.category = "general"
 
     # --- Spanish / non-English detection ---
     _spanish_result, _spanish_acknowledgment = _handle_spanish_detection(
@@ -262,6 +302,9 @@ def generate_reply(
     )
     if _spanish_result:
         return _spanish_result
+    # Late-set: handlers downstream (service flow prefix injection) read this.
+    ctx.spanish_detected = bool(_spanish_acknowledgment)
+    ctx.spanish_acknowledgment = _spanish_acknowledgment
 
     # --- Tone prefix (computed early so help/confused/emotional handlers
     # can use it too, not just service-flow responses). The sensitive-
@@ -283,6 +326,8 @@ def generate_reply(
         is_service_flow=_is_service_flow,
         prior_emotional_context=existing.get("_emotional_context"),
     )
+    # Late-set: meta + service handlers read this.
+    ctx.tone_prefix = _tone_prefix
 
     # Persist emotional context for subsequent turns (needed here, not
     # just at the service-flow site below, because help/confused
@@ -291,7 +336,7 @@ def generate_reply(
 
     # --- Reset ---
     if category == "reset":
-        return _handle_reset(session_id, redacted_message, category, tone, request_id)
+        return _handle_reset(ctx)
 
     # --- Correction ---
     if category == "correction":
@@ -316,6 +361,11 @@ def generate_reply(
             category = "service"
             if tone is None:
                 tone = "frustrated"
+            # Keep ctx in sync with local promotion so downstream ctx-using
+            # handlers see the correct category/tone (the local var and
+            # ctx.* must agree — see ORCHESTRATOR_AUDIT.md PR-α invariants).
+            ctx.category = category
+            ctx.tone = tone
             # Fall through to normal service routing below.
         else:
             return _handle_negative_preference(
@@ -324,58 +374,50 @@ def generate_reply(
 
     # --- Greeting ---
     if category == "greeting":
-        return _handle_greeting(session_id, redacted_message, existing, category, tone, request_id)
+        return _handle_greeting(ctx)
 
     # --- Thanks ---
     if category == "thanks":
-        return _handle_thanks(session_id, redacted_message, existing, category, tone, request_id)
+        return _handle_thanks(ctx)
 
     # --- Help ---
     if category == "help":
-        return _handle_help(session_id, message, redacted_message, existing,
-                            _response_tone, category, tone, _tone_prefix, request_id)
+        return _handle_help(ctx)
 
     # --- Bot Identity ---
     if category == "bot_identity":
-        return _handle_bot_identity(session_id, redacted_message, existing,
-                                    category, tone, request_id)
+        return _handle_bot_identity(ctx)
 
     # --- Bot capability questions ---
     if category == "bot_question":
-        return _handle_bot_capability_question(session_id, message, redacted_message,
-                                               existing, category, tone, request_id)
+        return _handle_bot_capability_question(ctx)
 
     # --- Demographic skip ("I'd rather not say" / "skip") ---
     # SAMHSA Empowerment principle: users control what they share.
-    _demo_skip_result = _handle_demographic_skip(session_id, message, redacted_message,
-                                                  existing, tone, request_id)
+    _demo_skip_result = _handle_demographic_skip(ctx)
     if _demo_skip_result:
         return _demo_skip_result
 
     # --- Location unknown ---
-    _loc_unknown_result = _handle_location_unknown(session_id, message, redacted_message,
-                                                    existing, tone, request_id)
+    _loc_unknown_result = _handle_location_unknown(ctx)
     if _loc_unknown_result:
         return _loc_unknown_result
 
     # --- Confused / Overwhelmed ---
     if category == "confused":
-        return _handle_confused(session_id, redacted_message, existing,
-                                category, tone, _tone_prefix, request_id)
+        return _handle_confused(ctx)
 
     # --- Emotional expression ---
     if category == "emotional":
-        return _handle_emotional(session_id, message, redacted_message, existing,
-                                 category, tone, request_id)
+        return _handle_emotional(ctx)
 
     # --- Frustration ---
     if category == "frustration":
-        return _handle_frustration(session_id, redacted_message, existing, tone, request_id)
+        return _handle_frustration(ctx)
 
     # --- Escalation ---
     if category == "escalation":
-        return _handle_escalation(session_id, redacted_message, existing,
-                                  category, tone, request_id)
+        return _handle_escalation(ctx)
 
     # --- Context-aware "yes" / "no" handling ---
     last_action = existing.get("_last_action")
@@ -471,6 +513,9 @@ def generate_reply(
                         if k not in ("additional_services", "_populations", "_contradiction", "_is_additive", "tone", "action"))
 
     merged = merge_slots(existing, extracted)
+    # Late-set: handlers that fire after merge_slots (notably
+    # _handle_general_conversation at the function tail) read this.
+    ctx.merged = merged
 
     _append_to_transcript(merged, redacted_message)
     _update_queued_services(merged, extracted, existing)
@@ -582,7 +627,4 @@ def generate_reply(
         )
 
     # --- General conversation / unrecognized service ---
-    return _handle_general_conversation(
-        session_id, message, redacted_message, merged,
-        _confidence, tone, request_id,
-    )
+    return _handle_general_conversation(ctx)

@@ -20,7 +20,7 @@ from app.services.responses import _fallback_response
 from app.services.session_store import save_session_slots
 from app.services.slot_extractor import NEAR_ME_SENTINEL
 
-from ..context import _empty_reply
+from ..context import MessageContext, _empty_reply
 from ..logging import _log_turn
 
 
@@ -47,8 +47,7 @@ _CASUAL_RESPONSES = (
 )
 
 
-def _handle_general_conversation(session_id, message, redacted_message, merged,
-                                 confidence, tone, request_id):
+def _handle_general_conversation(ctx: MessageContext):
     """Handle general chat / unrecognized service requests with tiered
     escalation.
 
@@ -60,9 +59,13 @@ def _handle_general_conversation(session_id, message, redacted_message, merged,
     2. User sends casual chat ("how are you?") → rotating friendly reply.
     3. Anything else → fallback response, optionally with a low-confidence
        peer-navigator offer.
+
+    Reads ``ctx.merged`` (post-merge_slots dict) — this handler runs at
+    the end of ``generate_reply`` so merged is always populated by then.
     """
-    is_casual_chat = bool(_CASUAL_CHAT_RE.search(message))
-    is_service_request_pattern = bool(_SERVICE_NEED_RE.search(message))
+    merged = ctx.merged
+    is_casual_chat = bool(_CASUAL_CHAT_RE.search(ctx.message))
+    is_service_request_pattern = bool(_SERVICE_NEED_RE.search(ctx.message))
     has_unrecognized_need = (
         is_service_request_pattern
         and not merged.get("service_type")
@@ -76,7 +79,7 @@ def _handle_general_conversation(session_id, message, redacted_message, merged,
         # Track repeated unrecognized requests for response variation
         unrec_count = merged.get("_unrecognized_count", 0) + 1
         merged["_unrecognized_count"] = unrec_count
-        save_session_slots(session_id, merged)
+        save_session_slots(ctx.session_id, merged)
 
         location_label = merged.get("location") or "your area"
         if location_label == NEAR_ME_SENTINEL:
@@ -110,20 +113,20 @@ def _handle_general_conversation(session_id, message, redacted_message, merged,
             qr = list(_WELCOME_QUICK_REPLIES) + [
                 {"label": "❌ Not what I meant", "value": "not what I meant"},
             ]
-        result = _empty_reply(session_id, response, merged, quick_replies=qr)
-        _log_turn(session_id, redacted_message, result, "unrecognized_service",
-                  request_id=request_id, tone=tone, confidence="low")
+        result = _empty_reply(ctx.session_id, response, merged, quick_replies=qr)
+        _log_turn(ctx.session_id, ctx.redacted_message, result, "unrecognized_service",
+                  request_id=ctx.request_id, tone=ctx.tone, confidence="low")
         return result
 
     if is_casual_chat:
         idx = len(merged.get("transcript", [])) % len(_CASUAL_RESPONSES)
         response = _CASUAL_RESPONSES[idx]
     else:
-        response = _fallback_response(message, merged)
+        response = _fallback_response(ctx.message, merged)
         # Cultural humility: when the bot can't understand what the user
         # needs (low confidence), acknowledge the limitation rather than
         # pretending the generic response is adequate.
-        if confidence == "low" and not merged.get("service_type"):
+        if ctx.confidence == "low" and not merged.get("service_type"):
             response += (
                 "\n\nIf I'm missing something important about what you need, "
                 "a peer navigator can help — they're real people who know "
@@ -134,12 +137,12 @@ def _handle_general_conversation(session_id, message, redacted_message, merged,
     general_qr = []
     if not has_service_intent and len(merged.get("transcript", [])) <= 1 and not is_casual_chat:
         general_qr = list(_WELCOME_QUICK_REPLIES)
-    if confidence in ("medium", "low"):
+    if ctx.confidence in ("medium", "low"):
         general_qr.append({"label": "❌ Not what I meant", "value": "not what I meant"})
     result = _empty_reply(
-        session_id, response, merged,
+        ctx.session_id, response, merged,
         quick_replies=general_qr,
     )
-    _log_turn(session_id, redacted_message, result, "general",
-              request_id=request_id, tone=tone, confidence=confidence)
+    _log_turn(ctx.session_id, ctx.redacted_message, result, "general",
+              request_id=ctx.request_id, tone=ctx.tone, confidence=ctx.confidence)
     return result
