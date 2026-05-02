@@ -7,7 +7,7 @@ Kept deliberately small and dependency-free so every other module in the
 import logging
 import os
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, Tuple
 
 
 logger = logging.getLogger(__name__)
@@ -81,17 +81,25 @@ class MessageContext:
     early_extracted: dict     # raw extraction result (service_type, location, age, etc.)
     has_service_intent: bool  # True if service_type or org_name was extracted
     # --- Crisis ---
-    crisis_result: Optional[dict]  # from detect_crisis(), None if no crisis
+    # Tuple of (crisis_category, response_text) when detected, else None.
+    # Shape comes from ``detect_crisis()``; the dispatcher checks against
+    # ``None`` to gate crisis routing.
+    crisis_result: Optional[Tuple[str, str]]
     # --- Post-results state ---
     last_results: Optional[list]   # cached query results from session, or None
     is_confirmation_action: bool   # True if action is confirm_yes/deny/change/reset/greeting
-    # --- Geolocation ---
-    has_coords: bool          # True if lat/lon were provided by browser
+    # --- Geolocation (browser-provided coords for this request) ---
+    # Stashed on ctx for handlers that need them in concert with
+    # ``existing["_latitude"]`` / ``existing["_longitude"]``. Pre-merge
+    # coords only — handlers that need post-merge readiness should read
+    # from ``ctx.merged`` (or ``existing`` after ``_apply_session_geo``).
     latitude: Optional[float]
     longitude: Optional[float]
-    # --- Language ---
-    spanish_detected: bool    # True if Spanish phrases found in message
-    spanish_acknowledgment: str  # bilingual prefix if Spanish + service intent
+    # --- Language (set late, after _handle_spanish_detection) ---
+    # Bilingual prefix prepended to the service-flow response. Empty
+    # string when no Spanish was detected. Read in the orchestrator's
+    # service-flow prefix-injection block.
+    spanish_acknowledgment: str = ""
     # --- Tone prefix (set late — see class docstring) ---
     tone_prefix: str = ""     # sensitive-context / warmth prefix from _compute_tone_prefix
     # --- Merged slot state (set late, after merge_slots in service flow) ---

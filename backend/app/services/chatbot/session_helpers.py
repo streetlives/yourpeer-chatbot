@@ -246,11 +246,14 @@ def _persist_emotional_context_late(
     ``_emotional_context = "shame"`` and the late computation wants
     ``"frustrated"``, the in-memory dict updates but the save
     condition is False (both are truthy), so the change is lost on
-    follow-up paths that don't save again before returning. This
-    bug is preserved here bit-for-bit and is queued for fix in PR-γ
-    (TEST_QUALITY_PLAN.md). When that fix lands, change the
-    condition to ``!=`` and add a regression test in
-    ``test_session_helpers.py``.
+    follow-up paths that don't save again before returning. This bug
+    is preserved here bit-for-bit; tracking and resolution plan are
+    in ``ORCHESTRATOR_AUDIT.md`` ("Known-deferred items"). The
+    BUGGY behavior is pinned by
+    ``test_late_persist_does_not_save_on_value_to_value_change`` in
+    ``test_session_helpers.py``; that test's ``save_recorder``
+    assertion needs to be inverted when the fix lands (change the
+    condition below to ``!=``).
     """
     if update is not None:
         merged["_emotional_context"] = update

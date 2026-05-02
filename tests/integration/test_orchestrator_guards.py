@@ -158,8 +158,7 @@ class TestQueueAcceptFastPath:
                 and early_extracted.get("service_type") == existing["_queued_offer"][0]):
             offer = existing["_queued_offer"]
             return _promote_queued_offer(
-                session_id, message, redacted_message, existing, offer,
-                request_id, tone,
+                ctx, offer,
                 location_override=early_extracted.get("location"),
             )
     """
@@ -405,10 +404,11 @@ class TestQueueAcceptFastPath:
             mock_promote.return_value = {"response": "ok"}
             generate_reply("I need clothing", session_id=sid)
 
-        # Args: (session_id, message, redacted_message, existing, offer,
-        #        request_id, tone)
+        # After Phase C ctx-migration, signature is
+        # ``_promote_queued_offer(ctx, offer, location_override=...)``,
+        # so offer is positional[1].
         positional = mock_promote.call_args.args
-        assert positional[4] == queued
+        assert positional[1] == queued
 
 
 # ===========================================================================

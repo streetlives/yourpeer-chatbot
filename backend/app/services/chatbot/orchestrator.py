@@ -214,7 +214,7 @@ def generate_reply(
     # positional args to ctx-only signatures. Constructed here (earliest
     # point all not-late-set fields are available) so it's visible to
     # the queue-accept/post-results fast paths and the crisis dispatch
-    # below. Three fields are LATE-SET via direct attribute assignment
+    # below. Two fields are LATE-SET via direct attribute assignment
     # as their values are computed downstream:
     #   * spanish_acknowledgment — set after _handle_spanish_detection
     #   * tone_prefix            — set after _compute_tone_prefix
@@ -241,13 +241,8 @@ def generate_reply(
             "confirm_yes", "confirm_deny", "confirm_change_service",
             "confirm_change_location", "reset", "greeting",
         ),
-        has_coords=(
-            existing.get("_latitude") is not None
-            and existing.get("_longitude") is not None
-        ),
         latitude=latitude,
         longitude=longitude,
-        spanish_detected=False,           # late-set after spanish detection
         spanish_acknowledgment="",         # late-set after spanish detection
         tone_prefix="",                    # late-set after _compute_tone_prefix
         merged=None,                       # late-set after merge_slots (service flow)
@@ -288,8 +283,7 @@ def generate_reply(
                 and early_extracted.get("service_type") == existing["_queued_offer"][0]):
             offer = existing["_queued_offer"]
             return _promote_queued_offer(
-                session_id, message, redacted_message, existing, offer,
-                request_id, tone,
+                ctx, offer,
                 location_override=early_extracted.get("location"),
             )
 
@@ -316,8 +310,7 @@ def generate_reply(
     )
     if _spanish_result:
         return _spanish_result
-    # Late-set: handlers downstream (service flow prefix injection) read this.
-    ctx.spanish_detected = bool(_spanish_acknowledgment)
+    # Late-set: read in the service-flow prefix-injection block below.
     ctx.spanish_acknowledgment = _spanish_acknowledgment
 
     # --- Tone prefix (computed early so help/confused/emotional handlers
@@ -433,10 +426,7 @@ def generate_reply(
 
     # --- Context-aware "yes" / "no" handling ---
     last_action = existing.get("_last_action")
-    context_result = _handle_context_aware_confirm(
-        session_id, message, redacted_message, existing,
-        category, last_action, tone, request_id,
-    )
+    context_result = _handle_context_aware_confirm(ctx, last_action)
     if context_result:
         return context_result
 
@@ -452,19 +442,13 @@ def generate_reply(
 
     # --- Handle confirmation responses ---
     pending = existing.get("_pending_confirmation")
-    confirm_result = _handle_pending_confirmation(
-        session_id, message, redacted_message, existing, pending,
-        category, tone, request_id, early_extracted=early_extracted,
-    )
+    confirm_result = _handle_pending_confirmation(ctx, pending)
     if confirm_result:
         return confirm_result
 
     # If pending confirmation but user typed something new
     if pending:
-        return _handle_post_pending_confirmation(
-            session_id, message, redacted_message, existing,
-            _response_tone, tone, request_id,
-        )
+        return _handle_post_pending_confirmation(ctx, _response_tone)
 
     # --- Service request or general conversation ---
     if _USE_LLM and category == "service":
@@ -574,7 +558,7 @@ def generate_reply(
     # appear first in confirmations and follow-ups.
     _prefix_prepend = (
         _pii_warning
-        + _spanish_acknowledgment
+        + ctx.spanish_acknowledgment
         + _immigration_acknowledgment(merged)
         + _combined_contextual_acknowledgments(merged, redacted_message)
     )
