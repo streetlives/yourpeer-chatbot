@@ -234,31 +234,29 @@ def _persist_emotional_context_late(
 
     The late ``_compute_tone_prefix`` call (after potential B.2
     promotion of negative_preference → service) may produce a
-    different result than the early one. This helper preserves the
-    original orchestrator's two-stage logic exactly:
+    different result than the early one. This helper handles two
+    in-flow cases:
 
     1. If ``update`` is non-None, write it to ``merged`` (in-memory).
-    2. Save IFF the merged dict now has emotional context AND
-       ``existing`` (pre-merge) did not.
+    2. Save IFF ``merged`` now has emotional context that differs
+       from what ``existing`` (pre-merge) had.
 
-    NOTE (ORCHESTRATOR_AUDIT.md Bug 1): Step 2's condition only fires
-    on a None → non-None transition. If the early site already set
-    ``_emotional_context = "shame"`` and the late computation wants
-    ``"frustrated"``, the in-memory dict updates but the save
-    condition is False (both are truthy), so the change is lost on
-    follow-up paths that don't save again before returning. This bug
-    is preserved here bit-for-bit; tracking and resolution plan are
-    in ``ORCHESTRATOR_AUDIT.md`` ("Known-deferred items"). The
-    BUGGY behavior is pinned by
-    ``test_late_persist_does_not_save_on_value_to_value_change`` in
-    ``test_session_helpers.py``; that test's ``save_recorder``
-    assertion needs to be inverted when the fix lands (change the
-    condition below to ``!=``).
+    Case 2 fires on:
+      * None → non-None (early site set nothing, late site produced one)
+      * non-None → different non-None (e.g., "shame" promoted to
+        "frustrated" along the negative_preference path)
+
+    Case 2 does NOT fire when ``merged.get("_emotional_context")`` is
+    falsy. This protects against the artificial scenario where a
+    caller builds ``merged`` without carrying through the existing
+    context: a naked ``!=`` would treat that as "value cleared" and
+    trigger a save with a stripped-down dict, nuking session state.
+    In real usage at the call site, ``merged`` is the output of
+    ``merge_slots(existing, extracted)`` and always carries through
+    existing fields.
     """
     if update is not None:
         merged["_emotional_context"] = update
-    if (
-        merged.get("_emotional_context")
-        and not existing.get("_emotional_context")
-    ):
+    new_value = merged.get("_emotional_context")
+    if new_value and new_value != existing.get("_emotional_context"):
         save_session_slots(session_id, merged)

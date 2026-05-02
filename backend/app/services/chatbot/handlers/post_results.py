@@ -17,13 +17,13 @@ the session so filter responses paginate correctly.
 """
 
 from app.rag.query_executor import fetch_schedule_for_day
-from app.rag.query_templates import _format_time
 from app.services.phrase_lists import _WELCOME_QUICK_REPLIES
 from app.services.post_results import (
     answer_from_results,
     classify_post_results_question,
 )
 from app.services.session_store import save_session_slots
+from app.utils.time_format import format_time
 
 from ..context import _DISPLAY_PAGE_SIZE, _count_unique_locations, _empty_reply
 from ..logging import _log_turn
@@ -248,8 +248,8 @@ def _handle_hours_for_day(ctx, post_intent):
         if sched_entries:
             time_strs = []
             for entry in sched_entries:
-                opens = _format_time(entry.get("opens_at"))
-                closes = _format_time(entry.get("closes_at"))
+                opens = format_time(entry.get("opens_at"))
+                closes = format_time(entry.get("closes_at"))
                 if opens and closes:
                     time_strs.append(f"{opens} – {closes}")
             if time_strs:

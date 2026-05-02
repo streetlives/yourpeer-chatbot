@@ -14,6 +14,7 @@ import re
 import logging
 
 from app.llm.claude_client import claude_reply
+from app.utils.text_normalize import normalize_contractions, strip_intensifiers
 
 logger = logging.getLogger(__name__)
 
@@ -189,12 +190,10 @@ def _pick_emotional_response(text: str) -> str:
     Falls back to the generic _EMOTIONAL_RESPONSE if no specific
     emotion is detected.
     """
-    from app.services.classifier import _normalize_contractions, _strip_intensifiers
-
     lower = text.lower()
-    normalized = _normalize_contractions(lower)
-    stripped = _strip_intensifiers(lower)
-    stripped_normalized = _strip_intensifiers(normalized)
+    normalized = normalize_contractions(lower)
+    stripped = strip_intensifiers(lower)
+    stripped_normalized = strip_intensifiers(normalized)
 
     def _any_match(phrases):
         """Check if any phrase appears in any text variant."""

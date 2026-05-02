@@ -28,6 +28,8 @@ Key gotchas from schema exploration:
     - locations.position is PostGIS USER-DEFINED geometry
 """
 
+from app.utils.time_format import format_time
+
 
 
 # ---------------------------------------------------------------------------
@@ -1375,8 +1377,8 @@ def _compute_schedule_status(opens_at, closes_at) -> dict:
         return {"hours_today": None, "is_open": None}
 
     # Format for display
-    open_str = _format_time(open_time)
-    close_str = _format_time(close_time)
+    open_str = format_time(open_time)
+    close_str = format_time(close_time)
     hours_today = f"{open_str} – {close_str}"
 
     # Determine if currently open
@@ -1388,15 +1390,6 @@ def _compute_schedule_status(opens_at, closes_at) -> dict:
         is_open = "open" if now >= open_time or now <= close_time else "closed"
 
     return {"hours_today": hours_today, "is_open": is_open}
-
-
-def _format_time(t) -> str:
-    """Format a time object as '9:00 AM' style (cross-platform)."""
-    from datetime import datetime
-    # Use %I (zero-padded) then strip the leading zero manually.
-    # %-I is macOS-only and crashes on Linux.
-    formatted = datetime.combine(datetime.min, t).strftime("%I:%M %p")
-    return formatted.lstrip("0") if formatted.startswith("0") else formatted
 
 
 def deduplicate_results(rows: list[dict]) -> list[dict]:

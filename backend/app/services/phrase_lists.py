@@ -15,70 +15,6 @@ Separated from logic so that:
 import re
 
 # ---------------------------------------------------------------------------
-# CONTRACTION NORMALIZATION (P4 audit)
-# ---------------------------------------------------------------------------
-# Expands common contractions to their full forms so phrase lists only need
-# the expanded version (e.g., "not helpful") to match all contraction
-# variants ("isn't helpful", "isnt helpful", "wasn't helpful", etc.).
-#
-# Applied to frustration, emotional, and confused matching in _classify_tone.
-# NOT applied to crisis detection — crisis uses explicit enumeration for safety.
-
-_CONTRACTION_MAP = {
-    # Negative contractions → "not" form
-    "isn't": "is not", "isnt": "is not",
-    "wasn't": "was not", "wasnt": "was not",
-    "aren't": "are not", "arent": "are not",
-    "weren't": "were not", "werent": "were not",
-    "doesn't": "does not", "doesnt": "does not",
-    "didn't": "did not", "didnt": "did not",
-    "don't": "do not", "dont": "do not",
-    "can't": "can not", "cant": "can not",
-    "won't": "will not", "wont": "will not",
-    "hasn't": "has not", "hasnt": "has not",
-    "haven't": "have not", "havent": "have not",
-    "wouldn't": "would not", "wouldnt": "would not",
-    "couldn't": "could not", "couldnt": "could not",
-    "shouldn't": "should not", "shouldnt": "should not",
-    # Pronoun contractions
-    "i'm": "i am", "im": "i am",
-    "i've": "i have", "ive": "i have",
-    "i'll": "i will",
-    "i'd": "i would",
-    "it's": "it is",
-    "that's": "that is",
-    "there's": "there is",
-    "what's": "what is",
-    "you're": "you are", "youre": "you are",
-    "they're": "they are", "theyre": "they are",
-    "we're": "we are",
-}
-
-# Sort by length descending so longer contractions match first
-# ("wouldn't" before "won't" to avoid partial replacement)
-_CONTRACTION_PAIRS = sorted(_CONTRACTION_MAP.items(), key=lambda x: -len(x[0]))
-
-
-# ---------------------------------------------------------------------------
-# INTENSIFIER STRIPPING
-# ---------------------------------------------------------------------------
-# Removes common intensifier adverbs that break substring contiguity in
-# phrase matching. "I'm really scared" → "I'm scared" matches "i'm scared".
-
-_INTENSIFIERS = {
-    "really", "very", "so", "super", "extremely", "pretty", "quite",
-    "totally", "absolutely", "incredibly", "truly", "deeply",
-    "terribly", "horribly", "awfully", "genuinely", "particularly",
-    "just", "kinda", "sorta",
-}
-
-_INTENSIFIER_RE = re.compile(
-    r'\b(' + '|'.join(re.escape(w) for w in sorted(_INTENSIFIERS, key=len, reverse=True)) + r')\b\s*',
-    re.IGNORECASE,
-)
-
-
-# ---------------------------------------------------------------------------
 # MESSAGE CLASSIFICATION PHRASES
 # ---------------------------------------------------------------------------
 
@@ -246,8 +182,8 @@ _EMOTIONAL_PHRASES = [
     # Grief / loss (P2 audit — common trigger for homelessness)
     "lost someone", "someone died", "my friend died",
     "grieving", "in mourning",
-    # Post-normalization variants — _normalize_contractions() expands
-    # "I'm" → "I am", so these forms must be in the list too.
+    # Post-normalization variants — text_normalize.normalize_contractions()
+    # expands "I'm" → "I am", so these forms must be in the list too.
     # Without them, "I'm scared" → normalized "I am scared" → no match.
     "i am scared", "i am feeling scared", "i feel scared",
     "i am sad", "i am feeling sad", "i feel sad",

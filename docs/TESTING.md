@@ -307,7 +307,7 @@ Validates location normalization, borough expansion, proximity search, and that 
 | Neighborhood proximity | 15 | All neighborhoods have coordinates within NYC bounds, proximity search integration |
 | DB connection | 1 | `test_connection` returns False without DATABASE_URL |
 
-### `test_query_templates.py` — 124 tests
+### `test_query_templates.py` — 118 tests
 
 Validates query template correctness, SQL structure, service card formatting, schedule computation, result sorting, and shelter taxonomy enrichment.
 

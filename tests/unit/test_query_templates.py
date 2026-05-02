@@ -22,7 +22,6 @@ from app.rag.query_templates import (
     format_service_card,
     deduplicate_results,
     _compute_schedule_status,
-    _format_time,
     TEMPLATES,
     _BASE_QUERY,
 )
@@ -626,35 +625,8 @@ def test_schedule_no_data_in_card():
 # -----------------------------------------------------------------------
 # TIME FORMATTING
 # -----------------------------------------------------------------------
-
-def test_format_time_morning():
-    assert _format_time(time(9, 0)) == "9:00 AM"
-    assert _format_time(time(9, 30)) == "9:30 AM"
-
-
-def test_format_time_afternoon():
-    assert _format_time(time(14, 0)) == "2:00 PM"
-    assert _format_time(time(17, 45)) == "5:45 PM"
-
-
-def test_format_time_noon():
-    assert _format_time(time(12, 0)) == "12:00 PM"
-
-
-def test_format_time_midnight():
-    assert _format_time(time(0, 0)) == "12:00 AM"
-
-
-def test_format_time_just_after_midnight():
-    assert _format_time(time(0, 30)) == "12:30 AM"
-
-
-def test_format_time_no_leading_zero():
-    """Single-digit hours should NOT have a leading zero."""
-    result = _format_time(time(9, 0))
-    assert not result.startswith("0"), f"Leading zero in: {result}"
-    result2 = _format_time(time(1, 0))
-    assert not result2.startswith("0"), f"Leading zero in: {result2}"
+# Tests for the format_time helper moved to tests/unit/test_time_format.py
+# when the function moved to app/utils/time_format.py.
 
 
 # -----------------------------------------------------------------------
