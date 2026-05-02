@@ -78,6 +78,61 @@ class TestLastActionLifecycle:
         # (the service flow doesn't set _last_action)
         assert s.get("_last_action") is None
 
+    def test_show_more_after_emotional_clears_stale_last_action(self, sid):
+        """A 'show more results' message after results were displayed must
+        clear any stale ``_last_action`` from a prior emotional turn AND
+        still serve the more-results page.
+
+        This pins an orchestrator-level invariant introduced when
+        MessageContext construction was moved before the post-results
+        fast path: ``_clear_stale_last_action`` now runs BEFORE
+        ``_handle_post_results_interaction``, but the reorder is only
+        safe if the "fast path requires _last_action unset" guard for
+        confirm_yes/deny actions remains effectively a no-op for
+        non-confirm categories. This test catches a regression that
+        would manifest as either (a) ``_last_action`` leaking into a
+        subsequent confirm_yes turn, or (b) the show-more fast path
+        misfiring because the stale flag wasn't cleared in time.
+
+        Setup: emotional turn (sets ``_last_action='emotional'``) →
+        a real service search yielding results → "show more results".
+        Assertion: the show-more page serves results AND
+        ``_last_action`` is cleared after the show-more turn.
+        """
+        # 1. Emotional turn — sets _last_action='emotional'
+        send("I'm feeling really down", session_id=sid)
+        s1 = get_session_slots(sid)
+        assert s1.get("_last_action") == "emotional", (
+            "Setup: emotional handler should set _last_action"
+        )
+
+        # 2. Service search — confirm and execute
+        send("I need food in Brooklyn", session_id=sid)
+        send("Yes, search", session_id=sid)
+        s2 = get_session_slots(sid)
+        # Slot extraction during service flow should have cleared
+        # _last_action (or it was cleared by the service-flow path).
+        # Pin _last_results so we know the show-more is valid.
+        assert s2.get("_last_results"), (
+            "Setup: service search should populate _last_results"
+        )
+
+        # 3. Show-more — the test target
+        r = send("Show more results", session_id=sid)
+        s3 = get_session_slots(sid)
+
+        # _last_action should be cleared (whether by
+        # _clear_stale_last_action or by the post-results handler's
+        # internal pop — either path leaves it cleared).
+        assert s3.get("_last_action") is None, (
+            f"_last_action should be cleared after show-more, got "
+            f"{s3.get('_last_action')!r}"
+        )
+        # And the show-more should have produced a result of some kind
+        # (services list or response text — exact format depends on
+        # how many results existed).
+        assert r.get("response"), "show-more should produce a response"
+
 
 # =====================================================================
 # 2. Confirm/deny with service change

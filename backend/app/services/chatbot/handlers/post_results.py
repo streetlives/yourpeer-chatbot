@@ -54,26 +54,29 @@ _ISODOW_NAMES = {1: "Monday", 2: "Tuesday", 3: "Wednesday", 4: "Thursday",
                  5: "Friday", 6: "Saturday", 7: "Sunday"}
 
 
-def _handle_show_more(session_id, message, redacted_message, existing,
-                      last_results, request_id):
+def _handle_show_more(ctx):
     """Handle 'show more results' / 'show all' after results were displayed."""
-    msg_lower = message.lower().strip()
+    msg_lower = ctx.message.lower().strip()
     if msg_lower not in _SHOW_MORE_PATTERNS:
         return None
 
+    # Snapshot once so the body reads identically to the pre-migration
+    # version (which had ``last_results`` as a function parameter).
+    last_results = ctx.last_results
+
     # When a filter is active, "show all" escapes back to unfiltered results;
     # "show more" paginates through the filtered set.
-    filtered = existing.get("_filtered_results")
+    filtered = ctx.existing.get("_filtered_results")
     is_show_all = msg_lower in _SHOW_ALL_PATTERNS
 
     if filtered and is_show_all:
         # Escape the filter — clear state and re-display the first page
         # of the unfiltered set (same pagination UX as initial display).
-        existing.pop("_filtered_results", None)
-        existing.pop("_filter_phrase", None)
+        ctx.existing.pop("_filtered_results", None)
+        ctx.existing.pop("_filter_phrase", None)
         first_page = last_results[:_DISPLAY_PAGE_SIZE]
-        existing["_displayed_count"] = len(first_page)
-        save_session_slots(session_id, existing)
+        ctx.existing["_displayed_count"] = len(first_page)
+        save_session_slots(ctx.session_id, ctx.existing)
         qr = [
             {"label": "🔍 New search", "value": "Start over"},
             {"label": "🤝 Peer navigator", "value": "Connect with peer navigator"},
@@ -88,28 +91,29 @@ def _handle_show_more(session_id, message, redacted_message, existing,
                 "value": "Show more results",
             })
         result = {
-            "session_id": session_id,
+            "session_id": ctx.session_id,
             "response": "Here are all the results again:",
             "follow_up_needed": False,
-            "slots": existing,
+            "slots": ctx.existing,
             "services": first_page,
             "result_count": len(first_page),
             "relaxed_search": False,
             "quick_replies": qr,
         }
-        _log_turn(session_id, redacted_message, result, "post_results", request_id=request_id)
+        _log_turn(ctx.session_id, ctx.redacted_message, result, "post_results",
+                  request_id=ctx.request_id)
         return result
 
     # Source set: filtered when active, otherwise the full last_results.
     source = filtered if filtered else last_results
 
-    displayed = existing.get("_displayed_count", 0)
+    displayed = ctx.existing.get("_displayed_count", 0)
     if displayed and displayed < len(source):
         # Show the next page of results (not all remaining)
         next_page = source[displayed:displayed + _DISPLAY_PAGE_SIZE]
         new_displayed = displayed + len(next_page)
-        existing["_displayed_count"] = new_displayed
-        save_session_slots(session_id, existing)
+        ctx.existing["_displayed_count"] = new_displayed
+        save_session_slots(ctx.session_id, ctx.existing)
 
         still_remaining = len(source) - new_displayed
         qr = [
@@ -127,10 +131,10 @@ def _handle_show_more(session_id, message, redacted_message, existing,
 
         page_loc_count = _count_unique_locations(next_page)
         result = {
-            "session_id": session_id,
+            "session_id": ctx.session_id,
             "response": f"Here are {page_loc_count} more result{'s' if page_loc_count != 1 else ''}:",
             "follow_up_needed": False,
-            "slots": existing,
+            "slots": ctx.existing,
             "services": next_page,
             "result_count": page_loc_count,
             "relaxed_search": False,
@@ -139,10 +143,10 @@ def _handle_show_more(session_id, message, redacted_message, existing,
     else:
         # No more to show — re-display everything from the active source.
         result = {
-            "session_id": session_id,
+            "session_id": ctx.session_id,
             "response": "Here are all the results again:",
             "follow_up_needed": False,
-            "slots": existing,
+            "slots": ctx.existing,
             "services": source,
             "result_count": len(source),
             "relaxed_search": False,
@@ -151,14 +155,15 @@ def _handle_show_more(session_id, message, redacted_message, existing,
                 {"label": "🤝 Peer navigator", "value": "Connect with peer navigator"},
             ],
         }
-    _log_turn(session_id, redacted_message, result, "post_results", request_id=request_id)
+    _log_turn(ctx.session_id, ctx.redacted_message, result, "post_results",
+              request_id=ctx.request_id)
     return result
 
 
-def _handle_sort_results(session_id, message, redacted_message, existing,
-                         last_results, request_id):
+def _handle_sort_results(ctx):
     """Handle 'sort by recently verified' / 'most services' requests."""
-    sort_key = _SORT_PATTERNS.get(message.lower().strip())
+    sort_key = _SORT_PATTERNS.get(ctx.message.lower().strip())
+    last_results = ctx.last_results
     if not (sort_key and last_results):
         return None
 
@@ -174,10 +179,10 @@ def _handle_sort_results(session_id, message, redacted_message, existing,
             key=lambda s: len(s.get("also_available") or []),
             reverse=True,
         )
-    existing["_last_results"] = sorted_results
+    ctx.existing["_last_results"] = sorted_results
     sort_page = sorted_results[:_DISPLAY_PAGE_SIZE]
-    existing["_displayed_count"] = len(sort_page)
-    save_session_slots(session_id, existing)
+    ctx.existing["_displayed_count"] = len(sort_page)
+    save_session_slots(ctx.session_id, ctx.existing)
 
     sort_remaining = len(sorted_results) - len(sort_page)
     sort_qr = [
@@ -194,25 +199,25 @@ def _handle_sort_results(session_id, message, redacted_message, existing,
 
     sort_label = "most recently verified" if sort_key == "verified" else "most services at location"
     result = {
-        "session_id": session_id,
+        "session_id": ctx.session_id,
         "response": f"Here are the results sorted by {sort_label}:",
         "follow_up_needed": False,
-        "slots": existing,
+        "slots": ctx.existing,
         "services": sort_page,
         "result_count": len(sort_page),
         "relaxed_search": False,
         "quick_replies": sort_qr,
     }
-    _log_turn(session_id, redacted_message, result, "post_results", request_id=request_id)
+    _log_turn(ctx.session_id, ctx.redacted_message, result, "post_results",
+              request_id=ctx.request_id)
     return result
 
 
-def _handle_hours_for_day(
-    session_id, existing, last_results, post_intent, redacted_message, request_id,
-):
+def _handle_hours_for_day(ctx, post_intent):
     """Look up schedule for a specific day of the week for displayed services."""
     weekday = post_intent.get("weekday")
     is_weekend = post_intent.get("weekend", False)
+    last_results = ctx.last_results
     if weekday is None or not last_results:
         return None
 
@@ -258,10 +263,10 @@ def _handle_hours_for_day(
     response += "\n\nHours can change — I'd recommend calling ahead to confirm."
 
     result = {
-        "session_id": session_id,
+        "session_id": ctx.session_id,
         "response": response,
         "follow_up_needed": False,
-        "slots": existing,
+        "slots": ctx.existing,
         "services": [],
         "result_count": 0,
         "relaxed_search": False,
@@ -270,30 +275,30 @@ def _handle_hours_for_day(
             {"label": "🔍 New search", "value": "Start over"},
         ],
     }
-    _log_turn(session_id, redacted_message, result, "post_results", request_id=request_id)
+    _log_turn(ctx.session_id, ctx.redacted_message, result, "post_results",
+              request_id=ctx.request_id)
     return result
 
 
-def _handle_post_results_question(session_id, message, redacted_message, existing,
-                                  last_results, request_id):
+def _handle_post_results_question(ctx):
     """Handle questions about specific results ('what are the hours', 'tell me
     about the second one', etc.) after results were displayed."""
-    post_intent = classify_post_results_question(message)
+    post_intent = classify_post_results_question(ctx.message)
     if post_intent is None:
         return None
 
+    last_results = ctx.last_results
+
     # Day-specific hours — requires DB lookup
     if post_intent.get("type") == "ask_hours_day":
-        result = _handle_hours_for_day(
-            session_id, existing, last_results, post_intent, redacted_message, request_id,
-        )
+        result = _handle_hours_for_day(ctx, post_intent)
         if result:
             return result
 
     pr = answer_from_results(
         post_intent,
         last_results,
-        existing.get("_displayed_count", len(last_results)),
+        ctx.existing.get("_displayed_count", len(last_results)),
     )
     if pr is not None:
         # Persist filter state when _handle_filter_subcategory matched.
@@ -303,56 +308,47 @@ def _handle_post_results_question(session_id, message, redacted_message, existin
         # it's cleared by a state transition (no-thanks / frustration /
         # new search).
         if pr.get("_filter_matched"):
-            existing["_filtered_results"] = pr.get("_full_filtered", [])
-            existing["_filter_phrase"] = pr.get("_filter_phrase")
-            existing["_displayed_count"] = len(pr.get("services", []))
-            save_session_slots(session_id, existing)
+            ctx.existing["_filtered_results"] = pr.get("_full_filtered", [])
+            ctx.existing["_filter_phrase"] = pr.get("_filter_phrase")
+            ctx.existing["_displayed_count"] = len(pr.get("services", []))
+            save_session_slots(ctx.session_id, ctx.existing)
 
         result = {
-            "session_id": session_id,
+            "session_id": ctx.session_id,
             "response": pr["response"],
             "follow_up_needed": False,
-            "slots": existing,
+            "slots": ctx.existing,
             "services": pr.get("services", []),
             "result_count": len(pr.get("services", [])),
             "relaxed_search": False,
             "quick_replies": pr.get("quick_replies", []),
         }
-        _log_turn(session_id, redacted_message, result, "post_results", request_id=request_id)
+        _log_turn(ctx.session_id, ctx.redacted_message, result, "post_results",
+                  request_id=ctx.request_id)
         return result
 
     if post_intent.get("type") == "specific_name":
         query = post_intent.get("query", "that")
         result = _empty_reply(
-            session_id,
+            ctx.session_id,
             "I'm not sure if you're asking about the results "
             "I showed, or if you'd like to search for "
             "something new. Which would you prefer?",
-            existing,
+            ctx.existing,
             quick_replies=[
                 {"label": f"🔍 Search for {query}", "value": f"I need {query}"},
                 {"label": "📋 More about results", "value": "Tell me about the first one"},
                 {"label": "🔍 New search", "value": "Start over"},
             ],
         )
-        _log_turn(session_id, redacted_message, result, "disambiguation",
-                  request_id=request_id, confidence="disambiguated")
+        _log_turn(ctx.session_id, ctx.redacted_message, result, "disambiguation",
+                  request_id=ctx.request_id, confidence="disambiguated")
         return result
 
     return None
 
 
-def _handle_post_results_interaction(
-    session_id: str,
-    message: str,
-    redacted_message: str,
-    existing: dict,
-    early_extracted: dict,
-    has_service_intent: bool,
-    action_pre: str | None,
-    tone: str | None,
-    request_id: str | None,
-) -> dict | None:
+def _handle_post_results_interaction(ctx) -> dict | None:
     """Handle follow-up messages after results have been shown.
 
     This runs BEFORE the routing cascade — it catches "show more," sort
@@ -364,10 +360,10 @@ def _handle_post_results_interaction(
 
     Returns a result dict if a post-results interaction fired, ``None`` if
     the caller should continue to the normal routing cascade. May mutate
-    ``existing`` (pops ``_last_results`` / ``_last_action`` and saves).
+    ``ctx.existing`` (pops ``_last_results`` / ``_last_action`` and saves).
     """
-    last_results = existing.get("_last_results")
-    is_confirmation_action = action_pre in (
+    last_results = ctx.last_results
+    is_confirmation_action = ctx.action in (
         "confirm_change_service", "confirm_change_location",
         "confirm_yes", "confirm_deny", "reset", "greeting",
     )
@@ -380,29 +376,29 @@ def _handle_post_results_interaction(
     # the confirm action. Without this guard, "search for" matches
     # confirm_yes and the user's new request gets swallowed.
     if (last_results
-            and action_pre in ("confirm_yes", "confirm_deny")
-            and not existing.get("_pending_confirmation")
-            and not existing.get("_queue_offer_pending")
-            and not existing.get("_queued_services")
-            and not existing.get("_last_action")
-            and not has_service_intent):
+            and ctx.action in ("confirm_yes", "confirm_deny")
+            and not ctx.existing.get("_pending_confirmation")
+            and not ctx.existing.get("_queue_offer_pending")
+            and not ctx.existing.get("_queued_services")
+            and not ctx.existing.get("_last_action")
+            and not ctx.has_service_intent):
 
-        if action_pre == "confirm_yes":
-            existing.pop("_last_results", None)
-            save_session_slots(session_id, existing)
+        if ctx.action == "confirm_yes":
+            ctx.existing.pop("_last_results", None)
+            save_session_slots(ctx.session_id, ctx.existing)
             result = _empty_reply(
-                session_id,
+                ctx.session_id,
                 "I've already shown the results above — you can tap on any "
                 "service card for more details. Would you like to search for "
                 "something else?",
-                existing,
+                ctx.existing,
                 quick_replies=[
                     {"label": "🔍 New search", "value": "Start over"},
                     {"label": "🤝 Peer navigator", "value": "Connect with peer navigator"},
                 ],
             )
-            _log_turn(session_id, redacted_message, result, "post_results_confirm",
-                      request_id=request_id, tone=tone)
+            _log_turn(ctx.session_id, ctx.redacted_message, result, "post_results_confirm",
+                      request_id=ctx.request_id, tone=ctx.tone)
             return result
 
         # confirm_deny
@@ -411,12 +407,12 @@ def _handle_post_results_interaction(
         # re-display the first page of the unfiltered set. This matches
         # the filter-pipeline design where "no thanks" after filter is
         # an escape path, not a session end.
-        if existing.get("_filtered_results"):
-            existing.pop("_filtered_results", None)
-            existing.pop("_filter_phrase", None)
+        if ctx.existing.get("_filtered_results"):
+            ctx.existing.pop("_filtered_results", None)
+            ctx.existing.pop("_filter_phrase", None)
             first_page = last_results[:_DISPLAY_PAGE_SIZE]
-            existing["_displayed_count"] = len(first_page)
-            save_session_slots(session_id, existing)
+            ctx.existing["_displayed_count"] = len(first_page)
+            save_session_slots(ctx.session_id, ctx.existing)
             qr = [
                 {"label": "🔍 New search", "value": "Start over"},
                 {"label": "🤝 Peer navigator", "value": "Connect with peer navigator"},
@@ -431,43 +427,43 @@ def _handle_post_results_interaction(
                     "value": "Show more results",
                 })
             result = {
-                "session_id": session_id,
+                "session_id": ctx.session_id,
                 "response": "No problem — here are all the results again:",
                 "follow_up_needed": False,
-                "slots": existing,
+                "slots": ctx.existing,
                 "services": first_page,
                 "result_count": len(first_page),
                 "relaxed_search": False,
                 "quick_replies": qr,
             }
-            _log_turn(session_id, redacted_message, result, "post_results_filter_escape",
-                      request_id=request_id, tone=tone)
+            _log_turn(ctx.session_id, ctx.redacted_message, result, "post_results_filter_escape",
+                      request_id=ctx.request_id, tone=ctx.tone)
             return result
 
-        existing.pop("_last_results", None)
-        save_session_slots(session_id, existing)
+        ctx.existing.pop("_last_results", None)
+        save_session_slots(ctx.session_id, ctx.existing)
         result = _empty_reply(
-            session_id,
+            ctx.session_id,
             "No problem! Let me know if you need anything else.",
-            existing,
+            ctx.existing,
             quick_replies=list(_WELCOME_QUICK_REPLIES),
         )
-        _log_turn(session_id, redacted_message, result, "post_results_decline",
-                  request_id=request_id, tone=tone)
+        _log_turn(ctx.session_id, ctx.redacted_message, result, "post_results_decline",
+                  request_id=ctx.request_id, tone=ctx.tone)
         return result
 
-    if last_results and not has_service_intent and not is_confirmation_action:
+    if last_results and not ctx.has_service_intent and not is_confirmation_action:
         # Clear stale _last_action: if the user is interacting with
         # results (asking questions, sorting, paginating), any prior
         # emotional/escalation/crisis context is no longer relevant.
-        if existing.get("_last_action"):
-            existing.pop("_last_action", None)
-            save_session_slots(session_id, existing)
+        if ctx.existing.get("_last_action"):
+            ctx.existing.pop("_last_action", None)
+            save_session_slots(ctx.session_id, ctx.existing)
 
         is_frustration_or_rejection = (
-            tone == "frustrated"
-            or action_pre == "negative_preference"
-            or action_pre == "correction"
+            ctx.tone == "frustrated"
+            or ctx.action == "negative_preference"
+            or ctx.action == "correction"
         )
         if is_frustration_or_rejection:
             # Intentionally DO NOT pop _last_results here. The downstream
@@ -479,54 +475,45 @@ def _handle_post_results_interaction(
             # _last_results is naturally replaced by the next successful
             # search or cleared on reset, so leaving it in place is safe.
             pass
-        elif early_extracted.get("location"):
-            existing.pop("_last_results", None)
-            save_session_slots(session_id, existing)
+        elif ctx.early_extracted.get("location"):
+            ctx.existing.pop("_last_results", None)
+            save_session_slots(ctx.session_id, ctx.existing)
         else:
             # "Show all results" / "Show more results"
-            show_result = _handle_show_more(
-                session_id, message, redacted_message, existing,
-                last_results, request_id,
-            )
+            show_result = _handle_show_more(ctx)
             if show_result:
                 return show_result
 
             # Sort options
-            sort_result = _handle_sort_results(
-                session_id, message, redacted_message, existing,
-                last_results, request_id,
-            )
+            sort_result = _handle_sort_results(ctx)
             if sort_result:
                 return sort_result
 
             # Questions about specific results
-            post_intent_result = _handle_post_results_question(
-                session_id, message, redacted_message, existing,
-                last_results, request_id,
-            )
+            post_intent_result = _handle_post_results_question(ctx)
             if post_intent_result:
                 return post_intent_result
 
-    if last_results and (has_service_intent or is_confirmation_action):
-        existing.pop("_last_results", None)
+    if last_results and (ctx.has_service_intent or is_confirmation_action):
+        ctx.existing.pop("_last_results", None)
         # When results were already shown and the user asks for something
         # new, treat it as a fresh search — clear the old service slots so
         # they don't compound with the new request. Multi-service should
         # only happen within a single message or before results.
-        if has_service_intent:
-            existing.pop("service_type", None)
-            existing.pop("service_detail", None)
-            existing.pop("_queued_services", None)
-            existing.pop("_queued_services_original", None)
-            existing.pop("_queue_offer_pending", None)
-            existing.pop("_queued_offer", None)
-            existing.pop("_queued_location", None)
-            existing.pop("_pending_confirmation", None)
-            existing.pop("_displayed_count", None)
+        if ctx.has_service_intent:
+            ctx.existing.pop("service_type", None)
+            ctx.existing.pop("service_detail", None)
+            ctx.existing.pop("_queued_services", None)
+            ctx.existing.pop("_queued_services_original", None)
+            ctx.existing.pop("_queue_offer_pending", None)
+            ctx.existing.pop("_queued_offer", None)
+            ctx.existing.pop("_queued_location", None)
+            ctx.existing.pop("_pending_confirmation", None)
+            ctx.existing.pop("_displayed_count", None)
             # Filter state was tied to the prior _last_results — clear it
             # so it doesn't bleed into the new search's results.
-            existing.pop("_filtered_results", None)
-            existing.pop("_filter_phrase", None)
-        save_session_slots(session_id, existing)
+            ctx.existing.pop("_filtered_results", None)
+            ctx.existing.pop("_filter_phrase", None)
+        save_session_slots(ctx.session_id, ctx.existing)
 
     return None

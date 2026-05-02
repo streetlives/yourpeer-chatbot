@@ -97,58 +97,57 @@ def _looks_like_topic_shift_question(message: str) -> bool:
     return False
 
 
-def _handle_change_location_request(session_id, redacted_message, existing,
-                                    early_extracted, category, tone, request_id):
+def _handle_change_location_request(ctx):
     """User asked to change search location ("search somewhere else").
 
     If the message already contains a new location (e.g. "actually Manhattan"),
     apply it directly — prevents a frustration loop where the bot wipes the
     location and re-asks what the user just said. Otherwise, wipe and ask.
     """
-    new_loc = early_extracted.get("location")
+    new_loc = ctx.early_extracted.get("location")
     if new_loc:
-        existing["location"] = new_loc
-        save_session_slots(session_id, existing)
-        if is_enough_to_answer(existing):
-            existing["_pending_confirmation"] = True
-            save_session_slots(session_id, existing)
-            confirm_msg = _build_confirmation_message(existing)
+        ctx.existing["location"] = new_loc
+        save_session_slots(ctx.session_id, ctx.existing)
+        if is_enough_to_answer(ctx.existing):
+            ctx.existing["_pending_confirmation"] = True
+            save_session_slots(ctx.session_id, ctx.existing)
+            confirm_msg = _build_confirmation_message(ctx.existing)
             result = {
-                "session_id": session_id,
+                "session_id": ctx.session_id,
                 "response": confirm_msg,
                 "follow_up_needed": True,
-                "slots": existing,
+                "slots": ctx.existing,
                 "services": [],
                 "result_count": 0,
                 "relaxed_search": False,
-                "quick_replies": _confirmation_quick_replies(existing),
+                "quick_replies": _confirmation_quick_replies(ctx.existing),
             }
-            _log_turn(session_id, redacted_message, result, "confirmation",
-                      request_id=request_id, tone=tone)
+            _log_turn(ctx.session_id, ctx.redacted_message, result, "confirmation",
+                      request_id=ctx.request_id, tone=ctx.tone)
             return result
         else:
-            follow_up = next_follow_up_question(existing)
+            follow_up = next_follow_up_question(ctx.existing)
             result = {
-                "session_id": session_id,
+                "session_id": ctx.session_id,
                 "response": follow_up,
                 "follow_up_needed": True,
-                "slots": existing,
+                "slots": ctx.existing,
                 "services": [],
                 "result_count": 0,
                 "relaxed_search": False,
-                "quick_replies": _follow_up_quick_replies(existing),
+                "quick_replies": _follow_up_quick_replies(ctx.existing),
             }
-            _log_turn(session_id, redacted_message, result, "service",
-                      request_id=request_id, tone=tone)
+            _log_turn(ctx.session_id, ctx.redacted_message, result, "service",
+                      request_id=ctx.request_id, tone=ctx.tone)
             return result
 
     # No location in message — clear and ask for one
-    existing["location"] = None
-    save_session_slots(session_id, existing)
+    ctx.existing["location"] = None
+    save_session_slots(ctx.session_id, ctx.existing)
     result = _empty_reply(
-        session_id,
+        ctx.session_id,
         "Sure! What neighborhood or borough should I search in?",
-        existing,
+        ctx.existing,
         quick_replies=[
             {"label": "📍 Use my location", "value": "__use_geolocation__"},
             {"label": "Manhattan", "value": "Manhattan"},
@@ -158,12 +157,12 @@ def _handle_change_location_request(session_id, redacted_message, existing,
             {"label": "Staten Island", "value": "Staten Island"},
         ],
     )
-    _log_turn(session_id, redacted_message, result, category, request_id=request_id, tone=tone)
+    _log_turn(ctx.session_id, ctx.redacted_message, result, ctx.category,
+              request_id=ctx.request_id, tone=ctx.tone)
     return result
 
 
-def _handle_change_service_request(session_id, redacted_message, existing,
-                                   category, tone, request_id):
+def _handle_change_service_request(ctx):
     """User asked to change the service type — wipe service_type + service_detail
     and show the service menu.
 
@@ -178,29 +177,30 @@ def _handle_change_service_request(session_id, redacted_message, existing,
     single service — avoids the mis-extraction entirely. Covers
     `confirm_multi_change`.
     """
-    existing["service_type"] = None
-    existing.pop("service_detail", None)
-    existing["_awaiting_service_after_clear"] = True
-    save_session_slots(session_id, existing)
+    ctx.existing["service_type"] = None
+    ctx.existing.pop("service_detail", None)
+    ctx.existing["_awaiting_service_after_clear"] = True
+    save_session_slots(ctx.session_id, ctx.existing)
     result = _empty_reply(
-        session_id,
+        ctx.session_id,
         "No problem! What kind of help do you need?",
-        existing,
+        ctx.existing,
         quick_replies=list(_WELCOME_QUICK_REPLIES),
     )
-    _log_turn(session_id, redacted_message, result, category, request_id=request_id, tone=tone)
+    _log_turn(ctx.session_id, ctx.redacted_message, result, ctx.category,
+              request_id=ctx.request_id, tone=ctx.tone)
     return result
 
 
-def _handle_correction(session_id, redacted_message, existing, tone, request_id):
+def _handle_correction(ctx):
     """Acknowledge a user correction ("that's not what I meant") by clearing
     pending state and echoing what we WERE searching for so they can redirect."""
-    existing.pop("_pending_confirmation", None)
-    existing.pop("_last_action", None)
-    existing.pop("_last_results", None)
-    save_session_slots(session_id, existing)
-    service_type = existing.get("service_type")
-    location = existing.get("location")
+    ctx.existing.pop("_pending_confirmation", None)
+    ctx.existing.pop("_last_action", None)
+    ctx.existing.pop("_last_results", None)
+    save_session_slots(ctx.session_id, ctx.existing)
+    service_type = ctx.existing.get("service_type")
+    location = ctx.existing.get("location")
     if location == NEAR_ME_SENTINEL:
         location = None
     context = ""
@@ -209,21 +209,21 @@ def _handle_correction(session_id, redacted_message, existing, tone, request_id)
     elif service_type:
         context = f" I was searching for {service_type}."
     result = _empty_reply(
-        session_id,
+        ctx.session_id,
         f"Sorry about that!{context} Let me know what you need — you can "
         f"pick a service below, tell me in your own words, or connect "
         f"with a peer navigator.",
-        existing,
+        ctx.existing,
         quick_replies=list(_WELCOME_QUICK_REPLIES) + [
             {"label": "🤝 Peer navigator", "value": "Connect with peer navigator"},
         ],
     )
-    _log_turn(session_id, redacted_message, result, "correction",
-              request_id=request_id, tone=tone, confidence="low")
+    _log_turn(ctx.session_id, ctx.redacted_message, result, "correction",
+              request_id=ctx.request_id, tone=ctx.tone, confidence="low")
     return result
 
 
-def _handle_negative_preference(session_id, redacted_message, existing, tone, request_id):
+def _handle_negative_preference(ctx):
     """Handle "I don't like those" / "none of these" with tiered escalation.
 
     After 3+ consecutive frustration-counted turns, routes to peer navigator.
@@ -231,58 +231,58 @@ def _handle_negative_preference(session_id, redacted_message, existing, tone, re
     something else.
     """
     # Also count as frustration for escalation tiers (Run 24 eval fix)
-    frust_count = existing.get("_frustration_count", 0) + 1
-    existing["_frustration_count"] = frust_count
+    frust_count = ctx.existing.get("_frustration_count", 0) + 1
+    ctx.existing["_frustration_count"] = frust_count
 
     # When frustration has accumulated, use tiered escalation
     if frust_count >= 3:
-        existing["_last_action"] = "frustration"
-        save_session_slots(session_id, existing)
+        ctx.existing["_last_action"] = "frustration"
+        save_session_slots(ctx.session_id, ctx.existing)
         result = _empty_reply(
-            session_id,
+            ctx.session_id,
             "I'm sorry I haven't been able to help. Let me connect you "
             "with a peer navigator — they can work with you directly.",
-            existing,
+            ctx.existing,
             quick_replies=[
                 {"label": "🤝 Peer navigator", "value": "Connect with peer navigator"},
             ],
         )
-        _log_turn(session_id, redacted_message, result, "frustration_tier3",
-                  request_id=request_id, tone=tone)
+        _log_turn(ctx.session_id, ctx.redacted_message, result, "frustration_tier3",
+                  request_id=ctx.request_id, tone=ctx.tone)
         return result
     elif frust_count >= 2:
-        existing["_last_action"] = "frustration"
-        save_session_slots(session_id, existing)
+        ctx.existing["_last_action"] = "frustration"
+        save_session_slots(ctx.session_id, ctx.existing)
         result = _empty_reply(
-            session_id,
+            ctx.session_id,
             "I hear you — I'm clearly not finding what you need right now. "
             "A peer navigator would be more helpful — they're real people "
             "who know the system. You can also call 311 for live help.",
-            existing,
+            ctx.existing,
             quick_replies=[
                 {"label": "🤝 Peer navigator", "value": "Connect with peer navigator"},
                 {"label": "🔄 Start over", "value": "Start over"},
             ],
         )
-        _log_turn(session_id, redacted_message, result, "frustration_tier2",
-                  request_id=request_id, tone=tone)
+        _log_turn(ctx.session_id, ctx.redacted_message, result, "frustration_tier2",
+                  request_id=ctx.request_id, tone=ctx.tone)
         return result
 
-    existing["_last_action"] = "negative_preference"
-    save_session_slots(session_id, existing)
+    ctx.existing["_last_action"] = "negative_preference"
+    save_session_slots(ctx.session_id, ctx.existing)
     result = _empty_reply(
-        session_id,
+        ctx.session_id,
         "I understand — those options aren't what you need. "
         "I can search for a different type of service, or connect "
         "you with a peer navigator who might know of other resources. "
         "What would be most helpful?",
-        existing,
+        ctx.existing,
         quick_replies=list(_WELCOME_QUICK_REPLIES) + [
             {"label": "🤝 Peer navigator", "value": "Connect with peer navigator"},
         ],
     )
-    _log_turn(session_id, redacted_message, result, "negative_preference",
-              request_id=request_id, tone=tone)
+    _log_turn(ctx.session_id, ctx.redacted_message, result, "negative_preference",
+              request_id=ctx.request_id, tone=ctx.tone)
     return result
 
 

@@ -172,6 +172,87 @@ def generate_reply(
         if tone is None and _llm_tone:
             tone = _llm_tone
 
+    # --- COMBINE INTO ROUTING CATEGORY ---
+    # Computed here (instead of after the fast paths below) so that
+    # MessageContext can be constructed before the queue-accept and
+    # post-results fast paths run. Those fast paths now take ``ctx``,
+    # consistent with all other handlers. ``_compute_routing_category``
+    # depends only on tone/action/has_service_intent/early_extracted/
+    # extraction_source/message, all finalized by this point.
+    action = _action_pre
+    _response_tone = tone
+    category, _confidence = _compute_routing_category(
+        tone=tone,
+        action=action,
+        has_service_intent=has_service_intent,
+        early_extracted=early_extracted,
+        extraction_source=_extraction_source,
+        message=message,
+    )
+
+    # Clear stale _last_action when the user shifts context.
+    # _last_action is set by emotional/escalation/crisis/confused/frustration
+    # handlers and consumed by _handle_context_aware_confirm for the NEXT
+    # confirm_yes or confirm_deny. If the user sends anything else (greeting,
+    # help, thanks, a new service request), the context has shifted and
+    # _last_action should not persist — otherwise it would incorrectly
+    # affect a confirm_yes/confirm_deny many turns later.
+    #
+    # Safe to run before the post-results fast path: the fast path's
+    # ``not ctx.existing.get("_last_action")`` guard inside
+    # ``_handle_post_results_interaction`` only fires when
+    # ``ctx.action in ("confirm_yes", "confirm_deny")``, and for those
+    # actions ``category`` is also confirm_yes/confirm_deny (set above).
+    # Since both are in ``_CONSUMES_LAST_ACTION``,
+    # ``_clear_stale_last_action`` is a no-op for the case the fast
+    # path cares about. See ``test_routing_category_order.py`` for the
+    # precedence guarantee.
+    _clear_stale_last_action(session_id, existing, category)
+
+    # --- Build MessageContext for handler dispatch ---
+    # ORCHESTRATOR_AUDIT.md PR-α: handlers progressively migrating from
+    # positional args to ctx-only signatures. Constructed here (earliest
+    # point all not-late-set fields are available) so it's visible to
+    # the queue-accept/post-results fast paths and the crisis dispatch
+    # below. Three fields are LATE-SET via direct attribute assignment
+    # as their values are computed downstream:
+    #   * spanish_acknowledgment — set after _handle_spanish_detection
+    #   * tone_prefix            — set after _compute_tone_prefix
+    #   * merged                 — set after merge_slots in service flow
+    # Handlers that fire before each setter runs see the default ("" / None)
+    # — that's safe because no handler reads a field before it's populated.
+    ctx = MessageContext(
+        session_id=session_id,
+        request_id=request_id,
+        message=message,
+        redacted_message=redacted_message,
+        pii_warning=_pii_warning,
+        existing=existing,
+        category=category,
+        action=action,
+        tone=tone,
+        confidence=_confidence,
+        extraction_source=_extraction_source,
+        early_extracted=early_extracted,
+        has_service_intent=has_service_intent,
+        crisis_result=_crisis_result,
+        last_results=existing.get("_last_results"),
+        is_confirmation_action=action in (
+            "confirm_yes", "confirm_deny", "confirm_change_service",
+            "confirm_change_location", "reset", "greeting",
+        ),
+        has_coords=(
+            existing.get("_latitude") is not None
+            and existing.get("_longitude") is not None
+        ),
+        latitude=latitude,
+        longitude=longitude,
+        spanish_detected=False,           # late-set after spanish detection
+        spanish_acknowledgment="",         # late-set after spanish detection
+        tone_prefix="",                    # late-set after _compute_tone_prefix
+        merged=None,                       # late-set after merge_slots (service flow)
+    )
+
     if tone == "crisis":
         pass  # handled below in routing
     else:
@@ -213,78 +294,11 @@ def generate_reply(
             )
 
         # --- POST-RESULTS QUESTION CHECK ---
-        _post_result = _handle_post_results_interaction(
-            session_id, message, redacted_message, existing,
-            early_extracted, has_service_intent, _action_pre, tone, request_id,
-        )
+        _post_result = _handle_post_results_interaction(ctx)
         if _post_result:
             return _post_result
 
-    # --- COMBINE INTO ROUTING CATEGORY ---
-    action = _action_pre
-    _response_tone = tone
-    category, _confidence = _compute_routing_category(
-        tone=tone,
-        action=action,
-        has_service_intent=has_service_intent,
-        early_extracted=early_extracted,
-        extraction_source=_extraction_source,
-        message=message,
-    )
-
     # === ROUTE TO HANDLERS ===
-
-    # Clear stale _last_action when the user shifts context.
-    # _last_action is set by emotional/escalation/crisis/confused/frustration
-    # handlers and consumed by _handle_context_aware_confirm for the NEXT
-    # confirm_yes or confirm_deny. If the user sends anything else (greeting,
-    # help, thanks, a new service request), the context has shifted and
-    # _last_action should not persist — otherwise it would incorrectly
-    # affect a confirm_yes/confirm_deny many turns later.
-    _clear_stale_last_action(session_id, existing, category)
-
-    # --- Build MessageContext for handler dispatch ---
-    # ORCHESTRATOR_AUDIT.md PR-α: handlers progressively migrating from
-    # positional args to ctx-only signatures. Constructed here (earliest
-    # point all not-late-set fields are available) so it's visible to
-    # crisis dispatch immediately below. Three fields are LATE-SET via
-    # direct attribute assignment as their values are computed downstream:
-    #   * spanish_acknowledgment — set after _handle_spanish_detection
-    #   * tone_prefix            — set after _compute_tone_prefix
-    #   * merged                 — set after merge_slots in service flow
-    # Handlers that fire before each setter runs see the default ("" / None)
-    # — that's safe because no handler reads a field before it's populated.
-    ctx = MessageContext(
-        session_id=session_id,
-        request_id=request_id,
-        message=message,
-        redacted_message=redacted_message,
-        pii_warning=_pii_warning,
-        existing=existing,
-        category=category,
-        action=action,
-        tone=tone,
-        confidence=_confidence,
-        extraction_source=_extraction_source,
-        early_extracted=early_extracted,
-        has_service_intent=has_service_intent,
-        crisis_result=_crisis_result,
-        last_results=existing.get("_last_results"),
-        is_confirmation_action=action in (
-            "confirm_yes", "confirm_deny", "confirm_change_service",
-            "confirm_change_location", "reset", "greeting",
-        ),
-        has_coords=(
-            existing.get("_latitude") is not None
-            and existing.get("_longitude") is not None
-        ),
-        latitude=latitude,
-        longitude=longitude,
-        spanish_detected=False,           # late-set after spanish detection
-        spanish_acknowledgment="",         # late-set after spanish detection
-        tone_prefix="",                    # late-set after _compute_tone_prefix
-        merged=None,                       # late-set after merge_slots (service flow)
-    )
 
     # --- Crisis ---
     if category == "crisis":
@@ -340,7 +354,7 @@ def generate_reply(
 
     # --- Correction ---
     if category == "correction":
-        return _handle_correction(session_id, redacted_message, existing, tone, request_id)
+        return _handle_correction(ctx)
 
     # --- Negative preference ---
     if category == "negative_preference":
@@ -368,9 +382,7 @@ def generate_reply(
             ctx.tone = tone
             # Fall through to normal service routing below.
         else:
-            return _handle_negative_preference(
-                session_id, redacted_message, existing, tone, request_id,
-            )
+            return _handle_negative_preference(ctx)
 
     # --- Greeting ---
     if category == "greeting":
@@ -434,14 +446,9 @@ def generate_reply(
     # --- Handle "change location" / "change service" outside pending ---
     if not existing.get("_pending_confirmation"):
         if category == "confirm_change_location":
-            return _handle_change_location_request(
-                session_id, redacted_message, existing, early_extracted,
-                category, tone, request_id,
-            )
+            return _handle_change_location_request(ctx)
         if category == "confirm_change_service":
-            return _handle_change_service_request(
-                session_id, redacted_message, existing, category, tone, request_id,
-            )
+            return _handle_change_service_request(ctx)
 
     # --- Handle confirmation responses ---
     pending = existing.get("_pending_confirmation")
