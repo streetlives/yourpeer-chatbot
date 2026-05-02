@@ -3,6 +3,11 @@
 These all return canned or near-canned responses and generally touch the
 session only to clear state (reset) or to mark ``_last_action`` so a
 follow-up yes/no can be interpreted in context (confused).
+
+All handlers in this module take a single ``MessageContext`` parameter
+(see ``chatbot/context.py``). Field reads use ``ctx.X`` rather than
+positional arguments — this is the migration referenced in
+``ORCHESTRATOR_AUDIT.md`` Phase A.
 """
 
 import logging
@@ -23,7 +28,7 @@ from app.services.responses import (
 from app.services.session_store import clear_session, save_session_slots
 from app.services.audit_log import log_session_reset
 
-from ..context import _USE_LLM, _empty_reply
+from ..context import MessageContext, _USE_LLM, _empty_reply
 from ..logging import _log_turn
 
 
@@ -39,8 +44,35 @@ _SHAME_HELP_SIGNALS = (
 )
 
 
-def _handle_help(session_id, message, redacted_message, existing,
-                 response_tone, category, tone, tone_prefix, request_id):
+# Slot keys that represent user-provided content (vs Trust Model 5 control
+# flags / always-populated metadata). Used by ``_handle_greeting`` to decide
+# whether the session has a real prior search in progress.
+#
+# Background: the unified extractor returns all 13 slot fields on every
+# turn (Trust Model 5: `no_requirements`, `_contradiction`, `_is_additive`
+# are always present as bools defaulting to False; `_populations` is
+# always present as a list defaulting to []). After a turn 1 of pure
+# casual chat ("how's it going?"), the session contains
+# `{"no_requirements": False, "_populations": [], ...}` — every value is
+# non-None even though the user shared nothing. The old
+# `any(v is not None for v in ctx.existing.values())` check therefore
+# misread casual-chat sessions as having an active search and produced
+# the misleading "Hey again! I still have your earlier search info..."
+# response on a follow-up greeting (eval scenario
+# ``conversational_just_chatting``, regressed in R25 and persistent).
+#
+# Whitelisting the user-content slots fixes this: empty `_populations`
+# evaluates falsy, the False default of `no_requirements` doesn't
+# trigger, and the resume branch only fires when the user actually
+# shared something searchable.
+_USER_PROVIDED_SLOTS = (
+    "service_type", "service_detail", "additional_services",
+    "location", "urgency", "age", "family_status",
+    "_gender", "_populations", "org_name",
+)
+
+
+def _handle_help(ctx: MessageContext):
     """Show the service-menu help response.
 
     Two variants: if the user is expressing shame around asking ("I'm
@@ -48,7 +80,7 @@ def _handle_help(session_id, message, redacted_message, existing,
     instead. Confused or emotional callers get a lead-in that acknowledges
     the overwhelm before the menu.
 
-    `tone_prefix` is the sensitive-context / tonal prefix computed by
+    ``ctx.tone_prefix`` is the sensitive-context / tonal prefix computed by
     the orchestrator (e.g., "I understand this is a difficult situation.
     Let me help. " for foster-care / fleeing / just-got-out-of-jail
     messages). When non-empty, it PRE-empts the generic confused/emotional
@@ -57,30 +89,30 @@ def _handle_help(session_id, message, redacted_message, existing,
     """
     # Shame + help: vulnerability disclosure masquerading as a help request.
     # Route to emotional handler with the shame-specific response.
-    if response_tone == "emotional":
-        help_lower = message.lower()
+    if ctx.tone == "emotional":
+        help_lower = ctx.message.lower()
         if any(s in help_lower for s in _SHAME_HELP_SIGNALS):
-            response = _pick_emotional_response(message)
-            existing["_last_action"] = "emotional"
-            existing["_emotional_context"] = "shame"
-            save_session_slots(session_id, existing)
+            response = _pick_emotional_response(ctx.message)
+            ctx.existing["_last_action"] = "emotional"
+            ctx.existing["_emotional_context"] = "shame"
+            save_session_slots(ctx.session_id, ctx.existing)
             result = _empty_reply(
-                session_id, response, existing,
+                ctx.session_id, response, ctx.existing,
                 quick_replies=[
                     {"label": "🤝 Peer navigator", "value": "Connect with peer navigator"},
                 ],
             )
-            _log_turn(session_id, redacted_message, result, "emotional",
-                      request_id=request_id, tone=tone)
+            _log_turn(ctx.session_id, ctx.redacted_message, result, "emotional",
+                      request_id=ctx.request_id, tone=ctx.tone)
             return result
 
     # When sensitive context is present, the orchestrator's tone_prefix
     # already provides an empathic acknowledgment — use standard menu
     # body to avoid doubling up. Otherwise, confused / emotional callers
     # still get the overwhelm lead-in.
-    if tone_prefix:
-        help_msg = tone_prefix + _HELP_RESPONSE
-    elif response_tone in ("confused", "emotional"):
+    if ctx.tone_prefix:
+        help_msg = ctx.tone_prefix + _HELP_RESPONSE
+    elif ctx.tone in ("confused", "emotional"):
         help_msg = (
             "I hear you — it can feel overwhelming when you don't know "
             "where to start. Let's take it one step at a time. "
@@ -89,103 +121,119 @@ def _handle_help(session_id, message, redacted_message, existing,
     else:
         help_msg = _HELP_RESPONSE
     result = _empty_reply(
-        session_id, help_msg, existing,
+        ctx.session_id, help_msg, ctx.existing,
         quick_replies=list(_WELCOME_QUICK_REPLIES),
     )
-    _log_turn(session_id, redacted_message, result, category, request_id=request_id, tone=tone)
+    _log_turn(ctx.session_id, ctx.redacted_message, result, ctx.category,
+              request_id=ctx.request_id, tone=ctx.tone)
     return result
 
 
-def _handle_bot_identity(session_id, redacted_message, existing, category, tone, request_id):
+def _handle_bot_identity(ctx: MessageContext):
     """Answer "are you a bot?" / "who are you?" with the standard identity line."""
     result = _empty_reply(
-        session_id, _BOT_IDENTITY_RESPONSE, existing,
+        ctx.session_id, _BOT_IDENTITY_RESPONSE, ctx.existing,
         quick_replies=[
             {"label": "🔍 New search", "value": "Start over"},
             {"label": "🤝 Peer navigator", "value": "Connect with peer navigator"},
         ],
     )
-    _log_turn(session_id, redacted_message, result, category, request_id=request_id, tone=tone)
+    _log_turn(ctx.session_id, ctx.redacted_message, result, ctx.category,
+              request_id=ctx.request_id, tone=ctx.tone)
     return result
 
 
-def _handle_bot_capability_question(session_id, message, redacted_message, existing,
-                                    category, tone, request_id):
+def _handle_bot_capability_question(ctx: MessageContext):
     """Answer "what can you do?" / "can you find X?" — tries bot_knowledge first,
     then LLM, then a static fallback."""
     from app.services.bot_knowledge import answer_question
-    static_answer = answer_question(message)
+    static_answer = answer_question(ctx.message)
     if static_answer:
         response = static_answer
     elif _USE_LLM:
         try:
-            prompt = _build_bot_question_prompt(message, slots=existing)
+            prompt = _build_bot_question_prompt(ctx.message, slots=ctx.existing)
             response = claude_reply(prompt)
         except Exception as e:
             logger.error(f"Bot question LLM response failed: {e}")
-            response = _static_bot_answer(message)
+            response = _static_bot_answer(ctx.message)
     else:
-        response = _static_bot_answer(message)
-    result = _empty_reply(session_id, response, existing)
-    _log_turn(session_id, redacted_message, result, category, request_id=request_id, tone=tone)
+        response = _static_bot_answer(ctx.message)
+    result = _empty_reply(ctx.session_id, response, ctx.existing)
+    _log_turn(ctx.session_id, ctx.redacted_message, result, ctx.category,
+              request_id=ctx.request_id, tone=ctx.tone)
     return result
 
 
-def _handle_confused(session_id, redacted_message, existing, category, tone, tone_prefix, request_id):
+def _handle_confused(ctx: MessageContext):
     """Acknowledge overwhelm with the standard confused response and mark
     _last_action so a follow-up 'yes' / 'no' is interpreted in this context.
 
-    `tone_prefix` is prepended when set (e.g., sensitive-context empathy
+    ``ctx.tone_prefix`` is prepended when set (e.g., sensitive-context empathy
     for foster-care / fleeing scenarios). The standard confused response
     ("That's okay — you don't have to know exactly...") flows naturally
     after any tone prefix without doubling empathy.
     """
-    existing["_last_action"] = "confused"
-    save_session_slots(session_id, existing)
+    ctx.existing["_last_action"] = "confused"
+    save_session_slots(ctx.session_id, ctx.existing)
     result = _empty_reply(
-        session_id, tone_prefix + _CONFUSED_RESPONSE, existing,
+        ctx.session_id, ctx.tone_prefix + _CONFUSED_RESPONSE, ctx.existing,
         quick_replies=list(_WELCOME_QUICK_REPLIES) + [
             {"label": "🤝 Peer navigator", "value": "Connect with peer navigator"},
         ],
     )
-    _log_turn(session_id, redacted_message, result, category, request_id=request_id, tone=tone)
+    _log_turn(ctx.session_id, ctx.redacted_message, result, ctx.category,
+              request_id=ctx.request_id, tone=ctx.tone)
     return result
 
 
-def _handle_reset(session_id, redacted_message, category, tone, request_id):
+def _handle_reset(ctx: MessageContext):
     """Clear all session state and return the reset response."""
-    clear_session(session_id)
-    log_session_reset(session_id)
+    clear_session(ctx.session_id)
+    log_session_reset(ctx.session_id)
     result = _empty_reply(
-        session_id, _RESET_RESPONSE, {},
+        ctx.session_id, _RESET_RESPONSE, {},
         quick_replies=list(_WELCOME_QUICK_REPLIES),
     )
-    _log_turn(session_id, redacted_message, result, category, request_id=request_id, tone=tone)
+    _log_turn(ctx.session_id, ctx.redacted_message, result, ctx.category,
+              request_id=ctx.request_id, tone=ctx.tone)
     return result
 
 
-def _handle_greeting(session_id, redacted_message, existing, category, tone, request_id):
-    """Welcome message. If we have prior session state, offer to resume or reset."""
-    if existing and any(v is not None for v in existing.values()):
+def _handle_greeting(ctx: MessageContext):
+    """Welcome message. If we have prior session state, offer to resume or reset.
+
+    The "prior state" check uses ``_USER_PROVIDED_SLOTS`` rather than
+    ``any(v is not None for v in ctx.existing.values())`` — see the
+    constant's docstring. The old check misread Trust Model 5 control
+    flags (``no_requirements``, ``_contradiction``, ``_is_additive``)
+    and the always-empty ``_populations`` list as evidence of a prior
+    search, producing "I still have your earlier search info" after a
+    casual first turn that had no search.
+    """
+    has_prior_search = any(ctx.existing.get(k) for k in _USER_PROVIDED_SLOTS)
+    if has_prior_search:
         response = (
             "Hey again! I still have your earlier search info. "
             "Want to keep going, or would you like to start over?"
         )
-        result = _empty_reply(session_id, response, existing)
+        result = _empty_reply(ctx.session_id, response, ctx.existing)
     else:
         result = _empty_reply(
-            session_id, _GREETING_RESPONSE, existing,
+            ctx.session_id, _GREETING_RESPONSE, ctx.existing,
             quick_replies=list(_WELCOME_QUICK_REPLIES),
         )
-    _log_turn(session_id, redacted_message, result, category, request_id=request_id, tone=tone)
+    _log_turn(ctx.session_id, ctx.redacted_message, result, ctx.category,
+              request_id=ctx.request_id, tone=ctx.tone)
     return result
 
 
-def _handle_thanks(session_id, redacted_message, existing, category, tone, request_id):
+def _handle_thanks(ctx: MessageContext):
     """Acknowledge thanks and offer the welcome actions for whatever comes next."""
     result = _empty_reply(
-        session_id, _THANKS_RESPONSE, existing,
+        ctx.session_id, _THANKS_RESPONSE, ctx.existing,
         quick_replies=list(_WELCOME_QUICK_REPLIES),
     )
-    _log_turn(session_id, redacted_message, result, category, request_id=request_id, tone=tone)
+    _log_turn(ctx.session_id, ctx.redacted_message, result, ctx.category,
+              request_id=ctx.request_id, tone=ctx.tone)
     return result

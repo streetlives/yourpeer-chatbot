@@ -1299,10 +1299,22 @@ SCENARIOS = [
         "id": "natural_drop_in_center",
         "name": "Drop-in center phrasing",
         "category": "natural_language",
-        "description": "User asks for a drop-in center — now covered by the 'other' template.",
+        "description": (
+            "User asks for a drop-in center. The DB taxonomy parents "
+            "drop-in centers under Shelter (parent_name='Shelter'), so "
+            "the shelter query template returns them and a "
+            "service_type='shelter' classification retrieves the right "
+            "results. See test_audit_regression.py::"
+            "test_drop_in_center_is_shelter_child for the DB-verified "
+            "evidence. This scenario previously expected service_type="
+            "'other' based on a multi-service interpretation, but that "
+            "produced a CF: an 'other' query won't return drop-in "
+            "centers. Updated 2026-04-30 to match production retrieval "
+            "behavior."
+        ),
         "user_turns": ["Is there a drop-in center I can go to in Manhattan?"],
         "expected": {
-            "service_type": "other",
+            "service_type": "shelter",
             "location_contains": "manhattan",
             "should_reach_confirmation": True,
         },
