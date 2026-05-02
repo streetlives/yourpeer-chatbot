@@ -218,11 +218,11 @@ The three call sites become 1–2 lines each. The tone-prefix asymmetry surfaces
 ### 🟦 Smell 7: orchestrator does session-state mutation it shouldn't
 
 The orchestrator handles:
-- Transcript append + truncation (lines 475–481)
-- Queue-additional-services management (lines 483–493)
-- `_awaiting_service_after_clear` flag clearing (line 445)
-- `_last_action` clearing (lines 386–389)
-- `_emotional_context` persistence (lines 285–287, 527–534)
+- Transcript append + truncation
+- Queue-additional-services management
+- `_awaiting_service_after_clear` flag clearing
+- `_last_action` clearing
+- `_emotional_context` persistence
 
 These are session-state operations interleaved with routing logic. The orchestrator's job is supposedly "thread the pipeline, dispatch to handlers" — not "manage the session's queue, transcript, and emotional context."
 
@@ -260,7 +260,7 @@ Uniform call shape across both patterns.
 
 ### 🟦 Smell 9: `_empty_reply` doesn't log
 
-Line 102: empty-message guard returns via `_empty_reply` without a `_log_turn` call. Every other return path in the orchestrator logs (verified all 24 handlers do). If the team wants empty-message events in audit logs, this is a gap.
+empty-message guard returns via `_empty_reply` without a `_log_turn` call. Every other return path in the orchestrator logs (verified all 24 handlers do). If the team wants empty-message events in audit logs, this is a gap.
 
 **Fix:** add `_log_turn(session_id, "", result, "empty_message", request_id=request_id, tone=None)` before returning. Or accept the gap intentionally — but document it.
 
