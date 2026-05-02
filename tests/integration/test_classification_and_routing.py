@@ -2078,15 +2078,16 @@ def test_idk_variants_with_curly_apostrophe(fresh_session):
     apostrophes would silently miss _LOCATION_UNKNOWN_PHRASES and the
     user wouldn't get the geolocation/borough picker.
 
-    This integration test also serves as coverage for the sibling
-    handler ``_handle_demographic_skip`` in the same module
-    (``accessibility.py``). Both handlers received the same
-    ``normalize_apostrophes`` fix, but demographic_skip is only
-    reachable in unusual flows (post-confirmation-clear, etc.) that
-    are awkward to set up via natural conversation. Pinning
-    location_unknown's curly behavior here is sufficient to catch
-    a regression in the shared ``normalize_apostrophes`` import or
-    a partial revert to the accessibility module.
+    Coverage gap acknowledged: the sibling handler
+    ``_handle_demographic_skip`` in the same module shares the same
+    ``normalize_apostrophes`` import and gets the same fix at its entry
+    point, but is hard to integration-test cleanly (its preconditions
+    require a session state that's awkward to reach via natural
+    conversation, since shelter+location auto-sets
+    ``_pending_confirmation``). This test catches a regression in the
+    shared import or a revert of ``_handle_location_unknown``, but
+    would NOT catch a selective revert of just demographic_skip's
+    normalization. See AUDIT_FINDINGS.md.
     """
     curly_phrases = [
         "I don\u2019t know",

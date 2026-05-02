@@ -49,20 +49,15 @@ Tone guidance:
 
 import re
 
-# Word sets and regexes intentionally module-scoped — built once at
-# import time, not per-message.
-
-# ---------------------------------------------------------------------------
-# Apostrophe normalization
-# ---------------------------------------------------------------------------
-#
 # Imported under the private alias used historically by this module's
 # detectors. Mobile users frequently send curly apostrophes (U+2019) where
-# the regexes below expect straight (U+0027); normalizing at the start of
-# each detector keeps the regexes readable rather than requiring
-# multi-codepoint character classes everywhere. See
-# app/utils/text_normalize.py for the canonical helper and rationale.
+# the regexes below expect straight (U+0027); normalizing once at the
+# start of each detector keeps the regexes readable rather than requiring
+# multi-codepoint character classes. See app/utils/text_normalize.py.
 from app.utils.text_normalize import normalize_apostrophes as _normalize_apostrophes
+
+# Word sets and regexes intentionally module-scoped — built once at
+# import time, not per-message.
 
 
 # ---------------------------------------------------------------------------

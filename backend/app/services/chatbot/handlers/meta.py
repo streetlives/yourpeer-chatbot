@@ -30,6 +30,7 @@ from app.services.audit_log import log_session_reset
 
 from ..context import MessageContext, _USE_LLM, _empty_reply
 from ..logging import _log_turn
+from ..session_helpers import has_user_content
 
 
 logger = logging.getLogger(__name__)
@@ -42,13 +43,6 @@ _SHAME_HELP_SIGNALS = (
     "hard to ask", "hard for me", "hate asking", "hate to ask",
     "difficult to ask", "burden", "swallow my pride",
 )
-
-
-# Slot keys that represent user-provided content (vs Trust Model 5
-# control flags / always-populated metadata). Used by ``_handle_greeting``
-# to decide whether the session has a real prior search in progress.
-# See ``session_helpers.py`` for the full background and rationale.
-from ..session_helpers import _USER_PROVIDED_SLOTS, has_user_content
 
 
 def _handle_help(ctx: MessageContext):

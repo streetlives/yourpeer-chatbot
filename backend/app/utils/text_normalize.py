@@ -28,15 +28,14 @@ crisis_detector module, etc.) without dependency cycles.
 NON_STANDARD_APOSTROPHES = ("\u2019", "\u2018", "\u02bc", "\u0060")
 
 
-def normalize_apostrophes(text: str) -> str:
+def normalize_apostrophes(text: str | None) -> str | None:
     """Replace non-standard apostrophes with straight ASCII apostrophe.
 
     Returns the input unchanged when ``text`` is None or empty so callers
-    can pass through and check truthiness afterward.
+    can pass through and check truthiness afterward (None in, None out;
+    "" in, "" out).
 
-    Idempotent — calling on already-normalized text is a no-op (the
-    early-exit on missing characters means each codepoint check is O(1)
-    via Python's ``in`` operator on str).
+    Idempotent: calling on already-normalized text returns the same value.
     """
     if not text:
         return text

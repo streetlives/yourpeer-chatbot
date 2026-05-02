@@ -29,12 +29,13 @@ helpers end-to-end via ``generate_reply``.
 from app.services.session_store import save_session_slots
 
 
-# --- Module-level constants (formerly inline in orchestrator.py) ---
+# --- Module-level constants ---
 
 # Categories that read and consume ``_last_action`` on the next turn.
 # When the user's next category is NOT one of these, any pending
 # ``_last_action`` was set in a prior emotional/escalation/crisis
 # context that no longer applies and should be cleared.
+# (Originally inline in orchestrator.py.)
 _CONSUMES_LAST_ACTION = frozenset({"confirm_yes", "confirm_deny"})
 
 
@@ -42,6 +43,7 @@ _CONSUMES_LAST_ACTION = frozenset({"confirm_yes", "confirm_deny"})
 # Older entries are dropped first. The transcript is included in the
 # context window of LLM calls (``slot_extraction.extract`` reads it),
 # so the upper bound also caps token cost.
+# (Originally inline in orchestrator.py.)
 _MAX_TRANSCRIPT = 20
 
 

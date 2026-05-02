@@ -48,15 +48,15 @@ import logging
 import time
 from typing import Optional, Tuple
 
+# Imported under the private alias because ``detect_crisis()`` calls it
+# internally to normalize curly apostrophes (U+2019 et al.) before
+# substring matching. 11 DV/trafficking phrases ("he's going to hurt me",
+# "they won't let me go", etc.) have no no-apostrophe fallback variant in
+# the phrase lists below, so without this normalization mobile users
+# typing those phrases with autocorrect would silently miss the regex
+# tier and fall through to the LLM. See app/utils/text_normalize.py.
 from app.utils.text_normalize import normalize_apostrophes as _normalize_apostrophes
-# ``_normalize_apostrophes`` is imported under its private alias because
-# it's used internally by ``detect_crisis()`` to normalize curly
-# apostrophes from mobile autocorrect (U+2019, U+2018, U+02BC, U+0060)
-# to U+0027 before substring matching against the crisis-phrase lists.
-# Without this, 11 DV/trafficking phrases ("he's going to hurt me",
-# "they won't let me go", etc.) would silently miss the regex tier
-# because the phrase lists below have no no-apostrophe fallback variant.
-# See app/utils/text_normalize.py for full rationale.
+
 
 # ---------------------------------------------------------------------------
 # LLM CLIENT — uses shared Anthropic client from claude_client.py
