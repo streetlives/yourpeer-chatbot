@@ -66,7 +66,7 @@ The four-phase MessageContext adoption (Phases A-C in `ORCHESTRATOR_AUDIT.md`) i
 **Options:**
 - **(a) Pytest fixture `default_ctx(**overrides)`** — returns a MessageContext with sensible defaults, callers override only the fields they care about. Simplest and most idiomatic for pytest.
 - **(b) `MessageContext.for_test(...)` classmethod** — same idea, on the class itself. Discoverable but couples production code to tests.
-
+<!-- drift:ignore: ignore future test files that don't exist yet -->
 **Recommendation:** (a) in `tests/conftest.py` or `tests/_fixtures/ctx.py`. About 15 lines.
 
 **Acceptance:** fixture lands; existing unit tests for migrated handlers (e.g. `_handle_negative_preference`, `_handle_correction`, `_handle_demographic_skip`) optionally rewritten to use it; `D-1` blocked on this.
@@ -218,7 +218,7 @@ All three did `from app.services.slot_extraction import extract as extract_unifi
 
 **Status:** Open.
 
-**Location:** orchestrator.py around line 252:
+**Location:** orchestrator.py:
 ```python
 if tone == "crisis":
     pass  # handled below in routing
@@ -557,6 +557,7 @@ The snapshot semantics matter because the dispatcher mutates the same key on `ct
 
 **Proposed harness:** parametrized test that takes a list of eval scenarios with apostrophe-bearing input, substitutes each apostrophe variant (U+2019, U+02BC, U+2018, U+0060), and re-runs. Asserts the same routing behavior as the straight-apostrophe input.
 
+<!-- drift:ignore: ignore future test file that doesn't exist yet -->
 **Implementation sketch:** ~50 LOC in `tests/integration/test_apostrophe_fuzz.py`. Reuses existing scenario definitions; iterates a small list of substitutions.
 
 **Acceptance:** harness exists; runs against ≥10 representative scenarios; failure clearly identifies which (scenario, substitution) pair regressed.
