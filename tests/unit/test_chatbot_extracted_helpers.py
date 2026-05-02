@@ -256,7 +256,7 @@ class TestRunLLMGate:
     def test_skip_when_has_service_intent(self, llm_enabled):
         """If earlier tiers resolved service intent, the LLM gate should
         not run — regardless of other signals."""
-        has_si, action, src, tone, llm_action = _run_llm_gate(
+        has_si, action, src, tone, llm_action, unified = _run_llm_gate(
             message="I need food in Brooklyn with cats and dogs",
             early_extracted={"service_type": "food"},
             has_service_intent=True,
@@ -315,7 +315,7 @@ class TestRunLLMGate:
     def test_gate_fires_when_substantive_and_unresolved(self, llm_enabled):
         """When none of the short-circuits apply, the gate should call the LLM."""
         llm_enabled.return_value = {"service_type": "food"}
-        has_si, action, src, tone, llm_action = _run_llm_gate(
+        has_si, action, src, tone, llm_action, unified = _run_llm_gate(
             message="i really could use some help with groceries",
             early_extracted={},
             has_service_intent=False,
@@ -331,7 +331,7 @@ class TestRunLLMGate:
         """A flaky LLM call must not break routing — the gate logs and
         returns None-y values so the caller falls back to regex."""
         llm_enabled.side_effect = RuntimeError("API timeout")
-        has_si, action, src, tone, llm_action = _run_llm_gate(
+        has_si, action, src, tone, llm_action, unified = _run_llm_gate(
             message="i really could use some help with groceries",
             early_extracted={},
             has_service_intent=False,

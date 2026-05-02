@@ -117,7 +117,7 @@ def _run_llm_gate(
     action_pre: str | None,
     regex_tone_pre: str | None,
     extraction_source: str | None,
-) -> tuple[bool, str | None, str | None, str | None, str | None]:
+) -> tuple[bool, str | None, str | None, str | None, str | None, dict | None]:
     """Unified LLM classification gate.
 
     Runs only when regex + semantic routing didn't resolve AND the message
@@ -126,7 +126,14 @@ def _run_llm_gate(
     finds a service_type / demographic slot that regex/semantic missed.
 
     Returns a tuple of updated state:
-        (has_service_intent, action_pre, extraction_source, llm_tone, llm_action)
+        (has_service_intent, action_pre, extraction_source, llm_tone,
+         llm_action, unified)
+
+    The trailing ``unified`` is the full 15-field merged dict returned by
+    ``slot_extraction.extract()`` — captured here so downstream consumers
+    (notably the orchestrator's service branch) can skip a redundant
+    second call on the same message. ``None`` when the gate condition
+    didn't fire OR when the call raised.
     """
     needs_unified = (
         _USE_LLM
@@ -136,10 +143,11 @@ def _run_llm_gate(
         and len(message.split()) >= 4
     )
     if not needs_unified:
-        return has_service_intent, action_pre, extraction_source, None, None
+        return has_service_intent, action_pre, extraction_source, None, None, None
 
     llm_tone = None
     llm_action = None
+    unified: dict | None = None
     try:
         # Route through the unified extractor — Phase 4 replacement for
         # the legacy `classify_unified` call. `slot_extraction.extract()`
@@ -196,8 +204,9 @@ def _run_llm_gate(
                     action_pre = llm_action
     except Exception as e:
         logger.error(f"Unified LLM classification failed: {e}")
+        unified = None
 
-    return has_service_intent, action_pre, extraction_source, llm_tone, llm_action
+    return has_service_intent, action_pre, extraction_source, llm_tone, llm_action, unified
 
 
 def _compute_routing_category(
@@ -265,19 +274,25 @@ def _compute_routing_category(
         category = "emotional"
     elif tone == "confused":
         category = "confused"
-    elif _USE_LLM and len(message.strip().split()) > 3:
-        from app.llm.claude_client import classify_message_llm
-        llm_category = classify_message_llm(message)
-        if llm_category is not None:
-            logger.info(
-                f"LLM classifier override: regex='general' → llm='{llm_category}'"
-            )
-            category = llm_category
-            confidence = "medium"
-        else:
-            category = "general"
-            confidence = "low"
     else:
+        # LLM-3 (April 2026): the prior version of this branch fired a
+        # second LLM classifier (``classify_message_llm``) as a fallback
+        # when nothing else matched, on the theory that an LLM might
+        # still recognize an intent regex/gate missed. In practice, the
+        # branch only fires when ALL of these are true:
+        #   * tone is None (regex AND gate's ``unified.tone`` both empty)
+        #   * action is not in the early-handled list
+        #     (reset/correction/negative_preference/confirm_*/bot_*/
+        #     greeting/thanks/help/escalation)
+        #   * has_service_intent is False (regex + semantic + gate's
+        #     slot extraction all empty)
+        #
+        # When all three hold, the message has no detectable signal and
+        # ``classify_message_llm`` is unlikely to find one its sibling
+        # classifiers (the same model with a slot-extraction prompt)
+        # missed. The categories it returns either overlap with what's
+        # already handled above (greeting/thanks/etc.) or are the same
+        # ``general`` default. See ``PHASE_AC_AFTERMATH.md`` `LLM-3`.
         category = "general"
         confidence = "low"
 

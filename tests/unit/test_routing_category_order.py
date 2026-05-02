@@ -86,9 +86,7 @@ def test_routing_category_sequence_is_preserved(chatbot_source: str) -> None:
         '"frustration"',        # tone == frustrated
         '"emotional"',          # tone == emotional
         '"confused"',           # tone == confused
-        "llm_category",         # LLM classifier hit
-        '"general"',            # LLM returned None
-        '"general"',            # not _USE_LLM or short message
+        '"general"',            # final else: no signal — default fallthrough
     ]
     actual = _extract_category_assignments(chatbot_source)
     assert actual == expected, (

@@ -725,23 +725,37 @@ def _handle_post_pending_confirmation(ctx, response_tone):
     existing = ctx.existing
 
     existing.pop("_pending_confirmation", None)
-    if _USE_LLM:
-        # Phase 4 (April 2026): the legacy `extract_slots_smart` path
-        # was removed and the feature flag deleted; the unified
-        # extractor is the only LLM path. It requires a `regex_result`
-        # parameter, so we run regex here first (cheap — the caller's
-        # `_run_early_extraction` isn't in scope at this post-pending
-        # path). See UNIFIED_EXTRACTOR_MIGRATION.md.
-        regex_result = extract_slots(ctx.message)
+    if ctx.unified_extraction is not None:
+        # LLM-2: the gate (in pipeline._run_llm_gate) already ran the
+        # unified extractor on this exact message and cached the result
+        # on ctx. Reuse it instead of firing the same LLM call again.
+        # See PHASE_AC_AFTERMATH.md `LLM-2`.
+        pending_extracted = ctx.unified_extraction
+    elif _USE_LLM:
+        # Gate didn't fire (regex caught service_type, message too
+        # short, action in _SKIP_UNIFIED_ACTIONS, etc.) — but the
+        # unified extractor still adds value via post-regex slot
+        # enrichment, so call it once here.
+        #
+        # Pass ``ctx.early_extracted`` as the regex_result instead of
+        # rerunning ``extract_slots`` on the same message — the
+        # orchestrator's ``_run_early_extraction`` already computed it
+        # (regex + semantic router) and stashed it on ctx. Forward
+        # ``ctx.extraction_source`` so Trust Model 3 can give the
+        # semantic router priority on disagreement (the same kwarg the
+        # main service-flow call passes).
         pending_extracted = slot_extraction.extract(
             ctx.message,
-            regex_result,
+            ctx.early_extracted,
             conversation_history=existing.get("transcript", []),
             api_key_available=True,  # gated by _USE_LLM above
-            extraction_source="regex",
+            extraction_source=ctx.extraction_source or "regex",
         )
     else:
-        pending_extracted = extract_slots(ctx.message)
+        # No LLM available — ``ctx.early_extracted`` is the same regex
+        # result the prior code path computed via ``extract_slots``,
+        # plus semantic-router enrichment when applicable.
+        pending_extracted = ctx.early_extracted
     # no_requirements is always present as False when not set — exclude it
     # so the default value doesn't falsely trigger the pending_has_new branch.
     pending_has_new = any(

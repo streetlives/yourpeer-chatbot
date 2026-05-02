@@ -99,6 +99,7 @@ def stub_pipeline(monkeypatch):
             "regex",
             None,
             None,
+            None,  # unified_extraction — None to exercise the non-cached path
         )
 
     def _classify_action(message):
