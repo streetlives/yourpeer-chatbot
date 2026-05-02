@@ -20,6 +20,7 @@ import pytest
 from app.services.chatbot import session_helpers
 from app.services.chatbot.session_helpers import (
     _MAX_TRANSCRIPT,
+    _USER_PROVIDED_SLOTS,
     _append_to_transcript,
     _clear_awaiting_service_after_clear,
     _clear_stale_last_action,
@@ -27,6 +28,7 @@ from app.services.chatbot.session_helpers import (
     _persist_emotional_context_early,
     _persist_emotional_context_late,
     _update_queued_services,
+    has_user_content,
 )
 
 
@@ -512,3 +514,129 @@ class TestModuleConstants:
     def test_max_transcript_value(self):
         """Pin the documented value. Change deliberately if requirements shift."""
         assert session_helpers._MAX_TRANSCRIPT == 20
+
+
+# ---------------------------------------------------------------------------
+# has_user_content / _USER_PROVIDED_SLOTS
+# ---------------------------------------------------------------------------
+
+
+class TestHasUserContent:
+    """The predicate that distinguishes "user shared something searchable"
+    from "the unified extractor has run and populated control flags."
+
+    This was originally a private constant in ``handlers/meta.py`` for the
+    greeting handler. Promoted here because Phase C handlers
+    (``_handle_pending_confirmation``, ``_handle_post_results_interaction``,
+    etc.) will need the same predicate. The bug it guards against is the
+    naive ``any(v is not None for v in session.values())`` check that
+    misreads Trust Model 5 control flags as evidence of a prior search.
+    """
+
+    def test_empty_session_returns_false(self):
+        """No session at all → no content."""
+        assert has_user_content({}) is False
+
+    def test_none_session_returns_false(self):
+        """None passes through cleanly (callers may pass None)."""
+        assert has_user_content(None) is False
+
+    def test_only_control_flags_returns_false(self):
+        """Trust Model 5 control flags MUST NOT count as user content.
+
+        This is the regression-preventing test. Without the whitelist
+        approach, ``no_requirements: False`` (a populated bool, default
+        from the extractor) would wrongly count as "user content."
+        """
+        session = {
+            "no_requirements": False,
+            "_contradiction": False,
+            "_is_additive": False,
+            "_populations": [],
+            "transcript": [],
+        }
+        assert has_user_content(session) is False, (
+            "Trust Model 5 control flags must not register as user content. "
+            "If this assertion fails, _handle_greeting and any other "
+            "handler using has_user_content() will misread casual-chat "
+            "sessions as having an active search."
+        )
+
+    def test_service_type_counts_as_content(self):
+        assert has_user_content({"service_type": "shelter"}) is True
+
+    def test_location_counts_as_content(self):
+        assert has_user_content({"location": "Brooklyn"}) is True
+
+    def test_org_name_counts_as_content(self):
+        """org_name is a search target distinct from service_type — must count."""
+        assert has_user_content({"org_name": "Covenant House"}) is True
+
+    def test_populations_with_value_counts_as_content(self):
+        """Empty list (default) is falsy, but a populated list IS content."""
+        assert has_user_content({"_populations": ["lgbtq"]}) is True
+
+    def test_empty_populations_list_does_not_count(self):
+        """Default-empty _populations is not content (it's the extractor's
+        always-populated default, like the Trust Model 5 flags)."""
+        assert has_user_content({"_populations": []}) is False
+
+    def test_empty_string_does_not_count(self):
+        """Falsy values for content slots also don't count — the user
+        didn't actually share something."""
+        assert has_user_content({"location": ""}) is False
+        assert has_user_content({"service_type": None}) is False
+
+    def test_mixed_content_and_flags(self):
+        """A real session: flags AND user content. Should return True."""
+        session = {
+            "service_type": "food",
+            "location": "Manhattan",
+            "no_requirements": False,
+            "_contradiction": False,
+            "_populations": [],
+        }
+        assert has_user_content(session) is True
+
+    def test_realistic_casual_chat_session(self):
+        """The actual session shape after one turn of casual chat. The
+        greeting bug regression scenario.
+
+        After a user types "how's it going?" turn 1 and "hi" turn 2,
+        the extractor populates these fields. Without has_user_content,
+        the greeting handler responds "Hey again! I still have your
+        earlier search info..." — implying a search that never happened.
+        """
+        casual_session = {
+            "no_requirements": False,
+            "_contradiction": False,
+            "_is_additive": False,
+            "_populations": [],
+            "transcript": [{"role": "user", "content": "how's it going?"}],
+            "service_type": None,
+            "service_detail": None,
+            "additional_services": None,
+            "location": None,
+            "urgency": None,
+            "age": None,
+            "family_status": None,
+            "_gender": None,
+            "org_name": None,
+        }
+        assert has_user_content(casual_session) is False
+
+    def test_user_provided_slots_constant_is_canonical(self):
+        """The constant must contain exactly the 10 user-content slots
+        documented in slot_extractor's output. Pinning this prevents
+        accidental drift if a new control flag gets added to the
+        extractor and someone naively appends it here.
+        """
+        # If this fails, the slot_extractor probably added a new slot.
+        # Decide if it's user-content (add to _USER_PROVIDED_SLOTS) or
+        # control flag (don't). Don't reflexively expand the tuple.
+        assert _USER_PROVIDED_SLOTS == (
+            "service_type", "service_detail", "additional_services",
+            "location", "urgency", "age", "family_status",
+            "_gender", "_populations", "org_name",
+        )
+

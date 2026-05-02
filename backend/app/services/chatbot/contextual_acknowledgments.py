@@ -49,40 +49,15 @@ Tone guidance:
 
 import re
 
+# Imported under the private alias used historically by this module's
+# detectors. Mobile users frequently send curly apostrophes (U+2019) where
+# the regexes below expect straight (U+0027); normalizing once at the
+# start of each detector keeps the regexes readable rather than requiring
+# multi-codepoint character classes. See app/utils/text_normalize.py.
+from app.utils.text_normalize import normalize_apostrophes as _normalize_apostrophes
+
 # Word sets and regexes intentionally module-scoped — built once at
 # import time, not per-message.
-
-# ---------------------------------------------------------------------------
-# Apostrophe normalization
-# ---------------------------------------------------------------------------
-
-# Mobile users frequently send curly apostrophes (U+2019) where the
-# regexes below expect straight (U+0027). Without normalization, a
-# detector like ``won'?t kick me out`` would silently miss messages
-# typed on iOS/Android. Normalize once at the start of each detector
-# rather than authoring multi-codepoint character classes inside every
-# regex, which is harder to read and easier to forget.
-#
-# Codepoints normalized:
-#   U+2019  RIGHT SINGLE QUOTATION MARK   '   (most common autocorrect)
-#   U+2018  LEFT SINGLE QUOTATION MARK    '   (some keyboards)
-#   U+02BC  MODIFIER LETTER APOSTROPHE    ʼ   (rarer; some locales)
-#   U+0060  GRAVE ACCENT                  `   (typed by accident)
-_NON_STANDARD_APOSTROPHES = ("\u2019", "\u2018", "\u02bc", "\u0060")
-
-
-def _normalize_apostrophes(text: str) -> str:
-    """Replace non-standard apostrophes with straight ASCII apostrophe.
-
-    Returns the input unchanged when ``text`` is None or empty so callers
-    can pass through and check truthiness afterward.
-    """
-    if not text:
-        return text
-    for ch in _NON_STANDARD_APOSTROPHES:
-        if ch in text:
-            text = text.replace(ch, "'")
-    return text
 
 
 # ---------------------------------------------------------------------------

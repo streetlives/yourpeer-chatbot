@@ -28,6 +28,7 @@ from app.services.slot_extractor import (
     merge_slots,
     next_follow_up_question,
 )
+from app.utils.text_normalize import normalize_apostrophes
 
 from ..context import _USE_LLM, _empty_reply
 from ..execution import _execute_and_respond
@@ -68,7 +69,11 @@ def _looks_like_topic_shift_question(message: str) -> bool:
     """
     if not message:
         return False
-    stripped = message.strip().lower()
+    # Normalize curly apostrophes from mobile autocorrect before matching
+    # against _WH_WORD_STARTERS, which has entries like "what's", "who's",
+    # "how's". Without normalization, mobile users typing "what's your
+    # name?" with autocorrect would fail topic-shift detection.
+    stripped = normalize_apostrophes(message.strip().lower())
     # Too short to be a substantive question — probably a confirmation
     # fragment like "ok?", "yes?", single-word "what".
     words = stripped.split()
@@ -92,58 +97,57 @@ def _looks_like_topic_shift_question(message: str) -> bool:
     return False
 
 
-def _handle_change_location_request(session_id, redacted_message, existing,
-                                    early_extracted, category, tone, request_id):
+def _handle_change_location_request(ctx):
     """User asked to change search location ("search somewhere else").
 
     If the message already contains a new location (e.g. "actually Manhattan"),
     apply it directly — prevents a frustration loop where the bot wipes the
     location and re-asks what the user just said. Otherwise, wipe and ask.
     """
-    new_loc = early_extracted.get("location")
+    new_loc = ctx.early_extracted.get("location")
     if new_loc:
-        existing["location"] = new_loc
-        save_session_slots(session_id, existing)
-        if is_enough_to_answer(existing):
-            existing["_pending_confirmation"] = True
-            save_session_slots(session_id, existing)
-            confirm_msg = _build_confirmation_message(existing)
+        ctx.existing["location"] = new_loc
+        save_session_slots(ctx.session_id, ctx.existing)
+        if is_enough_to_answer(ctx.existing):
+            ctx.existing["_pending_confirmation"] = True
+            save_session_slots(ctx.session_id, ctx.existing)
+            confirm_msg = _build_confirmation_message(ctx.existing)
             result = {
-                "session_id": session_id,
+                "session_id": ctx.session_id,
                 "response": confirm_msg,
                 "follow_up_needed": True,
-                "slots": existing,
+                "slots": ctx.existing,
                 "services": [],
                 "result_count": 0,
                 "relaxed_search": False,
-                "quick_replies": _confirmation_quick_replies(existing),
+                "quick_replies": _confirmation_quick_replies(ctx.existing),
             }
-            _log_turn(session_id, redacted_message, result, "confirmation",
-                      request_id=request_id, tone=tone)
+            _log_turn(ctx.session_id, ctx.redacted_message, result, "confirmation",
+                      request_id=ctx.request_id, tone=ctx.tone)
             return result
         else:
-            follow_up = next_follow_up_question(existing)
+            follow_up = next_follow_up_question(ctx.existing)
             result = {
-                "session_id": session_id,
+                "session_id": ctx.session_id,
                 "response": follow_up,
                 "follow_up_needed": True,
-                "slots": existing,
+                "slots": ctx.existing,
                 "services": [],
                 "result_count": 0,
                 "relaxed_search": False,
-                "quick_replies": _follow_up_quick_replies(existing),
+                "quick_replies": _follow_up_quick_replies(ctx.existing),
             }
-            _log_turn(session_id, redacted_message, result, "service",
-                      request_id=request_id, tone=tone)
+            _log_turn(ctx.session_id, ctx.redacted_message, result, "service",
+                      request_id=ctx.request_id, tone=ctx.tone)
             return result
 
     # No location in message — clear and ask for one
-    existing["location"] = None
-    save_session_slots(session_id, existing)
+    ctx.existing["location"] = None
+    save_session_slots(ctx.session_id, ctx.existing)
     result = _empty_reply(
-        session_id,
+        ctx.session_id,
         "Sure! What neighborhood or borough should I search in?",
-        existing,
+        ctx.existing,
         quick_replies=[
             {"label": "📍 Use my location", "value": "__use_geolocation__"},
             {"label": "Manhattan", "value": "Manhattan"},
@@ -153,12 +157,12 @@ def _handle_change_location_request(session_id, redacted_message, existing,
             {"label": "Staten Island", "value": "Staten Island"},
         ],
     )
-    _log_turn(session_id, redacted_message, result, category, request_id=request_id, tone=tone)
+    _log_turn(ctx.session_id, ctx.redacted_message, result, ctx.category,
+              request_id=ctx.request_id, tone=ctx.tone)
     return result
 
 
-def _handle_change_service_request(session_id, redacted_message, existing,
-                                   category, tone, request_id):
+def _handle_change_service_request(ctx):
     """User asked to change the service type — wipe service_type + service_detail
     and show the service menu.
 
@@ -173,29 +177,30 @@ def _handle_change_service_request(session_id, redacted_message, existing,
     single service — avoids the mis-extraction entirely. Covers
     `confirm_multi_change`.
     """
-    existing["service_type"] = None
-    existing.pop("service_detail", None)
-    existing["_awaiting_service_after_clear"] = True
-    save_session_slots(session_id, existing)
+    ctx.existing["service_type"] = None
+    ctx.existing.pop("service_detail", None)
+    ctx.existing["_awaiting_service_after_clear"] = True
+    save_session_slots(ctx.session_id, ctx.existing)
     result = _empty_reply(
-        session_id,
+        ctx.session_id,
         "No problem! What kind of help do you need?",
-        existing,
+        ctx.existing,
         quick_replies=list(_WELCOME_QUICK_REPLIES),
     )
-    _log_turn(session_id, redacted_message, result, category, request_id=request_id, tone=tone)
+    _log_turn(ctx.session_id, ctx.redacted_message, result, ctx.category,
+              request_id=ctx.request_id, tone=ctx.tone)
     return result
 
 
-def _handle_correction(session_id, redacted_message, existing, tone, request_id):
+def _handle_correction(ctx):
     """Acknowledge a user correction ("that's not what I meant") by clearing
     pending state and echoing what we WERE searching for so they can redirect."""
-    existing.pop("_pending_confirmation", None)
-    existing.pop("_last_action", None)
-    existing.pop("_last_results", None)
-    save_session_slots(session_id, existing)
-    service_type = existing.get("service_type")
-    location = existing.get("location")
+    ctx.existing.pop("_pending_confirmation", None)
+    ctx.existing.pop("_last_action", None)
+    ctx.existing.pop("_last_results", None)
+    save_session_slots(ctx.session_id, ctx.existing)
+    service_type = ctx.existing.get("service_type")
+    location = ctx.existing.get("location")
     if location == NEAR_ME_SENTINEL:
         location = None
     context = ""
@@ -204,21 +209,21 @@ def _handle_correction(session_id, redacted_message, existing, tone, request_id)
     elif service_type:
         context = f" I was searching for {service_type}."
     result = _empty_reply(
-        session_id,
+        ctx.session_id,
         f"Sorry about that!{context} Let me know what you need — you can "
         f"pick a service below, tell me in your own words, or connect "
         f"with a peer navigator.",
-        existing,
+        ctx.existing,
         quick_replies=list(_WELCOME_QUICK_REPLIES) + [
             {"label": "🤝 Peer navigator", "value": "Connect with peer navigator"},
         ],
     )
-    _log_turn(session_id, redacted_message, result, "correction",
-              request_id=request_id, tone=tone, confidence="low")
+    _log_turn(ctx.session_id, ctx.redacted_message, result, "correction",
+              request_id=ctx.request_id, tone=ctx.tone, confidence="low")
     return result
 
 
-def _handle_negative_preference(session_id, redacted_message, existing, tone, request_id):
+def _handle_negative_preference(ctx):
     """Handle "I don't like those" / "none of these" with tiered escalation.
 
     After 3+ consecutive frustration-counted turns, routes to peer navigator.
@@ -226,143 +231,154 @@ def _handle_negative_preference(session_id, redacted_message, existing, tone, re
     something else.
     """
     # Also count as frustration for escalation tiers (Run 24 eval fix)
-    frust_count = existing.get("_frustration_count", 0) + 1
-    existing["_frustration_count"] = frust_count
+    frust_count = ctx.existing.get("_frustration_count", 0) + 1
+    ctx.existing["_frustration_count"] = frust_count
 
     # When frustration has accumulated, use tiered escalation
     if frust_count >= 3:
-        existing["_last_action"] = "frustration"
-        save_session_slots(session_id, existing)
+        ctx.existing["_last_action"] = "frustration"
+        save_session_slots(ctx.session_id, ctx.existing)
         result = _empty_reply(
-            session_id,
+            ctx.session_id,
             "I'm sorry I haven't been able to help. Let me connect you "
             "with a peer navigator — they can work with you directly.",
-            existing,
+            ctx.existing,
             quick_replies=[
                 {"label": "🤝 Peer navigator", "value": "Connect with peer navigator"},
             ],
         )
-        _log_turn(session_id, redacted_message, result, "frustration_tier3",
-                  request_id=request_id, tone=tone)
+        _log_turn(ctx.session_id, ctx.redacted_message, result, "frustration_tier3",
+                  request_id=ctx.request_id, tone=ctx.tone)
         return result
     elif frust_count >= 2:
-        existing["_last_action"] = "frustration"
-        save_session_slots(session_id, existing)
+        ctx.existing["_last_action"] = "frustration"
+        save_session_slots(ctx.session_id, ctx.existing)
         result = _empty_reply(
-            session_id,
+            ctx.session_id,
             "I hear you — I'm clearly not finding what you need right now. "
             "A peer navigator would be more helpful — they're real people "
             "who know the system. You can also call 311 for live help.",
-            existing,
+            ctx.existing,
             quick_replies=[
                 {"label": "🤝 Peer navigator", "value": "Connect with peer navigator"},
                 {"label": "🔄 Start over", "value": "Start over"},
             ],
         )
-        _log_turn(session_id, redacted_message, result, "frustration_tier2",
-                  request_id=request_id, tone=tone)
+        _log_turn(ctx.session_id, ctx.redacted_message, result, "frustration_tier2",
+                  request_id=ctx.request_id, tone=ctx.tone)
         return result
 
-    existing["_last_action"] = "negative_preference"
-    save_session_slots(session_id, existing)
+    ctx.existing["_last_action"] = "negative_preference"
+    save_session_slots(ctx.session_id, ctx.existing)
     result = _empty_reply(
-        session_id,
+        ctx.session_id,
         "I understand — those options aren't what you need. "
         "I can search for a different type of service, or connect "
         "you with a peer navigator who might know of other resources. "
         "What would be most helpful?",
-        existing,
+        ctx.existing,
         quick_replies=list(_WELCOME_QUICK_REPLIES) + [
             {"label": "🤝 Peer navigator", "value": "Connect with peer navigator"},
         ],
     )
-    _log_turn(session_id, redacted_message, result, "negative_preference",
-              request_id=request_id, tone=tone)
+    _log_turn(ctx.session_id, ctx.redacted_message, result, "negative_preference",
+              request_id=ctx.request_id, tone=ctx.tone)
     return result
 
 
-def _handle_context_aware_confirm(
-    session_id, message, redacted_message, existing,
-    category, last_action, tone, request_id,
-):
+def _handle_context_aware_confirm(ctx, last_action):
     """Handle yes/no after escalation, emotional, crisis, confused, frustration.
+
+    Args:
+        last_action: Captured snapshot of ``ctx.existing.get("_last_action")``
+            from the orchestrator. Passed explicitly because this handler
+            mutates ``_last_action`` (pops it on confirm_yes paths) and the
+            orchestrator's subsequent ``_consume_last_action`` call must
+            see the same value the handler dispatched on. Same snapshot
+            shape as ``last_results`` and ``pending`` elsewhere.
 
     Returns a result dict, or None if no context-aware handling applies.
     """
-    if last_action == "escalation" and category == "confirm_yes":
-        existing.pop("_last_action", None)
-        save_session_slots(session_id, existing)
+    if last_action == "escalation" and ctx.category == "confirm_yes":
+        ctx.existing.pop("_last_action", None)
+        save_session_slots(ctx.session_id, ctx.existing)
         result = _empty_reply(
-            session_id,
+            ctx.session_id,
             "I've shared the contact info above — reach out when you're "
             "ready. Is there anything else I can help with in the meantime?",
-            existing,
+            ctx.existing,
             quick_replies=[
                 {"label": "🔍 Search for services", "value": "Start over"},
                 {"label": "👤 Show contact info again", "value": "Connect with peer navigator"},
             ],
         )
-        _log_turn(session_id, redacted_message, result, "escalation", request_id=request_id, tone=tone)
+        _log_turn(ctx.session_id, ctx.redacted_message, result, "escalation",
+                  request_id=ctx.request_id, tone=ctx.tone)
         return result
 
-    if last_action == "emotional" and category == "confirm_yes":
-        existing.pop("_last_action", None)
-        save_session_slots(session_id, existing)
+    if last_action == "emotional" and ctx.category == "confirm_yes":
+        ctx.existing.pop("_last_action", None)
+        save_session_slots(ctx.session_id, ctx.existing)
         result = _empty_reply(
-            session_id,
+            ctx.session_id,
             _ESCALATION_RESPONSE,
-            existing,
+            ctx.existing,
             quick_replies=[
                 {"label": "🔍 Search for services", "value": "Start over"},
             ],
         )
-        _log_turn(session_id, redacted_message, result, "escalation", request_id=request_id, tone=tone)
+        _log_turn(ctx.session_id, ctx.redacted_message, result, "escalation",
+                  request_id=ctx.request_id, tone=ctx.tone)
         return result
 
-    if last_action == "crisis" and category == "confirm_yes":
-        existing.pop("_last_action", None)
-        save_session_slots(session_id, existing)
+    if last_action == "crisis" and ctx.category == "confirm_yes":
+        ctx.existing.pop("_last_action", None)
+        save_session_slots(ctx.session_id, ctx.existing)
         _crisis_geo_ready = (
-            existing.get("location") == NEAR_ME_SENTINEL
-            and existing.get("_latitude") is not None
-            and existing.get("_longitude") is not None
+            ctx.existing.get("location") == NEAR_ME_SENTINEL
+            and ctx.existing.get("_latitude") is not None
+            and ctx.existing.get("_longitude") is not None
         )
-        if is_enough_to_answer(existing) or _crisis_geo_ready:
-            result = _execute_and_respond(session_id, message, existing, request_id=request_id)
+        if is_enough_to_answer(ctx.existing) or _crisis_geo_ready:
+            result = _execute_and_respond(ctx.session_id, ctx.message, ctx.existing,
+                                          request_id=ctx.request_id)
         else:
-            follow_up = next_follow_up_question(existing)
+            follow_up = next_follow_up_question(ctx.existing)
             result = _empty_reply(
-                session_id, follow_up, existing,
-                quick_replies=_follow_up_quick_replies(existing),
+                ctx.session_id, follow_up, ctx.existing,
+                quick_replies=_follow_up_quick_replies(ctx.existing),
             )
             result["follow_up_needed"] = True
-        _log_turn(session_id, redacted_message, result, "service", request_id=request_id, tone=tone)
+        _log_turn(ctx.session_id, ctx.redacted_message, result, "service",
+                  request_id=ctx.request_id, tone=ctx.tone)
         return result
 
-    if last_action == "confused" and category == "confirm_yes":
-        existing.pop("_last_action", None)
-        save_session_slots(session_id, existing)
+    if last_action == "confused" and ctx.category == "confirm_yes":
+        ctx.existing.pop("_last_action", None)
+        save_session_slots(ctx.session_id, ctx.existing)
         result = _empty_reply(
-            session_id, _ESCALATION_RESPONSE, existing,
+            ctx.session_id, _ESCALATION_RESPONSE, ctx.existing,
             quick_replies=[
                 {"label": "🔍 New search", "value": "Start over"},
                 {"label": "👤 Talk to a person", "value": "Connect with person"},
             ],
         )
-        _log_turn(session_id, redacted_message, result, "escalation", request_id=request_id, tone=tone)
+        _log_turn(ctx.session_id, ctx.redacted_message, result, "escalation",
+                  request_id=ctx.request_id, tone=ctx.tone)
         return result
 
-    if last_action == "frustration" and category == "confirm_yes":
-        existing.pop("_last_action", None)
-        save_session_slots(session_id, existing)
+    if last_action == "frustration" and ctx.category == "confirm_yes":
+        ctx.existing.pop("_last_action", None)
+        save_session_slots(ctx.session_id, ctx.existing)
         result = _empty_reply(
-            session_id, _ESCALATION_RESPONSE, existing,
+            ctx.session_id, _ESCALATION_RESPONSE, ctx.existing,
             quick_replies=[
                 {"label": "🔍 New search", "value": "Start over"},
                 {"label": "👤 Talk to a person", "value": "Connect with person"},
             ],
         )
-        _log_turn(session_id, redacted_message, result, "escalation", request_id=request_id, tone=tone)
+        _log_turn(ctx.session_id, ctx.redacted_message, result, "escalation",
+                  request_id=ctx.request_id, tone=ctx.tone)
         return result
 
     # Deny handlers for each context
@@ -392,27 +408,25 @@ def _handle_context_aware_confirm(
             "If you'd like to search for services later, I'm here."
         ),
     }
-    if category == "confirm_deny" and last_action in _deny_contexts:
-        existing.pop("_last_action", None)
-        existing.pop("_pending_confirmation", None)
-        save_session_slots(session_id, existing)
+    if ctx.category == "confirm_deny" and last_action in _deny_contexts:
+        ctx.existing.pop("_last_action", None)
+        ctx.existing.pop("_pending_confirmation", None)
+        save_session_slots(ctx.session_id, ctx.existing)
         qr = [{"label": "🤝 Peer navigator", "value": "Connect with peer navigator"}]
         if last_action == "crisis":
             qr.append({"label": "🔍 Search for services", "value": "I need help"})
         result = _empty_reply(
-            session_id, _deny_contexts[last_action], existing,
+            ctx.session_id, _deny_contexts[last_action], ctx.existing,
             quick_replies=qr,
         )
-        _log_turn(session_id, redacted_message, result, "general", request_id=request_id, tone=tone)
+        _log_turn(ctx.session_id, ctx.redacted_message, result, "general",
+                  request_id=ctx.request_id, tone=ctx.tone)
         return result
 
     return None
 
 
-def _promote_queued_offer(
-    session_id, message, redacted_message, existing, offer,
-    request_id, tone, location_override=None,
-):
+def _promote_queued_offer(ctx, offer, location_override=None):
     """Promote a queued service offer to the primary slot and execute the search.
 
     Shared between the two "user accepts the queued offer" paths:
@@ -427,11 +441,11 @@ def _promote_queued_offer(
 
     Args:
         offer: The (service, detail, location) tuple from
-            `existing["_queued_offer"]`.
-        location_override: If set, use this instead of `offer[2]`.
+            ``ctx.existing["_queued_offer"]``.
+        location_override: If set, use this instead of ``offer[2]``.
             Lets the service-match path honor a location the user just
             typed ("I need shelter in Manhattan" when the offer was
-            for Brooklyn). `confirm_yes` callers pass None (the yes
+            for Brooklyn). ``confirm_yes`` callers pass None (the yes
             message carries no new location signal).
     """
     next_service, next_detail, next_location = offer
@@ -439,42 +453,57 @@ def _promote_queued_offer(
 
     # Clear prior results' post-search state — fresh search, not
     # paginating/filtering the previous one.
-    existing.pop("_last_results", None)
-    existing.pop("_displayed_count", None)
-    existing.pop("_filtered_results", None)
-    existing.pop("_filter_phrase", None)
+    ctx.existing.pop("_last_results", None)
+    ctx.existing.pop("_displayed_count", None)
+    ctx.existing.pop("_filtered_results", None)
+    ctx.existing.pop("_filter_phrase", None)
 
     # Promote the queued service to primary.
-    existing["service_type"] = next_service
+    ctx.existing["service_type"] = next_service
     if next_detail:
-        existing["service_detail"] = next_detail
+        ctx.existing["service_detail"] = next_detail
     else:
-        existing.pop("service_detail", None)
+        ctx.existing.pop("service_detail", None)
     if location:
-        existing["location"] = location
+        ctx.existing["location"] = location
 
     # Clear queue state for this offer. _queued_services may still
     # hold remaining items for 3+ queue scenarios — leave it for
     # _apply_queue_offer to re-fire after the search completes.
-    existing.pop("_queue_offer_pending", None)
-    existing.pop("_queued_offer", None)
-    existing.pop("_queued_location", None)
+    ctx.existing.pop("_queue_offer_pending", None)
+    ctx.existing.pop("_queued_offer", None)
+    ctx.existing.pop("_queued_location", None)
 
-    save_session_slots(session_id, existing)
-    result = _execute_and_respond(session_id, message, existing, request_id=request_id)
-    _log_turn(session_id, redacted_message, result, "queue_accept",
-              request_id=request_id, tone=tone)
+    save_session_slots(ctx.session_id, ctx.existing)
+    result = _execute_and_respond(ctx.session_id, ctx.message, ctx.existing,
+                                  request_id=ctx.request_id)
+    _log_turn(ctx.session_id, ctx.redacted_message, result, "queue_accept",
+              request_id=ctx.request_id, tone=ctx.tone)
     return result
 
 
-def _handle_pending_confirmation(
-    session_id, message, redacted_message, existing, pending,
-    category, tone, request_id, early_extracted=None,
-):
+def _handle_pending_confirmation(ctx, pending):
     """Handle confirm_yes, confirm_change_*, confirm_deny during pending confirmation.
+
+    Args:
+        pending: Captured snapshot of ``ctx.existing.get("_pending_confirmation")``
+            from the orchestrator. Passed explicitly because this handler
+            mutates ``_pending_confirmation`` (pops it on confirm paths) and
+            the orchestrator's subsequent ``if pending:`` guard before
+            ``_handle_post_pending_confirmation`` must see the same value
+            this handler dispatched on. Same snapshot shape as ``last_action``
+            in ``_handle_context_aware_confirm``.
 
     Returns a result dict, or None if no pending handling applies.
     """
+    # Local alias — handler may rebind via ``merge_slots`` below, which
+    # returns a new dict. The orchestrator's ``ctx.existing`` reference
+    # stays pointing at the original; subsequent reads of ``ctx.existing``
+    # in the orchestrator are safe because the orchestrator returns
+    # immediately when this handler returns non-None (the only branches
+    # that rebind also return).
+    existing = ctx.existing
+
     if not pending:
         # Queue offer active (post-results "You also mentioned X — search too?"):
         # handle yes and no distinctly. Without this, yes-to-queue falls
@@ -489,33 +518,31 @@ def _handle_pending_confirmation(
         # is handled directly in `orchestrator.generate_reply` via an
         # early queue-accept check, using `_promote_queued_offer` below.
         queue_offer_active = existing.get("_queued_services") or existing.get("_queue_offer_pending")
-        if category == "confirm_deny" and queue_offer_active:
+        if ctx.category == "confirm_deny" and queue_offer_active:
             existing.pop("_queued_services", None)
             existing.pop("_queue_offer_pending", None)
             existing.pop("_queued_offer", None)
             existing.pop("_queued_location", None)
             existing.pop("_queued_services_original", None)
-            save_session_slots(session_id, existing)
+            save_session_slots(ctx.session_id, existing)
             result = _empty_reply(
-                session_id,
+                ctx.session_id,
                 "No problem! Let me know if you need anything else.",
                 existing,
                 quick_replies=list(_WELCOME_QUICK_REPLIES),
             )
-            _log_turn(session_id, redacted_message, result, "queue_decline", request_id=request_id, tone=tone)
+            _log_turn(ctx.session_id, ctx.redacted_message, result, "queue_decline",
+                      request_id=ctx.request_id, tone=ctx.tone)
             return result
 
-        if category == "confirm_yes" and queue_offer_active:
+        if ctx.category == "confirm_yes" and queue_offer_active:
             offer = existing.get("_queued_offer")
             if offer:
-                return _promote_queued_offer(
-                    session_id, message, redacted_message, existing, offer,
-                    request_id, tone,
-                )
+                return _promote_queued_offer(ctx, offer)
         return None
 
-    if category == "confirm_yes":
-        confirm_extracted = extract_slots(message)
+    if ctx.category == "confirm_yes":
+        confirm_extracted = extract_slots(ctx.message)
         if (confirm_extracted.get("service_type") is not None
                 and confirm_extracted["service_type"] != existing.get("service_type")):
             logger.info(
@@ -524,12 +551,14 @@ def _handle_pending_confirmation(
             )
             existing = merge_slots(existing, confirm_extracted)
         existing.pop("_pending_confirmation", None)
-        save_session_slots(session_id, existing)
-        result = _execute_and_respond(session_id, message, existing, request_id=request_id)
-        _log_turn(session_id, redacted_message, result, category, request_id=request_id, tone=tone)
+        save_session_slots(ctx.session_id, existing)
+        result = _execute_and_respond(ctx.session_id, ctx.message, existing,
+                                      request_id=ctx.request_id)
+        _log_turn(ctx.session_id, ctx.redacted_message, result, ctx.category,
+                  request_id=ctx.request_id, tone=ctx.tone)
         return result
 
-    if category == "confirm_change_service":
+    if ctx.category == "confirm_change_service":
         existing.pop("_pending_confirmation", None)
         existing["service_type"] = None
         existing.pop("service_detail", None)
@@ -558,31 +587,32 @@ def _handle_pending_confirmation(
         # to the final confirmation — "food and shelter" instead of
         # just "shelter".
         existing["_awaiting_service_after_clear"] = True
-        save_session_slots(session_id, existing)
+        save_session_slots(ctx.session_id, existing)
         result = _empty_reply(
-            session_id,
+            ctx.session_id,
             "No problem! What kind of help do you need?",
             existing,
             quick_replies=list(_WELCOME_QUICK_REPLIES),
         )
-        _log_turn(session_id, redacted_message, result, category, request_id=request_id, tone=tone)
+        _log_turn(ctx.session_id, ctx.redacted_message, result, ctx.category,
+                  request_id=ctx.request_id, tone=ctx.tone)
         return result
 
-    if category == "confirm_change_location":
+    if ctx.category == "confirm_change_location":
         existing.pop("_pending_confirmation", None)
         # If the user's message contains a new location (e.g., "change
         # to Brooklyn" or "I already said Manhattan"), use it directly
         # instead of wiping and re-asking.
-        new_loc = (early_extracted or {}).get("location")
+        new_loc = (ctx.early_extracted or {}).get("location")
         if new_loc:
             existing["location"] = new_loc
-            save_session_slots(session_id, existing)
+            save_session_slots(ctx.session_id, existing)
             if is_enough_to_answer(existing):
                 existing["_pending_confirmation"] = True
-                save_session_slots(session_id, existing)
+                save_session_slots(ctx.session_id, existing)
                 confirm_msg = _build_confirmation_message(existing)
                 result = {
-                    "session_id": session_id,
+                    "session_id": ctx.session_id,
                     "response": confirm_msg,
                     "follow_up_needed": True,
                     "slots": existing,
@@ -591,14 +621,14 @@ def _handle_pending_confirmation(
                     "relaxed_search": False,
                     "quick_replies": _confirmation_quick_replies(existing),
                 }
-                _log_turn(session_id, redacted_message, result, "confirmation",
-                          request_id=request_id, tone=tone)
+                _log_turn(ctx.session_id, ctx.redacted_message, result, "confirmation",
+                          request_id=ctx.request_id, tone=ctx.tone)
                 return result
         # No location in message — ask for one
         existing["location"] = None
-        save_session_slots(session_id, existing)
+        save_session_slots(ctx.session_id, existing)
         result = _empty_reply(
-            session_id,
+            ctx.session_id,
             "Sure! What neighborhood or borough should I search in?",
             existing,
             quick_replies=[
@@ -610,26 +640,27 @@ def _handle_pending_confirmation(
                 {"label": "Staten Island", "value": "Staten Island"},
             ],
         )
-        _log_turn(session_id, redacted_message, result, category, request_id=request_id, tone=tone)
+        _log_turn(ctx.session_id, ctx.redacted_message, result, ctx.category,
+                  request_id=ctx.request_id, tone=ctx.tone)
         return result
 
-    if category == "confirm_deny":
+    if ctx.category == "confirm_deny":
         # Fix 1: Check if the denial also contains a new service intent.
         # "I changed my mind, shelter" should switch to shelter, not deny.
-        deny_extracted = extract_slots(message)
+        deny_extracted = extract_slots(ctx.message)
         new_service = deny_extracted.get("service_type")
         if new_service and new_service != existing.get("service_type"):
             logger.info(
-                f"[{session_id}] confirm_deny + new service: "
+                f"[{ctx.session_id}] confirm_deny + new service: "
                 f"'{existing.get('service_type')}' → '{new_service}'"
             )
             existing = merge_slots(existing, deny_extracted)
             existing.pop("_pending_confirmation", None)
-            save_session_slots(session_id, existing)
+            save_session_slots(ctx.session_id, existing)
             new_label = _SERVICE_LABELS.get(new_service, new_service)
             confirm_msg = f"Got it — switching to {new_label}. " + _build_confirmation_message(existing)
             result = {
-                "session_id": session_id,
+                "session_id": ctx.session_id,
                 "response": confirm_msg,
                 "follow_up_needed": True,
                 "slots": existing,
@@ -638,13 +669,14 @@ def _handle_pending_confirmation(
                 "relaxed_search": False,
                 "quick_replies": _confirmation_quick_replies(existing),
             }
-            _log_turn(session_id, redacted_message, result, "service_switch", request_id=request_id, tone=tone)
+            _log_turn(ctx.session_id, ctx.redacted_message, result, "service_switch",
+                      request_id=ctx.request_id, tone=ctx.tone)
             return result
 
         existing.pop("_pending_confirmation", None)
-        save_session_slots(session_id, existing)
+        save_session_slots(ctx.session_id, existing)
         result = _empty_reply(
-            session_id,
+            ctx.session_id,
             "No problem! I'll hold onto your info in case you want to "
             "come back to it. What would you like to do?",
             existing,
@@ -655,14 +687,14 @@ def _handle_pending_confirmation(
                 {"label": "🤝 Peer navigator", "value": "Connect with peer navigator"},
             ],
         )
-        _log_turn(session_id, redacted_message, result, category, request_id=request_id, tone=tone)
+        _log_turn(ctx.session_id, ctx.redacted_message, result, ctx.category,
+                  request_id=ctx.request_id, tone=ctx.tone)
         return result
 
     return None
 
 
-def _handle_post_pending_confirmation(session_id, message, redacted_message, existing,
-                                      response_tone, tone, request_id):
+def _handle_post_pending_confirmation(ctx, response_tone):
     """Handle messages that arrive while a confirmation was pending, after
     ``_handle_pending_confirmation`` has already had a chance to match a
     direct yes/no/change.
@@ -676,8 +708,21 @@ def _handle_post_pending_confirmation(session_id, message, redacted_message, exi
        without re-confirmation.
     3. **No new info** — re-nudge with a tone-matched confirmation prompt.
 
+    Args:
+        response_tone: Captured snapshot of the response tone before any
+            negative_preference → service promotion. Used at the bottom
+            of the function to pick a tone-matched nudge prefix. Distinct
+            from ``ctx.tone`` because the orchestrator may have promoted
+            a None tone to "frustrated" along the negative_preference
+            path; ``response_tone`` preserves the pre-promotion value
+            so the nudge prefix reflects what the user originally said.
+
     Returns a result dict in all three cases.
     """
+    # Local alias — handler may rebind via ``merge_slots`` below. See
+    # the analogous note in ``_handle_pending_confirmation``.
+    existing = ctx.existing
+
     existing.pop("_pending_confirmation", None)
     if _USE_LLM:
         # Phase 4 (April 2026): the legacy `extract_slots_smart` path
@@ -687,15 +732,15 @@ def _handle_post_pending_confirmation(session_id, message, redacted_message, exi
         # `_run_early_extraction` isn't in scope at this post-pending
         # path). See UNIFIED_EXTRACTOR_MIGRATION.md.
         from app.services.slot_extraction import extract as extract_unified
-        regex_result = extract_slots(message)
+        regex_result = extract_slots(ctx.message)
         pending_extracted = extract_unified(
-            message,
+            ctx.message,
             regex_result,
             conversation_history=existing.get("transcript", []),
             api_key_available=True,  # gated by _USE_LLM above
         )
     else:
-        pending_extracted = extract_slots(message)
+        pending_extracted = extract_slots(ctx.message)
     # no_requirements is always present as False when not set — exclude it
     # so the default value doesn't falsely trigger the pending_has_new branch.
     pending_has_new = any(
@@ -722,19 +767,19 @@ def _handle_post_pending_confirmation(session_id, message, redacted_message, exi
                 and "service_type" in changed):
             merged_pending = merge_slots(existing, pending_extracted)
             merged_pending["_pending_confirmation"] = True
-            save_session_slots(session_id, merged_pending)
+            save_session_slots(ctx.session_id, merged_pending)
             svc_label = _SERVICE_LABELS.get(
                 existing.get("service_type", ""), existing.get("service_type", "services"))
             new_label = _SERVICE_LABELS.get(changed["service_type"], changed["service_type"])
             result = _empty_reply(
-                session_id,
+                ctx.session_id,
                 f"Got it — I've noted {new_label} for after. "
                 f"Let me finish searching for {svc_label} first. Sound good?",
                 merged_pending,
                 quick_replies=_confirmation_quick_replies(merged_pending),
             )
-            _log_turn(session_id, redacted_message, result, "additive_service",
-                      request_id=request_id, tone=tone)
+            _log_turn(ctx.session_id, ctx.redacted_message, result, "additive_service",
+                      request_id=ctx.request_id, tone=ctx.tone)
             return result
 
         if changed:
@@ -742,12 +787,12 @@ def _handle_post_pending_confirmation(session_id, message, redacted_message, exi
             merged_pending = merge_slots(existing, pending_extracted)
             if is_enough_to_answer(merged_pending):
                 logger.info(
-                    f"[{session_id}] Contradiction during confirmation: "
+                    f"[{ctx.session_id}] Contradiction during confirmation: "
                     f"{changed} — auto-executing"
                 )
-                save_session_slots(session_id, merged_pending)
+                save_session_slots(ctx.session_id, merged_pending)
                 result = _execute_and_respond(
-                    session_id, message, merged_pending, request_id=request_id
+                    ctx.session_id, ctx.message, merged_pending, request_id=ctx.request_id
                 )
                 # Prepend acknowledgment of the change
                 changes = []
@@ -760,8 +805,8 @@ def _handle_post_pending_confirmation(session_id, message, redacted_message, exi
                 prefix = f"Got it — switching to {', '.join(changes)}. " if changes else ""
                 result["response"] = prefix + result["response"]
                 _log_turn(
-                    session_id, redacted_message, result,
-                    "contradiction_auto_execute", request_id=request_id, tone=tone,
+                    ctx.session_id, ctx.redacted_message, result,
+                    "contradiction_auto_execute", request_id=ctx.request_id, tone=ctx.tone,
                 )
                 return result
 
@@ -790,15 +835,15 @@ def _handle_post_pending_confirmation(session_id, message, redacted_message, exi
             )
             if is_enough_to_answer(merged_pending) or geolocation_fill:
                 logger.info(
-                    f"[{session_id}] Slot fill after confirmation — auto-executing"
+                    f"[{ctx.session_id}] Slot fill after confirmation — auto-executing"
                 )
-                save_session_slots(session_id, merged_pending)
+                save_session_slots(ctx.session_id, merged_pending)
                 result = _execute_and_respond(
-                    session_id, message, merged_pending, request_id=request_id
+                    ctx.session_id, ctx.message, merged_pending, request_id=ctx.request_id
                 )
                 _log_turn(
-                    session_id, redacted_message, result,
-                    "fill_auto_execute", request_id=request_id, tone=tone,
+                    ctx.session_id, ctx.redacted_message, result,
+                    "fill_auto_execute", request_id=ctx.request_id, tone=ctx.tone,
                 )
                 return result
 
@@ -810,7 +855,7 @@ def _handle_post_pending_confirmation(session_id, message, redacted_message, exi
     if pending_has_new:
         existing = merge_slots(existing, pending_extracted)
     existing["_pending_confirmation"] = True
-    save_session_slots(session_id, existing)
+    save_session_slots(ctx.session_id, existing)
 
     # C.2 (April 2026) — topic-shift disambiguation. If the user sent
     # something that looks like an off-topic question (e.g. "what's your
@@ -822,7 +867,7 @@ def _handle_post_pending_confirmation(session_id, message, redacted_message, exi
     # _pending_confirmation so "yes" still works, but offer the user a
     # clear choice rather than silently assuming they want the old
     # search. See docs/CHATBOT_BEHAVIOR.md § Confirmation Actions.
-    if _looks_like_topic_shift_question(message):
+    if _looks_like_topic_shift_question(ctx.message):
         confirm_msg = (
             "I wasn't sure if that was a question about something else, "
             "or if you were still thinking about the search. "
@@ -838,7 +883,7 @@ def _handle_post_pending_confirmation(session_id, message, redacted_message, exi
              "value": "I was asking something else"},
         ]
         result = {
-            "session_id": session_id,
+            "session_id": ctx.session_id,
             "response": confirm_msg,
             "follow_up_needed": True,
             "slots": existing,
@@ -847,9 +892,9 @@ def _handle_post_pending_confirmation(session_id, message, redacted_message, exi
             "relaxed_search": False,
             "quick_replies": qr,
         }
-        _log_turn(session_id, redacted_message, result,
+        _log_turn(ctx.session_id, ctx.redacted_message, result,
                   "topic_shift_disambiguation",
-                  request_id=request_id, tone=tone)
+                  request_id=ctx.request_id, tone=ctx.tone)
         return result
 
     nudge_prefix = "Just to make sure — "
@@ -867,7 +912,7 @@ def _handle_post_pending_confirmation(session_id, message, redacted_message, exi
         + ' Tap "Yes, search" to go, or you can change the details.'
     )
     result = {
-        "session_id": session_id,
+        "session_id": ctx.session_id,
         "response": confirm_msg,
         "follow_up_needed": True,
         "slots": existing,
@@ -876,6 +921,6 @@ def _handle_post_pending_confirmation(session_id, message, redacted_message, exi
         "relaxed_search": False,
         "quick_replies": _confirmation_quick_replies(existing),
     }
-    _log_turn(session_id, redacted_message, result, "confirmation_nudge",
-              request_id=request_id, tone=tone)
+    _log_turn(ctx.session_id, ctx.redacted_message, result, "confirmation_nudge",
+              request_id=ctx.request_id, tone=ctx.tone)
     return result

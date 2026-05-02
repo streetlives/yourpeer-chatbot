@@ -48,6 +48,16 @@ import logging
 import time
 from typing import Optional, Tuple
 
+# Imported under the private alias because ``detect_crisis()`` calls it
+# internally to normalize curly apostrophes (U+2019 et al.) before
+# substring matching. 11 DV/trafficking phrases ("he's going to hurt me",
+# "they won't let me go", etc.) have no no-apostrophe fallback variant in
+# the phrase lists below, so without this normalization mobile users
+# typing those phrases with autocorrect would silently miss the regex
+# tier and fall through to the LLM. See app/utils/text_normalize.py.
+from app.utils.text_normalize import normalize_apostrophes as _normalize_apostrophes
+
+
 # ---------------------------------------------------------------------------
 # LLM CLIENT — uses shared Anthropic client from claude_client.py
 # ---------------------------------------------------------------------------
@@ -510,7 +520,13 @@ def detect_crisis(text: str, skip_llm: bool = False) -> Optional[Tuple[str, str]
     Categories: "suicide_self_harm", "medical_emergency",
                 "domestic_violence", "safety_concern", "trafficking", "violence"
     """
-    lower = text.lower()
+    # Normalize curly apostrophes from mobile autocorrect (U+2019, U+2018,
+    # U+02BC, U+0060) → straight U+0027 BEFORE substring matching. Without
+    # this, 11 DV/trafficking phrases ("he's going to hurt me", "they won't
+    # let me go", etc.) have no curly-apostrophe fallback variant in the
+    # phrase lists and would silently miss the regex tier. See module-level
+    # _normalize_apostrophes docstring for the full rationale.
+    lower = _normalize_apostrophes(text.lower())
 
     # --- Stage 1: Regex pre-check ---
     for category, phrases, response in _CRISIS_CATEGORIES:

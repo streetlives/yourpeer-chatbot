@@ -30,6 +30,7 @@ from app.services.audit_log import log_session_reset
 
 from ..context import MessageContext, _USE_LLM, _empty_reply
 from ..logging import _log_turn
+from ..session_helpers import has_user_content
 
 
 logger = logging.getLogger(__name__)
@@ -41,34 +42,6 @@ _SHAME_HELP_SIGNALS = (
     "embarrassed", "ashamed", "pathetic", "humiliating",
     "hard to ask", "hard for me", "hate asking", "hate to ask",
     "difficult to ask", "burden", "swallow my pride",
-)
-
-
-# Slot keys that represent user-provided content (vs Trust Model 5 control
-# flags / always-populated metadata). Used by ``_handle_greeting`` to decide
-# whether the session has a real prior search in progress.
-#
-# Background: the unified extractor returns all 13 slot fields on every
-# turn (Trust Model 5: `no_requirements`, `_contradiction`, `_is_additive`
-# are always present as bools defaulting to False; `_populations` is
-# always present as a list defaulting to []). After a turn 1 of pure
-# casual chat ("how's it going?"), the session contains
-# `{"no_requirements": False, "_populations": [], ...}` — every value is
-# non-None even though the user shared nothing. The old
-# `any(v is not None for v in ctx.existing.values())` check therefore
-# misread casual-chat sessions as having an active search and produced
-# the misleading "Hey again! I still have your earlier search info..."
-# response on a follow-up greeting (eval scenario
-# ``conversational_just_chatting``, regressed in R25 and persistent).
-#
-# Whitelisting the user-content slots fixes this: empty `_populations`
-# evaluates falsy, the False default of `no_requirements` doesn't
-# trigger, and the resume branch only fires when the user actually
-# shared something searchable.
-_USER_PROVIDED_SLOTS = (
-    "service_type", "service_detail", "additional_services",
-    "location", "urgency", "age", "family_status",
-    "_gender", "_populations", "org_name",
 )
 
 
@@ -203,15 +176,16 @@ def _handle_reset(ctx: MessageContext):
 def _handle_greeting(ctx: MessageContext):
     """Welcome message. If we have prior session state, offer to resume or reset.
 
-    The "prior state" check uses ``_USER_PROVIDED_SLOTS`` rather than
-    ``any(v is not None for v in ctx.existing.values())`` — see the
-    constant's docstring. The old check misread Trust Model 5 control
-    flags (``no_requirements``, ``_contradiction``, ``_is_additive``)
-    and the always-empty ``_populations`` list as evidence of a prior
-    search, producing "I still have your earlier search info" after a
-    casual first turn that had no search.
+    The "prior state" check uses ``has_user_content()`` rather than
+    ``any(v is not None for v in ctx.existing.values())`` — see
+    ``session_helpers._USER_PROVIDED_SLOTS`` for the bug this predicate
+    fixes. The naive check misread Trust Model 5 control flags
+    (``no_requirements``, ``_contradiction``, ``_is_additive``) and the
+    always-empty ``_populations`` list as evidence of a prior search,
+    producing "I still have your earlier search info" after a casual
+    first turn that had no search.
     """
-    has_prior_search = any(ctx.existing.get(k) for k in _USER_PROVIDED_SLOTS)
+    has_prior_search = has_user_content(ctx.existing)
     if has_prior_search:
         response = (
             "Hey again! I still have your earlier search info. "

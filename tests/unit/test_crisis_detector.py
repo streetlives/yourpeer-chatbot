@@ -591,3 +591,203 @@ def test_llm_uses_sonnet_for_crisis():
     assert call_kwargs.get("max_tokens", 999) <= 60, \
         "Max tokens should be small (60) — crisis response is ~15 tokens"
 
+
+# -----------------------------------------------------------------------
+# CURLY-APOSTROPHE NORMALIZATION (REGRESSION)
+# -----------------------------------------------------------------------
+#
+# Background: mobile autocorrect produces U+2019 (right single quotation
+# mark) instead of U+0027 (apostrophe). The regex tier originally used
+# straight-apostrophe literals like "he's going to hurt me" and would
+# silently miss curly-apostrophe input.
+#
+# For 11 specific DV/trafficking phrases, the audit found NO no-apostrophe
+# fallback variant in the phrase lists either — meaning the regex tier
+# would have completely missed these crisis signals from mobile users.
+# These tests pin the contract that regex catches them with both
+# apostrophe variants. See AUDIT_FINDINGS.md.
+
+# All 11 phrases identified in the audit as having no no-apostrophe variant
+# in _DOMESTIC_VIOLENCE_PHRASES, _SAFETY_CONCERN_PHRASES, _YOUTH_RUNAWAY_PHRASES,
+# or _TRAFFICKING_PHRASES. Each maps to its expected category.
+_AUDIT_MISSING_VARIANT_PHRASES = (
+    ("he's going to come back", "domestic_violence"),
+    ("he's going to hurt me", "domestic_violence"),
+    ("he's looking for me", "safety_concern"),
+    ("home isn't safe", "youth_runaway"),
+    ("said he'd hurt me", "domestic_violence"),
+    ("said she'd hurt me", "domestic_violence"),
+    ("she's going to come back", "domestic_violence"),
+    ("she's going to hurt me", "domestic_violence"),
+    ("she's looking for me", "safety_concern"),
+    ("they won't let me go", "trafficking"),
+    ("they're going to find me", "safety_concern"),
+)
+
+
+def _curly(text: str) -> str:
+    """Replace straight apostrophe with U+2019 (mobile autocorrect form)."""
+    return text.replace("'", "\u2019")
+
+
+def test_audit_phrases_fire_with_straight_apostrophe():
+    """Sanity: each audit phrase fires the regex tier with a straight apostrophe.
+
+    This would have passed even before the normalization fix — establishing
+    the baseline that the phrase IS in the regex lists with the canonical
+    apostrophe form, so the curly-apostrophe test below is testing the
+    normalization specifically and not a missing phrase.
+    """
+    for phrase, expected_category in _AUDIT_MISSING_VARIANT_PHRASES:
+        result = detect_crisis(phrase, skip_llm=True)
+        assert result is not None, (
+            f"Regex tier missed crisis with straight apostrophe: {phrase!r}. "
+            f"This phrase must exist in the relevant category's list."
+        )
+        assert result[0] == expected_category, (
+            f"Wrong category for {phrase!r}: got {result[0]}, "
+            f"expected {expected_category}"
+        )
+
+
+def test_audit_phrases_fire_with_curly_apostrophe():
+    """Regression: each audit phrase fires the regex tier with U+2019.
+
+    This is the primary fix verification. Without normalization, all 11
+    phrases would fail this test — they have no no-apostrophe fallback
+    variant, so the curly-apostrophe input has nothing to match against.
+
+    Critically, the test uses ``skip_llm=True`` to verify the REGEX TIER
+    catches the crisis. Without skip_llm, the LLM fallback would mask the
+    bug by catching the crisis (slowly, with potentially wrong category).
+    """
+    for phrase, expected_category in _AUDIT_MISSING_VARIANT_PHRASES:
+        curly_phrase = _curly(phrase)
+        # Sanity: the curly form actually contains U+2019
+        assert "\u2019" in curly_phrase, (
+            f"Test setup error: {phrase!r} has no apostrophe to make curly"
+        )
+
+        result = detect_crisis(curly_phrase, skip_llm=True)
+        assert result is not None, (
+            f"REGRESSION: regex tier missed crisis with curly apostrophe: "
+            f"{curly_phrase!r}. The _normalize_apostrophes() call in "
+            f"detect_crisis() should have mapped U+2019 to U+0027 before "
+            f"substring matching."
+        )
+        assert result[0] == expected_category, (
+            f"Wrong category for {curly_phrase!r}: got {result[0]}, "
+            f"expected {expected_category}"
+        )
+
+
+def test_curly_apostrophe_works_for_all_categories():
+    """Spot-check curly-apostrophe normalization for one phrase per category
+    that ALSO has a no-apostrophe variant in its list.
+
+    These are different phrases from the audit list above — chosen because
+    they have a no-apostrophe fallback, so they would have worked even
+    without normalization (via the fallback). This test confirms the fix
+    doesn't BREAK them — that normalizing curly→straight still hits the
+    canonical phrase, not just the no-apostrophe variant.
+    """
+    spot_checks = (
+        ("I can't take it anymore", "suicide_self_harm"),
+        ("I can't go on", "suicide_self_harm"),
+        ("don't want to wake up", "suicide_self_harm"),
+        ("can't breathe", "medical_emergency"),
+    )
+    for phrase, expected_category in spot_checks:
+        result = detect_crisis(_curly(phrase), skip_llm=True)
+        assert result is not None, (
+            f"Curly-apostrophe variant of {phrase!r} not detected"
+        )
+        assert result[0] == expected_category, (
+            f"Wrong category for curly variant of {phrase!r}: "
+            f"got {result[0]}, expected {expected_category}"
+        )
+
+
+def test_normalize_apostrophes_handles_all_codepoints():
+    """The normalizer handles four non-standard apostrophe codepoints.
+
+    Direct unit test of the helper rather than going through detect_crisis,
+    so a regression in the normalizer surfaces here cleanly.
+    """
+    from app.services.crisis_detector import _normalize_apostrophes
+
+    assert _normalize_apostrophes("he\u2019s") == "he's"   # right single quote
+    assert _normalize_apostrophes("he\u2018s") == "he's"   # left single quote
+    assert _normalize_apostrophes("he\u02bcs") == "he's"   # modifier letter apostrophe
+    assert _normalize_apostrophes("he`s") == "he's"        # grave accent
+
+    # Mixed codepoints in one string
+    assert _normalize_apostrophes("he\u2019s and she\u2018s") == "he's and she's"
+
+    # Already-normalized text passes through unchanged
+    assert _normalize_apostrophes("he's") == "he's"
+
+    # Empty / None inputs pass through (callers may rely on this)
+    assert _normalize_apostrophes("") == ""
+    assert _normalize_apostrophes(None) is None
+
+
+def test_no_false_positive_on_curly_apostrophe_in_safe_message():
+    """Curly apostrophes in non-crisis messages must not falsely trigger crisis.
+
+    Catches a hypothetical regression where the normalization was applied
+    too aggressively (e.g., normalizing whole categories of punctuation that
+    happen to contain the codepoints).
+    """
+    safe_messages_with_curly = (
+        "I\u2019m looking for food in Brooklyn",
+        "I\u2019d like to find a shelter near me",
+        "What\u2019s the closest food pantry?",
+        "Can you help me find what\u2019s open today?",
+    )
+    for msg in safe_messages_with_curly:
+        result = detect_crisis(msg, skip_llm=True)
+        assert result is None, (
+            f"False positive on safe message with curly apostrophe: {msg!r} "
+            f"-> {result}"
+        )
+
+
+def test_sub_crisis_emotional_filter_applies_to_curly_apostrophe():
+    """Sub-crisis emotional phrases ("I'm scared", "I'm not okay") must
+    bypass the LLM with both straight and curly apostrophes.
+
+    These phrases are handled by the emotional tone handler downstream,
+    not by the crisis detector. Without normalization, a curly-apostrophe
+    "I'm scared" would fall through the sub-crisis filter (which uses
+    straight-apostrophe phrases) and unnecessarily invoke the Sonnet LLM
+    crisis-detection call — adding latency and cost on a non-crisis
+    message.
+
+    Forces ``_USE_LLM_DETECTION=True`` because the test only has signal
+    when the LLM path is reachable. With the env-default of False (no API
+    key), the LLM call site is skipped and the mock can't observe whether
+    the sub-crisis filter or the env-flag was the early-exit cause.
+    """
+    sub_crisis_phrases = (
+        "I'm scared",
+        "I'm not okay",
+        "I'm struggling",
+    )
+    for phrase in sub_crisis_phrases:
+        # Mock the LLM AND force the env flag to True; we want to assert
+        # the sub-crisis filter (not the env flag) is the early-exit reason.
+        with patch("app.services.crisis_detector._detect_crisis_llm") as mock_llm, \
+             patch("app.services.crisis_detector._USE_LLM_DETECTION", True):
+            mock_llm.return_value = None
+            result = detect_crisis(_curly(phrase))
+            assert result is None, (
+                f"Sub-crisis emotional phrase {phrase!r} (curly form) "
+                f"should not trigger crisis"
+            )
+            assert not mock_llm.called, (
+                f"LLM was unnecessarily called for sub-crisis phrase {phrase!r} "
+                f"(curly form). The sub-crisis filter should match the "
+                f"normalized form and short-circuit before LLM invocation."
+            )
+

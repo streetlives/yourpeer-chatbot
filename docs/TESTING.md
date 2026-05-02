@@ -323,7 +323,7 @@ Validates query template correctness, SQL structure, service card formatting, sc
 | Result sorting | 6 | Open-now priority, proximity-first with distance, freshness ordering, relaxed sort consistency |
 | Shelter taxonomy enrichment | 8 | Youth (always, age eligibility handles exclusion), senior (age≥62), families (with_children), single adult (alone), LGBTQ Young Adult (always), base taxonomies preserved, food queries not enriched, TEMPLATES default_params not mutated |
 
-### `test_crisis_detector.py` — 36 tests
+### `test_crisis_detector.py` — 42 tests
 
 Validates crisis detection across five categories with correct hotline resources and no false positives.
 
@@ -616,7 +616,7 @@ Prevents silent data loss at serialization boundaries by asserting that mock fix
 | Admin stats drift | 5 | Top-level keys, confirmation breakdown shape, conversation quality shape, tone distribution shape, multi-intent shape |
 | Persistence failure isolation | 6 | log_conversation_turn, log_query_execution, log_feedback, save/clear session, full generate_reply all survive persistence failures |
 
-### `test_multi_turn_and_context.py` — 55 tests
+### `test_multi_turn_and_context.py` — 56 tests
 
 Comprehensive regression tests for multi-turn, multi-intent, and context-aware routing. Guards against state transition bugs, _last_action lifecycle issues, frustration counting, and handler interaction patterns found in eval analysis.
 

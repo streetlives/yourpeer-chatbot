@@ -29,12 +29,13 @@ helpers end-to-end via ``generate_reply``.
 from app.services.session_store import save_session_slots
 
 
-# --- Module-level constants (formerly inline in orchestrator.py) ---
+# --- Module-level constants ---
 
 # Categories that read and consume ``_last_action`` on the next turn.
 # When the user's next category is NOT one of these, any pending
 # ``_last_action`` was set in a prior emotional/escalation/crisis
 # context that no longer applies and should be cleared.
+# (Originally inline in orchestrator.py.)
 _CONSUMES_LAST_ACTION = frozenset({"confirm_yes", "confirm_deny"})
 
 
@@ -42,7 +43,64 @@ _CONSUMES_LAST_ACTION = frozenset({"confirm_yes", "confirm_deny"})
 # Older entries are dropped first. The transcript is included in the
 # context window of LLM calls (``slot_extraction.extract`` reads it),
 # so the upper bound also caps token cost.
+# (Originally inline in orchestrator.py.)
 _MAX_TRANSCRIPT = 20
+
+
+# Slot keys that represent user-provided content. Distinguished from
+# Trust Model 5 control flags (``no_requirements``, ``_contradiction``,
+# ``_is_additive``) which are always-populated metadata that the unified
+# extractor returns on every turn — including turns where the user
+# shared nothing searchable.
+#
+# Background — why this list exists at all:
+# After a turn 1 of pure casual chat ("how's it going?"), the session
+# contains ``{"no_requirements": False, "_populations": [],
+# "_contradiction": False, "_is_additive": False, "transcript": [...]}``.
+# Every value is non-None even though the user shared nothing. A naive
+# ``any(v is not None for v in existing.values())`` check therefore
+# misreads casual-chat sessions as having an active search.
+#
+# Whitelisting the user-content slots fixes this: empty ``_populations``
+# evaluates falsy via ``bool([])``, the False default of
+# ``no_requirements`` doesn't trigger, and the resume/has-state branch
+# only fires when the user actually shared something searchable.
+#
+# Originally a private constant in ``handlers/meta.py`` for
+# ``_handle_greeting``. Promoted here so Phase C handlers
+# (``_handle_pending_confirmation``, ``_handle_post_results_interaction``,
+# etc.) can use the same predicate without re-importing across handler
+# modules or re-defining the list.
+_USER_PROVIDED_SLOTS = (
+    "service_type", "service_detail", "additional_services",
+    "location", "urgency", "age", "family_status",
+    "_gender", "_populations", "org_name",
+)
+
+
+def has_user_content(session: dict | None) -> bool:
+    """Return True if the session contains any user-provided slot value.
+
+    Distinguishes "the user has shared something searchable" from "the
+    extractor has run and populated control flags" — see the
+    ``_USER_PROVIDED_SLOTS`` docstring for the bug this predicate fixes.
+
+    Examples:
+        ``{}``                                    → False
+        ``None``                                  → False
+        ``{"no_requirements": False}``            → False (control flag)
+        ``{"_populations": []}``                  → False (empty list)
+        ``{"service_type": "shelter"}``           → True
+        ``{"location": "Brooklyn"}``              → True
+        ``{"_gender": "female"}``                 → True
+
+    The check uses ``.get(k)`` (not ``k in session``) so a key with a
+    falsy value — empty string, empty list, None — counts as "no
+    content" rather than "content present but falsy."
+    """
+    if not session:
+        return False
+    return any(session.get(k) for k in _USER_PROVIDED_SLOTS)
 
 
 # --- Pure mutators (no save) ---
@@ -188,11 +246,14 @@ def _persist_emotional_context_late(
     ``_emotional_context = "shame"`` and the late computation wants
     ``"frustrated"``, the in-memory dict updates but the save
     condition is False (both are truthy), so the change is lost on
-    follow-up paths that don't save again before returning. This
-    bug is preserved here bit-for-bit and is queued for fix in PR-γ
-    (TEST_QUALITY_PLAN.md). When that fix lands, change the
-    condition to ``!=`` and add a regression test in
-    ``test_session_helpers.py``.
+    follow-up paths that don't save again before returning. This bug
+    is preserved here bit-for-bit; tracking and resolution plan are
+    in ``ORCHESTRATOR_AUDIT.md`` ("Known-deferred items"). The
+    BUGGY behavior is pinned by
+    ``test_late_persist_does_not_save_on_value_to_value_change`` in
+    ``test_session_helpers.py``; that test's ``save_recorder``
+    assertion needs to be inverted when the fix lands (change the
+    condition below to ``!=``).
     """
     if update is not None:
         merged["_emotional_context"] = update
