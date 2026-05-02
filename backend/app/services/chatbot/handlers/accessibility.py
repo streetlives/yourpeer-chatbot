@@ -19,6 +19,7 @@ from app.services.confirmation import (
     _confirmation_quick_replies,
 )
 from app.services.session_store import save_session_slots
+from app.utils.text_normalize import normalize_apostrophes
 
 from ..context import MessageContext, _empty_reply
 from ..logging import _log_turn
@@ -65,7 +66,13 @@ def _handle_demographic_skip(ctx: MessageContext):
 
     Returns a result dict if the skip pattern fired, None otherwise.
     """
-    skip_lower = ctx.message.lower().strip()
+    # Normalize curly apostrophes from mobile autocorrect before matching.
+    # Several entries in _DEMOGRAPHIC_SKIP_PHRASES contain straight
+    # apostrophes ("i'd rather not say", "don't want to say", "that's
+    # personal"); without normalization, mobile users typing those with
+    # autocorrect would be re-asked the demographic question they tried
+    # to skip — a SAMHSA empowerment violation.
+    skip_lower = normalize_apostrophes(ctx.message.lower().strip())
     is_skip = (
         any(p in skip_lower for p in _DEMOGRAPHIC_SKIP_PHRASES)
         or skip_lower in ("skip", "pass")
@@ -111,7 +118,10 @@ def _handle_location_unknown(ctx: MessageContext):
 
     Returns a result dict if the pattern fired, None otherwise.
     """
-    msg_lower = ctx.message.lower().strip()
+    # Normalize curly apostrophes from mobile autocorrect before matching.
+    # _LOCATION_UNKNOWN_PHRASES contains apostrophe-bearing entries like
+    # "i don't know", "i'm not sure", "doesn't matter".
+    msg_lower = normalize_apostrophes(ctx.message.lower().strip())
     is_location_unknown = (
         any(p in msg_lower for p in _LOCATION_UNKNOWN_PHRASES)
         or msg_lower in _LOCATION_UNKNOWN_EXACT

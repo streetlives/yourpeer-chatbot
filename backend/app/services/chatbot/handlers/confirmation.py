@@ -28,6 +28,7 @@ from app.services.slot_extractor import (
     merge_slots,
     next_follow_up_question,
 )
+from app.utils.text_normalize import normalize_apostrophes
 
 from ..context import _USE_LLM, _empty_reply
 from ..execution import _execute_and_respond
@@ -68,7 +69,11 @@ def _looks_like_topic_shift_question(message: str) -> bool:
     """
     if not message:
         return False
-    stripped = message.strip().lower()
+    # Normalize curly apostrophes from mobile autocorrect before matching
+    # against _WH_WORD_STARTERS, which has entries like "what's", "who's",
+    # "how's". Without normalization, mobile users typing "what's your
+    # name?" with autocorrect would fail topic-shift detection.
+    stripped = normalize_apostrophes(message.strip().lower())
     # Too short to be a substantive question — probably a confirmation
     # fragment like "ok?", "yes?", single-word "what".
     words = stripped.split()

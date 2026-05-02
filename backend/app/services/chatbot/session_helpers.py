@@ -45,6 +45,62 @@ _CONSUMES_LAST_ACTION = frozenset({"confirm_yes", "confirm_deny"})
 _MAX_TRANSCRIPT = 20
 
 
+# Slot keys that represent user-provided content. Distinguished from
+# Trust Model 5 control flags (``no_requirements``, ``_contradiction``,
+# ``_is_additive``) which are always-populated metadata that the unified
+# extractor returns on every turn — including turns where the user
+# shared nothing searchable.
+#
+# Background — why this list exists at all:
+# After a turn 1 of pure casual chat ("how's it going?"), the session
+# contains ``{"no_requirements": False, "_populations": [],
+# "_contradiction": False, "_is_additive": False, "transcript": [...]}``.
+# Every value is non-None even though the user shared nothing. A naive
+# ``any(v is not None for v in existing.values())`` check therefore
+# misreads casual-chat sessions as having an active search.
+#
+# Whitelisting the user-content slots fixes this: empty ``_populations``
+# evaluates falsy via ``bool([])``, the False default of
+# ``no_requirements`` doesn't trigger, and the resume/has-state branch
+# only fires when the user actually shared something searchable.
+#
+# Originally a private constant in ``handlers/meta.py`` for
+# ``_handle_greeting``. Promoted here so Phase C handlers
+# (``_handle_pending_confirmation``, ``_handle_post_results_interaction``,
+# etc.) can use the same predicate without re-importing across handler
+# modules or re-defining the list.
+_USER_PROVIDED_SLOTS = (
+    "service_type", "service_detail", "additional_services",
+    "location", "urgency", "age", "family_status",
+    "_gender", "_populations", "org_name",
+)
+
+
+def has_user_content(session: dict | None) -> bool:
+    """Return True if the session contains any user-provided slot value.
+
+    Distinguishes "the user has shared something searchable" from "the
+    extractor has run and populated control flags" — see the
+    ``_USER_PROVIDED_SLOTS`` docstring for the bug this predicate fixes.
+
+    Examples:
+        ``{}``                                    → False
+        ``None``                                  → False
+        ``{"no_requirements": False}``            → False (control flag)
+        ``{"_populations": []}``                  → False (empty list)
+        ``{"service_type": "shelter"}``           → True
+        ``{"location": "Brooklyn"}``              → True
+        ``{"_gender": "female"}``                 → True
+
+    The check uses ``.get(k)`` (not ``k in session``) so a key with a
+    falsy value — empty string, empty list, None — counts as "no
+    content" rather than "content present but falsy."
+    """
+    if not session:
+        return False
+    return any(session.get(k) for k in _USER_PROVIDED_SLOTS)
+
+
 # --- Pure mutators (no save) ---
 
 def _append_to_transcript(merged: dict, redacted_message: str) -> None:

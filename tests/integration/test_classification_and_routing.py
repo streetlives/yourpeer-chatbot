@@ -2071,6 +2071,47 @@ def test_idk_variants_after_location_ask(fresh_session):
         assert "📍 Use my location" in labels, f"'{phrase}' should offer geolocation"
 
 
+def test_idk_variants_with_curly_apostrophe(fresh_session):
+    """Mobile autocorrect produces curly apostrophes (U+2019) where users
+    typed straight ones. Without normalize_apostrophes() in the handler,
+    "I don't know" / "I'm not sure" / "doesn't matter" with curly
+    apostrophes would silently miss _LOCATION_UNKNOWN_PHRASES and the
+    user wouldn't get the geolocation/borough picker.
+
+    This integration test also serves as coverage for the sibling
+    handler ``_handle_demographic_skip`` in the same module
+    (``accessibility.py``). Both handlers received the same
+    ``normalize_apostrophes`` fix, but demographic_skip is only
+    reachable in unusual flows (post-confirmation-clear, etc.) that
+    are awkward to set up via natural conversation. Pinning
+    location_unknown's curly behavior here is sufficient to catch
+    a regression in the shared ``normalize_apostrophes`` import or
+    a partial revert to the accessibility module.
+    """
+    curly_phrases = [
+        "I don\u2019t know",
+        "I\u2019m not sure",
+        "I don\u2019t know where I am",
+        "doesn\u2019t matter",
+    ]
+    for phrase in curly_phrases:
+        from app.services.session_store import clear_session
+        clear_session(fresh_session)
+        send("I need food", session_id=fresh_session)
+        result = send(phrase, session_id=fresh_session)
+        labels = [qr["label"] for qr in result.get("quick_replies", [])]
+        assert "📍 Use my location" in labels, (
+            f"Curly-apostrophe variant {phrase!r} should still offer "
+            f"geolocation. Without normalize_apostrophes() at the entry of "
+            f"_handle_location_unknown, this test fails because the curly "
+            f"form doesn't substring-match the straight-apostrophe entries "
+            f"in _LOCATION_UNKNOWN_PHRASES."
+        )
+
+
+
+
+
 def test_here_exact_match_no_false_positive(fresh_session):
     """'here' inside longer phrases should NOT trigger location-unknown handler.
     The bot correctly shows location buttons because it needs a location for

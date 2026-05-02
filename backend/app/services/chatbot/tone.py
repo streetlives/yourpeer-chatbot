@@ -9,6 +9,7 @@ on the user's detected emotional signals. Research-driven: see
 import re
 
 from app.services.responses import random_warmth_prefix
+from app.utils.text_normalize import normalize_apostrophes
 
 
 # Phrases indicating shame/vulnerability disclosure. When these co-occur with
@@ -81,7 +82,12 @@ def _compute_tone_prefix(
     caller should save to ``merged["_emotional_context"]`` for use on the
     next turn (None = don't change).
     """
-    msg_lower = message.lower()
+    # Normalize curly apostrophes (U+2019, etc.) from mobile autocorrect
+    # before substring matching. Several entries in _SHAME_SIGNALS and
+    # _MEDICATION_DEPLETION contain straight apostrophes; without this,
+    # mobile users typing "I can't afford to eat" would silently miss the
+    # shame normalization prefix.
+    msg_lower = normalize_apostrophes(message.lower())
     is_shame = any(s in msg_lower for s in _SHAME_SIGNALS)
     is_medical_urgent = (
         is_service_flow

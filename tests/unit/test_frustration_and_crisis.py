@@ -515,6 +515,27 @@ class TestLooksLikeTopicShiftQuestion:
         assert _looks_like_topic_shift_question("do you remember me") is True
         assert _looks_like_topic_shift_question("is this conversation private") is True
 
+    def test_curly_apostrophe_in_wh_word_opener_fires(self):
+        """Mobile autocorrect produces curly apostrophes (U+2019) where the
+        _WH_WORD_STARTERS list expects straight (U+0027). Without
+        normalize_apostrophes() in _looks_like_topic_shift_question, a
+        mobile user typing 'what's your name?' with autocorrect would
+        fail topic-shift detection and the bot would silently re-nudge
+        the prior confirmation.
+        """
+        from app.services.chatbot.handlers.confirmation import (
+            _looks_like_topic_shift_question,
+        )
+        # Curly apostrophe variants of the openers tested above
+        assert _looks_like_topic_shift_question("what\u2019s your name?") is True, (
+            "Curly-apostrophe 'what's your name?' should still fire as "
+            "topic-shift. Without normalize_apostrophes(), the curly form "
+            "doesn't match 'what\\'s ' in _WH_WORD_STARTERS and the helper "
+            "returns False for a clearly off-topic question."
+        )
+        assert _looks_like_topic_shift_question("who\u2019s in charge here") is True
+        assert _looks_like_topic_shift_question("how\u2019s this going to work?") is True
+
     def test_question_mark_four_words_fires(self):
         """Question mark + substantive content but no wh-word opener
         still counts as a topic shift."""

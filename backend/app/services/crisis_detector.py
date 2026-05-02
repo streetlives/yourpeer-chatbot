@@ -48,43 +48,15 @@ import logging
 import time
 from typing import Optional, Tuple
 
-
-# ---------------------------------------------------------------------------
-# Apostrophe normalization
-# ---------------------------------------------------------------------------
-# Mobile users frequently send curly apostrophes (U+2019) where the
-# crisis-phrase lists expect straight (U+0027). Without normalization, a
-# user typing "he's going to hurt me" with mobile autocorrect would
-# silently miss the regex tier and fall through to the LLM fallback —
-# adding 1-3s of latency to a safety-critical response and potentially
-# losing category specificity (DV-specific resources vs. generic
-# safety_concern). For DV/trafficking phrases that have NO no-apostrophe
-# fallback variant in the phrase lists below, this would mean the regex
-# tier never catches the crisis at all.
-#
-# Normalize once at the start of detect_crisis() rather than authoring
-# multi-codepoint character classes inside every phrase, which is
-# harder to read and easier to forget when adding new phrases.
-#
-# Duplicated from contextual_acknowledgments.py for scope discipline:
-# this is an urgent safety fix and we don't want to expand to a shared
-# text-normalization module in the same PR. Pre-Phase-C cleanup will
-# promote both copies to a shared helper. See AUDIT_FINDINGS.md.
-_NON_STANDARD_APOSTROPHES = ("\u2019", "\u2018", "\u02bc", "\u0060")
-
-
-def _normalize_apostrophes(text: str) -> str:
-    """Replace non-standard apostrophes with straight ASCII apostrophe.
-
-    Returns the input unchanged when ``text`` is None or empty so callers
-    can pass through and check truthiness afterward.
-    """
-    if not text:
-        return text
-    for ch in _NON_STANDARD_APOSTROPHES:
-        if ch in text:
-            text = text.replace(ch, "'")
-    return text
+from app.utils.text_normalize import normalize_apostrophes as _normalize_apostrophes
+# ``_normalize_apostrophes`` is imported under its private alias because
+# it's used internally by ``detect_crisis()`` to normalize curly
+# apostrophes from mobile autocorrect (U+2019, U+2018, U+02BC, U+0060)
+# to U+0027 before substring matching against the crisis-phrase lists.
+# Without this, 11 DV/trafficking phrases ("he's going to hurt me",
+# "they won't let me go", etc.) would silently miss the regex tier
+# because the phrase lists below have no no-apostrophe fallback variant.
+# See app/utils/text_normalize.py for full rationale.
 
 # ---------------------------------------------------------------------------
 # LLM CLIENT — uses shared Anthropic client from claude_client.py

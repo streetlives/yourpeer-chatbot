@@ -193,6 +193,56 @@ class TestComputeTonePrefix:
         assert prefix == ""
         assert ctx is None
 
+    # -----------------------------------------------------------------------
+    # Curly-apostrophe normalization (mobile autocorrect)
+    # -----------------------------------------------------------------------
+    # Several entries in _SHAME_SIGNALS and _MEDICATION_DEPLETION contain
+    # straight apostrophes ("can't believe i'm", "don't have my", etc.).
+    # Without normalization, mobile users typing those phrases with
+    # autocorrect produce U+2019 instead of U+0027 and silently miss the
+    # shame normalization or medical urgency prefix. These tests pin the
+    # contract that both apostrophe variants trigger the prefix.
+
+    def test_shame_fires_with_curly_apostrophe_in_signal(self):
+        """A shame signal that contains an apostrophe must fire with U+2019."""
+        # "can't believe i'm" → curly variant
+        prefix, ctx = _compute_tone_prefix(
+            message="I can\u2019t believe I\u2019m asking for help",
+            response_tone="emotional",
+            is_service_flow=True,
+            prior_emotional_context=None,
+        )
+        assert "real strength" in prefix, (
+            "Shame signal with curly apostrophe should trigger the "
+            "normalizing prefix. Without normalize_apostrophes() at the "
+            "msg_lower line, this test fails because 'can\\u2019t believe "
+            "i\\u2019m' is not in _SHAME_SIGNALS as written."
+        )
+        assert ctx == "shame"
+
+    def test_shame_fires_with_curly_apostrophe_food_context(self):
+        """'can't afford to eat' with curly apostrophe still fires shame."""
+        prefix, ctx = _compute_tone_prefix(
+            message="I can\u2019t afford to eat anymore",
+            response_tone=None,
+            is_service_flow=True,
+            prior_emotional_context=None,
+        )
+        assert "real strength" in prefix
+        assert ctx == "shame"
+
+    def test_medical_urgent_fires_with_curly_apostrophe_in_depletion(self):
+        """Medical depletion + medication keyword still fires with curly."""
+        # "don't have my" → curly variant + "insulin"
+        prefix, ctx = _compute_tone_prefix(
+            message="I don\u2019t have my insulin",
+            response_tone=None,
+            is_service_flow=True,
+            prior_emotional_context=None,
+        )
+        assert "urgent" in prefix.lower()
+        assert ctx == "medical_urgent"
+
 
 # -----------------------------------------------------------------------
 # _run_llm_gate — short-circuit invariants
