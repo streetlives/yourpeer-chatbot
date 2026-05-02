@@ -546,7 +546,8 @@ def generate_reply(
     #
     # NOTE: this helper preserves the late-site save bug (Bug 1 in
     # ORCHESTRATOR_AUDIT.md): saves only on a None→non-None
-    # transition, not on value→different-value. Fix is queued as PR-γ.
+    # transition, not on value→different-value. See
+    # ORCHESTRATOR_AUDIT.md "Known-deferred items" for tracking.
     _persist_emotional_context_late(
         session_id, merged, existing, _emotional_context_update
     )

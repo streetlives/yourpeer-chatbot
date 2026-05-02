@@ -36,7 +36,7 @@ This is a meaningful refactor — touches every handler — but the work is mech
 
 **Location:** lines 516–534
 
-**Setup:** `_compute_tone_prefix` is called twice — once early (line 275) for help/confused/emotional handlers, once late (line 516) to handle the B.2 promotion case (negative_preference → service changes `is_service_flow=False` to `True`).
+**Setup:** `_compute_tone_prefix` is called twice — once early for help/confused/emotional handlers, once late to handle the B.2 promotion case (negative_preference → service changes `is_service_flow=False` to `True`).
 
 **Problem:**
 
@@ -60,13 +60,13 @@ The condition checks "did the late call introduce a new value where there wasn't
 
 1. Turn N-1: user expressed shame, session has `_emotional_context = "shame"`
 2. Turn N message: "I already tried those, I need shelter instead" (B.2 negative_preference)
-3. Early `_compute_tone_prefix` at line 275: `is_service_flow=False`, returns `_emotional_context_update=None` (most prefixes don't fire on non-service-flow)
-4. Line 286: `_emotional_context_update is None` so no early save
+3. Early `_compute_tone_prefix`: `is_service_flow=False`, returns `_emotional_context_update=None` (most prefixes don't fire on non-service-flow)
+4. `_emotional_context_update is None` so no early save
 5. B.2 promotes category to "service"
-6. Line 516: late call with `is_service_flow=True` returns `_emotional_context_update="frustrated"`
-7. Line 528: `merged["_emotional_context"] = "frustrated"` (overwrites "shame" in memory)
-8. Line 533: `merged.get(...)` truthy ("frustrated"), `existing.get(...)` truthy ("shame") → condition False → **no save**
-9. If response takes the follow-up path (line 570 or 586), no further save happens. The "frustrated" update is lost; the next turn loads "shame" from session.
+6. late call with `is_service_flow=True` returns `_emotional_context_update="frustrated"`
+7. `merged["_emotional_context"] = "frustrated"` (overwrites "shame" in memory)
+8. `merged.get(...)` truthy ("frustrated"), `existing.get(...)` truthy ("shame") → condition False → **no save**
+9. If response takes the follow-up path, no further save happens. The "frustrated" update is lost; the next turn loads "shame" from session.
 
 **Fix:** condition should be "save if the value differs from what's persisted":
 
@@ -217,7 +217,7 @@ The three call sites become 1–2 lines each. The tone-prefix asymmetry surfaces
 The orchestrator handles:
 - Transcript append + truncation (lines 475–481)
 - Queue-additional-services management (lines 483–493)
-- `_awaiting_service_after_clear` flag clearing (line 445)
+- `_awaiting_service_after_clear` flag clearing
 - `_last_action` clearing (lines 386–389)
 - `_emotional_context` persistence (lines 285–287, 527–534)
 
@@ -257,7 +257,7 @@ Uniform call shape across both patterns.
 
 ### 🟦 Smell 9: `_empty_reply` doesn't log
 
-Line 102: empty-message guard returns via `_empty_reply` without a `_log_turn` call. Every other return path in the orchestrator logs (verified all 24 handlers do). If the team wants empty-message events in audit logs, this is a gap.
+empty-message guard returns via `_empty_reply` without a `_log_turn` call. Every other return path in the orchestrator logs (verified all 24 handlers do). If the team wants empty-message events in audit logs, this is a gap.
 
 **Fix:** add `_log_turn(session_id, "", result, "empty_message", request_id=request_id, tone=None)` before returning. Or accept the gap intentionally — but document it.
 
