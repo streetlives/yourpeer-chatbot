@@ -39,6 +39,7 @@ from app.services.slot_extractor import (
     merge_slots,
     next_follow_up_question,
 )
+from app.services import slot_extraction
 
 from .context import MessageContext, _USE_LLM, _empty_reply
 from .handlers import (
@@ -489,8 +490,7 @@ def generate_reply(
             # disagrees with the LLM's pick (Phase 4 Stage 3
             # follow-up). When the source is "regex" or None, merge
             # behaves as before.
-            from app.services.slot_extraction import extract as extract_unified
-            extracted = extract_unified(
+            extracted = slot_extraction.extract(
                 message,
                 early_extracted,
                 conversation_history=existing.get("transcript", []),
@@ -542,12 +542,8 @@ def generate_reply(
     # Persist emotional context update (may differ from the early
     # computation if B.2 promoted — e.g., shame prefix only fires for
     # service flow, so the context could transition from None early to
-    # "shame" here).
-    #
-    # NOTE: this helper preserves the late-site save bug (Bug 1 in
-    # ORCHESTRATOR_AUDIT.md): saves only on a None→non-None
-    # transition, not on value→different-value. See
-    # ORCHESTRATOR_AUDIT.md "Known-deferred items" for tracking.
+    # "shame" here, or "shame" early to "frustrated" here on the
+    # negative_preference path).
     _persist_emotional_context_late(
         session_id, merged, existing, _emotional_context_update
     )

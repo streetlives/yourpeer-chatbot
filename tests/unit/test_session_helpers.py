@@ -8,11 +8,6 @@ five-clause AND in ``_update_queued_services``, the asymmetric
 save condition in ``_persist_emotional_context_late``) get
 multiple targeted tests so each individual mutant has at least one
 test that flips on it.
-
-Bug 1 (ORCHESTRATOR_AUDIT.md): the late-emotional-context save
-condition is preserved as-is. ``test_late_persist_does_not_save_on_value_to_value_change``
-*pins the buggy behavior*. When PR-γ fixes the bug, that test
-inverts to assert the save DID happen.
 """
 
 import pytest
@@ -450,28 +445,30 @@ class TestPersistEmotionalContextLate:
         _persist_emotional_context_late("sid", merged, existing, None)
         assert save_recorder == []
 
-    def test_late_persist_does_not_save_on_value_to_value_change(
+    def test_late_persist_saves_on_value_to_value_change(
         self, save_recorder
     ):
-        """PIN: ORCHESTRATOR_AUDIT.md Bug 1.
+        """Bug fix verification: when the early site set
+        ``_emotional_context = "shame"`` and the late computation
+        produces ``"frustrated"``, the change should now be persisted.
 
-        When the early site set ``_emotional_context = "shame"`` and the
-        late computation produces ``"frustrated"``, the in-memory dict
-        updates but the save condition evaluates ``"frustrated" and not
-        "shame"`` → False, so the change is NOT persisted.
-
-        This test pins the BUGGY behavior. When PR-γ fixes the
-        condition (``!=`` instead), invert the save_recorder
-        assertion to ``len(...) == 1`` and add a content check that
-        the persisted value is "frustrated".
+        Previously this test pinned the BUGGY no-save behavior. The
+        save condition was ``new and not old`` — False when both were
+        truthy, so the change was silently lost on follow-up paths.
+        Fixed to ``new and new != old`` so value→value transitions
+        save. The ``new`` truthiness guard is preserved so an
+        artificially empty merged dict (test 4 scenario) doesn't
+        trigger a save with stripped-down state.
         """
         merged = {"_emotional_context": "shame"}  # carried from existing into merged
         existing = {"_emotional_context": "shame"}
         _persist_emotional_context_late("sid", merged, existing, "frustrated")
-        # In-memory: updated (this part is correct).
+        # In-memory update.
         assert merged["_emotional_context"] == "frustrated"
-        # Persistence: BUG — not saved.
-        assert save_recorder == []
+        # Persistence: now fires because new != old.
+        assert len(save_recorder) == 1
+        # And the persisted value is the late-computed one, not the early one.
+        assert save_recorder[0][1]["_emotional_context"] == "frustrated"
 
     def test_save_uses_merged_dict_not_existing(self, save_recorder):
         """When the save fires, it persists ``merged`` (which may have
@@ -486,6 +483,34 @@ class TestPersistEmotionalContextLate:
         # The persisted dict is merged, not existing — so service_type
         # should appear.
         assert snapshot.get("service_type") == "shelter"
+
+    def test_save_does_not_fire_when_merged_value_falsy(self, save_recorder):
+        """The save condition's truthiness guard on the merged value
+        protects against artificially-empty merged dicts where existing
+        had context. A naked ``!=`` would treat that as a "value
+        cleared" transition and save the stripped-down dict, nuking
+        session state. Mutant kill: dropping ``new_value and ...``
+        would make this test fail (save fires inappropriately).
+
+        In real usage at the call site, ``merged`` is the output of
+        ``merge_slots(existing, extracted)`` and always carries through
+        existing fields, so this guard is defensive against the unit-
+        test shape rather than a production scenario.
+        """
+        merged = {}  # artificially empty, no context
+        existing = {"_emotional_context": "shame"}
+        _persist_emotional_context_late("sid", merged, existing, None)
+        assert save_recorder == []
+
+    def test_save_does_not_fire_when_value_unchanged(self, save_recorder):
+        """When merged and existing have the same context value (no
+        late update), no save fires. Mutant kill: dropping the
+        ``!= existing.get(...)`` clause would save here.
+        """
+        merged = {"_emotional_context": "shame"}
+        existing = {"_emotional_context": "shame"}
+        _persist_emotional_context_late("sid", merged, existing, None)
+        assert save_recorder == []
 
 
 # ===========================================================================

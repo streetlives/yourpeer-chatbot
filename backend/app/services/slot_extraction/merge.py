@@ -346,7 +346,6 @@ def _merge_llm_semantic(
 def _merge_service_type_and_primary_location(
     regex_result: dict,
     llm_result: dict,
-    message: Optional[str] = None,
     extraction_source: Optional[str] = None,
 ) -> tuple[Optional[str], Optional[str], list]:
     """Trust Model 3: the set-agreement rule for `service_type` and
@@ -396,11 +395,6 @@ def _merge_service_type_and_primary_location(
         can. This rule change unifies the treatment across paths and
         lets the prompt — not the merge — be the locus of primary-
         selection logic going forward.
-
-        `message` is preserved in the signature for backward
-        compatibility with direct-caller unit tests and for possible
-        future use; it is no longer consulted in the sets-match
-        branch.
 
     Semantic-priority carve-out (Phase 4 Stage 3 follow-up,
     April 2026):
@@ -488,9 +482,8 @@ def _merge_service_type_and_primary_location(
         #     The prompts can.
         #
         # This collapses the earlier short/narrative distinction. The
-        # `message` parameter is no longer consulted in this branch;
-        # it's preserved in the signature for backward compatibility
-        # with direct-caller unit tests and for future use.
+        # primary-selection logic now lives entirely in the LLM prompts;
+        # the merge layer just trusts the LLM's pick when the sets agree.
         #
         # Scenarios this rule serves (R36 Category A + B, same fix):
         #   - multi_food_and_shelter_brooklyn (short, food-first)
@@ -729,11 +722,20 @@ def _merge_additional_services(
 
 
 def _unpack_additional_item(item: Any) -> tuple:
-    """Coerce an additional-services entry into a (type, detail,
-    location) triple.
+    """Coerce an additional-services entry into a ``(type, detail,
+    location)`` triple.
 
-    Accepts both legacy 2-tuples and new 3-tuples. Returns `(None, None,
-    None)` for anything unparseable so callers can skip-filter.
+    The canonical shape produced by current callers is a 3-tuple. The
+    1-tuple, 2-tuple, and string branches are defensive: they let the
+    function tolerate malformed or partial entries that might appear in
+    deserialized session data, third-party fixtures, or future LLM
+    output that drops fields. Returns ``(None, None, None)`` for
+    anything unparseable so callers can skip-filter.
+
+    The defensive branches are exercised by unit tests in
+    ``tests/unit/test_slot_extraction.py`` to guarantee the unpacker
+    doesn't crash on unexpected inputs — that's the contract, not a
+    backwards-compatibility commitment to producers.
     """
     if not item:
         return (None, None, None)
@@ -758,7 +760,6 @@ def _unpack_additional_item(item: Any) -> tuple:
 def merge(
     regex_result: dict,
     llm_result: dict,
-    message: Optional[str] = None,
     extraction_source: Optional[str] = None,
 ) -> dict:
     """Merge regex and LLM extraction results into the 15-field dict
@@ -770,20 +771,14 @@ def merge(
       - `llm_result` has the 12 LLM-contributed fields populated where
         possible — the 10 slot fields plus `tone` and `action`. The 3
         regex-only Trust Model 5 fields are not present.
-      - `message` (optional) is the original user message. When
-        supplied, Trust Model 3 uses it to distinguish narrative-path
-        messages (≥ _NARRATIVE_THRESHOLD words) from short-path ones
-        and applies the narrative-path exception to the sets-match
-        rule. When None, the original sets-match rule (regex priority
-        wins) applies — this preserves backward compatibility for
-        unit tests that call `merge()` without the path distinction.
       - `extraction_source` (optional): one of "regex" / "semantic" /
         "llm_gate" / None, identifying where `regex_result.service_type`
         came from. Trust Model 3 uses this to give semantic-router
         classifications priority over the LLM on sets-disagree (see
         `_merge_service_type_and_primary_location` docstring).
-        Default None means "treat as regex" — backwards-compatible
-        with callers that don't track source.
+        The default is ``None`` for test convenience — production callers
+        should always pass an explicit value to make the source-tracking
+        behavior visible at the call site.
 
     Postconditions:
       - returned dict has 15 keys: the 13 fields from regex_result
@@ -803,7 +798,7 @@ def merge(
     # regex's Manhattan (which was regex's primary-for-shelter value).
     service_type, location_from_primary, winner_additional = \
         _merge_service_type_and_primary_location(
-            regex_result, llm_result, message, extraction_source
+            regex_result, llm_result, extraction_source
         )
 
     # TRUST MODEL 1: location (regex-literal, validator-gated LLM fallback)

@@ -32,50 +32,53 @@ This is a meaningful refactor — touches every handler — but the work is mech
 
 ## Real bugs / suspect logic
 
-### 🟥 Bug 1: late `_emotional_context_update` can be lost on follow-up paths
+### ✅ Bug 1: late `_emotional_context_update` can be lost on follow-up paths — FIXED
 
-**Location:** lines 516–534
+**Status:** Fixed in BUG-1 PR (May 2026). See `PHASE_AC_AFTERMATH.md::BUG-1` for the resolution detail.
+
+**Location (pre-fix):** lines 516–534 of the legacy orchestrator
 
 **Setup:** `_compute_tone_prefix` is called twice — once early for help/confused/emotional handlers, once late to handle the B.2 promotion case (negative_preference → service changes `is_service_flow=False` to `True`).
 
-**Problem:**
+**Problem (pre-fix):**
 
 ```python
-# Line 495: saves merged with whatever emotional_context was set early
-save_session_slots(session_id, merged)
-
-# Line 516: late call may compute a different _emotional_context_update
+# Late call may compute a different _emotional_context_update
 _tone_prefix, _emotional_context_update = _compute_tone_prefix(...)
 
-# Line 528: writes new value to merged (in-memory only)
+# Writes new value to merged (in-memory only)
 if _emotional_context_update is not None:
     merged["_emotional_context"] = _emotional_context_update
 
-# Line 533: re-saves ONLY if the value is *novel*
+# Re-saves ONLY if the value is *novel*
 if merged.get("_emotional_context") and not existing.get("_emotional_context"):
     save_session_slots(session_id, merged)
 ```
 
-The condition checks "did the late call introduce a new value where there wasn't one?" But it doesn't catch the case where the late call **changes** an existing value. Concrete scenario:
+The condition checked "did the late call introduce a new value where there wasn't one?" But it didn't catch the case where the late call **changes** an existing value. Concrete scenario:
 
 1. Turn N-1: user expressed shame, session has `_emotional_context = "shame"`
 2. Turn N message: "I already tried those, I need shelter instead" (B.2 negative_preference)
 3. Early `_compute_tone_prefix`: `is_service_flow=False`, returns `_emotional_context_update=None` (most prefixes don't fire on non-service-flow)
-4. `_emotional_context_update is None` so no early save
+4. No early save fires
 5. B.2 promotes category to "service"
-6. late call with `is_service_flow=True` returns `_emotional_context_update="frustrated"`
+6. Late call with `is_service_flow=True` returns `_emotional_context_update="frustrated"`
 7. `merged["_emotional_context"] = "frustrated"` (overwrites "shame" in memory)
 8. `merged.get(...)` truthy ("frustrated"), `existing.get(...)` truthy ("shame") → condition False → **no save**
 9. If response takes the follow-up path, no further save happens. The "frustrated" update is lost; the next turn loads "shame" from session.
 
-**Fix:** condition should be "save if the value differs from what's persisted":
+**Fix landed:**
 
 ```python
-if merged.get("_emotional_context") != existing.get("_emotional_context"):
+new_value = merged.get("_emotional_context")
+if new_value and new_value != existing.get("_emotional_context"):
     save_session_slots(session_id, merged)
 ```
 
-The blast radius is narrow (requires emotional context change between early and late computation AND a follow-up path response). I don't have evidence this affects an eval scenario today, but it's a real correctness bug.
+The `new_value and ...` truthiness guard is preserved (rather than a naked `!=`) to protect against an artificially-empty `merged` dict where existing had context — which a naked `!=` would treat as "value cleared" and save the stripped-down dict. In real usage `merged` is always the full output of `merge_slots(existing, extracted)` and carries through existing fields, so the guard is defensive against the unit-test shape rather than a production scenario.
+
+**Verification:** 4306 tests pass (was 4304 pre-fix, +2 new regression tests pinning the truthiness and inequality guards). The pinning test was renamed `test_late_persist_does_not_save_on_value_to_value_change` → `test_late_persist_saves_on_value_to_value_change` with the assertion inverted.
+
 
 ### 🟧 Suspect 1: Tone prefix asymmetry between follow-up paths
 
@@ -217,7 +220,7 @@ The three call sites become 1–2 lines each. The tone-prefix asymmetry surfaces
 The orchestrator handles:
 - Transcript append + truncation (lines 475–481)
 - Queue-additional-services management (lines 483–493)
-- `_awaiting_service_after_clear` flag clearing
+- `_awaiting_service_after_clear` flag clearing (line 445)
 - `_last_action` clearing (lines 386–389)
 - `_emotional_context` persistence (lines 285–287, 527–534)
 
@@ -257,7 +260,7 @@ Uniform call shape across both patterns.
 
 ### 🟦 Smell 9: `_empty_reply` doesn't log
 
-empty-message guard returns via `_empty_reply` without a `_log_turn` call. Every other return path in the orchestrator logs (verified all 24 handlers do). If the team wants empty-message events in audit logs, this is a gap.
+Line 102: empty-message guard returns via `_empty_reply` without a `_log_turn` call. Every other return path in the orchestrator logs (verified all 24 handlers do). If the team wants empty-message events in audit logs, this is a gap.
 
 **Fix:** add `_log_turn(session_id, "", result, "empty_message", request_id=request_id, tone=None)` before returning. Or accept the gap intentionally — but document it.
 
@@ -288,7 +291,7 @@ empty-message guard returns via `_empty_reply` without a `_log_turn` call. Every
 
 **Recommended priority:**
 
-1. **Bug 1** (emotional context save) — narrow but real, fix the condition
+1. **Bug 1** (emotional context save) — ✅ Fixed in BUG-1 PR (May 2026)
 2. **Suspect 1** (tone prefix asymmetry) — ask the team, document or fix
 3. **Smells 1, 3, 4** (dead imports, inline import, inline constants) — trivial cleanup, ~5 minute fix
 4. **Smell 6** (response-building helper) — small refactor, surfaces Suspect 1 explicitly
@@ -345,6 +348,5 @@ Two other handlers take auxiliary runtime data: ``_handle_hours_for_day(ctx, pos
 
 ### Known-deferred items
 
-* **Bug 1 (late ``_emotional_context`` save):** The buggy save-condition is preserved bit-for-bit in ``_persist_emotional_context_late`` with a clear note in its docstring and a regression test that pins the BUGGY behavior in ``test_late_persist_does_not_save_on_value_to_value_change``. When the fix lands (one-character change: ``and not`` → ``!=``), invert the test's ``save_recorder`` assertion.
 * **Suspect 1 (tone prefix asymmetry):** Documented at the call site (orchestrator service-flow continuation block). Resolution is a UX question — whether to repeat the empathic prefix on follow-up turns within a single conversation.
 * **Smells 2, 3, 5, 8, 9:** Not addressed. Audit-flagged as "fix opportunistically".

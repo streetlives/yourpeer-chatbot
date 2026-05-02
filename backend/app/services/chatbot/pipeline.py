@@ -10,6 +10,7 @@ import logging
 from app.privacy.pii_redactor import redact_pii
 from app.services.session_store import save_session_slots
 from app.services.slot_extractor import NEAR_ME_SENTINEL, extract_slots
+from app.services import slot_extraction
 
 from .context import _USE_LLM
 
@@ -146,11 +147,11 @@ def _run_llm_gate(
         # dict (13 slots + tone, action). The gate condition guarantees
         # `early_extracted.service_type is None`, so when the result has
         # a service_type, the LLM contributed it.
-        from app.services import slot_extraction
         unified = slot_extraction.extract(
             message,
             regex_result=early_extracted,
             api_key_available=True,
+            extraction_source=extraction_source,
         )
         if unified:
             if unified.get("service_type"):

@@ -19,9 +19,10 @@ from conftest import (
 # -----------------------------------------------------------------------
 # MESSAGE CLASSIFICATION
 # -----------------------------------------------------------------------
-# NOTE: These tests exercise _classify_message(), which is a backward-
-# compatibility wrapper used by the LLM fallback path. The main routing
-# in generate_reply() uses _classify_action() + _classify_tone() directly
+# NOTE: These tests exercise _classify_message(), a test-convenience
+# wrapper that combines the underlying classifiers (action + tone +
+# crisis + slots) into a single category string. Production routing in
+# generate_reply() uses _classify_action() + _classify_tone() directly
 # for more nuanced handling (e.g., service intent + emotional tone).
 # For end-to-end routing tests, use send() and assert on response
 # properties. See the "COMBINED ROUTING" and "SPLIT CLASSIFIER" sections

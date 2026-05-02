@@ -28,6 +28,7 @@ from app.services.slot_extractor import (
     merge_slots,
     next_follow_up_question,
 )
+from app.services import slot_extraction
 from app.utils.text_normalize import normalize_apostrophes
 
 from ..context import _USE_LLM, _empty_reply
@@ -731,13 +732,13 @@ def _handle_post_pending_confirmation(ctx, response_tone):
         # parameter, so we run regex here first (cheap — the caller's
         # `_run_early_extraction` isn't in scope at this post-pending
         # path). See UNIFIED_EXTRACTOR_MIGRATION.md.
-        from app.services.slot_extraction import extract as extract_unified
         regex_result = extract_slots(ctx.message)
-        pending_extracted = extract_unified(
+        pending_extracted = slot_extraction.extract(
             ctx.message,
             regex_result,
             conversation_history=existing.get("transcript", []),
             api_key_available=True,  # gated by _USE_LLM above
+            extraction_source="regex",
         )
     else:
         pending_extracted = extract_slots(ctx.message)

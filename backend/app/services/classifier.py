@@ -17,8 +17,6 @@ import logging
 
 from app.services.crisis_detector import detect_crisis
 from app.services.phrase_lists import (
-    _CONTRACTION_PAIRS,
-    _INTENSIFIER_RE,
     _RESET_PHRASES, _RESET_EXACT,
     _GREETING_PHRASES,
     _THANKS_PHRASES, _THANKS_EXACT,
@@ -34,42 +32,12 @@ from app.services.phrase_lists import (
     _CONFIRM_CHANGE_SERVICE, _CONFIRM_CHANGE_LOCATION,
     _CONFIRM_DENY_EXACT, _CONFIRM_DENY_PHRASES, _CONFIRM_DENY_STARTSWITH,
 )
+from app.utils.text_normalize import (
+    normalize_contractions as _normalize_contractions,
+    strip_intensifiers as _strip_intensifiers,
+)
 
 logger = logging.getLogger(__name__)
-
-
-# ---------------------------------------------------------------------------
-# TEXT NORMALIZATION
-# ---------------------------------------------------------------------------
-
-def _normalize_contractions(text: str) -> str:
-    """Expand contractions for consistent phrase matching.
-
-    Applied to frustration/emotional/confused matching so phrase lists
-    only need the 'not' form to catch all contraction variants.
-
-    NOT applied to crisis detection (explicit enumeration is safer).
-
-    Example:
-        "that wasn't helpful" → "that was not helpful"
-        "I'm struggling"     → "I am struggling"
-        "doesnt work"        → "does not work"
-    """
-    result = text.lower()
-    for contraction, expansion in _CONTRACTION_PAIRS:
-        result = result.replace(contraction, expansion)
-    return result
-
-
-def _strip_intensifiers(text: str) -> str:
-    """Remove common intensifiers for consistent phrase matching.
-
-    "I'm really scared"      → "I'm scared"
-    "I'm so incredibly down" → "I'm down"
-    "feeling pretty hopeless" → "feeling hopeless"
-    """
-    result = _INTENSIFIER_RE.sub('', text)
-    return re.sub(r'\s{2,}', ' ', result).strip()
 
 
 # ---------------------------------------------------------------------------
@@ -322,17 +290,22 @@ def _classify_tone(text: str, crisis_result=_CRISIS_NOT_CHECKED) -> str | None:
 
 
 # ---------------------------------------------------------------------------
-# COMBINED CLASSIFIER (backward compat)
+# COMBINED CLASSIFIER — TEST CONVENIENCE WRAPPER
 # ---------------------------------------------------------------------------
 
 def _classify_message(text: str) -> str:
     """Classify a message into a single routing category.
 
-    Thin wrapper that combines _classify_action() and _classify_tone()
-    for backward compatibility with existing tests and the LLM fallback.
+    This is a test-convenience wrapper that combines ``_classify_action``,
+    ``detect_crisis``, ``_classify_tone``, and ``extract_slots`` into a
+    single category string. Production routing in ``generate_reply()``
+    uses the split functions directly for nuanced handling (e.g., service
+    intent + emotional tone interleaved with confirmation state); this
+    wrapper exists so unit tests of the underlying classifiers can
+    exercise the combined behavior with one call.
 
-    The main routing in generate_reply() uses the split functions directly
-    for more nuanced handling (e.g., service intent + emotional tone).
+    The leading underscore signals "internal — not part of the
+    chatbot's public API". Tests are the only consumer.
     """
     from app.services.slot_extractor import extract_slots
 
