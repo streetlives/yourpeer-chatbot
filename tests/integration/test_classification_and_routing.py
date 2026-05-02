@@ -97,6 +97,95 @@ def test_greeting_with_existing_session(fresh_session):
     save_session_slots(fresh_session, {"service_type": "food"})
     result = send("hey", session_id=fresh_session)
     assert "earlier search" in result["response"].lower() or "still have" in result["response"].lower()
+
+
+def test_greeting_after_casual_chat_does_not_claim_prior_search(fresh_session):
+    """Regression: ``conversational_just_chatting`` (eval, R25-persistent).
+
+    After a casual first turn ("how's it going?"), the unified extractor
+    persists Trust Model 5 control flags into the session — the resulting
+    state looks like ``{"no_requirements": False, "_populations": [],
+    "_contradiction": False, "_is_additive": False, "transcript": [...]}``.
+    None of these are user-provided content, but every value is non-None.
+
+    The old ``_handle_greeting`` check ``any(v is not None for v in
+    ctx.existing.values())`` therefore misread this as evidence of a
+    prior search and produced "Hey again! I still have your earlier
+    search info..." — confusing the user, who never searched for
+    anything. This test pins the fix to ``_USER_PROVIDED_SLOTS``.
+
+    See also ``test_greeting_with_state_no_user_slots`` below for the
+    direct white-box version that bypasses message routing.
+    """
+    # Mock the LLM gate so turn 2 routes to greeting deterministically
+    # (matches the eval scenario behavior — judge observed "greeting"
+    # routing on "just thinking about stuff"). When LLM is unavailable
+    # this still works because turn 1 alone is enough to seed the
+    # session with TM5 flags; turn 2 here just stresses the fix path.
+    _r1 = send("how's it going?", session_id=fresh_session)
+
+    # Verify turn 1 left exactly the expected TM5 fingerprint —
+    # if this assertion fails, the bug premise has shifted and the
+    # regression test below is no longer covering the right case.
+    state_after_t1 = get_session_slots(fresh_session)
+    user_slots_set = any(state_after_t1.get(k) for k in (
+        "service_type", "location", "age", "family_status",
+        "_gender", "org_name", "service_detail", "urgency",
+    ))
+    assert not user_slots_set, (
+        f"Casual turn 1 should not populate user-content slots; got {state_after_t1!r}"
+    )
+    assert "no_requirements" in state_after_t1, (
+        "Trust Model 5 contract: no_requirements must be present (the "
+        "always-populated default is what triggered the bug)."
+    )
+
+    # Now send a greeting on turn 2. This must NOT claim a prior search.
+    r2 = send("hi", session_id=fresh_session)
+    response_lower = r2["response"].lower()
+    assert "earlier search" not in response_lower, (
+        f"Greeting after casual chat falsely claimed prior search. "
+        f"Response: {r2['response']!r}"
+    )
+    assert "still have" not in response_lower, (
+        f"Greeting after casual chat falsely claimed retained state. "
+        f"Response: {r2['response']!r}"
+    )
+
+
+def test_greeting_with_state_no_user_slots(fresh_session):
+    """White-box regression: handler must distinguish TM5 flags from real slots.
+
+    Directly seeds the session with the exact shape the unified extractor
+    persists after a casual turn, then sends a greeting. Bypasses
+    message-routing nondeterminism (LLM gate, classifier) so the test
+    pins ONLY the handler's "is there a prior search?" decision.
+
+    If a future Trust Model change adds a new always-populated field,
+    this test will still pass — but the broader test above will catch
+    behavioral drift. The two together pin the contract from both ends.
+    """
+    from app.services.session_store import save_session_slots
+    # Exact shape after a casual turn 1 (verified empirically — see
+    # the trace in ORCHESTRATOR_AUDIT.md / Phase B review).
+    save_session_slots(fresh_session, {
+        "no_requirements": False,
+        "_populations": [],
+        "_contradiction": False,
+        "_is_additive": False,
+        "transcript": [{"role": "user", "text": "how's it going?"}],
+    })
+    result = send("hi", session_id=fresh_session)
+    response_lower = result["response"].lower()
+    assert "earlier search" not in response_lower, (
+        f"Greeting handler treated TM5 control flags as a prior search. "
+        f"Response: {result['response']!r}"
+    )
+    # And it should still produce the standard welcome (positive assertion
+    # to catch the case where the fix accidentally removes both branches).
+    assert _GREETING_RESPONSE in result["response"]
+
+
 def test_reset_clears_session(fresh_session):
     """Reset should clear the session and return reset response."""
     from app.services.session_store import save_session_slots
