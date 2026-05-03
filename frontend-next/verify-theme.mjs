@@ -300,6 +300,85 @@ test("end-to-end: choice persists across 'reload'", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Static wiring check — locks in that the inline FOUC-prevention script
+// in src/app/layout.tsx references the same constants as theme.ts.
+//
+// Why this exists: an earlier version of the dark-mode work shipped CSS
+// for `.theme-transitions-off` but the inline script that was supposed
+// to set the class didn't exist (a comment referred to a script that
+// hadn't been written). The class was a no-op and users on dark mode
+// saw a 120ms color fade on every load. Caught during line-by-line
+// PR review.
+//
+// This check ensures the layout's inline script always references all
+// three constants from theme.ts directly. A future refactor that
+// inlines the strings or removes the imports would break this check
+// before it could ship.
+// ---------------------------------------------------------------------------
+
+test("FOUC inline script references THEME_STORAGE_KEY, DARK_CLASS, TRANSITIONS_OFF_CLASS", () => {
+  const layoutSrc = readFileSync(
+    new URL("./src/app/layout.tsx", import.meta.url),
+    "utf8",
+  );
+  // The script is constructed via template literal that interpolates
+  // the imported constants. Both the import and the references in the
+  // template literal must be present.
+  assert.match(
+    layoutSrc,
+    /import\s*{[^}]*THEME_STORAGE_KEY[^}]*}\s*from\s*"@\/lib\/theme"/,
+    "layout.tsx must import THEME_STORAGE_KEY",
+  );
+  assert.match(
+    layoutSrc,
+    /import\s*{[^}]*DARK_CLASS[^}]*}\s*from\s*"@\/lib\/theme"/,
+    "layout.tsx must import DARK_CLASS",
+  );
+  assert.match(
+    layoutSrc,
+    /import\s*{[^}]*TRANSITIONS_OFF_CLASS[^}]*}\s*from\s*"@\/lib\/theme"/,
+    "layout.tsx must import TRANSITIONS_OFF_CLASS",
+  );
+  // Inline script must use them via `${...}` template interpolation —
+  // not hard-coded strings.
+  assert.match(
+    layoutSrc,
+    /\$\{THEME_STORAGE_KEY\}/,
+    "FOUC script must reference THEME_STORAGE_KEY directly",
+  );
+  assert.match(
+    layoutSrc,
+    /\$\{DARK_CLASS\}/,
+    "FOUC script must reference DARK_CLASS directly",
+  );
+  assert.match(
+    layoutSrc,
+    /\$\{TRANSITIONS_OFF_CLASS\}/,
+    "FOUC script must reference TRANSITIONS_OFF_CLASS directly",
+  );
+  // suppressHydrationWarning is required because the inline script
+  // adds classes to <html> before React hydrates, and React would
+  // otherwise complain about the SSR/client className mismatch.
+  assert.match(
+    layoutSrc,
+    /suppressHydrationWarning/,
+    "html element must have suppressHydrationWarning to allow inline-script class additions",
+  );
+});
+
+test("FOUC: globals.css references TRANSITIONS_OFF_CLASS via the same selector", () => {
+  const cssSrc = readFileSync(
+    new URL("./src/app/globals.css", import.meta.url),
+    "utf8",
+  );
+  assert.match(
+    cssSrc,
+    /\.theme-transitions-off\b/,
+    "globals.css must contain a .theme-transitions-off rule for the FOUC script to take effect",
+  );
+});
+
+// ---------------------------------------------------------------------------
 
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) {

@@ -71,6 +71,13 @@ export function useTheme(): {
     // to handle the edge case where the stored choice changed between
     // the inline script running and React hydrating (e.g., a second
     // tab wrote to localStorage).
+    //
+    // The .theme-transitions-off class is added AND removed by the
+    // inline FOUC script itself (via requestAnimationFrame), so we
+    // don't need to touch it here — see app/layout.tsx. By the time
+    // this effect runs the class is already gone and any class change
+    // we make below (e.g., reacting to OS preference) animates
+    // smoothly as intended.
     applyResolvedTheme(resolvedTheme);
 
     // Watch for OS-level changes. Only relevant when choice is "system";

@@ -44,6 +44,14 @@ export const THEME_STORAGE_KEY = "yourpeer:theme:v1";
  *  dark variants. Must match tailwind.config.ts. */
 export const DARK_CLASS = "dark";
 
+/** HTML class added by the inline FOUC-prevention script and removed
+ *  by the useTheme mount-effect. While present, the global color
+ *  transitions in globals.css are suppressed — preventing the
+ *  unwanted fade-in on initial paint. The class name must match the
+ *  selector in globals.css; duplicated as a constant so both sides
+ *  reference the same source-of-truth. */
+export const TRANSITIONS_OFF_CLASS = "theme-transitions-off";
+
 /**
  * Read the stored theme choice from localStorage. Returns "system"
  * when nothing is stored or the stored value is invalid — "system"

@@ -492,6 +492,88 @@ SCENARIOS = [
         },
     },
 
+    # --- PWA HOME-SCREEN SHORTCUT PREFILLS (PR #77) ---
+    # These four scenarios exercise the EXACT strings injected by the
+    # manifest.webmanifest shortcuts (public/manifest.webmanifest). When
+    # a user installs the PWA and taps the shortcut from the home
+    # screen, the bot's first message is one of these strings — no
+    # location, no demographics, no follow-up context. The bot must
+    # handle them as the start of a service-discovery flow and ask for
+    # whatever's missing rather than searching with empty slots.
+    #
+    # If any of these regress, the home-screen shortcuts will deliver
+    # broken first impressions to users in their most fragile moment
+    # (just installed the app, looking for help fast).
+    {
+        "id": "shortcut_prefill_shelter",
+        "name": "Home-screen shortcut: 'I need shelter'",
+        "category": "happy_path",
+        "description": (
+            "User taps the 'Find shelter' home-screen shortcut. The "
+            "manifest sends 'I need shelter' as the first message. "
+            "Bot should extract service=shelter and ask for location."
+        ),
+        "user_turns": ["I need shelter"],
+        "expected": {
+            "service_type": "shelter",
+            "should_ask_for_location": True,
+        },
+    },
+    {
+        "id": "shortcut_prefill_food",
+        "name": "Home-screen shortcut: 'I need food'",
+        "category": "happy_path",
+        "description": (
+            "User taps the 'Find food' home-screen shortcut. The "
+            "manifest sends 'I need food' as the first message. Bot "
+            "should extract service=food and ask for location."
+        ),
+        "user_turns": ["I need food"],
+        "expected": {
+            "service_type": "food",
+            "should_ask_for_location": True,
+        },
+    },
+    {
+        "id": "shortcut_prefill_shower",
+        "name": "Home-screen shortcut: 'I need a shower'",
+        "category": "happy_path",
+        "description": (
+            "User taps the 'Find showers' home-screen shortcut. The "
+            "manifest sends 'I need a shower' as the first message. "
+            "Bot should extract service=personal_care (showers map to "
+            "the personal_care taxonomy) and ask for location."
+        ),
+        "user_turns": ["I need a shower"],
+        "expected": {
+            "service_type": "personal_care",
+            "should_ask_for_location": True,
+        },
+    },
+    {
+        "id": "shortcut_prefill_peer_navigator",
+        "name": "Home-screen shortcut: 'Connect with peer navigator'",
+        "category": "edge_case",
+        "description": (
+            "User taps the 'Talk to a peer navigator' home-screen "
+            "shortcut. The manifest sends 'Connect with peer navigator' "
+            "— this is NOT a service category, it's a request for "
+            "human handoff. The bot must NOT route this through the "
+            "service-search flow with service=other (which would then "
+            "ask 'where in NYC?' and hit the no-results path). Instead "
+            "it should recognize it as an escalation request and "
+            "respond with peer-navigator contact info, mirroring "
+            "edge_escalation above. Historically this lookup string "
+            "has been a stress test for the unrecognized-service "
+            "fallback (see eval R28 adversarial_unrecognized_service "
+            "scoring 2.91)."
+        ),
+        "user_turns": ["Connect with peer navigator"],
+        "expected": {
+            "should_offer_escalation": True,
+        },
+    },
+
     # --- ADVERSARIAL / SAFETY ---
     {
         "id": "adversarial_prompt_injection",

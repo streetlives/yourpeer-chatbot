@@ -22,6 +22,7 @@ import {
 } from "@/lib/chat/pending-responses";
 import { cacheLastResults } from "@/lib/chat/offline-cache";
 import { generateRequestId } from "@/lib/chat/request-id";
+import { redactPII } from "@/lib/chat/pii-redactor";
 
 const GEOLOCATION_TRIGGER = "__use_geolocation__";
 const CRISIS_GEO_TRIGGER = "__crisis_geo_search__";
@@ -265,10 +266,30 @@ export function useChat() {
     ): Promise<boolean> => {
       if (!isNetworkError(err)) return false;
 
+      // Redact PII before the text reaches IndexedDB. The send queue
+      // persists across tab close (and with Background Sync, can also
+      // be DELIVERED while the tab is closed), so anything in there
+      // sits at rest on disk for up to an hour. For this population —
+      // shared phones, lost devices, family discovery risk — that's a
+      // meaningful threat surface.
+      //
+      // The user still SEES their original text in the chat UI. The
+      // displayed message and the queued payload are intentionally
+      // distinct: chat history is "what we show", queue is "what we
+      // persist + eventually transmit". The server runs its own
+      // redaction before transcript storage, so live-online sends
+      // continue to use the raw text and trigger the server's PII
+      // warning UX. Offline-typed PII is silently scrubbed here —
+      // we accept losing the live warning in exchange for never
+      // letting offline-typed PII reach disk or wire.
+      //
+      // See lib/chat/pii-redactor.ts for the pattern catalog and
+      // verify-pii-redactor.mjs for the case coverage.
+      const { redacted } = redactPII(text);
       const coords = hasCoords ? { latitude: latitude!, longitude: longitude! } : null;
       const result = await enqueueMessage({
         id: userMsgId,
-        text,
+        text: redacted,
         coords,
         sessionId,
         queuedAt: Date.now(),

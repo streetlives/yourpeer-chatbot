@@ -271,3 +271,11 @@ offline → admin pages are unreachable (as expected).
   state. A "nothing is queueing" diagnosis is almost always a stale
   IDB viewer — verify against the "Waiting to send" status under the
   user's message bubble first; that updates live.
+
+
+## See also
+
+For the **closed-tab** scenarios that this doc cannot cover from
+DevTools — Background Sync drain, SW response reconciliation, reset-
+during-drain race — see `docs/TESTING_BACKGROUND_SYNC.md`. That
+runbook requires a real Android device with USB debugging.

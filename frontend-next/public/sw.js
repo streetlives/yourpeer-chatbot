@@ -41,8 +41,27 @@
  * registers a sync tag, the v3 SW wouldn't act on it. Forcing the
  * new SW to activate (skipWaiting + clients.claim on install/activate)
  * is already how the caches rotate — bumping the version guarantees
- * all prior-version caches are purged and the new SW takes control. */
-const CACHE_VERSION = "v4";
+ * all prior-version caches are purged and the new SW takes control.
+ *
+ * v5 bumped because:
+ *   - manifest.webmanifest now references four distinct shortcut
+ *     icons (shortcut-{shelter,food,shower,peer}-96.png) instead of
+ *     the previous shared shortcut-96.png. Without a cache bump,
+ *     users on v4 caches would have the old single-icon manifest
+ *     and continue to render all four shortcuts identically — the
+ *     primary motivation for adding distinct icons (low-literacy
+ *     legibility on the home screen) wouldn't reach them until
+ *     their browser independently revalidated the manifest.
+ *   - The previous shortcut-96.png file has been removed from the
+ *     repo. Any v4 cache still holding it would serve a 404 on the
+ *     manifest's icon refs if a stale-but-valid v4 manifest somehow
+ *     loaded — bumping forces clients onto the v5 manifest that
+ *     references the new files.
+ *   - SW logic changed (reset-epoch awareness in the sync handler;
+ *     queuedAt threading through storePendingResponse). Existing
+ *     in-flight v4 SWs would not honor those filters; making the
+ *     new SW activate ASAP closes that gap. */
+const CACHE_VERSION = "v5";
 const STATIC_CACHE = `yourpeer-${CACHE_VERSION}-static`;
 const SHELL_CACHE = `yourpeer-${CACHE_VERSION}-shell`;
 
@@ -287,6 +306,7 @@ async function networkFirst(request, cacheName) {
 
 const SEND_QUEUE_KEY = "yourpeer:send-queue:v1";
 const PENDING_KEY = "yourpeer:pending-responses:v1";
+const RESET_EPOCH_KEY = "yourpeer:reset-epoch:v1";
 const SYNC_TAG = "yourpeer-send-queue";
 
 /** idb-keyval's default config: database name "keyval-store", object
@@ -408,6 +428,27 @@ async function drainSendQueue() {
   }
   if (fresh.length === 0) return;
 
+  // Reset-epoch check: if the user reset their session AFTER queuing
+  // these messages, the messages belong to a session the user has
+  // walked away from. Sending them anyway would deliver bot replies
+  // for input the user has explicitly discarded — which can surface
+  // as orphaned messages on next mount, or worse, as live API calls
+  // for content the user no longer wants associated with their
+  // session. Drop pre-reset queue entries before sending.
+  //
+  // Read once at the top of the drain. A reset that happens MID-drain
+  // is still partially handled: client-side reconcilePending also
+  // checks the epoch, so any pending response we write for a since-
+  // reset message will be filtered before injection. The check here
+  // just avoids the wasted POST and the wasted server processing.
+  let resetEpoch = 0;
+  try {
+    const v = await readIdbValue(RESET_EPOCH_KEY);
+    resetEpoch = typeof v === "number" ? v : 0;
+  } catch (err) {
+    console.warn("[sw sync] failed to read reset epoch:", err);
+  }
+
   // Drain one-at-a-time in order. Serial to avoid race with the
   // client-side flush if both are active (client is singleton per-tab;
   // we're singleton per-SW). The server dedupes on X-Request-ID so a
@@ -416,6 +457,17 @@ async function drainSendQueue() {
   let transientFailure = false;
 
   for (const msg of fresh) {
+    // Pre-reset entries: drop without sending. The client side ALSO
+    // filters these on reconcile, but skipping the POST here saves
+    // the round trip entirely.
+    if (resetEpoch > 0 && (msg.queuedAt || 0) < resetEpoch) {
+      console.log(
+        `[sw sync] dropping pre-reset queue entry ${msg.id} ` +
+          `(queued ${msg.queuedAt} < reset ${resetEpoch})`,
+      );
+      await dequeueFromSw(msg.id);
+      continue;
+    }
     try {
       const body = {
         message: msg.text,
@@ -456,7 +508,7 @@ async function drainSendQueue() {
         await dequeueFromSw(msg.id);
         continue;
       }
-      await storePendingResponse(msg.id, responseBody);
+      await storePendingResponse(msg.id, responseBody, msg.queuedAt);
       await dequeueFromSw(msg.id);
       drained++;
     } catch (err) {
@@ -493,8 +545,17 @@ async function dequeueFromSw(id) {
 
 /** Append a server response to the pending-responses store, under the
  *  same ID as the originating queued message. On next client mount,
- *  use-chat reads and reconciles it into the chat log. */
-async function storePendingResponse(id, body) {
+ *  use-chat reads and reconciles it into the chat log.
+ *
+ *  queuedAt is the user's-typing-time of the underlying QueuedMessage,
+ *  threaded through so the client's reconcilePending can compare it
+ *  against the reset epoch. We can't use the response's own
+ *  receivedAt for that comparison: a SW that completes a POST after
+ *  the user resets would write a post-reset receivedAt for pre-reset
+ *  typing, slipping through the filter. queuedAt is unambiguous —
+ *  it's stamped at the moment the user typed, well before any reset
+ *  could race with the SW. */
+async function storePendingResponse(id, body, queuedAt) {
   const MAX_PENDING_DEPTH = 50;
   try {
     await updateIdbValue(PENDING_KEY, (old) => {
@@ -505,14 +566,43 @@ async function storePendingResponse(id, body) {
       // Cap: drop the oldest if we're at the limit. Realistically the
       // queue drain should never produce 50+ pending entries; this is
       // only a guard against pathological SW loops.
+      //
+      // Hitting the cap is a real signal that something has gone
+      // wrong — either:
+      //   1. The client is failing to reconcile (mounting and not
+      //      consuming pending responses), causing the store to grow
+      //      unboundedly until each new write evicts an old one. The
+      //      user would observe a quiet "my offline messages aren't
+      //      coming back" gradual failure.
+      //   2. The SW is in a buggy loop generating duplicate-but-not-
+      //      deduped writes. Less likely given the dedup-by-id above,
+      //      but a code change that breaks dedup would surface here.
+      // Either way, the operator wants to know rather than have it
+      // silently mask the underlying issue. Log at warn so it shows
+      // in the SW console without being filtered out by the default
+      // info-level threshold.
       if (deduped.length >= MAX_PENDING_DEPTH) {
-        deduped.shift();
+        const evicted = deduped.shift();
+        console.warn(
+          `[sw sync] pending-responses cap (${MAX_PENDING_DEPTH}) hit; ` +
+            `evicted oldest entry (id=${evicted && evicted.id}, ` +
+            `receivedAt=${evicted && evicted.receivedAt}). ` +
+            `If this fires repeatedly, the client is not reconciling ` +
+            `pending responses on mount.`,
+        );
       }
       deduped.push({
         id,
         sessionId: body && typeof body === "object" ? body.session_id || null : null,
         body,
         receivedAt: Date.now(),
+        // Preserve the original queue time so the client can compare
+        // it against the reset epoch on reconcile. Coerce a missing
+        // value to undefined explicitly so the field is omitted from
+        // the stored entry rather than serialized as null — keeps the
+        // shape clean and the client's `typeof === "number"` guard
+        // works as intended.
+        queuedAt: typeof queuedAt === "number" ? queuedAt : undefined,
       });
       return deduped;
     });

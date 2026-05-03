@@ -8,7 +8,7 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import type { ChatMessage, QuickReply } from "./types";
 import { clearQueue } from "./send-queue";
-import { clearPending } from "./pending-responses";
+import { clearPending, markResetEpoch } from "./pending-responses";
 import { clearCachedResults } from "./offline-cache";
 
 // ---------------------------------------------------------------------------
@@ -201,9 +201,19 @@ export const useChatStore = create<ChatStore>()(
         // messages in the chat. Fire-and-forget — failures here don't
         // block the reset.
         //
+        // Order matters: stamp the reset epoch FIRST so that any SW
+        // drain finishing concurrently writes its response with a
+        // receivedAt that's already past the epoch boundary (and thus
+        // gets filtered out on next reconcile). clearPending then
+        // drops everything that's already in the store at this moment.
+        // Without the epoch stamp, a SW write landing in the gap
+        // between clearPending() and next mount would slip through —
+        // see pending-responses.ts::reconcilePending.
+        //
         // clearPending drops any SW-delivered responses that came in
         // before reset: those responses are for the pre-reset session
         // and would be injected as orphaned bot messages otherwise.
+        void markResetEpoch();
         void clearQueue();
         void clearPending();
         void clearCachedResults();
