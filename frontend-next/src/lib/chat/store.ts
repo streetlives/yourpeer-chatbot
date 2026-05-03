@@ -8,6 +8,7 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import type { ChatMessage, QuickReply } from "./types";
 import { clearQueue } from "./send-queue";
+import { clearPending } from "./pending-responses";
 import { clearCachedResults } from "./offline-cache";
 
 // ---------------------------------------------------------------------------
@@ -199,7 +200,12 @@ export const useChatStore = create<ChatStore>()(
         // and show up as bot responses with no corresponding user
         // messages in the chat. Fire-and-forget — failures here don't
         // block the reset.
+        //
+        // clearPending drops any SW-delivered responses that came in
+        // before reset: those responses are for the pre-reset session
+        // and would be injected as orphaned bot messages otherwise.
         void clearQueue();
+        void clearPending();
         void clearCachedResults();
       },
 

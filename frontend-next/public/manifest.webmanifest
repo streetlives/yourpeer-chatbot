@@ -30,5 +30,35 @@
       "type": "image/png",
       "purpose": "maskable"
     }
+  ],
+  "shortcuts": [
+    {
+      "name": "Find shelter",
+      "short_name": "Shelter",
+      "description": "Search for a shelter or a place to stay",
+      "url": "/chat?prefill=I+need+shelter",
+      "icons": [{ "src": "/icons/shortcut-96.png", "sizes": "96x96", "type": "image/png" }]
+    },
+    {
+      "name": "Find food",
+      "short_name": "Food",
+      "description": "Search for food pantries or free meals",
+      "url": "/chat?prefill=I+need+food",
+      "icons": [{ "src": "/icons/shortcut-96.png", "sizes": "96x96", "type": "image/png" }]
+    },
+    {
+      "name": "Find showers",
+      "short_name": "Showers",
+      "description": "Search for shower facilities and personal care",
+      "url": "/chat?prefill=I+need+a+shower",
+      "icons": [{ "src": "/icons/shortcut-96.png", "sizes": "96x96", "type": "image/png" }]
+    },
+    {
+      "name": "Talk to a peer navigator",
+      "short_name": "Peer",
+      "description": "Connect with a real person who knows the system",
+      "url": "/chat?prefill=Connect+with+peer+navigator",
+      "icons": [{ "src": "/icons/shortcut-96.png", "sizes": "96x96", "type": "image/png" }]
+    }
   ]
 }

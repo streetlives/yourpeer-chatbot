@@ -86,6 +86,39 @@ export function ChatContainer() {
     return unsub;
   }, []);
 
+  // PWA shortcut / deep-link prefill. Home-screen shortcuts (manifest
+  // "shortcuts") land on /chat?prefill=<URL-encoded message> and expect
+  // that message to auto-send. Also used by share-target / external
+  // links. The ref guards against double-send across re-renders. We
+  // wait for hydration so that the send dedup logic and store can see
+  // the message arrive in the correct order; if we send before hydration
+  // the message appears above any restored session state, which looks
+  // wrong.
+  //
+  // After sending, clear the query param via history.replaceState so a
+  // browser refresh doesn't re-trigger the prefill. We use raw History
+  // API rather than `next/navigation` useRouter because useSearchParams
+  // would require wrapping this client component in Suspense (statically-
+  // rendered parent) and we only need a one-shot read on mount. The
+  // replaceState approach leaves the tab history untouched.
+  const hasPrefilledRef = useRef(false);
+  useEffect(() => {
+    if (!hydrated) return;
+    if (hasPrefilledRef.current) return;
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const prefill = params.get("prefill");
+    if (!prefill) return;
+    // Length guard — prefill param is user-controllable via URL; cap
+    // to the same length the chat input enforces to prevent abuse.
+    if (prefill.length > 1000) return;
+    hasPrefilledRef.current = true;
+    send(prefill);
+    // Strip the query param so a reload doesn't re-send. Preserves
+    // the pathname so users stay on /chat.
+    window.history.replaceState(null, "", window.location.pathname);
+  }, [hydrated, send]);
+
   // Auto-scroll on new messages
   useEffect(() => {
     requestAnimationFrame(() => {

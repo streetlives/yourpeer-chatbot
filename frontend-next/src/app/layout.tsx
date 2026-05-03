@@ -8,6 +8,7 @@ import "./globals.css";
 import { Inter } from "next/font/google";
 import type { Metadata, Viewport } from "next";
 import { PWARegister } from "./pwa-register";
+import { AppleSplashLinks } from "./apple-splash-links";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -48,6 +49,13 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" className={inter.className}>
+      {/* Next's metadata export writes into <head> automatically; this
+          explicit <head> is additive and hosts tags Next can't emit via
+          the Metadata API (apple-touch-startup-image with per-device
+          media queries). Having both is supported. */}
+      <head>
+        <AppleSplashLinks />
+      </head>
       <body>
         {children}
         <PWARegister />
