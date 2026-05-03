@@ -81,7 +81,7 @@ export function ChatInput({ onSend, disabled }: ChatInputProps) {
           placeholder="What do you need help with?"
           autoComplete="off"
           disabled={disabled}
-          className="flex-1 px-4 py-3 border border-neutral-200 rounded-xl bg-white text-neutral-900 text-[0.94rem] outline-none transition-all focus:border-neutral-300 focus:ring-2 focus:ring-amber-300/30 placeholder:text-neutral-400 disabled:opacity-50"
+          className="flex-1 px-4 py-3 border border-neutral-200 rounded-xl bg-white text-neutral-900 text-[0.94rem] outline-none transition-all focus:border-neutral-300 focus:ring-2 focus:ring-amber-300/30 placeholder:text-neutral-400 disabled:opacity-50 dark:bg-neutral-900 dark:border-neutral-700 dark:text-neutral-100 dark:focus:border-neutral-600 dark:placeholder:text-neutral-500"
         />
 
         <VoiceInputButton
@@ -96,7 +96,7 @@ export function ChatInput({ onSend, disabled }: ChatInputProps) {
           type="submit"
           disabled={disabled || !value.trim()}
           aria-label="Send message"
-          className="w-12 h-12 border-none rounded-xl bg-neutral-900 text-white flex items-center justify-center transition-transform hover:scale-[1.04] active:scale-[0.97] disabled:opacity-40 disabled:cursor-not-allowed disabled:transform-none"
+          className="w-12 h-12 border-none rounded-xl bg-neutral-900 text-white flex items-center justify-center transition-transform hover:scale-[1.04] active:scale-[0.97] disabled:opacity-40 disabled:cursor-not-allowed disabled:transform-none dark:bg-neutral-100 dark:text-neutral-900"
         >
           <Send size={18} strokeWidth={2.5} />
         </button>

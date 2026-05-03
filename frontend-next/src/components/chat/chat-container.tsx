@@ -19,6 +19,7 @@ import { ChatStatus } from "./chat-status";
 import { FeedbackRow } from "./feedback-row";
 import { OfflineBanner } from "./offline-banner";
 import { EarlierResultsLink } from "./earlier-results-link";
+import { ThemeToggle } from "@/components/theme-toggle";
 
 export function ChatContainer() {
   const { messages, isLoading, error, send, retry, submitFeedback, cancelQueued } = useChat();
@@ -86,6 +87,39 @@ export function ChatContainer() {
     return unsub;
   }, []);
 
+  // PWA shortcut / deep-link prefill. Home-screen shortcuts (manifest
+  // "shortcuts") land on /chat?prefill=<URL-encoded message> and expect
+  // that message to auto-send. Also used by share-target / external
+  // links. The ref guards against double-send across re-renders. We
+  // wait for hydration so that the send dedup logic and store can see
+  // the message arrive in the correct order; if we send before hydration
+  // the message appears above any restored session state, which looks
+  // wrong.
+  //
+  // After sending, clear the query param via history.replaceState so a
+  // browser refresh doesn't re-trigger the prefill. We use raw History
+  // API rather than `next/navigation` useRouter because useSearchParams
+  // would require wrapping this client component in Suspense (statically-
+  // rendered parent) and we only need a one-shot read on mount. The
+  // replaceState approach leaves the tab history untouched.
+  const hasPrefilledRef = useRef(false);
+  useEffect(() => {
+    if (!hydrated) return;
+    if (hasPrefilledRef.current) return;
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const prefill = params.get("prefill");
+    if (!prefill) return;
+    // Length guard — prefill param is user-controllable via URL; cap
+    // to the same length the chat input enforces to prevent abuse.
+    if (prefill.length > 1000) return;
+    hasPrefilledRef.current = true;
+    send(prefill);
+    // Strip the query param so a reload doesn't re-send. Preserves
+    // the pathname so users stay on /chat.
+    window.history.replaceState(null, "", window.location.pathname);
+  }, [hydrated, send]);
+
   // Auto-scroll on new messages
   useEffect(() => {
     requestAnimationFrame(() => {
@@ -98,7 +132,7 @@ export function ChatContainer() {
   return (
     <div className="flex flex-col max-w-[820px] mx-auto px-4 pb-7 min-h-dvh">
       <div className="flex items-baseline gap-2.5 px-1 pt-5 pb-3.5">
-        <h1 className="text-xl font-bold tracking-tight text-neutral-900">
+        <h1 className="text-xl font-bold tracking-tight text-neutral-900 dark:text-neutral-100">
           YourPeer AI Chat
         </h1>
         <span
@@ -106,9 +140,18 @@ export function ChatContainer() {
           aria-label={dotLabel}
           className={`inline-block w-2 h-2 rounded-full shrink-0 ${dotColor}`}
         />
-        <span className="text-sm text-neutral-400">
+        <span className="text-sm text-neutral-400 dark:text-neutral-500">
           Find services near you
         </span>
+        {/* Push the toggle to the right end of the header row. items-
+            baseline on the parent keeps the h1 + status aligned to
+            text baseline; the toggle's ml-auto shoves it to the far
+            right without changing that baseline. self-center keeps
+            the button vertically centered in the header rather than
+            inheriting the text baseline (which would half-cut it). */}
+        <div className="ml-auto self-center">
+          <ThemeToggle />
+        </div>
       </div>
 
       {/* Offline state — amber banner covers both cached-results and
@@ -126,7 +169,7 @@ export function ChatContainer() {
       {showBackendUnreachableBanner && (
         <div
           role="alert"
-          className="mx-1 mb-2 px-3 py-2 rounded-lg bg-red-50 border border-red-200 text-sm text-red-700"
+          className="mx-1 mb-2 px-3 py-2 rounded-lg bg-red-50 border border-red-200 text-sm text-red-700 dark:bg-red-950/50 dark:border-red-900 dark:text-red-300"
         >
           Can&apos;t reach the server right now. Service search is unavailable;
           your messages will send when we&apos;re back up.
@@ -135,7 +178,7 @@ export function ChatContainer() {
 
       {/* Backend degraded — AI features limited but service search works */}
       {connectionState === "degraded" && (
-        <div role="status" className="mx-1 mb-2 px-3 py-2 rounded-lg bg-amber-50 border border-amber-200 text-sm text-amber-700">
+        <div role="status" className="mx-1 mb-2 px-3 py-2 rounded-lg bg-amber-50 border border-amber-200 text-sm text-amber-700 dark:bg-amber-950/40 dark:border-amber-800 dark:text-amber-300">
           {statusDetail.includes("API key")
             ? "Running in basic mode — service search still works."
             : statusDetail.includes("Rate limit")

@@ -60,8 +60,8 @@ export function VoiceInputButton({ onTranscript, onError, onListeningChange, sto
       title={isListening ? "Tap to stop" : "Tap to speak"}
       className={`w-12 h-12 rounded-xl border flex items-center justify-center transition-all flex-shrink-0 disabled:opacity-40 disabled:cursor-not-allowed ${
         isListening
-          ? "bg-red-50 border-red-400 text-red-600 animate-pulse"
-          : "bg-white border-neutral-200 text-neutral-500 hover:bg-neutral-50 hover:border-neutral-300 hover:text-neutral-900"
+          ? "bg-red-50 border-red-400 text-red-600 animate-pulse dark:bg-red-950/40 dark:border-red-600 dark:text-red-300"
+          : "bg-white border-neutral-200 text-neutral-500 hover:bg-neutral-50 hover:border-neutral-300 hover:text-neutral-900 dark:bg-neutral-900 dark:border-neutral-700 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:border-neutral-600 dark:hover:text-neutral-100"
       }`}
     >
       {isListening ? <Square size={18} strokeWidth={2.5} /> : <Mic size={20} />}

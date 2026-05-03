@@ -8,6 +8,7 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import type { ChatMessage, QuickReply } from "./types";
 import { clearQueue } from "./send-queue";
+import { clearPending, markResetEpoch } from "./pending-responses";
 import { clearCachedResults } from "./offline-cache";
 
 // ---------------------------------------------------------------------------
@@ -118,6 +119,17 @@ function makeWelcomeMessage(): ChatMessage {
   };
 }
 
+// Persist-boundary PII redaction lives in chat-message-redaction.ts
+// so the helpers can be unit-tested without the store's full
+// dependency graph. Imported for use in partialize/migrate, and
+// re-exported here for any external consumers that previously
+// imported them from this module.
+import {
+  redactMessage,
+  redactStoredMessage,
+} from "./chat-message-redaction";
+export { redactMessage, redactStoredMessage };
+
 // ---------------------------------------------------------------------------
 // Store
 // ---------------------------------------------------------------------------
@@ -199,7 +211,22 @@ export const useChatStore = create<ChatStore>()(
         // and show up as bot responses with no corresponding user
         // messages in the chat. Fire-and-forget — failures here don't
         // block the reset.
+        //
+        // Order matters: stamp the reset epoch FIRST so that any SW
+        // drain finishing concurrently writes its response with a
+        // receivedAt that's already past the epoch boundary (and thus
+        // gets filtered out on next reconcile). clearPending then
+        // drops everything that's already in the store at this moment.
+        // Without the epoch stamp, a SW write landing in the gap
+        // between clearPending() and next mount would slip through —
+        // see pending-responses.ts::reconcilePending.
+        //
+        // clearPending drops any SW-delivered responses that came in
+        // before reset: those responses are for the pre-reset session
+        // and would be injected as orphaned bot messages otherwise.
+        void markResetEpoch();
         void clearQueue();
+        void clearPending();
         void clearCachedResults();
       },
 
@@ -240,7 +267,12 @@ export const useChatStore = create<ChatStore>()(
       // The migrate function handles upgrading old data so users don't
       // lose their conversation or hit runtime errors after a deploy.
       // v2: added lastResultsBeforeReset (null-default is safe on legacy reads).
-      version: 2,
+      // v3: introduced PII redaction at the persist boundary. v2 stores
+      //     may contain unredacted PII in user messages; on first load
+      //     after upgrade, migrate() runs the redactor over each
+      //     message so existing data is brought up to current privacy
+      //     posture before it's ever rehydrated into React state.
+      version: 3,
       migrate: (persisted, version: number) => {
         const p = persisted as Record<string, unknown> | null | undefined;
         if (!p) return p;
@@ -255,17 +287,79 @@ export const useChatStore = create<ChatStore>()(
           // after a reset anyway.
           p.lastResultsBeforeReset = null;
         }
+        if (version < 3) {
+          // v2 → v3: redact PII from any pre-existing persisted
+          // messages. Without this step, a user who upgrades to v3
+          // would carry forward unredacted PII from their previous
+          // session in localStorage — defeating the purpose of the
+          // redaction. The migration is one-time per user; subsequent
+          // writes go through partialize and are redacted at the
+          // boundary.
+          //
+          // Mirrors the partialize-time logic exactly so post-upgrade
+          // and post-migration state are byte-equivalent.
+          if (Array.isArray(p.messages)) {
+            p.messages = (p.messages as Array<Record<string, unknown>>).map(
+              redactStoredMessage,
+            );
+          }
+          if (p.lastResultsBeforeReset && typeof p.lastResultsBeforeReset === "object") {
+            p.lastResultsBeforeReset = redactStoredMessage(
+              p.lastResultsBeforeReset as Record<string, unknown>,
+            );
+          }
+        }
         return p;
       },
 
       // Only persist conversation state — not transient UI flags.
       // Transient messages (e.g. "Getting your location…") are stripped
       // so they don't survive page refreshes.
+      //
+      // PII redaction at the persist boundary: every message written to
+      // localStorage runs through the same redactor that the offline
+      // queue uses (lib/chat/pii-redactor.ts). User-typed text and
+      // retryMessage strings get scrubbed of phone numbers, SSNs,
+      // addresses, names-on-introduction, etc.
+      //
+      // Why redact here and not at the source (handleSend, etc.):
+      // localStorage is the durable storage layer. There are multiple
+      // code paths that can put text into the messages array — direct
+      // sends, retries, error-message construction with retryMessage,
+      // queue flushes. Redacting at the partialize chokepoint
+      // guarantees that no path can leak unredacted text to disk,
+      // regardless of how it got into the in-memory store. This is
+      // the same defense-in-depth pattern that the offline queue
+      // uses (which also redacts on enqueue rather than at every
+      // possible call site).
+      //
+      // Trade-off accepted: the user types "my number is 555-1234"
+      // and sees that exact text in the chat WHILE THE TAB IS OPEN
+      // (it lives in volatile React state). On refresh or rehydrate
+      // they will see "my number is [PHONE]" — what's persisted is
+      // what comes back. This is honest and visible: the user
+      // observes the redaction happen on rehydrate, which makes the
+      // privacy posture obvious rather than hidden. The alternative
+      // (keeping originals in volatile state and only ever showing
+      // the user their own typed text) is worse for privacy because
+      // anyone with DevTools access could see a mismatch between
+      // displayed and stored text and might wonder what else the app
+      // is hiding.
+      //
+      // The bot's response messages don't need redaction: server-side
+      // logging already operates on redacted user input
+      // (backend/app/services/chatbot/logging.py uses
+      // user_message_redacted), so the bot does not echo user PII
+      // back. Bot text passes through unmodified.
       partialize: (state) => ({
         sessionId: state.sessionId,
-        messages: state.messages.filter((m) => !m.transient),
+        messages: state.messages
+          .filter((m) => !m.transient)
+          .map((m) => redactMessage(m)),
         lastActiveAt: state.lastActiveAt,
-        lastResultsBeforeReset: state.lastResultsBeforeReset,
+        lastResultsBeforeReset: state.lastResultsBeforeReset
+          ? redactMessage(state.lastResultsBeforeReset)
+          : null,
       }),
 
       onRehydrateStorage: () => (state) => {

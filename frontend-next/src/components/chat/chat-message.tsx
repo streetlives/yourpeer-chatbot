@@ -48,26 +48,26 @@ function MessageStatusIndicator({
   switch (status) {
     case "sending":
       return (
-        <div className={`${base} text-neutral-400`} aria-label="Sending">
+        <div className={`${base} text-neutral-400 dark:text-neutral-500`} aria-label="Sending">
           <Check size={12} aria-hidden="true" />
         </div>
       );
     case "sent":
       return (
-        <div className={`${base} text-neutral-500`} aria-label="Sent">
+        <div className={`${base} text-neutral-500 dark:text-neutral-400`} aria-label="Sent">
           <CheckCheck size={12} aria-hidden="true" />
         </div>
       );
     case "pending":
       return (
-        <div className={`${base} text-amber-700`} aria-label="Waiting to send">
+        <div className={`${base} text-amber-700 dark:text-amber-400`} aria-label="Waiting to send">
           <Clock size={12} aria-hidden="true" />
           <span>Waiting to send</span>
           {onCancel && (
             <button
               type="button"
               onClick={onCancel}
-              className="ml-1 underline underline-offset-2 hover:text-amber-900 focus:outline-none focus:ring-2 focus:ring-amber-400 rounded"
+              className="ml-1 underline underline-offset-2 hover:text-amber-900 dark:hover:text-amber-200 focus:outline-none focus:ring-2 focus:ring-amber-400 rounded"
               aria-label="Cancel this message"
             >
               Cancel
@@ -77,14 +77,14 @@ function MessageStatusIndicator({
       );
     case "failed":
       return (
-        <div className={`${base} text-red-700`} aria-label="Not sent">
+        <div className={`${base} text-red-700 dark:text-red-400`} aria-label="Not sent">
           <AlertTriangle size={12} aria-hidden="true" />
           <span>Not sent</span>
         </div>
       );
     case "cancelled":
       return (
-        <div className={`${base} text-neutral-400`} aria-label="Cancelled">
+        <div className={`${base} text-neutral-400 dark:text-neutral-500`} aria-label="Cancelled">
           <X size={12} aria-hidden="true" />
           <span>Cancelled</span>
         </div>
@@ -121,8 +121,42 @@ export function ChatMessage({ message, onQuickReply, onRetry, onCancel }: ChatMe
           aria-label={isUser ? "You said" : "YourPeer said"}
           className={`px-4 py-3 rounded-2xl text-[0.94rem] leading-relaxed whitespace-pre-wrap animate-in fade-in slide-in-from-bottom-1 ${
             isUser
-              ? `bg-amber-300 text-neutral-900 rounded-br-md ${cancelledStyle}`
-              : "bg-neutral-100 text-neutral-900 rounded-bl-md"
+              // User bubble: brand amber. In LIGHT mode, full
+              // amber-300 (#FCD34D) — the page is bright white and the
+              // bubble needs the saturation to read as a distinct
+              // surface. In DARK mode, amber-300 at 75% alpha — the
+              // page is near-black (neutral-950 #0a0a0a) and full-
+              // saturation yellow becomes a near-spotlight against it,
+              // disproportionately drawing the eye and creating a
+              // photosensitivity concern for a population with high
+              // trauma exposure (where bright high-contrast stimuli
+              // can be triggering). The 75% alpha softens the
+              // brightness without changing the hue — the bubble
+              // still reads as "the YourPeer yellow", just dimmer.
+              // Identity-as-color is preserved; brightness shock is
+              // not.
+              //
+              // We can't use Tailwind's `dark:bg-amber-300/75`
+              // shorthand because the BASE class needs to be a
+              // bg-amber-300 with full opacity for light mode. The
+              // dark-mode override uses inline rgba via an arbitrary
+              // value to be explicit about what's happening. Note
+              // the rgba components match the BRAND amber from
+              // tailwind.config.ts (#FFD54F = 255, 213, 79), not
+              // Tailwind's default amber-300 (#FCD34D) — Streetlives
+              // overrides the amber palette to a slightly warmer
+              // yellow. Text color stays neutral-900 in both modes
+              // because the 75%-alpha amber is still light enough
+              // that dark text hits AAA contrast over the dark page.
+              ? `bg-amber-300 dark:bg-[rgba(255,213,79,0.75)] text-neutral-900 rounded-br-md ${cancelledStyle}`
+              // Bot bubble: neutral-100 on light page, neutral-700 on
+              // dark. neutral-700 (#404040) is a deliberate two-step
+              // lift from neutral-950 page background — neutral-800
+              // (#262626) was previously used but blends into the
+              // dark page on lower-end displays / OLED in low light,
+              // making the bubble boundary hard to perceive.
+              // dark:text-neutral-100 reverses the near-black default.
+              : "bg-neutral-100 text-neutral-900 dark:bg-neutral-700 dark:text-neutral-100 rounded-bl-md"
           }`}
         >
           {isUser ? message.text : stripMarkdown(message.text)}
@@ -131,7 +165,7 @@ export function ChatMessage({ message, onQuickReply, onRetry, onCancel }: ChatMe
             <button
               onClick={() => onRetry(message.id, message.retryMessage!)}
               aria-label="Retry sending this message"
-              className="flex items-center gap-1.5 mt-2 px-3 py-1.5 text-xs font-medium text-amber-800 bg-amber-100 hover:bg-amber-200 rounded-lg transition-colors"
+              className="flex items-center gap-1.5 mt-2 px-3 py-1.5 text-xs font-medium text-amber-800 bg-amber-100 hover:bg-amber-200 dark:text-amber-200 dark:bg-amber-900/40 dark:hover:bg-amber-900/60 rounded-lg transition-colors"
             >
               <RotateCcw size={12} />
               Retry

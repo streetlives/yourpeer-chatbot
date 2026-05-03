@@ -20,20 +20,20 @@ interface ServiceCardProps {
 function StatusBadge({ status }: { status?: string }) {
   if (status === "open") {
     return (
-      <span className="inline-block text-xs font-semibold px-2.5 py-0.5 rounded-lg bg-green-100 text-green-800">
+      <span className="inline-block text-xs font-semibold px-2.5 py-0.5 rounded-lg bg-green-100 text-green-800 dark:bg-green-950/50 dark:text-green-300">
         Open now
       </span>
     );
   }
   if (status === "closed") {
     return (
-      <span className="inline-block text-xs font-semibold px-2.5 py-0.5 rounded-lg bg-red-50 text-red-700">
+      <span className="inline-block text-xs font-semibold px-2.5 py-0.5 rounded-lg bg-red-50 text-red-700 dark:bg-red-950/40 dark:text-red-300">
         Closed
       </span>
     );
   }
   return (
-    <span className="inline-block text-xs font-semibold px-2.5 py-0.5 rounded-lg bg-neutral-100 text-neutral-500">
+    <span className="inline-block text-xs font-semibold px-2.5 py-0.5 rounded-lg bg-neutral-100 text-neutral-500 dark:bg-neutral-800 dark:text-neutral-400">
       Call for hours
     </span>
   );
@@ -42,7 +42,7 @@ function StatusBadge({ status }: { status?: string }) {
 function ValidatedBadge({ dateStr }: { dateStr?: string }) {
   if (!dateStr) {
     return (
-      <span className="inline-flex items-center gap-1 text-[0.65rem] font-medium text-amber-600">
+      <span className="inline-flex items-center gap-1 text-[0.65rem] font-medium text-amber-600 dark:text-amber-400">
         <AlertTriangle size={11} aria-hidden="true" />
         Unverified — call to confirm
       </span>
@@ -75,7 +75,7 @@ function ValidatedBadge({ dateStr }: { dateStr?: string }) {
 
   if (isStale) {
     return (
-      <span className="inline-flex items-center gap-1 text-[0.65rem] font-medium text-amber-600">
+      <span className="inline-flex items-center gap-1 text-[0.65rem] font-medium text-amber-600 dark:text-amber-400">
         <AlertTriangle size={11} aria-hidden="true" />
         Unverified — call ahead
       </span>
@@ -84,7 +84,7 @@ function ValidatedBadge({ dateStr }: { dateStr?: string }) {
 
   return (
     <span className={`inline-flex items-center gap-1 text-[0.65rem] font-medium ${
-      isRecent ? "text-green-600" : "text-neutral-400"
+      isRecent ? "text-green-600 dark:text-green-400" : "text-neutral-400 dark:text-neutral-500"
     }`}>
       <CheckCircle size={11} aria-hidden="true" />
       Verified {label}
@@ -180,17 +180,17 @@ export function ServiceCard({ service, isActive, index, total }: ServiceCardProp
       role="listitem"
       aria-label={cardLabel}
       aria-current={isActive ? "true" : undefined}
-      className="flex-shrink-0 w-[280px] snap-start bg-white border border-neutral-200 rounded-2xl p-4 flex flex-col gap-2.5 transition-all hover:border-neutral-300 hover:shadow-md"
+      className="flex-shrink-0 w-[280px] snap-start bg-white border border-neutral-200 rounded-2xl p-4 flex flex-col gap-2.5 transition-all hover:border-neutral-300 hover:shadow-md dark:bg-neutral-900 dark:border-neutral-800 dark:hover:border-neutral-700"
     >
       {/* Name */}
-      <div className="text-[0.95rem] font-semibold tracking-tight text-neutral-900 leading-snug">
+      <div className="text-[0.95rem] font-semibold tracking-tight text-neutral-900 dark:text-neutral-100 leading-snug">
         {name}
       </div>
 
       {/* Organization + Verified */}
       <div className="flex flex-col gap-0.5 -mt-1">
         {service.organization && (
-          <div className="text-xs text-neutral-500 font-medium">
+          <div className="text-xs text-neutral-500 dark:text-neutral-400 font-medium">
             {service.organization}
           </div>
         )}
@@ -201,8 +201,8 @@ export function ServiceCard({ service, isActive, index, total }: ServiceCardProp
       <div className="flex items-center gap-2">
         <StatusBadge status={service.is_open} />
         {service.hours_today && (
-          <span className="inline-flex items-center gap-1 text-xs text-neutral-500 whitespace-nowrap">
-            <Clock size={14} className="text-neutral-400 flex-shrink-0" aria-hidden="true" />
+          <span className="inline-flex items-center gap-1 text-xs text-neutral-500 dark:text-neutral-400 whitespace-nowrap">
+            <Clock size={14} className="text-neutral-400 dark:text-neutral-500 flex-shrink-0" aria-hidden="true" />
             <span>{service.hours_today}</span>
           </span>
         )}
@@ -210,7 +210,7 @@ export function ServiceCard({ service, isActive, index, total }: ServiceCardProp
 
       {/* Review highlight — visible by default (builds trust) */}
       {service.review_highlight && (
-        <div className="text-xs text-neutral-500 leading-relaxed bg-neutral-50 border border-neutral-100 rounded-lg px-3 py-2 italic">
+        <div className="text-xs text-neutral-500 dark:text-neutral-400 leading-relaxed bg-neutral-50 border border-neutral-100 rounded-lg px-3 py-2 italic dark:bg-neutral-800/60 dark:border-neutral-800">
           <span aria-hidden="true">💬 </span>
           {service.review_highlight.length > 120
             ? service.review_highlight.slice(0, 117) + "…"
@@ -222,17 +222,17 @@ export function ServiceCard({ service, isActive, index, total }: ServiceCardProp
       {(service.fees || service.requires_membership || service.eligibility_summary) && (
         <div className="flex items-center gap-1.5 flex-wrap">
           {service.requires_membership && (
-            <span className="inline-block text-xs font-semibold text-amber-800 bg-amber-100 px-2 py-0.5 rounded-lg">
+            <span className="inline-block text-xs font-semibold text-amber-800 bg-amber-100 px-2 py-0.5 rounded-lg dark:text-amber-300 dark:bg-amber-950/50">
               Ref. may be required
             </span>
           )}
           {service.eligibility_summary && (
-            <span className="inline-block text-xs font-semibold text-blue-800 bg-blue-50 px-2 py-0.5 rounded-lg">
+            <span className="inline-block text-xs font-semibold text-blue-800 bg-blue-50 px-2 py-0.5 rounded-lg dark:text-blue-300 dark:bg-blue-950/50">
               {service.eligibility_summary}
             </span>
           )}
           {service.fees && (
-            <span className="inline-block text-xs font-semibold text-green-800 bg-green-100 px-2 py-0.5 rounded-lg">
+            <span className="inline-block text-xs font-semibold text-green-800 bg-green-100 px-2 py-0.5 rounded-lg dark:text-green-300 dark:bg-green-950/50">
               {service.fees}
             </span>
           )}
@@ -244,15 +244,15 @@ export function ServiceCard({ service, isActive, index, total }: ServiceCardProp
 
       {/* Also available at this location — limited to 3 with expand */}
       {alsoItems.length > 0 && (
-        <div className="pt-1 border-t border-neutral-100">
-          <div className="text-[0.65rem] font-semibold uppercase tracking-wider text-neutral-400 mb-1.5">
+        <div className="pt-1 border-t border-neutral-100 dark:border-neutral-800">
+          <div className="text-[0.65rem] font-semibold uppercase tracking-wider text-neutral-400 dark:text-neutral-500 mb-1.5">
             Also here
           </div>
           <div className="flex flex-wrap gap-1">
             {alsoVisible.map((cat) => (
               <span
                 key={cat}
-                className="inline-block text-[0.68rem] font-medium px-2 py-0.5 rounded-md bg-neutral-50 border border-neutral-200 text-neutral-600"
+                className="inline-block text-[0.68rem] font-medium px-2 py-0.5 rounded-md bg-neutral-50 border border-neutral-200 text-neutral-600 dark:bg-neutral-800 dark:border-neutral-700 dark:text-neutral-300"
               >
                 {ALSO_EMOJI[cat] || "\u2022"} {cat}
               </span>
@@ -261,7 +261,7 @@ export function ServiceCard({ service, isActive, index, total }: ServiceCardProp
               <button
                 type="button"
                 onClick={() => setAlsoExpanded(true)}
-                className="inline-block text-[0.68rem] font-medium px-2 py-0.5 rounded-md bg-neutral-50 border border-neutral-200 text-blue-600 hover:bg-blue-50 hover:border-blue-200 transition-colors"
+                className="inline-block text-[0.68rem] font-medium px-2 py-0.5 rounded-md bg-neutral-50 border border-neutral-200 text-blue-600 hover:bg-blue-50 hover:border-blue-200 transition-colors dark:bg-neutral-800 dark:border-neutral-700 dark:text-blue-400 dark:hover:bg-blue-950/40 dark:hover:border-blue-900"
               >
                 +{alsoHiddenCount} more
               </button>
@@ -298,12 +298,12 @@ function DetailsSection({ service, hasDetails, detailsOpen, setDetailsOpen }: {
 }) {
   if (!hasDetails) return null;
   return (
-    <div className="border-t border-neutral-100 pt-1">
+    <div className="border-t border-neutral-100 pt-1 dark:border-neutral-800">
       <button
         type="button"
         onClick={() => setDetailsOpen(!detailsOpen)}
         aria-expanded={detailsOpen}
-        className="flex items-center justify-between w-full py-1.5 text-xs font-semibold uppercase tracking-wider text-blue-600 underline underline-offset-2 hover:text-blue-800 transition-colors"
+        className="flex items-center justify-between w-full py-1.5 text-xs font-semibold uppercase tracking-wider text-blue-600 underline underline-offset-2 hover:text-blue-800 transition-colors dark:text-blue-400 dark:hover:text-blue-300"
       >
         <span>Details</span>
         <ChevronDown
@@ -316,25 +316,25 @@ function DetailsSection({ service, hasDetails, detailsOpen, setDetailsOpen }: {
       {detailsOpen && (
         <div className="flex flex-col gap-2 pb-1 animate-in fade-in slide-in-from-top-1 duration-150">
           {service.address && (
-            <div className="flex items-start gap-2 text-xs text-neutral-500 leading-snug">
-              <MapPin size={14} className="text-neutral-400 mt-0.5 flex-shrink-0" aria-hidden="true" />
+            <div className="flex items-start gap-2 text-xs text-neutral-500 dark:text-neutral-400 leading-snug">
+              <MapPin size={14} className="text-neutral-400 dark:text-neutral-500 mt-0.5 flex-shrink-0" aria-hidden="true" />
               <span>{service.address}</span>
             </div>
           )}
           {service.phone && (
-            <div className="flex items-start gap-2 text-xs text-neutral-500">
-              <Phone size={14} className="text-neutral-400 mt-0.5 flex-shrink-0" aria-hidden="true" />
+            <div className="flex items-start gap-2 text-xs text-neutral-500 dark:text-neutral-400">
+              <Phone size={14} className="text-neutral-400 dark:text-neutral-500 mt-0.5 flex-shrink-0" aria-hidden="true" />
               <span>{service.phone}</span>
             </div>
           )}
           {service.email && (
-            <div className="flex items-start gap-2 text-sm text-neutral-500">
-              <Mail size={14} className="text-neutral-400 mt-0.5 flex-shrink-0" aria-hidden="true" />
+            <div className="flex items-start gap-2 text-sm text-neutral-500 dark:text-neutral-400">
+              <Mail size={14} className="text-neutral-400 dark:text-neutral-500 mt-0.5 flex-shrink-0" aria-hidden="true" />
               <span>{service.email}</span>
             </div>
           )}
           {service.accessibility && (
-            <div className="flex items-start gap-2 text-sm text-neutral-500 leading-snug">
+            <div className="flex items-start gap-2 text-sm text-neutral-500 dark:text-neutral-400 leading-snug">
               <span className="mt-0.5 flex-shrink-0 text-sm" aria-hidden="true">♿</span>
               <span>{service.accessibility}</span>
             </div>
@@ -342,18 +342,18 @@ function DetailsSection({ service, hasDetails, detailsOpen, setDetailsOpen }: {
           {service.description && (
             <SafeHtml
               html={service.description}
-              className="text-xs text-neutral-500 leading-relaxed [&_ul]:list-disc [&_ul]:pl-4 [&_ol]:list-decimal [&_ol]:pl-4 [&_li]:mb-0.5 [&_a]:text-blue-600 [&_a]:underline [&_p]:mb-1 last:[&_p]:mb-0"
+              className="text-xs text-neutral-500 dark:text-neutral-400 leading-relaxed [&_ul]:list-disc [&_ul]:pl-4 [&_ol]:list-decimal [&_ol]:pl-4 [&_li]:mb-0.5 [&_a]:text-blue-600 dark:[&_a]:text-blue-400 [&_a]:underline [&_p]:mb-1 last:[&_p]:mb-0"
             />
           )}
           {service.required_documents && service.required_documents.length > 0 && (
-            <div className="flex items-start gap-2 text-xs text-neutral-500 leading-snug">
+            <div className="flex items-start gap-2 text-xs text-neutral-500 dark:text-neutral-400 leading-snug">
               <span className="mt-0.5 flex-shrink-0" aria-hidden="true">📄</span>
               <span>Bring: {service.required_documents.join(", ")}</span>
             </div>
           )}
           {service.languages && service.languages.length > 0 &&
             !(service.languages.length === 1 && service.languages[0] === "English") && (
-            <div className="flex items-start gap-2 text-xs text-neutral-500 leading-snug">
+            <div className="flex items-start gap-2 text-xs text-neutral-500 dark:text-neutral-400 leading-snug">
               <span className="mt-0.5 flex-shrink-0" aria-hidden="true">🗣️</span>
               <span>{service.languages.join(", ")}</span>
             </div>
@@ -375,7 +375,7 @@ function ActionButtons({ service, name }: { service: ServiceResult; name: string
             type="button"
             onClick={() => setShowCallConfirm(true)}
             aria-label={`Call ${name}`}
-            className="flex-1 py-2 rounded-lg border border-neutral-900 bg-neutral-900 text-center text-xs font-semibold text-white transition hover:bg-neutral-700"
+            className="flex-1 py-2 rounded-lg border border-neutral-900 bg-neutral-900 text-center text-xs font-semibold text-white transition hover:bg-neutral-700 dark:border-neutral-100 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-200"
           >
             Call
           </button>
@@ -397,7 +397,7 @@ function ActionButtons({ service, name }: { service: ServiceResult; name: string
             target="_blank"
             rel="noopener noreferrer"
             aria-label={`Visit ${name} website`}
-            className="flex-1 py-2 rounded-lg border border-neutral-200 bg-neutral-50 text-center text-xs font-semibold text-neutral-900 transition hover:bg-neutral-100 hover:border-neutral-300"
+            className="flex-1 py-2 rounded-lg border border-neutral-200 bg-neutral-50 text-center text-xs font-semibold text-neutral-900 transition hover:bg-neutral-100 hover:border-neutral-300 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100 dark:hover:bg-neutral-700 dark:hover:border-neutral-600"
           >
             Website
           </a>
@@ -471,11 +471,11 @@ export function LocationCard({ services, isActive, index, total }: LocationCardP
       role="listitem"
       aria-label={cardLabel}
       aria-current={isActive ? "true" : undefined}
-      className="flex-shrink-0 w-[280px] snap-start bg-white border border-neutral-200 rounded-2xl p-4 flex flex-col gap-2.5 transition-all hover:border-neutral-300 hover:shadow-md"
+      className="flex-shrink-0 w-[280px] snap-start bg-white border border-neutral-200 rounded-2xl p-4 flex flex-col gap-2.5 transition-all hover:border-neutral-300 hover:shadow-md dark:bg-neutral-900 dark:border-neutral-800 dark:hover:border-neutral-700"
     >
       {/* Organization header */}
       <div className="flex flex-col gap-0.5">
-        <div className="text-[0.95rem] font-semibold tracking-tight text-neutral-900 leading-snug">
+        <div className="text-[0.95rem] font-semibold tracking-tight text-neutral-900 dark:text-neutral-100 leading-snug">
           {orgName}
         </div>
         <ValidatedBadge dateStr={bestVerified ?? undefined} />
@@ -486,8 +486,8 @@ export function LocationCard({ services, isActive, index, total }: LocationCardP
         <div className="flex items-center gap-2">
           <StatusBadge status={primary.is_open} />
           {primary.hours_today && (
-            <span className="inline-flex items-center gap-1 text-xs text-neutral-500 whitespace-nowrap">
-              <Clock size={14} className="text-neutral-400 flex-shrink-0" aria-hidden="true" />
+            <span className="inline-flex items-center gap-1 text-xs text-neutral-500 dark:text-neutral-400 whitespace-nowrap">
+              <Clock size={14} className="text-neutral-400 dark:text-neutral-500 flex-shrink-0" aria-hidden="true" />
               <span>{primary.hours_today}</span>
             </span>
           )}
@@ -498,17 +498,17 @@ export function LocationCard({ services, isActive, index, total }: LocationCardP
       {allSameBadges && (primary.fees || primary.requires_membership || primary.eligibility_summary) && (
         <div className="flex items-center gap-1.5 flex-wrap">
           {primary.requires_membership && (
-            <span className="inline-block text-xs font-semibold text-amber-800 bg-amber-100 px-2 py-0.5 rounded-lg">
+            <span className="inline-block text-xs font-semibold text-amber-800 bg-amber-100 px-2 py-0.5 rounded-lg dark:text-amber-300 dark:bg-amber-950/50">
               Ref. may be required
             </span>
           )}
           {primary.eligibility_summary && (
-            <span className="inline-block text-xs font-semibold text-blue-800 bg-blue-50 px-2 py-0.5 rounded-lg">
+            <span className="inline-block text-xs font-semibold text-blue-800 bg-blue-50 px-2 py-0.5 rounded-lg dark:text-blue-300 dark:bg-blue-950/50">
               {primary.eligibility_summary}
             </span>
           )}
           {primary.fees && (
-            <span className="inline-block text-xs font-semibold text-green-800 bg-green-100 px-2 py-0.5 rounded-lg">
+            <span className="inline-block text-xs font-semibold text-green-800 bg-green-100 px-2 py-0.5 rounded-lg dark:text-green-300 dark:bg-green-950/50">
               {primary.fees}
             </span>
           )}
@@ -516,8 +516,8 @@ export function LocationCard({ services, isActive, index, total }: LocationCardP
       )}
 
       {/* Service list */}
-      <div className="pt-1 border-t border-neutral-100">
-        <div className="text-[0.65rem] font-semibold uppercase tracking-wider text-neutral-400 mb-1.5">
+      <div className="pt-1 border-t border-neutral-100 dark:border-neutral-800">
+        <div className="text-[0.65rem] font-semibold uppercase tracking-wider text-neutral-400 dark:text-neutral-500 mb-1.5">
           Services
         </div>
         <div className="flex flex-col gap-2">
@@ -526,10 +526,10 @@ export function LocationCard({ services, isActive, index, total }: LocationCardP
             return (
               <div
                 key={svc.service_id || i}
-                className={`flex flex-col gap-1.5 ${i > 0 && hasPerServiceInfo ? "pt-2 border-t border-neutral-100" : ""}`}
+                className={`flex flex-col gap-1.5 ${i > 0 && hasPerServiceInfo ? "pt-2 border-t border-neutral-100 dark:border-neutral-800" : ""}`}
               >
                 {/* Service name */}
-                <div className="text-xs font-semibold text-neutral-700">
+                <div className="text-xs font-semibold text-neutral-700 dark:text-neutral-200">
                   {ALSO_EMOJI[svc.service_name || ""] ? `${ALSO_EMOJI[svc.service_name || ""]} ` : ""}{svc.service_name || "Service"}
                 </div>
 
@@ -538,8 +538,8 @@ export function LocationCard({ services, isActive, index, total }: LocationCardP
                   <div className="flex items-center gap-2">
                     <StatusBadge status={svc.is_open} />
                     {svc.hours_today && (
-                      <span className="inline-flex items-center gap-1 text-xs text-neutral-500 whitespace-nowrap">
-                        <Clock size={12} className="text-neutral-400 flex-shrink-0" aria-hidden="true" />
+                      <span className="inline-flex items-center gap-1 text-xs text-neutral-500 dark:text-neutral-400 whitespace-nowrap">
+                        <Clock size={12} className="text-neutral-400 dark:text-neutral-500 flex-shrink-0" aria-hidden="true" />
                         <span>{svc.hours_today}</span>
                       </span>
                     )}
@@ -550,17 +550,17 @@ export function LocationCard({ services, isActive, index, total }: LocationCardP
                 {!allSameBadges && (svc.fees || svc.requires_membership || svc.eligibility_summary) && (
                   <div className="flex items-center gap-1 flex-wrap">
                     {svc.requires_membership && (
-                      <span className="inline-block text-[0.65rem] font-semibold text-amber-800 bg-amber-100 px-1.5 py-0.5 rounded-md">
+                      <span className="inline-block text-[0.65rem] font-semibold text-amber-800 bg-amber-100 px-1.5 py-0.5 rounded-md dark:text-amber-300 dark:bg-amber-950/50">
                         Ref. may be required
                       </span>
                     )}
                     {svc.eligibility_summary && (
-                      <span className="inline-block text-[0.65rem] font-semibold text-blue-800 bg-blue-50 px-1.5 py-0.5 rounded-md">
+                      <span className="inline-block text-[0.65rem] font-semibold text-blue-800 bg-blue-50 px-1.5 py-0.5 rounded-md dark:text-blue-300 dark:bg-blue-950/50">
                         {svc.eligibility_summary}
                       </span>
                     )}
                     {svc.fees && (
-                      <span className="inline-block text-[0.65rem] font-semibold text-green-800 bg-green-100 px-1.5 py-0.5 rounded-md">
+                      <span className="inline-block text-[0.65rem] font-semibold text-green-800 bg-green-100 px-1.5 py-0.5 rounded-md dark:text-green-300 dark:bg-green-950/50">
                         {svc.fees}
                       </span>
                     )}
@@ -574,7 +574,7 @@ export function LocationCard({ services, isActive, index, total }: LocationCardP
 
       {/* Review highlight */}
       {review && (
-        <div className="text-xs text-neutral-500 leading-relaxed bg-neutral-50 border border-neutral-100 rounded-lg px-3 py-2 italic">
+        <div className="text-xs text-neutral-500 dark:text-neutral-400 leading-relaxed bg-neutral-50 border border-neutral-100 rounded-lg px-3 py-2 italic dark:bg-neutral-800/60 dark:border-neutral-800">
           <span aria-hidden="true">💬 </span>
           {review.length > 120 ? review.slice(0, 117) + "…" : review}
         </div>

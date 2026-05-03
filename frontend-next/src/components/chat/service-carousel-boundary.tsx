@@ -34,15 +34,15 @@ export class ServiceCarouselBoundary extends Component<Props, State> {
   render() {
     if (this.state.hasError) {
       return (
-        <div className="self-start w-full bg-neutral-100 border border-neutral-200 rounded-2xl px-5 py-4 text-sm text-neutral-500">
-          <p className="font-medium text-neutral-700 mb-1">
+        <div className="self-start w-full bg-neutral-100 border border-neutral-200 rounded-2xl px-5 py-4 text-sm text-neutral-500 dark:bg-neutral-900 dark:border-neutral-800 dark:text-neutral-400">
+          <p className="font-medium text-neutral-700 mb-1 dark:text-neutral-200">
             Couldn&apos;t display service results
           </p>
           <p>
             Try asking again, or visit{" "}
             <a
               href="https://yourpeer.nyc"
-              className="text-amber-500 underline hover:text-amber-600"
+              className="text-amber-500 underline hover:text-amber-600 dark:text-amber-400 dark:hover:text-amber-300"
               target="_blank"
               rel="noopener noreferrer"
             >

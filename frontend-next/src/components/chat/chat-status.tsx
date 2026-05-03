@@ -16,7 +16,7 @@ export function ChatStatus({ isLoading, error }: ChatStatusProps) {
       aria-live="polite"
       aria-atomic="true"
       className={`min-h-[20px] my-2 mx-1 text-sm ${
-        error ? "text-red-600" : "text-neutral-400"
+        error ? "text-red-600 dark:text-red-400" : "text-neutral-400 dark:text-neutral-500"
       }`}
     >
       {error || (isLoading ? "Searching..." : "")}

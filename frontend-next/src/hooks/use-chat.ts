@@ -17,8 +17,12 @@ import {
   readQueue,
   reapExpired,
 } from "@/lib/chat/send-queue";
+import {
+  reconcilePending,
+} from "@/lib/chat/pending-responses";
 import { cacheLastResults } from "@/lib/chat/offline-cache";
 import { generateRequestId } from "@/lib/chat/request-id";
+import { redactPII } from "@/lib/chat/pii-redactor";
 
 const GEOLOCATION_TRIGGER = "__use_geolocation__";
 const CRISIS_GEO_TRIGGER = "__crisis_geo_search__";
@@ -146,6 +150,54 @@ function isNetworkError(err: unknown): boolean {
 }
 
 /**
+ * Ask the browser to fire a Background Sync event when connectivity is
+ * available. The sync tag here MUST match `SYNC_TAG` in public/sw.js —
+ * the SW's sync handler only runs for the exact tag it's checking for.
+ *
+ * This is a strict enhancement on top of the existing client-side
+ * flush. When it works (Chromium browsers with the API enabled), the
+ * browser will drain the queue even if the tab is closed or JS is
+ * frozen — useful for iOS Android Chrome in background or users who
+ * close the tab between when they hit send and when connectivity
+ * returns. When it doesn't work (Safari, Firefox, older Edge, or any
+ * browser where the registration fails), the existing client-side
+ * `online` handler still fires on tab focus and drains the queue.
+ *
+ * Failures are swallowed: this is a best-effort enhancement, never
+ * the primary send path. We also check `navigator.onLine` before
+ * registering — an immediate sync on an already-online browser would
+ * fire right away, which is fine but racy with the client-side
+ * flush. Skip it; the client-side path will handle it.
+ */
+async function tryRegisterBackgroundSync(): Promise<void> {
+  if (typeof window === "undefined") return;
+  if (!("serviceWorker" in navigator)) return;
+  // Feature detection — SyncManager is the global API for Background
+  // Sync. Safari and Firefox omit this; registering on those browsers
+  // throws, which is why we gate even though the call below is in a
+  // try/catch.
+  if (!("SyncManager" in window)) return;
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    // The `sync` property is typed as optional in lib.dom — check
+    // before using to satisfy strict mode. Present whenever
+    // SyncManager is defined.
+    const sync = (reg as ServiceWorkerRegistration & {
+      sync?: { register(tag: string): Promise<void> };
+    }).sync;
+    if (!sync) return;
+    await sync.register("yourpeer-send-queue");
+  } catch (err) {
+    // Common failure modes: user-denied storage permission, no SW
+    // registered yet (would be odd this deep in the send path), or
+    // the browser happens not to implement Background Sync despite
+    // exposing SyncManager. None of these should break the user's
+    // flow — the client-side online handler is the fallback.
+    console.debug("[sync] registration failed (non-fatal):", err);
+  }
+}
+
+/**
  * Write a bot response that includes service cards to the offline
  * cache. Fire-and-forget — caching failures never block the UI.
  *
@@ -214,10 +266,30 @@ export function useChat() {
     ): Promise<boolean> => {
       if (!isNetworkError(err)) return false;
 
+      // Redact PII before the text reaches IndexedDB. The send queue
+      // persists across tab close (and with Background Sync, can also
+      // be DELIVERED while the tab is closed), so anything in there
+      // sits at rest on disk for up to an hour. For this population —
+      // shared phones, lost devices, family discovery risk — that's a
+      // meaningful threat surface.
+      //
+      // The user still SEES their original text in the chat UI. The
+      // displayed message and the queued payload are intentionally
+      // distinct: chat history is "what we show", queue is "what we
+      // persist + eventually transmit". The server runs its own
+      // redaction before transcript storage, so live-online sends
+      // continue to use the raw text and trigger the server's PII
+      // warning UX. Offline-typed PII is silently scrubbed here —
+      // we accept losing the live warning in exchange for never
+      // letting offline-typed PII reach disk or wire.
+      //
+      // See lib/chat/pii-redactor.ts for the pattern catalog and
+      // verify-pii-redactor.mjs for the case coverage.
+      const { redacted } = redactPII(text);
       const coords = hasCoords ? { latitude: latitude!, longitude: longitude! } : null;
       const result = await enqueueMessage({
         id: userMsgId,
-        text,
+        text: redacted,
         coords,
         sessionId,
         queuedAt: Date.now(),
@@ -229,6 +301,13 @@ export function useChat() {
         // "bot reply saying your message will send later" pattern —
         // the status lives on the message itself (WhatsApp-style).
         updateMessage(userMsgId, { status: "pending" });
+        // Best-effort: ask the browser to fire a sync event when
+        // connectivity returns, even if this tab is no longer alive.
+        // On supporting browsers (Chromium) this lets the SW drain
+        // the queue independent of the client-side flush. On Safari /
+        // Firefox it's a no-op and the client's online handler is the
+        // only drain — which is fine for foreground use.
+        void tryRegisterBackgroundSync();
       } else {
         // Queue is full or IDB write failed. Soften the message and
         // mark it transient so it doesn't persist to localStorage
@@ -1059,6 +1138,112 @@ export function useChat() {
     }
     return () => window.removeEventListener("online", handler);
   }, [flushQueue]);
+
+  // Reconcile pending responses that the service worker delivered via
+  // Background Sync while this tab wasn't running (or was frozen). The
+  // SW stores server responses under `yourpeer:pending-responses:v1`;
+  // here we drain that store, inject the messages into the chat log,
+  // and clear the store.
+  //
+  // Two triggers:
+  //   - On mount: covers the case where the user closed the tab before
+  //     the queue drained, then reopens later. Any SW-completed sends
+  //     surface now.
+  //   - On `online`: covers the case where the tab stayed open during
+  //     an offline spell, the SW drained on reconnect, and the
+  //     reconcile happens right after the online handler fires the
+  //     client-side flush (harmless duplication — server dedupes via
+  //     X-Request-ID, client dedupes by message id).
+  //
+  // The reconcile itself is session-aware: if the pending response is
+  // for a session the user has since reset, it's dropped inside
+  // reconcilePending(). Responses for the current session (or from a
+  // request that started with no session) are applied here.
+  //
+  // Mirrors the response-handling logic in flushQueue (lines ~1005-
+  // 1045). Kept inline rather than factored because the state updates
+  // touch hook-scoped closures (addMessage, updateMessage,
+  // setSessionId, sessionId) and extracting would require threading
+  // all of those through as arguments — noise for one call site.
+  const reconcileSwResponses = useCallback(async () => {
+    if (typeof window === "undefined") return;
+    const matched = await reconcilePending(sessionId);
+    if (matched.length === 0) return;
+
+    let sessionResetWarned = false;
+    for (const entry of matched) {
+      // Narrow the unknown response body to a shape we can use. The
+      // SW writes whatever /api/chat returned; if the shape is off
+      // (e.g. old server, partial response), skip rather than crash.
+      const body = entry.body;
+      if (!body || typeof body !== "object") continue;
+      const data = body as {
+        response?: string;
+        session_id?: string;
+        services?: ChatMessage["services"];
+        quick_replies?: ChatMessage["quick_replies"];
+      };
+
+      if (data.session_id) setSessionId(data.session_id);
+
+      // Same session-reset heuristic as flushQueue: if the pending
+      // response was for a token the server rejected and minted a
+      // new one, let the user know. Guarded to fire at most once
+      // per reconcile batch so a backlog doesn't spam the user.
+      if (
+        !sessionResetWarned &&
+        entry.sessionId &&
+        data.session_id &&
+        data.session_id !== entry.sessionId
+      ) {
+        addMessage({
+          id: nextMsgId(),
+          role: "bot",
+          text: "You were offline for a while — starting a fresh conversation.",
+          transient: true,
+        });
+        sessionResetWarned = true;
+      }
+
+      // Flip the user's own message (which should still be present
+      // with status="pending") to "sent". updateMessage is a no-op
+      // if the message isn't found — safe if the user wiped history
+      // in between.
+      updateMessage(entry.id, { status: "sent" });
+
+      const botMsg: ChatMessage = {
+        id: nextMsgId(),
+        role: "bot",
+        text: data.response || "(No response text)",
+        services: data.services,
+        quick_replies: data.quick_replies,
+        showFeedback: (data.services?.length ?? 0) > 0,
+      };
+      addMessage(botMsg);
+      // cacheIfResults needs the user's original query; we don't have
+      // it here (pending-responses stores only the response, not the
+      // request). Look it up from the live message log — if it's
+      // still there, we cache; if not (history was wiped), skip.
+      const userMsg = useChatStore
+        .getState()
+        .messages.find((m) => m.id === entry.id);
+      if (userMsg) {
+        cacheIfResults(botMsg, userMsg.text);
+      }
+    }
+  }, [sessionId, addMessage, updateMessage, setSessionId]);
+
+  useEffect(() => {
+    // Fire on mount and whenever the tab comes back online. The
+    // reconcile itself is idempotent (drain-and-clear pattern) so
+    // double-fires are harmless.
+    void reconcileSwResponses();
+    const handler = () => {
+      void reconcileSwResponses();
+    };
+    window.addEventListener("online", handler);
+    return () => window.removeEventListener("online", handler);
+  }, [reconcileSwResponses]);
 
   return { messages, isLoading, error, send, retry, submitFeedback, cancelQueued };
 }

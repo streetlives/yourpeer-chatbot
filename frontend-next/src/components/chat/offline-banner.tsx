@@ -35,11 +35,17 @@ export function OfflineBanner({ hasCachedResults, queueDepth }: OfflineBannerPro
 
   // Amber color chosen specifically to distinguish from the brand
   // yellow (#FFD54F). See design decision in PR.
+  //
+  // Dark-mode adjustments: the amber-50 bg becomes invisible against
+  // the dark page background, so in dark mode we use an amber-950
+  // tint (still warm but visible). amber-900 text on amber-50 has
+  // good contrast in light mode; we keep the amber hue in dark but
+  // shift to amber-200 for the text so it reads on a near-black page.
   const palette = {
-    bg: "bg-amber-50",
-    border: "border-amber-400",
-    text: "text-amber-900",
-    icon: "text-amber-600",
+    bg: "bg-amber-50 dark:bg-amber-950/40",
+    border: "border-amber-400 dark:border-amber-600",
+    text: "text-amber-900 dark:text-amber-200",
+    icon: "text-amber-600 dark:text-amber-400",
   };
 
   let primaryText: string;

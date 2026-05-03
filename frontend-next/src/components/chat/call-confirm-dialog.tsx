@@ -83,23 +83,23 @@ export function CallConfirmDialog({ phone, name, onConfirm, onCancel }: CallConf
       role="dialog"
       aria-modal="true"
       aria-label={`Call ${name}`}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 animate-in fade-in"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 animate-in fade-in dark:bg-black/70"
       onClick={handleBackdropClick}
     >
       <div
-        className="bg-white rounded-2xl shadow-xl w-[min(340px,90vw)] p-5 animate-in zoom-in-95 fade-in"
+        className="bg-white rounded-2xl shadow-xl w-[min(340px,90vw)] p-5 animate-in zoom-in-95 fade-in dark:bg-neutral-900 dark:shadow-2xl dark:ring-1 dark:ring-neutral-800"
       >
         <div className="flex items-center gap-3 mb-4">
-          <div className="w-10 h-10 rounded-full bg-neutral-900 flex items-center justify-center shrink-0">
-            <Phone className="w-5 h-5 text-white" />
+          <div className="w-10 h-10 rounded-full bg-neutral-900 flex items-center justify-center shrink-0 dark:bg-neutral-100">
+            <Phone className="w-5 h-5 text-white dark:text-neutral-900" />
           </div>
           <div className="min-w-0">
-            <p className="text-sm font-semibold text-neutral-900 truncate">{name}</p>
-            <p className="text-sm text-neutral-500 font-mono">{phone}</p>
+            <p className="text-sm font-semibold text-neutral-900 truncate dark:text-neutral-100">{name}</p>
+            <p className="text-sm text-neutral-500 font-mono dark:text-neutral-400">{phone}</p>
           </div>
         </div>
 
-        <p className="text-sm text-neutral-500 mb-5">
+        <p className="text-sm text-neutral-500 mb-5 dark:text-neutral-400">
           This will start a call to this number. Hours and availability may have changed — if no one answers, try again later.
         </p>
 
@@ -107,7 +107,7 @@ export function CallConfirmDialog({ phone, name, onConfirm, onCancel }: CallConf
           <button
             ref={cancelRef}
             onClick={onCancel}
-            className="flex-1 py-3 rounded-lg border border-neutral-200 bg-white text-sm font-semibold text-neutral-700 transition hover:bg-neutral-50"
+            className="flex-1 py-3 rounded-lg border border-neutral-200 bg-white text-sm font-semibold text-neutral-700 transition hover:bg-neutral-50 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200 dark:hover:bg-neutral-800"
           >
             Cancel
           </button>
@@ -115,7 +115,7 @@ export function CallConfirmDialog({ phone, name, onConfirm, onCancel }: CallConf
             ref={callRef}
             href={`tel:${phone.split(/\s*ext/i)[0].replace(/\D/g, "")}`}
             onClick={onConfirm}
-            className="flex-1 py-3 rounded-lg border border-neutral-900 bg-neutral-900 text-center text-sm font-semibold text-white transition hover:bg-neutral-700"
+            className="flex-1 py-3 rounded-lg border border-neutral-900 bg-neutral-900 text-center text-sm font-semibold text-white transition hover:bg-neutral-700 dark:border-neutral-100 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-200"
           >
             Call
           </a>

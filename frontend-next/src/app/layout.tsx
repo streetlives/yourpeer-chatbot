@@ -8,6 +8,8 @@ import "./globals.css";
 import { Inter } from "next/font/google";
 import type { Metadata, Viewport } from "next";
 import { PWARegister } from "./pwa-register";
+import { AppleSplashLinks } from "./apple-splash-links";
+import { THEME_STORAGE_KEY, DARK_CLASS, TRANSITIONS_OFF_CLASS } from "@/lib/theme";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -46,8 +48,57 @@ export default function RootLayout({
 }: {
   children: React.ReactNode;
 }) {
+  // Inline FOUC-prevention script. This runs synchronously before first
+  // paint, reading the user's stored theme choice + OS preference and
+  // applying the .dark class to <html> BEFORE React hydrates. Without
+  // this, users in dark mode see a flash of light theme on every load
+  // (SSR renders no class → browser paints light → React hydrates →
+  // useEffect sets the class → repaint to dark).
+  //
+  // Why inline + dangerouslySetInnerHTML: external scripts can't run
+  // before first paint without a network round-trip. The Tailwind
+  // dark: variants only activate when the class is present, so the
+  // script must literally run before the body renders.
+  //
+  // Why duplicate the storage key and "system"/"light"/"dark" string
+  // literals from src/lib/theme.ts: this script can't import. The
+  // duplication is intentional and the constants are interpolated
+  // from the imports above so a rename in theme.ts propagates here at
+  // build time.
+  //
+  // The .theme-transitions-off class suppresses the 120ms color
+  // transitions in globals.css for the first paint so users don't see
+  // a fade-in on load. We remove it after the first frame via
+  // requestAnimationFrame — by that time the initial paint has
+  // committed and any subsequent class change (toggle button, OS
+  // preference change) gets the smooth animation.
+  //
+  // Important: the removal runs from the inline script (not from
+  // useTheme) so it works on every page, including admin pages and
+  // any future routes that don't mount the chat container. Putting
+  // this in useTheme would mean the class never lifts on those pages,
+  // permanently suppressing the toggle animation if anyone ever adds
+  // a theme switcher there.
+  const fouc = `(function(){try{var k="${THEME_STORAGE_KEY}";var s=localStorage.getItem(k);var r;if(s==="light"||s==="dark"){r=s}else{r=(window.matchMedia&&window.matchMedia("(prefers-color-scheme: dark)").matches)?"dark":"light"}var h=document.documentElement;if(r==="dark"){h.classList.add("${DARK_CLASS}")}h.classList.add("${TRANSITIONS_OFF_CLASS}");if(typeof requestAnimationFrame==="function"){requestAnimationFrame(function(){h.classList.remove("${TRANSITIONS_OFF_CLASS}")})}else{setTimeout(function(){h.classList.remove("${TRANSITIONS_OFF_CLASS}")},0)}}catch(e){}})();`;
+
   return (
-    <html lang="en" className={inter.className}>
+    // suppressHydrationWarning: the inline FOUC script may add classes
+    // (.dark, .theme-transitions-off) to <html> before React hydrates.
+    // SSR has no access to localStorage or matchMedia, so the server
+    // renders without those classes. React would otherwise log a
+    // hydration mismatch warning. The FOUC script is the canonical
+    // pattern for this; suppressing the warning is correct here and
+    // ONLY here — body content is not affected.
+    <html lang="en" className={inter.className} suppressHydrationWarning>
+      {/* Next's metadata export writes into <head> automatically; this
+          explicit <head> is additive and hosts tags Next can't emit via
+          the Metadata API (apple-touch-startup-image with per-device
+          media queries, the inline FOUC script). Having both is
+          supported. */}
+      <head>
+        <AppleSplashLinks />
+        <script dangerouslySetInnerHTML={{ __html: fouc }} />
+      </head>
       <body>
         {children}
         <PWARegister />
