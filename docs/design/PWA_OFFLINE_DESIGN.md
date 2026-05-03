@@ -1,6 +1,6 @@
 # YourPeer Offline & Delivery UX — Design Document
 
-**Status:** Draft for review
+**Status:** ✅ Shipped (April 2026). Service worker, manifest, send queue, idempotency cache, and message status indicators are all live. Telemetry, push notifications, and a few smaller items in §7 remain explicitly deferred — see that section for what's intentionally not in the pilot.
 **Author:** Engineering
 **Date:** April 2026
 **Audience:** Streetlives leadership, engineering, data stewardship, pilot partners

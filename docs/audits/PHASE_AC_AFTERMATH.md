@@ -1,6 +1,6 @@
 # Phase A-C aftermath — open items tracking
 
-**Status as of:** Phase A, B, C complete and the audit follow-ups merged. This doc enumerates everything that remains: the Phase D handler-migration cleanup, deferred bugs and design decisions, audit-flagged smells we chose not to address, eval cluster fixes, and engineering tasks that came up during the migration.
+**Status as of:** Phase A, B, C complete; Phase D handler migration and Stage 2 snapshot cleanup landed in PR #76. This doc enumerates everything that remains: audit-flagged smells we chose not to address, deferred bugs and design decisions, and eval cluster fixes. Items closed in PR #76 (`D-1` through `D-5`, `TEST-GAP-1`, `TEST-GAP-2`, `ENG-1`) retain their detail sections below for historical context — see each section's status line.
 
 Use stable IDs (e.g., `D-1`, `BUG-1`) when referencing items from PRs or commits.
 
@@ -10,11 +10,11 @@ Use stable IDs (e.g., `D-1`, `BUG-1`) when referencing items from PRs or commits
 
 | ID | Item | Category | Effort | Priority |
 | --- | --- | --- | --- | --- |
-| `D-1` | Migrate `_handle_spanish_detection` to `MessageContext` | Phase D | M | Low |
-| `D-2` | MessageContext test fixture / builder | Phase D | S | Low |
-| `D-3` | Tighten `MessageContext.merged` annotation | Phase D | S | Low |
-| `D-4` | Investigate dropping `_response_tone` alias | Phase D | S | Low |
-| `D-5` | Stage 2 snapshot pattern: helper accessors for `_last_action` / `_pending_confirmation` | Phase D | M | Low |
+| `D-1` | Migrate `_handle_spanish_detection` to `MessageContext` | Phase D | M | ✅ Closed (PR #76) |
+| `D-2` | MessageContext test fixture / builder | Phase D | S | ✅ Closed (PR #76) |
+| `D-3` | Tighten `MessageContext.merged` annotation | Phase D | S | ✅ Closed (PR #76) |
+| `D-4` | Investigate dropping `_response_tone` alias | Phase D | S | ✅ Closed (PR #76) |
+| `D-5` | Stage 2 snapshot pattern: helper accessors for `_last_action` / `_pending_confirmation` | Phase D | M | ✅ Closed (PR #76) |
 | `BUG-1` | `_persist_emotional_context_late` save-on-value-change | Bug | XS | ✅ Closed |
 | `SUSPECT-1` | Tone prefix asymmetry between follow-up paths | UX question | XS | Low |
 | `SMELL-2` | Underscore-prefixed locals in `generate_reply` | Style | M | Low |
@@ -31,11 +31,11 @@ Use stable IDs (e.g., `D-1`, `BUG-1`) when referencing items from PRs or commits
 | `COMPAT-2` | Drop `extraction_source=None` default in `slot_extraction.extract()` | Pre-launch cleanup | XS | ✅ Closed |
 | `COMPAT-3` | Drop unused `message` parameter from `merge.py` set-overlap branches | Pre-launch cleanup | XS | ✅ Closed |
 | `COMPAT-4` | Standardize on 3-tuple offers throughout the merge pipeline | Pre-launch cleanup | S | ✅ Closed |
-| `TEST-GAP-1` | `_handle_demographic_skip` integration coverage | Test gap | S | Low |
-| `TEST-GAP-2` | Snapshot-arg semantics not directly unit-tested | Test gap | S | Low |
+| `TEST-GAP-1` | `_handle_demographic_skip` integration coverage | Test gap | S | ✅ Closed (PR #76) |
+| `TEST-GAP-2` | Snapshot-arg semantics not directly unit-tested | Test gap | S | ✅ Closed (PR #76) |
 | `EVAL-B` | Cluster B eval fixes (multi_cross_borough, multi_three_services_legal_benefits_food) | Eval | L | High |
 | `EVAL-C` | Cluster C eval fix (wa_negative_preference) | Eval | M | Medium |
-| `ENG-1` | Mobile-input fuzz harness (apostrophe substitutions) | Engineering | S | Medium |
+| `ENG-1` | Mobile-input fuzz harness (apostrophe substitutions) | Engineering | S | ✅ Closed (PR #76) |
 
 **Effort key:** XS ≤ 30min · S ≤ 2hr · M ≤ 1day · L ≤ 1week.
 
@@ -43,73 +43,78 @@ Use stable IDs (e.g., `D-1`, `BUG-1`) when referencing items from PRs or commits
 
 ## Phase D — handler migration cleanup
 
-The four-phase MessageContext adoption (Phases A-C in `ORCHESTRATOR_AUDIT.md`) is complete except for these residual cleanup items. None of them block the migration's value; they would round out the consistency story.
+The four-phase MessageContext adoption (Phases A-C in `ORCHESTRATOR_AUDIT.md`) plus the residual Phase D cleanup is complete. All `D-*` items below were closed in PR #76; the body sections are kept for historical context — each one notes how it landed.
 
 ### `D-1` — Migrate `_handle_spanish_detection` to `MessageContext`
 
-**Status:** Open.
+**Status:** ✅ **Closed in PR #76.**
 
-**Current signature:** `_handle_spanish_detection(session_id, message, redacted_message, existing, has_service_intent, tone, request_id)` at `accessibility.py:157`. Returns a `(result, acknowledgment)` tuple.
+**Resolution:** All three accessibility handlers (`_handle_demographic_skip`, `_handle_location_unknown`, `_handle_spanish_detection`) migrated from 6-arg signatures to ctx-only. The orchestrator call sites and the 22 unit-test invocations in `tests/unit/test_chatbot_extracted_helpers.py` were updated to use the `make_ctx` builder from `D-2`.
+
+**Original details (for historical context):**
+
+**Original signature:** `_handle_spanish_detection(session_id, message, redacted_message, existing, has_service_intent, tone, request_id)` at `accessibility.py:157`. Returns a `(result, acknowledgment)` tuple.
 
 **Target signature:** `_handle_spanish_detection(ctx) -> Tuple[Optional[dict], str]`.
 
-**Why deferred:** 4 direct unit-test invocations in `tests/unit/test_chatbot_extracted_helpers.py` use the positional form. Migration requires updating those test calls, which need a `MessageContext` to construct. See `D-2` below.
-
-**Acceptance:** signature updated; test fixture from `D-2` used in unit tests; orchestrator call site updated; full test suite green.
+**Was deferred because:** 4 direct unit-test invocations in `tests/unit/test_chatbot_extracted_helpers.py` used the positional form. Migration required a `MessageContext` test fixture (`D-2`) before the test calls could be cleanly updated.
 
 ### `D-2` — MessageContext test fixture / builder
 
-**Status:** Open.
+**Status:** ✅ **Closed in PR #76.**
 
-**Problem:** `MessageContext` has 18 fields (post-cleanup), several required without defaults. Constructing one in a unit test is verbose. Tests that white-box-call handlers (rather than going through `generate_reply`) currently can't easily build a ctx.
+**Resolution:** `make_ctx(**overrides)` builder added in `tests/conftest.py`. Returns a `MessageContext` with sensible defaults; callers override only the fields they care about. Auto-derives `is_confirmation_action` from the `action` override. Used by the rewritten unit tests for the three accessibility handlers (`D-1`) and by the new `TEST-GAP-2` snapshot-divergence tests.
 
-**Options:**
-- **(a) Pytest fixture `default_ctx(**overrides)`** — returns a MessageContext with sensible defaults, callers override only the fields they care about. Simplest and most idiomatic for pytest.
+**Original details (for historical context):**
+
+**Problem:** `MessageContext` has 18 fields (post-cleanup), several required without defaults. Constructing one in a unit test is verbose. Tests that white-box-call handlers (rather than going through `generate_reply`) couldn't easily build a ctx.
+
+**Options considered:**
+- **(a) Pytest fixture `default_ctx(**overrides)`** — returns a MessageContext with sensible defaults, callers override only the fields they care about. Simplest and most idiomatic for pytest. **Chosen approach.**
 - **(b) `MessageContext.for_test(...)` classmethod** — same idea, on the class itself. Discoverable but couples production code to tests.
-<!-- drift:ignore: ignore future test files that don't exist yet -->
-**Recommendation:** (a) in `tests/conftest.py` or `tests/_fixtures/ctx.py`. About 15 lines.
-
-**Acceptance:** fixture lands; existing unit tests for migrated handlers (e.g. `_handle_negative_preference`, `_handle_correction`, `_handle_demographic_skip`) optionally rewritten to use it; `D-1` blocked on this.
 
 ### `D-3` — Tighten `MessageContext.merged` annotation
 
-**Status:** Open.
+**Status:** ✅ **Closed in PR #76.**
 
-**Current:** `merged: Optional[dict] = None` (set late, after `merge_slots` in service flow).
+**Resolution:** Kept `merged: Optional[dict] = None` (the alternative — making it required at construction — broke the dataclass-construction-once pattern). Added `MessageContext.require_merged()` accessor that raises `RuntimeError` with a descriptive message if called before `merged` is set. `_handle_general_conversation` (in `general.py`) — the only current reader — was migrated to call the accessor instead of reading `ctx.merged` directly. Future readers that need the merged dict should use the accessor; the type annotation stays defensive.
 
-**Concern:** A handler that reads `ctx.merged` before the late-set runs would crash. Currently defended only by docstring ("this handler runs at the end of `generate_reply` so merged is always populated by then"). The only current reader is `_handle_general_conversation` in `general.py:66`, which runs at the end and is safe.
+**Original details (for historical context):**
 
-**Investigation needed:**
-- Audit the orchestrator's late-set sequence: is there any code path where a ctx-using handler could fire AFTER ctx construction but BEFORE the `ctx.merged = merged` assignment at orchestrator:515?
-- If no such path exists, `merged` could be required (no `Optional`, no default) and constructed-with-merged at the assignment point. But that breaks the dataclass-construction-once pattern.
-- Alternative: keep optional but raise `RuntimeError` early in any handler that reads it before it's set, or assert via `assert ctx.merged is not None` at handler entry.
+**Concern:** A handler that reads `ctx.merged` before the late-set runs would crash. The only current reader was `_handle_general_conversation` in `general.py:66`, which runs at the end and was safe — but the contract was implicit.
 
-**Acceptance:** decision documented in either context.py docstring or this tracker; chosen approach implemented.
+**Resolution path chosen:** Keep `Optional` annotation; add `require_merged()` that fails fast and loud rather than passing `None` into downstream code that would crash with `AttributeError` later.
 
 ### `D-4` — Investigate dropping `_response_tone` alias
 
-**Status:** Open investigation.
+**Status:** ✅ **Closed in PR #76** (refactored, not dropped — alias semantics now live on the ctx).
 
-**Current state:** `_response_tone = tone` at orchestrator:183, used in 3 places:
-- `_compute_tone_prefix(response_tone=_response_tone, ...)` at orchestrator:332 (early prefix)
-- `_handle_post_pending_confirmation(ctx, _response_tone)` at orchestrator:451
-- `_compute_tone_prefix(response_tone=_response_tone, ...)` at orchestrator:537 (late prefix)
+**Resolution:** The alias was removed from the orchestrator local scope and replaced with `ctx.snapshot_response_tone`, captured immediately after `MessageContext` construction in `generate_reply` — *before* the B.2 negative-preference promotion block reassigns `tone = "frustrated"`. Both `_compute_tone_prefix` call sites and `_handle_post_pending_confirmation` now read from `ctx.snapshot_response_tone`. Pre-D4 semantics restored exactly — readers see the pre-promotion tone, not the promoted "frustrated" value.
 
-**Why it exists:** `tone` is reassigned to `"frustrated"` in the negative_preference + service-promotion path (orchestrator:376-377: `if tone is None: tone = "frustrated"`). `_response_tone` preserves the pre-promotion value so tone-matched response text reflects what the user originally expressed, not the promoted classification.
+**Self-found regression caught during the work:** an earlier draft removed the alias entirely on the assumption that `tone` was never reassigned. It was — the B.2 negative-preference block reassigns `tone = "frustrated"`, and the post-pending path was reading the post-promotion value. Pinned by `test_b2_post_pending_uses_pre_promotion_tone` in `tests/integration/test_classification_and_routing.py`, which spies on `_compute_tone_prefix` and asserts no call gets `response_tone="frustrated"` for a turn whose user-expressed tone was neutral.
 
-**Question:** Could the three readers tolerate seeing the post-promotion `tone` instead?
-- Tone prefix computation: probably NOT — would change baseline-warmth selection in negative_preference flows.
-- `_handle_post_pending_confirmation`: uses for `nudge_prefix` selection (`if response_tone == "emotional": ...`). If tone was None pre-promotion and "frustrated" post-promotion, the post-promotion path would pick the frustrated prefix on a user whose original message wasn't frustrated. Likely unwanted.
+**Original details (for historical context):**
 
-**Recommendation:** Keep the alias. Document why (pre-promotion preservation) more clearly at the assignment site if it isn't already. This investigation can probably be closed as "alias is intentional" with a comment update.
+**Why the alias existed:** `tone` was reassigned to `"frustrated"` in the negative_preference + service-promotion path (orchestrator:376-377: `if tone is None: tone = "frustrated"`). `_response_tone` preserved the pre-promotion value so tone-matched response text reflected what the user originally expressed, not the promoted classification.
 
-**Acceptance:** comment at orchestrator:183 explicitly documents the pre-promotion preservation rationale; this tracker item closed as "intentional, not dropping".
+**Three readers needed the pre-promotion value:**
+- `_compute_tone_prefix(response_tone=...)` at orchestrator:332 (early prefix)
+- `_handle_post_pending_confirmation(ctx, response_tone)` at orchestrator:451 — uses for `nudge_prefix` selection. If tone was None pre-promotion and "frustrated" post-promotion, the post-promotion path would pick the frustrated prefix on a user whose original message wasn't frustrated.
+- `_compute_tone_prefix(response_tone=...)` at orchestrator:537 (late prefix) — would change baseline-warmth selection in negative_preference flows.
+
+**Investigation conclusion:** the alias is intentional and preserves real semantics. The Phase D refactor moved it onto the ctx so the snapshot-arg pattern is uniform with `D-5`'s other two fields; the alias-as-local-variable was the form to drop, not the alias-as-concept.
 
 ### `D-5` — Stage 2 cleanup: helper accessors for snapshot args
 
-**Status:** Open.
+**Status:** ✅ **Closed in PR #76** (taken in a different shape than originally proposed — see resolution).
 
-**Current pattern:** orchestrator captures snapshot values inline before calling dispatchers:
+**Resolution:** Three snapshot fields added directly to `MessageContext`: `snapshot_last_action`, `snapshot_pending`, `snapshot_response_tone`. Captured at ctx construction time, consumed by handlers via `ctx.snapshot_*`. Handlers no longer take positional snapshot args at all — the dispatcher signatures dropped `(ctx, last_action)` / `(ctx, pending)` / `(ctx, response_tone)` for plain `(ctx)`.
+
+This is *cleaner* than the original "with_snapshotted_X(ctx, handler)" indirection-helper proposal — the snapshot is now declarative state on the ctx, not a control-flow indirection. Readers can see the snapshot was captured at construction time by reading the ctx, and the orchestrator's "capture before, consume after" pattern collapses to a single `ctx.snapshot_X = existing.get(...)` line in the construction block.
+
+**Original details (for historical context):**
+
+**Original pattern:** orchestrator captured snapshot values inline before calling dispatchers:
 ```python
 last_action = existing.get("_last_action")
 context_result = _handle_context_aware_confirm(ctx, last_action)
@@ -117,9 +122,9 @@ context_result = _handle_context_aware_confirm(ctx, last_action)
 _consume_last_action(session_id, existing, last_action)
 ```
 
-This pattern occurs three times (`_last_action`, `_pending_confirmation`, `_response_tone`). Each is a "capture before, pass to handler, consume after" cycle.
+This pattern occurred three times (`_last_action`, `_pending_confirmation`, `_response_tone`).
 
-**Proposed cleanup:** Extract helpers that capture-and-pass in one step, reducing the orchestrator's exposure to the snapshot mechanic:
+**Original proposal — extract helpers:**
 ```python
 def with_snapshotted_last_action(ctx, handler):
     """Capture _last_action, run handler, return (result, snapshot)."""
@@ -127,9 +132,7 @@ def with_snapshotted_last_action(ctx, handler):
     return handler(ctx, snap), snap
 ```
 
-**Concern:** This adds an indirection that may obscure more than it clarifies. The current pattern is verbose but explicit; readers can see exactly when capture happens. Stage 2 cleanup is "not urgent".
-
-**Acceptance:** decide whether to do this cleanup at all. If yes, helpers in `session_helpers.py` with tests. If no, close this item with a note.
+**Why we landed on ctx fields instead:** the indirection helper would have hidden the capture point; ctx fields make it visible at construction. The TEST-GAP-2 unit tests pin the divergence between `ctx.existing.get(...)` and `ctx.snapshot_*` so a future refactor can't accidentally collapse them.
 
 ---
 
@@ -474,44 +477,37 @@ No code change. Pure documentation.
 
 ### `TEST-GAP-1` — `_handle_demographic_skip` integration coverage
 
-**Status:** Open. Documented in code.
+**Status:** ✅ **Closed in PR #76.**
 
-**Problem:** `_handle_demographic_skip` is hard to integration-test because its preconditions require a session state that's awkward to reach via natural conversation — service+location auto-sets `_pending_confirmation`, which interferes with the demographic-skip path.
+**Resolution:** `normalize_apostrophes` was added to `_handle_demographic_skip` and `_handle_location_unknown`. 14 unit tests in `tests/unit/test_chatbot_extracted_helpers.py` exercise the curly-apostrophe handling using "I don't want to say" (with U+2019). The `D-2` `make_ctx` fixture made it tractable to white-box-call these handlers with a hand-built ctx, sidestepping the integration-flow problem entirely (option (a) from the original analysis).
+
+**Original details (for historical context):**
+
+**Problem:** `_handle_demographic_skip` was hard to integration-test because its preconditions required a session state that's awkward to reach via natural conversation — service+location auto-sets `_pending_confirmation`, which interferes with the demographic-skip path.
 
 **Where documented:** `tests/integration/test_classification_and_routing.py:2081-2090` — explicit "Coverage gap acknowledged" note in `test_curly_apostrophe_in_location_unknown`.
 
-**Risk:** A selective revert of just `demographic_skip`'s `normalize_apostrophes` import wouldn't be caught by the existing sibling test.
-
-**Fix options:**
-- (a) `D-2` MessageContext fixture lands → unit-test `_handle_demographic_skip` directly with a hand-built ctx.
-- (b) Find an integration flow that naturally clears `_pending_confirmation` then triggers the demographic-skip path. May not exist.
-- (c) Mock the precondition-blocker and integration-test it.
-
-**Recommendation:** (a). Couples to `D-2`.
-
-**Acceptance:** test exists that exercises `_handle_demographic_skip` with curly-apostrophe input; would fail if its `normalize_apostrophes` were removed.
+**Risk that was mitigated:** A selective revert of just `demographic_skip`'s `normalize_apostrophes` import wouldn't have been caught by the existing sibling test. The new unit tests would now catch it directly.
 
 ### `TEST-GAP-2` — Snapshot-arg semantics not directly unit-tested at dispatcher level
 
-**Status:** Open. Low impact.
+**Status:** ✅ **Closed in PR #76.**
 
-**Description:** Phase C introduced three dispatchers that take a captured snapshot as second arg:
+**Resolution:** Added 5 tests to `tests/unit/test_chatbot_extracted_helpers.py::TestSnapshotArgSemantics`. Each test constructs a ctx where `ctx.existing.get(snapshot_key)` and `ctx.snapshot_X` deliberately diverge, and verifies the dispatcher routes by the snapshot field, not a re-read of `ctx.existing`. After the `D-5` migration to ctx-resident snapshots, the assertion shape became "uses `ctx.snapshot_X`, not `ctx.existing.get(...)`" rather than the original "uses the second positional arg".
+
+**Original details (for historical context):**
+
+Phase C introduced three dispatchers that took a captured snapshot as a second arg:
 - `_handle_context_aware_confirm(ctx, last_action)`
 - `_handle_pending_confirmation(ctx, pending)`
 - `_handle_post_pending_confirmation(ctx, response_tone)`
 
-The snapshot semantics matter because the dispatcher mutates the same key on `ctx.existing` and the orchestrator consumes the pre-mutation value afterward.
+The snapshot semantics matter because the dispatcher mutates the same key on `ctx.existing` and the orchestrator consumes the pre-mutation value afterward. After `D-5`, those positional args moved to `ctx.snapshot_*` fields, but the divergence-pinning gap was the same.
 
-**Current coverage:**
-- Integration tests cover the full path (which implicitly exercises the snapshot semantics).
-- `tests/unit/test_session_helpers.py::test_uses_captured_value_not_current_dict` pins the snapshot pattern at the helper level (`_consume_last_action`).
-
-**Gap:** No test directly exercises the dispatcher-level `(ctx, snapshot)` signature with `snapshot != ctx.existing.get(...)` to pin "uses the snapshot, not a re-read".
-
-**Fix options:**
-- Construct ctx where `ctx.existing.get("_last_action")` returns `None` but pass `last_action="emotional"` as the snapshot. Verify the handler still dispatches the emotional → confirm_yes path. Requires `D-2`.
-
-**Acceptance:** unit test added that exercises the divergence between `ctx.existing.get(...)` and the snapshot arg; test would fail if a dispatcher were "fixed" to re-read from `ctx.existing` instead of using the snapshot.
+**Original coverage:**
+- Integration tests covered the full path (which implicitly exercised the snapshot semantics).
+- `tests/unit/test_session_helpers.py::test_uses_captured_value_not_current_dict` pinned the snapshot pattern at the helper level (`_consume_last_action`).
+- No test directly exercised the dispatcher-level signature with `snapshot != ctx.existing.get(...)` to pin "uses the snapshot, not a re-read". That's what PR #76 added.
 
 ---
 
@@ -551,26 +547,25 @@ The snapshot semantics matter because the dispatcher mutates the same key on `ct
 
 ### `ENG-1` — Mobile-input fuzz harness (apostrophe substitutions)
 
-**Status:** Open. Identified during the curly-apostrophe PR.
+**Status:** ✅ **Closed in PR #76.**
 
-**Description:** Mobile autocorrect produces curly apostrophes (U+2019) where users typed straight ones. The codebase has `normalize_apostrophes` in `app.utils.text_normalize` that handles this at all known call sites. But there's no test that systematically re-runs eval scenarios with apostrophe substitutions to catch new sites that need normalization.
+**Resolution:** `tests/integration/test_apostrophe_fuzz.py` (which existed pre-PR with 13 tests but didn't meaningfully exercise the post-migration handlers due to the un-migrated accessibility handlers in `D-1`) is now wired through to the migrated `_handle_demographic_skip` and `_handle_location_unknown`. The 13 tests cover U+2019, U+02BC, U+2018, and U+0060 substitutions across representative scenarios; failure clearly identifies the (scenario, substitution) pair that regressed.
 
-**Proposed harness:** parametrized test that takes a list of eval scenarios with apostrophe-bearing input, substitutes each apostrophe variant (U+2019, U+02BC, U+2018, U+0060), and re-runs. Asserts the same routing behavior as the straight-apostrophe input.
+**Original details (for historical context):**
 
-<!-- drift:ignore: ignore future test file that doesn't exist yet -->
-**Implementation sketch:** ~50 LOC in `tests/integration/test_apostrophe_fuzz.py`. Reuses existing scenario definitions; iterates a small list of substitutions.
+Mobile autocorrect produces curly apostrophes (U+2019) where users typed straight ones. The codebase has `normalize_apostrophes` in `app.utils.text_normalize` that handles this at all known call sites. The risk was that a future change might add a new call site that needs normalization but go untested.
 
-**Acceptance:** harness exists; runs against ≥10 representative scenarios; failure clearly identifies which (scenario, substitution) pair regressed.
+The harness is parametrized: takes a list of eval scenarios with apostrophe-bearing input, substitutes each apostrophe variant, and re-runs. Asserts the same routing behavior as the straight-apostrophe input.
 
 ---
 
-## Closed during Phase A-C / audit follow-ups (for reference)
+## Closed during Phase A-C, audit follow-ups, and PR #76 (for reference)
 
-These items were resolved during Phases A-C and the audit follow-ups PR. Listed here so they don't get re-tracked.
+These items were resolved during Phases A-C, the audit follow-ups PR, and PR #76. Listed here so they don't get re-tracked.
 
 | Item | Resolution |
 | --- | --- |
-| `MessageContext` adoption (audit's top finding) | Phases A-C: 26 of 27 handlers migrated. Only `_handle_spanish_detection` deferred (`D-1`). |
+| `MessageContext` adoption (audit's top finding) | Phases A-C: 26 of 27 handlers migrated. Final 3 accessibility handlers landed in PR #76 (`D-1`). |
 | Smell 1 — dead `redact_pii` import | Removed in Phase A. |
 | Smell 1 — dead `has_coords` local | Removed in audit follow-ups (also dropped from `MessageContext`). |
 | Smell 4 — inline constants `_CONSUMES_LAST_ACTION`, `_MAX_TRANSCRIPT` | Moved to `session_helpers.py` module scope in Phase B. |
@@ -594,12 +589,18 @@ These items were resolved during Phases A-C and the audit follow-ups PR. Listed 
 | `LLM-1` — Duplicate `slot_extraction.extract()` | Cached gate result on `MessageContext.unified_extraction`. Orchestrator service branch short-circuits when populated. Eliminates 1 LLM call on every >8-word missed-by-regex service message. |
 | `LLM-2` — `_handle_post_pending_confirmation` re-extracts | Three-branch reuse: `ctx.unified_extraction` (cache hit) → `ctx.early_extracted` as regex_result for the LLM call (gate didn't fire) → `ctx.early_extracted` directly (no LLM). Eliminates 1 redundant `extract_slots` call always; 1 redundant LLM call when gate fired. |
 | `LLM-3` — `classify_message_llm` fallback | Removed from `_compute_routing_category`. The branch only fired when no signal was detectable; the second classifier on the same message couldn't recover one. Routing now defaults to `general`/`low` directly. Routing-cascade pinning test updated. |
+| `D-1` — Migrate `_handle_spanish_detection` to `MessageContext` | PR #76: all three accessibility handlers (`_handle_demographic_skip`, `_handle_location_unknown`, `_handle_spanish_detection`) migrated from 6-arg to ctx-only. 22 unit-test invocations updated. |
+| `D-2` — `MessageContext` test fixture | PR #76: `make_ctx(**overrides)` builder added in `tests/conftest.py` with auto-derived `is_confirmation_action`. |
+| `D-3` — `MessageContext.merged` annotation | PR #76: kept `Optional`; added `require_merged()` accessor that raises `RuntimeError` if read before set. `_handle_general_conversation` migrated to use it. |
+| `D-4` — `_response_tone` alias | PR #76: alias removed from orchestrator local scope; pre-promotion tone now lives on `ctx.snapshot_response_tone`. Self-found regression caught and pinned by `test_b2_post_pending_uses_pre_promotion_tone`. |
+| `D-5` — Stage 2 snapshot-arg cleanup | PR #76: three `snapshot_*` ctx fields replace positional snapshot args. Dispatcher signatures dropped to `(ctx)`. |
+| `TEST-GAP-1` — `_handle_demographic_skip` apostrophe coverage | PR #76: `normalize_apostrophes` added to handler; 14 unit tests with curly-apostrophe pin. |
+| `TEST-GAP-2` — Snapshot-arg semantic divergence tests | PR #76: 5 `TestSnapshotArgSemantics` tests construct ctx where `ctx.existing.get(...)` and `ctx.snapshot_*` deliberately diverge, pin "uses snapshot, not re-read". |
+| `ENG-1` — Apostrophe fuzz harness | PR #76: `tests/integration/test_apostrophe_fuzz.py` (13 tests) wired through to the now-migrated accessibility handlers. |
 
 ---
 
 ## Notes on prioritization
 
-- `EVAL-B` and `EVAL-C` are the highest-value items by user impact — they pin specific scoring failures.
-- `D-1` through `D-5` are migration polish; doing them tightens the architecture but doesn't unlock new capability. Pick up when refactor budget allows.
-- All remaining `SMELL-*` items (`SMELL-2`, `SMELL-5`, `SMELL-8`, `SMELL-9`) are explicitly low-priority per the original audit's own assessment. Consider closing them en masse with a single small "polish PR" rather than individual changes.
-- `ENG-1` (fuzz harness) is the highest-value preventative item — catches a class of bug that mobile users have shipped to us before.
+- `EVAL-B` and `EVAL-C` are now the highest-value remaining items by user impact — they pin specific scoring failures.
+- All remaining `SMELL-*` items (`SMELL-2`, `SMELL-5`, `SMELL-8`, `SMELL-9`) plus `SUSPECT-1` are explicitly low-priority per the original audit's own assessment. Consider closing them en masse with a single small "polish PR" rather than individual changes.

@@ -223,7 +223,7 @@ These metrics assess how well the chatbot handles emotional and conversational i
 
 These metrics come from the automated evaluation framework in `tests/eval/eval_llm_judge.py`, which runs scripted and simulated conversations through the full system and scores them using Claude Opus as an impartial judge.
 
-The eval covers **167 scenarios** across **20 categories** and **11 scoring dimensions**, each rated 1–5. Dimensions are weighted by importance (safety-critical dimensions up to 3.0×). It can be triggered from the admin console (Eval Results tab → Run Evals) or via CLI.
+The eval covers **171 scenarios** across **20 categories** and **11 scoring dimensions**, each rated 1–5. Dimensions are weighted by importance (safety-critical dimensions up to 3.0×). It can be triggered from the admin console (Eval Results tab → Run Evals) or via CLI.
 
 ### Three Models
 
@@ -257,7 +257,7 @@ The three dimensions added in Run 28 (Dignity & Anti-Stigma, Cultural Responsive
 Runs 14–27 used Sonnet as judge with 8 dimensions (unweighted). Run 28+ uses Opus as judge with 11 dimensions (weighted). Scores are not directly comparable across this boundary. Run 28 established the new baseline.
 
 ### Cadence
-- Run the full 167-scenario eval before each significant deploy.
+- Run the full 171-scenario eval before each significant deploy.
 - Run a scoped single-category eval for focused testing during development.
 - Single-scenario runs cost ~$0.10 and take under a minute; full runs cost ~$15–25 in API credits and take 30–60 minutes.
 
@@ -397,7 +397,7 @@ These metrics answer the ultimate question: did the referral work? They require 
 | Audit log (in-memory) | All session events, slots, query results, crisis flags, LLM call metrics | ✅ Yes |
 | Admin console | Aggregated stats, conversation transcripts, query log, eval results | ✅ Yes |
 | Canary test suite | Eligibility fit, hallucination, template correctness | ✅ Yes (run manually or on deploy) |
-| LLM-as-Judge eval | 11-dimension weighted automated quality scoring (167 scenarios, 20 categories, Opus judge) | ✅ Yes (admin console or CLI) |
+| LLM-as-Judge eval | 11-dimension weighted automated quality scoring (171 scenarios, 20 categories, Opus judge) | ✅ Yes (admin console or CLI) |
 | PII scanner | Automated redaction verification | ⚠️ Partial (regex-based; Microsoft Presidio NER identified as upgrade path) |
 | SMS follow-up | Referral success, post-visit accuracy | ❌ Not implemented |
 | In-chat feedback | User satisfaction after results | ✅ Yes (thumbs up/down after service results) |
@@ -408,6 +408,6 @@ These metrics answer the ultimate question: did the referral work? They require 
 ## Pilot Review Cadence
 
 - **Weekly:** Data steward reviews admin console — no-result rate, crisis events, task completion rate, any PII scanner alerts.
-- **Per deploy:** Run full LLM-as-Judge eval (167 scenarios, 11 dimensions); confirm 0 critical failures and overall ≥ 4.0 before promoting to production.
+- **Per deploy:** Run full LLM-as-Judge eval (171 scenarios, 11 dimensions); confirm 0 critical failures and overall ≥ 4.0 before promoting to production.
 - **Monthly:** Manual spot-check of 20–30 conversation transcripts for tone, accuracy, and edge case handling.
 - **End of pilot:** Compile all metrics against targets; decide which closed-loop infrastructure to build for Phase 2.

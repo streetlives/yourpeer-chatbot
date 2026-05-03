@@ -1,18 +1,20 @@
 # Regex Pattern Audit — Collision Risk Analysis
 
+**Status:** ✅ Resolved (April 2026). All 25 active false-positives, 12 population-phrase collisions, and 3 cross-category conflicts identified by this audit have been remediated — see `## Remediation Actions — Status` below for the per-item disposition. The "fire RIGHT NOW" framing in the sections below describes the **pre-remediation** state and is preserved for historical context; nothing in those tables is still firing in production.
+
 ## Summary
 
-Tested every SERVICE_KEYWORD, POPULATION_PHRASE, and WORD_BOUNDARY_PATTERN against real collision scenarios. Found **25 active false-positive patterns** that fire on common English text, plus **12 population-phrase collisions** and **3 cross-category conflicts**. With a semantic routing layer incoming, these patterns should be retired rather than fixed — adding word boundaries to 25+ keywords is more maintenance than the regex layer is worth for those cases.
+Tested every SERVICE_KEYWORD, POPULATION_PHRASE, and WORD_BOUNDARY_PATTERN against real collision scenarios. Originally found **25 active false-positive patterns** that fired on common English text, plus **12 population-phrase collisions** and **3 cross-category conflicts**. The semantic routing layer landed in parallel, and the collision-prone patterns were either word-boundary-protected, removed from regex entirely (and delegated to the semantic layer), or retired after contextual false-positive testing.
 
-Industry guidance is consistent: substring matching without word boundaries is the most basic form of keyword matching and is universally discouraged in production chatbots. The standard recommendation is to keep regex only for **unambiguous, domain-specific terms** and delegate everything else to embeddings or ML classifiers.
+Industry guidance is consistent: substring matching without word boundaries is the most basic form of keyword matching and is universally discouraged in production chatbots. The standard recommendation is to keep regex only for **unambiguous, domain-specific terms** and delegate everything else to embeddings or ML classifiers — which is the shape the regex layer ended up in (see "What's in regex now" below).
 
 ---
 
-## Critical — Active False Positives (proven in tests)
+## Critical — Active False Positives (pre-remediation; all resolved)
 
-These patterns fire RIGHT NOW on common English text. Each one is a substring match in `SERVICE_KEYWORDS` that lacks word-boundary protection.
+These patterns fired on common English text in the pre-remediation codebase. Each one was a substring match in `SERVICE_KEYWORDS` that lacked word-boundary protection. Disposition for each is in `## Remediation Actions — Status`.
 
-| Keyword | Category | False Positive | What Happens |
+| Keyword | Category | False Positive | What Happened (pre-fix) |
 |---|---|---|---|
 | `room` | shelter | "mush**room**", "class**room**" | User asking about a classroom → shelter results |
 | `sick` | medical | "home**sick**", "**sick** of this" | User frustrated → medical results |

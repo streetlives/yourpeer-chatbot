@@ -32,7 +32,7 @@ User (browser)
       |   +-- Structured service cards (from DB, never LLM-generated)
       |
       +-- Streetlives PostgreSQL (read-only, AWS RDS)
-      |   +-- 11 parameterized SQL templates
+      |   +-- 10 parameterized SQL templates
       |   +-- PostGIS proximity search (59 NYC neighborhoods)
       |   +-- Population-based ORDER BY boosts
       |
@@ -40,7 +40,7 @@ User (browser)
           +-- System health card (real-time component status)
           +-- Anonymized transcripts, query logs, crisis events
           +-- 35+ metrics across 7 layers
-          +-- LLM-as-Judge eval runner (167 scenarios, 11 dimensions, Opus judge)
+          +-- LLM-as-Judge eval runner (171 scenarios, 11 dimensions, Opus judge)
 ```
 
 ## Key Design Principles

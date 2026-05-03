@@ -12,28 +12,28 @@ The counts below were re-tallied against the current source by running a small `
 
 | List | File | Count | Purpose |
 |---|---|---|---|
-| Suicide/self-harm | crisis_detector.py | 92 | Crisis detection — direct, indirect, and passive ideation |
-| Domestic violence | crisis_detector.py | 78 | Crisis detection — abuse, threats, fleeing |
-| Safety concern | crisis_detector.py | 35 | Crisis detection — unsafe situations, runaways (general) |
-| Youth runaway | crisis_detector.py | 23 | Crisis detection — runaway-specific (R31+) |
-| Assault victim | crisis_detector.py | 19 | Crisis detection — physical assault, "got beat up" (R31+) |
-| Trafficking | crisis_detector.py | 25 | Crisis detection — forced labor/sex work |
-| Medical emergency | crisis_detector.py | 31 | Crisis detection — immediate physical danger |
-| Violence | crisis_detector.py | 16 | Crisis detection — threats to others |
-| Emotional | phrase_lists.py | 247 | Sub-crisis distress routing → AVR handler. Includes "i'm X", "im X", "i am X", "i feel X", and "i am feeling X" forms for 13 emotional states, plus intensifier variants |
-| Frustration | phrase_lists.py | 89 | System frustration → 3-tier escalation handler |
-| Confused | phrase_lists.py | 34 | Overwhelm → gentle guidance handler |
-| Negative preference | classifier.py | 51 | Rejection of offered options → alternative service categories. **Originally 19, expanded to 35 in B.1 (2026-04-21)**, has since grown by another 16 phrases. See B.1 entry under Audit Trail below |
-| Escalation | phrase_lists.py | 27 | Human handoff requests |
-| Help | phrase_lists.py | 15 | Capability questions |
-| Bot question | phrase_lists.py | 74 | Privacy/capability/attribution meta-questions. **Expanded from 65 to 74 in C.1 (2026-04-21)** — added 9 attribution/origin phrases ("who made you", "who built you", "who created you", etc.) routing to the LLM-answered bot_question handler. See C.1 entry under Audit Trail |
-| Bot identity | phrase_lists.py | 23 | "Am I talking to a robot?" + direct identity questions. **Expanded from 15 to 23 in C.1 (2026-04-21)** — added 8 phrases ("what's your name" variants, "who are you", "tell me about yourself", etc.) to catch identity questions that would otherwise fall through to the re-nudge path during pending confirmations. See C.1 entry under Audit Trail |
-| Service keywords | slot_extraction_regex.py | 393 (across 9 categories) | Service type extraction. Per-category counts: food 28, shelter 55, clothing 29, personal_care 23, medical 51, mental_health 36, legal 33, employment 36, other 102 |
-| Word-boundary keywords | slot_extraction_regex.py | 152 (across 20 patterns) | Collision-prone service keywords. Boundary-protected per `REGEX_AUDIT.md` recommendations — `bed`, `wash`, `id`, `eat`, `hat`, `stress`, `ssi`, `ssdi`, `hiv`, `esl`, `ged`, `syep`, `sober`, `mail`, `soap`, `pads`, `wic`, `visa`, `meal`, `pants` |
-| **Crisis subtotal** | crisis_detector.py | **319** | Sum of 8 crisis category lists |
-| **Routing subtotal** | phrase_lists.py + classifier.py | **560** | Emotional, Frustration, Confused, Escalation, Help, Bot Q&I, Negative preference |
-| **Service subtotal** | slot_extraction_regex.py | **545** | Service keywords + word-boundary keywords |
-| **Total** | | **1,424** | Crisis + Routing + Service |
+| Suicide/self-harm | crisis_detector.py | 92 | <!-- check:phrase-count: app.services.crisis_detector._SUICIDE_SELF_HARM_PHRASES --> Crisis detection — direct, indirect, and passive ideation |
+| Domestic violence | crisis_detector.py | 78 | <!-- check:phrase-count: app.services.crisis_detector._DOMESTIC_VIOLENCE_PHRASES --> Crisis detection — abuse, threats, fleeing |
+| Safety concern | crisis_detector.py | 35 | <!-- check:phrase-count: app.services.crisis_detector._SAFETY_CONCERN_PHRASES --> Crisis detection — unsafe situations, runaways (general) |
+| Youth runaway | crisis_detector.py | 23 | <!-- check:phrase-count: app.services.crisis_detector._YOUTH_RUNAWAY_PHRASES --> Crisis detection — runaway-specific (R31+) |
+| Assault victim | crisis_detector.py | 19 | <!-- check:phrase-count: app.services.crisis_detector._ASSAULT_VICTIM_PHRASES --> Crisis detection — physical assault, "got beat up" (R31+) |
+| Trafficking | crisis_detector.py | 25 | <!-- check:phrase-count: app.services.crisis_detector._TRAFFICKING_PHRASES --> Crisis detection — forced labor/sex work |
+| Medical emergency | crisis_detector.py | 31 | <!-- check:phrase-count: app.services.crisis_detector._MEDICAL_EMERGENCY_PHRASES --> Crisis detection — immediate physical danger |
+| Violence | crisis_detector.py | 16 | <!-- check:phrase-count: app.services.crisis_detector._VIOLENCE_PHRASES --> Crisis detection — threats to others |
+| Emotional | phrase_lists.py | 247 | <!-- check:phrase-count: app.services.phrase_lists._EMOTIONAL_PHRASES --> Sub-crisis distress routing → AVR handler. Includes "i'm X", "im X", "i am X", "i feel X", and "i am feeling X" forms for 13 emotional states, plus intensifier variants |
+| Frustration | phrase_lists.py | 89 | <!-- check:phrase-count: app.services.phrase_lists._FRUSTRATION_PHRASES --> System frustration → 3-tier escalation handler |
+| Confused | phrase_lists.py | 34 | <!-- check:phrase-count: app.services.phrase_lists._CONFUSED_PHRASES --> Overwhelm → gentle guidance handler |
+| Negative preference | classifier.py | 51 | <!-- check:phrase-count: skip --> Rejection of offered options → alternative service categories. **Originally 19, expanded to 35 in B.1 (2026-04-21)**, has since grown by another 16 phrases. Check skipped because `_NEGATIVE_PREFERENCE_PHRASES` is a function-local constant in `classifier._classify_action`, not a module-level attribute — count drift here is currently a manual re-tally exercise. See B.1 entry under Audit Trail below |
+| Escalation | phrase_lists.py | 27 | <!-- check:phrase-count: app.services.phrase_lists._ESCALATION_PHRASES --> Human handoff requests |
+| Help | phrase_lists.py | 15 | <!-- check:phrase-count: app.services.phrase_lists._HELP_PHRASES --> Capability questions |
+| Bot question | phrase_lists.py | 74 | <!-- check:phrase-count: app.services.phrase_lists._BOT_QUESTION_PHRASES --> Privacy/capability/attribution meta-questions. **Expanded from 65 to 74 in C.1 (2026-04-21)** — added 9 attribution/origin phrases ("who made you", "who built you", "who created you", etc.) routing to the LLM-answered bot_question handler. See C.1 entry under Audit Trail |
+| Bot identity | phrase_lists.py | 23 | <!-- check:phrase-count: app.services.phrase_lists._BOT_IDENTITY_PHRASES --> "Am I talking to a robot?" + direct identity questions. **Expanded from 15 to 23 in C.1 (2026-04-21)** — added 8 phrases ("what's your name" variants, "who are you", "tell me about yourself", etc.) to catch identity questions that would otherwise fall through to the re-nudge path during pending confirmations. See C.1 entry under Audit Trail |
+| Service keywords | slot_extraction_regex.py | 393 | <!-- check:phrase-count: app.services.slot_extraction_regex.SERVICE_KEYWORDS --> Service type extraction across 9 categories (count is sum across all category lists). Per-category counts: food 28, shelter 55, clothing 29, personal_care 23, medical 51, mental_health 36, legal 33, employment 36, other 102 |
+| Word-boundary keywords | slot_extraction_regex.py | 152 | <!-- check:phrase-count: app.services.slot_extraction_regex._WORD_BOUNDARY_KEYWORDS --> Collision-prone service keywords across 20 boundary-protected patterns (count is sum across all patterns). Boundary-protected per `REGEX_AUDIT.md` recommendations — `bed`, `wash`, `id`, `eat`, `hat`, `stress`, `ssi`, `ssdi`, `hiv`, `esl`, `ged`, `syep`, `sober`, `mail`, `soap`, `pads`, `wic`, `visa`, `meal`, `pants` |
+| **Crisis subtotal** | crisis_detector.py | **319** | <!-- check:phrase-count: skip --> Sum of 8 crisis category lists |
+| **Routing subtotal** | phrase_lists.py + classifier.py | **560** | <!-- check:phrase-count: skip --> Emotional, Frustration, Confused, Escalation, Help, Bot Q&I, Negative preference |
+| **Service subtotal** | slot_extraction_regex.py | **545** | <!-- check:phrase-count: skip --> Service keywords + word-boundary keywords |
+| **Total** | | **1,424** | <!-- check:phrase-count: skip --> Crisis + Routing + Service |
 
 > **Counting note.** "Service keywords" reports the sum across all 9 category lists (e.g., `food` is one of those categories with 28 keywords). "Word-boundary keywords" reports the sum across the 20 boundary-protected patterns. The original audit's `220` for service keywords reflected an earlier scope; growth since reflects vocabulary additions to existing categories plus the `housing_assistance` retirement folding into `other`. The original `6` for word-boundary keywords was the count of *categories* before the boundary-protection expansion documented in `REGEX_AUDIT.md`.
 

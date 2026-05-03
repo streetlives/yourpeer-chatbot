@@ -1,8 +1,6 @@
 # YourPeer PWA Icons
 
-The PWA manifest references three icon files in this directory. Until you
-provide real YourPeer brand assets, the site will work in the browser but
-"Add to Home Screen" will show a broken-icon placeholder on mobile devices.
+The PWA manifest references three icon files in this directory. Placeholder PNGs are in place so the manifest loads cleanly and "Add to Home Screen" works on mobile; replace them with real YourPeer brand assets when ready (the file list and constraints below describe what each one needs).
 
 ## Required files
 
