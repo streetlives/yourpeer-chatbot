@@ -1059,7 +1059,6 @@ class TestBugBPriorityCarveOuts:
             ("shelter", "food", [("shelter", None, None)], "food"),
         ]
         for regex_p, llm_p, llm_add, expected in cases:
-            regex_add = []
             # Build regex side: regex puts tier-winner as primary, others
             # as additional. We need to derive what regex would have here.
             # For our purposes just the primary matters — the LLM's set

@@ -415,7 +415,6 @@ def _rebuild_additional_after_promotion(
     """
     # Step 1: filter out the promoted service from base
     filtered: list = []
-    seen_displaced = False
     for item in base_additional or []:
         if not item or not item[0]:
             continue
@@ -428,7 +427,6 @@ def _rebuild_additional_after_promotion(
         if s_type == displaced_primary:
             # Skip duplicates of the displaced primary; we'll insert it at
             # the front with the canonical fields below.
-            seen_displaced = True
             continue
         filtered.append((s_type, s_detail, s_loc))
 
