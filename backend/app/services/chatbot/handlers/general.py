@@ -62,8 +62,10 @@ def _handle_general_conversation(ctx: MessageContext):
 
     Reads ``ctx.merged`` (post-merge_slots dict) — this handler runs at
     the end of ``generate_reply`` so merged is always populated by then.
+    The ``require_merged()`` accessor enforces this with a descriptive
+    error if some future refactor invokes us before merge has run.
     """
-    merged = ctx.merged
+    merged = ctx.require_merged()
     is_casual_chat = bool(_CASUAL_CHAT_RE.search(ctx.message))
     is_service_request_pattern = bool(_SERVICE_NEED_RE.search(ctx.message))
     has_unrecognized_need = (

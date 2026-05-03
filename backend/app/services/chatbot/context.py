@@ -103,6 +103,19 @@ class MessageContext:
     # --- Tone prefix (set late — see class docstring) ---
     tone_prefix: str = ""     # sensitive-context / warmth prefix from _compute_tone_prefix
     # --- Merged slot state (set late, after merge_slots in service flow) ---
+    # Stays Optional because there's a real "not yet computed" state: the
+    # orchestrator only sets ``ctx.merged`` after ``merge_slots`` runs in
+    # the service-flow branch. Handlers that route to the service flow's
+    # tail (currently only ``_handle_general_conversation``) read this —
+    # they're guaranteed to see a populated value by then. Handlers that
+    # fire EARLIER (crisis, emotional, confirmation, etc.) must NOT read
+    # ``merged`` directly — use ``require_merged()`` if you must, or read
+    # from ``existing`` / ``early_extracted`` instead.
+    #
+    # Tightening this to a non-Optional type would force a synthetic
+    # initial value, masking the "not yet set" condition. The
+    # ``require_merged()`` accessor below makes the read-time contract
+    # explicit instead.
     merged: Optional[dict] = None  # post-merge dict; same identity as orchestrator's `merged`
     # --- Cached LLM extraction (set when ``_run_llm_gate`` fires) ---
     # Full 15-field merged dict from ``slot_extraction.extract()``, captured
@@ -114,6 +127,49 @@ class MessageContext:
     # falling through to a fresh ``slot_extraction.extract()`` call or
     # using ``early_extracted`` directly.
     unified_extraction: Optional[dict] = None
+    # --- Snapshot fields (set by orchestrator immediately before handler dispatch) ---
+    # These exist because three confirmation handlers mutate session state
+    # (popping ``_last_action`` / ``_pending_confirmation`` from
+    # ``existing``) as part of their dispatch logic. The orchestrator
+    # captures the pre-mutation value into these snapshot fields so the
+    # handler — and any orchestrator code that reads the same value
+    # *after* the handler returns (like ``_consume_last_action``) — can
+    # see the value the handler dispatched on.
+    #
+    # Tracks audit item D-5 from PHASE_AC_AFTERMATH.md. The previous
+    # design passed these as positional args alongside ctx; promoting
+    # them to ctx fields makes every handler signature uniform
+    # (``_handle_X(ctx)``) and documents the snapshot semantics here.
+    #
+    # Set to ``None`` at construction time. The orchestrator MUST populate
+    # them before calling the corresponding handler. Tests can either
+    # set these directly via ``make_ctx(snapshot_last_action=...)`` or
+    # via attribute assignment after ``make_ctx()``.
+    snapshot_last_action: Optional[str] = None
+    snapshot_pending: Optional[bool] = None
+    snapshot_response_tone: Optional[str] = None
+
+    def require_merged(self) -> dict:
+        """Read ``self.merged`` with a fail-fast guard.
+
+        Use this when a handler genuinely needs the post-merge slot state
+        and would crash on ``merged.get(...)`` if ``merged`` were ``None``.
+        Raises a descriptive RuntimeError naming the contract instead of
+        a bare AttributeError on the missing ``.get`` method.
+
+        For handlers that have a sensible fallback (read from
+        ``ctx.existing`` instead) — don't use this; just check ``ctx.merged``
+        directly.
+        """
+        if self.merged is None:
+            raise RuntimeError(
+                "ctx.merged accessed before it was populated. This handler "
+                "is running before the orchestrator's merge_slots call. "
+                "Handler should either read from ctx.existing / "
+                "ctx.early_extracted instead, or be moved to the post-merge "
+                "dispatch path."
+            )
+        return self.merged
 
 
 # ---------------------------------------------------------------------------

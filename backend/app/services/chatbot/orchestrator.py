@@ -181,7 +181,6 @@ def generate_reply(
     # depends only on tone/action/has_service_intent/early_extracted/
     # extraction_source/message, all finalized by this point.
     action = _action_pre
-    _response_tone = tone
     category, _confidence = _compute_routing_category(
         tone=tone,
         action=action,
@@ -250,6 +249,17 @@ def generate_reply(
         unified_extraction=_unified,       # cached gate output (None if gate didn't fire)
     )
 
+    # Capture ``tone`` BEFORE the negative_preference B.2 promotion block
+    # below (which may reassign ``tone`` from None to "frustrated").
+    # Several downstream sites need the PRE-promotion tone:
+    #   * the late ``_compute_tone_prefix`` recomputation in the service
+    #     branch, which deliberately recomputes with the original tone
+    #     after correcting only ``is_service_flow``.
+    #   * ``_handle_post_pending_confirmation``'s nudge-prefix selection,
+    #     which should reflect the user's original emotional disclosure.
+    # See ``MessageContext.snapshot_response_tone`` for the contract.
+    ctx.snapshot_response_tone = tone
+
     if tone == "crisis":
         pass  # handled below in routing
     else:
@@ -306,10 +316,7 @@ def generate_reply(
         ctx.category = "general"
 
     # --- Spanish / non-English detection ---
-    _spanish_result, _spanish_acknowledgment = _handle_spanish_detection(
-        session_id, message, redacted_message, existing,
-        has_service_intent, tone, request_id,
-    )
+    _spanish_result, _spanish_acknowledgment = _handle_spanish_detection(ctx)
     if _spanish_result:
         return _spanish_result
     # Late-set: read in the service-flow prefix-injection block below.
@@ -331,7 +338,13 @@ def generate_reply(
     _is_service_flow = category == "service"
     _tone_prefix, _emotional_context_update = _compute_tone_prefix(
         message=message,
-        response_tone=_response_tone,
+        # Read from the snapshot for uniformity with the late
+        # ``_compute_tone_prefix`` call below — at this point in
+        # ``generate_reply`` ``tone`` and ``ctx.snapshot_response_tone``
+        # are equal (the negative_preference promotion hasn't run yet),
+        # so this is functionally identical, but using the snapshot
+        # makes both call sites read from the same documented contract.
+        response_tone=ctx.snapshot_response_tone,
         is_service_flow=_is_service_flow,
         prior_emotional_context=existing.get("_emotional_context"),
     )
@@ -427,13 +440,18 @@ def generate_reply(
         return _handle_escalation(ctx)
 
     # --- Context-aware "yes" / "no" handling ---
-    last_action = existing.get("_last_action")
-    context_result = _handle_context_aware_confirm(ctx, last_action)
+    # Snapshot _last_action onto ctx so the handler can dispatch on the
+    # pre-mutation value (the handler pops _last_action on confirm_yes
+    # paths) and so the post-handler ``_consume_last_action`` call below
+    # sees the same value the handler dispatched on. See
+    # ``MessageContext.snapshot_last_action`` for the contract.
+    ctx.snapshot_last_action = existing.get("_last_action")
+    context_result = _handle_context_aware_confirm(ctx)
     if context_result:
         return context_result
 
     # Clear the last_action tracker now that we've checked it
-    _consume_last_action(session_id, existing, last_action)
+    _consume_last_action(session_id, existing, ctx.snapshot_last_action)
 
     # --- Handle "change location" / "change service" outside pending ---
     if not existing.get("_pending_confirmation"):
@@ -443,14 +461,20 @@ def generate_reply(
             return _handle_change_service_request(ctx)
 
     # --- Handle confirmation responses ---
-    pending = existing.get("_pending_confirmation")
-    confirm_result = _handle_pending_confirmation(ctx, pending)
+    # Snapshot _pending_confirmation: handler pops it on confirm paths;
+    # the ``if pending:`` guard below must see the pre-mutation value.
+    ctx.snapshot_pending = existing.get("_pending_confirmation")
+    confirm_result = _handle_pending_confirmation(ctx)
     if confirm_result:
         return confirm_result
 
     # If pending confirmation but user typed something new
-    if pending:
-        return _handle_post_pending_confirmation(ctx, _response_tone)
+    if ctx.snapshot_pending:
+        # ``ctx.snapshot_response_tone`` was captured EARLY (before the
+        # negative_preference promotion block) so it reflects the
+        # original tone classification, not any post-promotion override.
+        # Don't overwrite it here.
+        return _handle_post_pending_confirmation(ctx)
 
     # --- Service request or general conversation ---
     if _USE_LLM and category == "service":
@@ -547,7 +571,12 @@ def generate_reply(
     _is_service_flow = category == "service"
     _tone_prefix, _emotional_context_update = _compute_tone_prefix(
         message=message,
-        response_tone=_response_tone,
+        # Use the early-captured snapshot — ``tone`` may have been
+        # promoted to "frustrated" by the negative_preference B.2 block
+        # above, but this recomputation should preserve the original
+        # tone classification (only ``is_service_flow`` is being
+        # corrected here).
+        response_tone=ctx.snapshot_response_tone,
         is_service_flow=_is_service_flow,
         prior_emotional_context=existing.get("_emotional_context"),
     )

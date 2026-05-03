@@ -579,3 +579,108 @@ def assert_classified(message, expected_category):
     assert actual == expected_category, \
         f"Expected '{message}' → '{expected_category}', got '{actual}'"
 
+
+# ---------------------------------------------------------------------------
+# MessageContext builder for handler unit tests
+# ---------------------------------------------------------------------------
+# Background: Phase A-C migrated handlers to take a single ``ctx`` arg
+# instead of 6+ positional args. Constructing a MessageContext for a
+# handler unit test by hand is 18 lines of dataclass kwargs, most with
+# safe-default values. This helper centralizes the defaults so tests
+# only specify what they care about.
+#
+# Tracks audit item D-2 from PHASE_AC_AFTERMATH.md.
+#
+# Example usage:
+#   ctx = make_ctx(message="I'd rather not say",
+#                  existing={"service_type": "food", "location": "brooklyn"})
+#   result = _handle_demographic_skip(ctx)
+#
+# Snapshot args (last_action, pending, response_tone) are NOT on ctx in
+# the current architecture — they're positional snapshots passed by the
+# orchestrator after capturing them from existing. Tests that need to
+# pin snapshot-arg semantics should construct ctx with whatever existing
+# state is convenient and pass the snapshot value separately. (Audit
+# item D-5 will eventually move snapshots onto ctx as accessor methods.)
+
+def make_ctx(
+    *,
+    message: str = "",
+    redacted_message: str | None = None,
+    session_id: str = "test-session",
+    request_id: str = "test-request",
+    pii_warning: str = "",
+    existing: dict | None = None,
+    category: str = "general",
+    action: str = "",
+    tone: str | None = None,
+    confidence: str = "high",
+    extraction_source: str | None = None,
+    early_extracted: dict | None = None,
+    has_service_intent: bool = False,
+    crisis_result: tuple | None = None,
+    last_results: list | None = None,
+    is_confirmation_action: bool | None = None,
+    latitude: float | None = None,
+    longitude: float | None = None,
+    spanish_acknowledgment: str = "",
+    tone_prefix: str = "",
+    merged: dict | None = None,
+    unified_extraction: dict | None = None,
+    snapshot_last_action: str | None = None,
+    snapshot_pending: bool | None = None,
+    snapshot_response_tone: str | None = None,
+):
+    """Construct a MessageContext with sensible defaults for unit tests.
+
+    Every field has a default. Pass keyword overrides for the fields
+    your test cares about. ``redacted_message`` defaults to ``message``
+    (matching the most common case where there's nothing to redact).
+
+    ``is_confirmation_action`` is auto-derived from ``action`` using the
+    same membership check the orchestrator uses, so a test that sets
+    ``action="confirm_yes"`` automatically gets the consistent
+    ``is_confirmation_action=True``. Pass an explicit bool to override
+    the derivation (rare — useful only for tests that want to exercise
+    inconsistent ctx states).
+
+    ``existing`` and ``early_extracted`` default to fresh dicts to avoid
+    accidental sharing between tests. Don't change this default to a
+    module-level constant.
+    """
+    from app.services.chatbot.context import MessageContext
+
+    if is_confirmation_action is None:
+        is_confirmation_action = action in (
+            "confirm_yes", "confirm_deny", "confirm_change_service",
+            "confirm_change_location", "reset", "greeting",
+        )
+
+    return MessageContext(
+        session_id=session_id,
+        request_id=request_id,
+        message=message,
+        redacted_message=message if redacted_message is None else redacted_message,
+        pii_warning=pii_warning,
+        existing=existing if existing is not None else {},
+        category=category,
+        action=action,
+        tone=tone,
+        confidence=confidence,
+        extraction_source=extraction_source,
+        early_extracted=early_extracted if early_extracted is not None else {},
+        has_service_intent=has_service_intent,
+        crisis_result=crisis_result,
+        last_results=last_results,
+        is_confirmation_action=is_confirmation_action,
+        latitude=latitude,
+        longitude=longitude,
+        spanish_acknowledgment=spanish_acknowledgment,
+        tone_prefix=tone_prefix,
+        merged=merged,
+        unified_extraction=unified_extraction,
+        snapshot_last_action=snapshot_last_action,
+        snapshot_pending=snapshot_pending,
+        snapshot_response_tone=snapshot_response_tone,
+    )
+

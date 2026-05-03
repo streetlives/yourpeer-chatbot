@@ -363,10 +363,12 @@ def _handle_post_results_interaction(ctx) -> dict | None:
     ``ctx.existing`` (pops ``_last_results`` / ``_last_action`` and saves).
     """
     last_results = ctx.last_results
-    is_confirmation_action = ctx.action in (
-        "confirm_change_service", "confirm_change_location",
-        "confirm_yes", "confirm_deny", "reset", "greeting",
-    )
+    # Read the pre-computed flag from ctx instead of recomputing the
+    # action-membership check. The orchestrator computes this at ctx
+    # construction time using the canonical list of "confirmation"
+    # actions (confirm_yes/deny/change_*/reset/greeting). Inlining the
+    # check here would duplicate that list and risk drift.
+    is_confirmation_action = ctx.is_confirmation_action
 
     # confirm_yes / confirm_deny after results when no pending confirmation.
     # Without this, those messages fall through to extraction and re-trigger
