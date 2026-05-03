@@ -270,12 +270,16 @@ went through), the server recognizes the duplicate via a stable
 request ID and returns the same response without running the search
 again. Prevents confusing duplicate replies.
 
-**PII redaction at enqueue.** When a message is held in the offline
-queue, any personally identifiable information it contains (phone
-numbers, addresses, SSNs, etc.) is scrubbed before the message is
-written to disk. The user sees their original text in the chat
-display, but the on-disk version is redacted. Important because
-queued messages can sit on the device for up to an hour.
+**PII redaction at persist time.** When a message is held in the
+offline queue, OR when the active conversation is saved to
+localStorage for the 30-minute resume window, any personally
+identifiable information it contains (phone numbers, addresses, SSNs,
+etc.) is scrubbed before the data is written to disk. The user sees
+their original text in the chat display while the tab is open, but on
+refresh / reopen they see the redacted version (which is what's
+stored). This applies to both the offline send queue and the
+conversation history persistence — the two paths where user-typed
+text could otherwise sit on the device.
 
 **Retry on failure.** When a message fails to send (servers hiccup
 even when online), the error message includes a "Retry" button. The
