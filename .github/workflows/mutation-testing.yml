@@ -11,7 +11,7 @@ name: Mutation Testing (Weekly)
 #   opens an issue.
 #
 #   Tier 2 (7 modules) — high blast-radius: pipeline, execution,
-#   slot_extractor, query_templates, handlers/confirmation,
+#   slot_extraction, query_templates, handlers/confirmation,
 #   slot_extraction/merge, slot_extraction/dispatch. Thresholds
 #   55-70% (lenient initial bar; walk up over quarters).
 #
@@ -150,9 +150,9 @@ jobs:
             # this runs ~440 tests per mutant vs the previous ~270.
             # Expect kill rate to jump from 42.4% toward 55-65%.
 
-          - module: backend/app/services/slot_extractor.py
+          - module: backend/app/services/slot_extraction_regex.py
             tests: >-
-              tests/unit/test_slot_extractor.py
+              tests/unit/test_slot_extraction_regex.py
               tests/unit/test_slot_extraction_keywords.py
               tests/unit/test_service_keywords.py
               tests/unit/test_audit_regression.py
@@ -160,12 +160,12 @@ jobs:
               tests/unit/test_gender_extraction.py
             # PAIRING NOTE (2026-04-21): originally paired with 3 files
             # (241 tests). Audit after weekly-run-#1 found 29 more test
-            # files with direct imports of slot_extractor that weren't
+            # files with direct imports of slot_extraction_regex that weren't
             # running against mutants — largely explains the 45.2% score.
             # Added the 3 highest-leverage: test_audit_regression.py
             # (125 tests, slot-extraction regression coverage),
             # test_populations.py (88 tests, population detection logic
-            # lives in slot_extractor), test_gender_extraction.py
+            # lives in slot_extraction_regex), test_gender_extraction.py
             # (52 tests, extraction edge cases). Combined test count:
             # 241 → 506. Expect 45.2% → 55-65%.
 
@@ -218,7 +218,7 @@ jobs:
             # `_narrative_regex_fallback`, `_VALID_TONES`, `_VALID_ACTIONS`
             # directly. Mixed-purity module: the LLM call paths produce
             # unkillable mutants on retry/error branches under mocking,
-            # which is why the threshold is 60% (matches slot_extractor.py).
+            # which is why the threshold is 60% (matches slot_extraction_regex.py).
             # Walk up if real scores come in higher.
 
     env:
@@ -299,7 +299,7 @@ jobs:
               # on Tier 2 opens an issue but shouldn't block releases.
               "backend/app/services/chatbot/pipeline.py": 55,
               "backend/app/services/chatbot/execution.py": 55,
-              "backend/app/services/slot_extractor.py": 60,   # more pure logic
+              "backend/app/services/slot_extraction_regex.py": 60,   # more pure logic
               "backend/app/rag/query_templates.py": 60,       # more pure logic
               "backend/app/services/chatbot/handlers/confirmation.py": 55,
               # Phase 4 Stage 3 follow-up — slot_extraction/ replacements

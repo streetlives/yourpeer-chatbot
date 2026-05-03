@@ -1,7 +1,7 @@
 """
 Tests for slot extraction keyword additions and negation-aware extraction.
 
-Covers changes to slot_extractor.py:
+Covers changes to slot_extraction_regex.py:
   - Medical keywords: insulin, diabetic, diabetes, inhaler, asthma, etc.
   - Reentry population phrases: felon, felony, criminal record, etc.
   - Foster care shelter keywords: aging out, foster care
@@ -218,11 +218,11 @@ class TestShelterNegationPhrases:
     def test_negation_embedded_phrase_extracts_shelter(self, phrase):
         """Each phrase in this set must extract service_type=shelter.
         If any fails, the corresponding keyword was removed or typo'd
-        in slot_extractor.py's shelter SERVICE_KEYWORDS list."""
+        in slot_extraction_regex.py's shelter SERVICE_KEYWORDS list."""
         s = extract_slots(phrase)
         assert s["service_type"] == "shelter", (
             f"{phrase!r} should extract shelter. Got {s['service_type']!r}. "
-            "Check slot_extractor.py shelter keywords for missing variant."
+            "Check slot_extraction_regex.py shelter keywords for missing variant."
         )
 
 

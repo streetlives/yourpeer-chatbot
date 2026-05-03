@@ -1,7 +1,7 @@
 # Phrase List Audit Report
 
 **Date:** 2026-04-08 (inventory updated 2026-04-21 for B.1 additions)
-**Scope:** All regex phrase lists in `phrase_lists.py`, `classifier.py`, `crisis_detector.py`, and `slot_extractor.py`
+**Scope:** All regex phrase lists in `phrase_lists.py`, `classifier.py`, `crisis_detector.py`, and `slot_extraction_regex.py`
 **Methodology:** Cross-referenced against C-SSRS (Columbia Suicide Severity Rating Scale), ISEAR emotion model, DAPHNE social needs chatbot research, Woebot/Wysa clinical patterns, NYC homeless population service terminology, and NLP suicide detection literature.
 
 ---
@@ -24,8 +24,8 @@
 | Help | phrase_lists.py | 15 | Capability questions |
 | Bot question | phrase_lists.py | 74 | Privacy/capability/attribution meta-questions. **Expanded from 65 to 74 in C.1 (2026-04-21)** — added 9 attribution/origin phrases ("who made you", "who built you", "who created you", etc.) routing to the LLM-answered bot_question handler. See C.1 entry under Audit Trail |
 | Bot identity | phrase_lists.py | 23 | "Am I talking to a robot?" + direct identity questions. **Expanded from 15 to 23 in C.1 (2026-04-21)** — added 8 phrases ("what's your name" variants, "who are you", "tell me about yourself", etc.) to catch identity questions that would otherwise fall through to the re-nudge path during pending confirmations. See C.1 entry under Audit Trail |
-| Service keywords | slot_extractor.py | 220 | Service type extraction (9 categories) |
-| Word-boundary keywords | slot_extractor.py | 6 | Collision-prone service keywords |
+| Service keywords | slot_extraction_regex.py | 220 | Service type extraction (9 categories) |
+| Word-boundary keywords | slot_extraction_regex.py | 6 | Collision-prone service keywords |
 | **Total** | | **~792** | |
 
 ---
@@ -370,7 +370,7 @@ A comprehensive regex audit tested 133 natural-language inputs and found miss ra
 
 **Slot extractor — employment (+5):** finding work, help finding work, help with work, finding a job, help finding a job.
 
-**Total phrases added:** ~90 across phrase_lists.py, classifier.py, crisis_detector.py, and slot_extractor.py. Post-Track 1 detection rates on audit test set: confirm_yes 18%→100%, frustration 42%→100%, emotional 0%→100%, escalation 50%→100%, crisis suicidal ideation 18%→82%, crisis DV 50%→100%, crisis medical 0%→100%.
+**Total phrases added:** ~90 across phrase_lists.py, classifier.py, crisis_detector.py, and slot_extraction_regex.py. Post-Track 1 detection rates on audit test set: confirm_yes 18%→100%, frustration 42%→100%, emotional 0%→100%, escalation 50%→100%, crisis suicidal ideation 18%→82%, crisis DV 50%→100%, crisis medical 0%→100%.
 
 **Implementation note:** 130+ phrases added across 7 files. Total phrase inventory: 770 → 850+. Three systematic preprocessing functions eliminate future gaps: contraction normalization (37 mappings), intensifier stripping (20 adverbs), and emotional enhancement validation (56-item blocklist). Bot self-knowledge module (`bot_knowledge.py`) provides 15 topic entries with keyword matching for static bot question answers. Zero test regressions (939 passed locally, same 4 pre-existing feature gaps).
 

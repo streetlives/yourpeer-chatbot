@@ -23,7 +23,7 @@ The target population has higher-than-average rates of low literacy, uses mobile
 
 The chatbot's three-tier classification pipeline has different levels of typo tolerance:
 
-**Tier 1 — Regex (sub-millisecond, ~80% of messages).** Zero typo tolerance. Keyword lists in `slot_extractor.py` use exact substring matching. "sheltr" does not match "shelter." A misspelled service keyword falls through to Tier 2.
+**Tier 1 — Regex (sub-millisecond, ~80% of messages).** Zero typo tolerance. Keyword lists in `slot_extraction_regex.py` use exact substring matching. "sheltr" does not match "shelter." A misspelled service keyword falls through to Tier 2.
 
 **Tier 2 — Semantic Router (all-MiniLM-L6-v2, ~5ms, ~5% of messages).** Partial typo tolerance. BPE tokenization provides some resilience — "shelterr" still tokenizes into sub-words related to "shelter." But research shows sentence transformers suffer 15-21% accuracy degradation on character-level noise. The 15 pre-embedded routes currently contain only clean utterances, so the model has no training signal that "sheltr" should match the shelter route.
 
@@ -205,7 +205,7 @@ RapidFuzz is the industry standard for fuzzy string matching in Python. It's MIT
 
 ### Implementation
 
-Create a new function in `slot_extractor.py` (or a new module `services/fuzzy_keywords.py`):
+Create a new function in `slot_extraction_regex.py` (or a new module `services/fuzzy_keywords.py`):
 
 ```python
 from rapidfuzz import fuzz, process

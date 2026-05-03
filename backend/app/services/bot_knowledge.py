@@ -6,7 +6,7 @@ and how it handles privacy. Used by both the LLM prompt builder
 keyword-matched answers).
 
 Capabilities are sourced from actual code where possible — service
-categories from slot_extractor, PII types from pii_redactor, locations
+categories from slot_extraction_regex, PII types from pii_redactor, locations
 from the known locations list. This prevents drift between what the
 code does and what the bot tells users it does.
 """
@@ -112,7 +112,7 @@ TOPICS = {
             "like benefits (SNAP/EBT), IDs, and drop-in centers."
         ),
         "summary": "Searches 9 service categories across NYC's five boroughs",
-        "source": "slot_extractor.py → SERVICE_KEYWORDS",
+        "source": "slot_extraction_regex.py → SERVICE_KEYWORDS",
     },
 
     "location_how": {

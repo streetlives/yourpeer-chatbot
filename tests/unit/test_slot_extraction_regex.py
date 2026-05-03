@@ -1,8 +1,8 @@
 """
 Tests for the slot extractor.
 
-Run with: python -m pytest tests/test_slot_extractor.py -v
-Or just:  python tests/test_slot_extractor.py
+Run with: python -m pytest tests/test_slot_extraction_regex.py -v
+Or just:  python tests/test_slot_extraction_regex.py
 """
 
 import pytest
@@ -215,7 +215,7 @@ def test_service_detail_none_for_generic():
 
 
 # =========================================================================
-# tests/test_slot_extractor.py — add after test_age_out_of_range()
+# tests/test_slot_extraction_regex.py — add after test_age_out_of_range()
 # =========================================================================
 
 @pytest.mark.xfail(reason="Not yet implemented: word-to-number conversion for voice-transcribed ages")
@@ -1347,7 +1347,7 @@ def test_extract_all_cross_tier_priority():
     """Across tiers, priority wins regardless of text position.
 
     Housing First: shelter (tier 1) beats food (tier 2) even if food is
-    mentioned first. See _SERVICE_NEED_PRIORITY in slot_extractor.py.
+    mentioned first. See _SERVICE_NEED_PRIORITY in slot_extraction_regex.py.
     """
     from app.services.slot_extraction_regex import _extract_all_service_types
     # Food first in text, but shelter (tier 1) wins the priority.

@@ -205,7 +205,7 @@ Four confirmation categories handle the user's response to a pending search conf
 - **confirm_change_service** — Clears the service type slot and asks what they need.
 - **confirm_change_location** — Clears the location slot and offers borough buttons.
 
-**Queue-state clearing on service change (A.4).** When a user explicitly changes `service_type` mid-flow (either via `confirm_change_service` or by typing a new service intent that contradicts the existing primary), `merge_slots` in `slot_extractor.py` clears `_queued_services`, `_queued_services_original`, and `_queue_offer_pending` so that any previously-queued secondary services from a prior multi-intent message don't leak into the new single-service confirmation. This closes a bug where `"food in Manhattan"` → `"actually, shelter"` produced `"shelter AND food"` in the response because the queue state from the food turn persisted across the merge. The `_is_additive` branch (e.g., `"I also need shelter"`) is explicitly excluded — additive intent correctly preserves the queue.
+**Queue-state clearing on service change (A.4).** When a user explicitly changes `service_type` mid-flow (either via `confirm_change_service` or by typing a new service intent that contradicts the existing primary), `merge_slots` in `slot_extraction_regex.py` clears `_queued_services`, `_queued_services_original`, and `_queue_offer_pending` so that any previously-queued secondary services from a prior multi-intent message don't leak into the new single-service confirmation. This closes a bug where `"food in Manhattan"` → `"actually, shelter"` produced `"shelter AND food"` in the response because the queue state from the food turn persisted across the merge. The `_is_additive` branch (e.g., `"I also need shelter"`) is explicitly excluded — additive intent correctly preserves the queue.
 
 **Topic-shift disambiguation during pending confirmation (C.2).** When a confirmation is pending and the user sends something that looks like an off-topic question — a substantive question (≥3 words) starting with a wh-word or auxiliary-verb opener (who/what/where/when/why/how/are you/do you/can you/is this…), or a ≥4-word question ending in `?` — the bot asks for clarification rather than silently re-nudging the prior search. The disambiguation response reads: `"I wasn't sure if that was a question about something else, or if you were still thinking about the search. I'll look for [service] in [location] — should I go ahead with that, or were you asking something different?"` and includes an extra quick reply `"💬 I was asking something else"` so the user doesn't have to retype their off-topic question.
 
@@ -535,7 +535,7 @@ Based on this research, the following principles govern emotional handling in th
 
 ### Adding a new service category
 
-1. Add keywords to `SERVICE_KEYWORDS` in `slot_extractor.py`
+1. Add keywords to `SERVICE_KEYWORDS` in `slot_extraction_regex.py`
 2. Add 10–20 example utterances to `SERVICE_ROUTES` in `semantic_routes.py` — use full phrases representing how real users describe this need, not single keywords
 3. Add a SQL template in `query_templates.py`
 4. Add a service label in `phrase_lists.py`

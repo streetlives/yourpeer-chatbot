@@ -105,7 +105,7 @@ def _test_file_exercises_module(test_path: Path, module_path: str) -> bool:
        conftest harnesses (``send``, ``send_multi``, ``assert_classified``)
        that routes through the full chatbot pipeline. In that case,
        mutations to any pipeline-resident module (orchestrator, pipeline,
-       execution, classifier, slot_extractor, crisis_detector, and the
+       execution, classifier, slot_extraction_regex, crisis_detector, and the
        handlers under ``chatbot/handlers/``) can be killed by assertions
        on end-to-end behavior. Confirmation.py is the canonical example:
        no direct imports in its paired tests, but scored 232/398 = 58.3%
@@ -161,7 +161,7 @@ def _test_file_exercises_module(test_path: Path, module_path: str) -> bool:
     PIPELINE_MODULES = {
         "backend/app/services/classifier.py",
         "backend/app/services/crisis_detector.py",
-        "backend/app/services/slot_extractor.py",
+        "backend/app/services/slot_extraction_regex.py",
         "backend/app/services/chatbot/orchestrator.py",
         "backend/app/services/chatbot/pipeline.py",
         "backend/app/services/chatbot/execution.py",

@@ -266,7 +266,7 @@ def generate_reply(
         # it sees `has_service_intent` (it treats any new service intent
         # as a fresh search). It must also run BEFORE the normal service
         # flow, whose `merge_slots` hits its "service change" guard
-        # (`slot_extractor.py:1804-1809`) and also wipes queue state,
+        # (`slot_extraction_regex.py:1804-1809`) and also wipes queue state,
         # resulting in a redundant re-confirmation of the queued service.
         #
         # Without this fast path, `multi_accept_queued_shelter`-style

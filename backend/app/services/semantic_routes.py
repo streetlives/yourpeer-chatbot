@@ -276,7 +276,7 @@ SERVICE_ROUTES = {
     # --- housing_assistance route retired (April 15, 2026 audit) ---
     # housing_assistance was collapsed into SERVICE_KEYWORDS['other'] with
     # a description filter on the 'other' template (matches YourPeer).
-    # The regex layer in slot_extractor.py now handles the common keywords
+    # The regex layer in slot_extraction_regex.py now handles the common keywords
     # ("rental assistance", "section 8", "nycha", "eviction prevention",
     # etc.) via the 'other' cluster. Semantic routing for these phrasings
     # was dropped along with the dedicated service type.

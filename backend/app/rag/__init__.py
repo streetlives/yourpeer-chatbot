@@ -243,7 +243,7 @@ def query_services(
         # "lgbtq young adult" is a Shelter child that narrowing strips out.
         #
         # Check both gender AND populations: "transman" maps to gender="male"
-        # (the identified gender) but slot_extractor adds "lgbtq" to
+        # (the identified gender) but slot_extraction_regex adds "lgbtq" to
         # _populations to preserve the LGBTQ signal for enrichment.
         _is_lgbtq = (
             gender in ("lgbtq", "transgender", "nonbinary")

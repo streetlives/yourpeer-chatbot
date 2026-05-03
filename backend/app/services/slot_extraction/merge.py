@@ -212,7 +212,7 @@ def _validate_location(llm_value: Optional[str]) -> Optional[str]:
         return None
 
     # Local import: same pattern as _validate_service_detail — avoid
-    # forcing a slot_extractor import at package load time.
+    # forcing a slot_extraction_regex import at package load time.
     from app.services.slot_extraction_regex import _KNOWN_LOCATIONS
 
     llm_norm = _normalize_for_match(llm_value)

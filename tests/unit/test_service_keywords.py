@@ -1,5 +1,5 @@
 """Tests for SERVICE_KEYWORDS, _WORD_BOUNDARY_KEYWORDS, and _NOTABLE_SUB_TYPES
-coverage in slot_extractor.py.
+coverage in slot_extraction_regex.py.
 
 Validates that all 17 keyword clusters from the service discovery audit
 (April 2026) are correctly mapped, sub-type labels are set for confirmation

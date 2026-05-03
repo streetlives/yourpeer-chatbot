@@ -534,7 +534,7 @@ def _execute_sql(sql: str, params: dict) -> list[dict]:
 # SLOT-TO-TEMPLATE MAPPING
 # ---------------------------------------------------------------------------
 
-# Maps the service_type values from slot_extractor.py to template keys.
+# Maps the service_type values from slot_extraction_regex.py to template keys.
 # This bridges the gap between what the user says and what template to run.
 
 SLOT_SERVICE_TO_TEMPLATE = {

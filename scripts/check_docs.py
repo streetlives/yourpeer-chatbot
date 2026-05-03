@@ -991,7 +991,7 @@ def check_service_category_enumeration(args):
     updated too — this check asserts that.
     """
     live = extract_collection_members(
-        BACKEND_DIR / "app/services/slot_extractor.py",
+        BACKEND_DIR / "app/services/slot_extraction_regex.py",
         "SERVICE_KEYWORDS")
     if not live:
         return
@@ -1014,7 +1014,7 @@ def check_service_category_enumeration(args):
 
     missing_from_mapping = live_set - set(friendly)
     if missing_from_mapping:
-        warn(rel(BACKEND_DIR / "app/services/slot_extractor.py"),
+        warn(rel(BACKEND_DIR / "app/services/slot_extraction_regex.py"),
              f"SERVICE_KEYWORDS has key(s) {sorted(missing_from_mapping)} "
              f"that check_service_category_enumeration's friendly map "
              f"doesn't know about. Add to both the mapping in "
@@ -1108,7 +1108,7 @@ def check_service_need_priority_tiers(args):
     assert each claimed group equals one of the live tier sets.
     """
     live = extract_int_dict(
-        BACKEND_DIR / "app/services/slot_extractor.py",
+        BACKEND_DIR / "app/services/slot_extraction_regex.py",
         "_SERVICE_NEED_PRIORITY")
     if not live:
         return

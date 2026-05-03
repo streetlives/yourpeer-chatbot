@@ -6,11 +6,11 @@ the collision edge cases discovered during testing. If a future change
 reintroduces any of these issues, these tests will catch it.
 
 Groups:
-  A — Location non_locations filter (slot_extractor.py)
+  A — Location non_locations filter (slot_extraction_regex.py)
   B — Confirm deny startswith (phrase_lists.py, classifier.py)
-  C — Shelter "need a place" keywords (slot_extractor.py)
+  C — Shelter "need a place" keywords (slot_extraction_regex.py)
   D — Diapers categorization (test expectation only)
-  E — Age extraction comma pattern (slot_extractor.py)
+  E — Age extraction comma pattern (slot_extraction_regex.py)
   F — Auto-execute xfail (test markers only)
   G — Day detection priority (post_results.py)
   H — Post-results has_service_intent guard (chatbot.py)

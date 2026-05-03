@@ -60,7 +60,7 @@ class TestConfirmationRequired:
         (shelter=1, employment=4) and employment queues as an additional
         service.
 
-        If this regresses, check `slot_extractor.py` shelter keywords
+        If this regresses, check `slot_extraction_regex.py` shelter keywords
         for 'don't have anywhere to go' / 'dont have anywhere to go'.
         """
         r = send_multi([
@@ -73,7 +73,7 @@ class TestConfirmationRequired:
             "Shelter must be primary (priority 1) over employment "
             f"(priority 4). Got {slots.get('service_type')!r}. If this "
             "is 'employment', the 'don't have anywhere to go' shelter "
-            "keyword may have been removed from slot_extractor.py."
+            "keyword may have been removed from slot_extraction_regex.py."
         )
         assert "foster_youth" in (slots.get("_populations") or [])
         # Bot response should reference both services (primary + queued)
@@ -278,7 +278,7 @@ class TestOtherR25Regressions:
         This test pins (2) by mocking the LLM extractor to return
         ``_populations: ["reentry"]`` deterministically. Without the
         ``elif "immigration"`` branch in ``confirmation.py`` AND the
-        regex-side ``immigration`` mapping in ``slot_extractor.py``,
+        regex-side ``immigration`` mapping in ``slot_extraction_regex.py``,
         this test fails — the bot says "reentry-friendly".
 
         Bidirectional reproduction:

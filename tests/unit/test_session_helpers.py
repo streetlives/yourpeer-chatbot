@@ -656,7 +656,7 @@ class TestHasUserContent:
         accidental drift if a new control flag gets added to the
         extractor and someone naively appends it here.
         """
-        # If this fails, the slot_extractor probably added a new slot.
+        # If this fails, the slot_extraction_regex probably added a new slot.
         # Decide if it's user-content (add to _USER_PROVIDED_SLOTS) or
         # control flag (don't). Don't reflexively expand the tuple.
         assert _USER_PROVIDED_SLOTS == (

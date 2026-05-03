@@ -5560,11 +5560,11 @@ R34 sets new Opus-era records for weighted average (4.52) and critical failure c
 
 **1. PR 6 delivered.** Six of R33's ten failing scenarios now pass. The fixes were well-targeted — every code change produced measurable improvement on its intended scenario. The frustration phrase expansion (B.1) produced the single largest scenario improvement in the Opus era (+1.27 on `edge_frustration`).
 
-**2. The A.3 expectation flip on `multi_cross_borough` was counterproductive.** Flipping the expected primary from food-in-Brooklyn to shelter-in-Manhattan widened the gap between expectation and runtime behavior. The runtime still produces food-in-Brooklyn as primary. Score dropped 3.73 → 3.09. This expectation change should be reverted until the underlying cross-location binding bug is fixed in `slot_extractor.py`.
+**2. The A.3 expectation flip on `multi_cross_borough` was counterproductive.** Flipping the expected primary from food-in-Brooklyn to shelter-in-Manhattan widened the gap between expectation and runtime behavior. The runtime still produces food-in-Brooklyn as primary. Score dropped 3.73 → 3.09. This expectation change should be reverted until the underlying cross-location binding bug is fixed in `slot_extraction_regex.py`.
 
 **3. `peer_diabetic_insulin` at 2.64 is the Opus era's worst single-scenario score.** The failure mode has shifted — R34's judge notes say the LLM gate failed to recognize "insulin" as a medical need entirely, which is a slot extraction failure, not the "Yes, search" confirmation bug the plan diagnosed. This needs fresh investigation. Seven of eleven dimensions score ≤2.
 
-**4. Two cross-location bug instances now surface.** `multi_cross_borough` (3.09) and the new `multi_cross_neighborhood_shower_les_food_chinatown` (3.91) both exhibit the same class of bug: when a user requests two services in two different locations, the second location is silently dropped. The plan's A.3 investigation in `slot_extractor.py:1566-1604` covers both.
+**4. Two cross-location bug instances now surface.** `multi_cross_borough` (3.09) and the new `multi_cross_neighborhood_shower_les_food_chinatown` (3.91) both exhibit the same class of bug: when a user requests two services in two different locations, the second location is silently dropped. The plan's A.3 investigation in `slot_extraction_regex.py:1566-1604` covers both.
 
 **5. `multiturn_change_mind` at exactly 4.00 is a false comfort.** Its Opus-era range is 3.91–4.36. One re-score and it fails. This is the clearest candidate for multi-run averaging (EVAL_QUALITY_ENGINEERING_PLAN §C.1).
 
@@ -5576,7 +5576,7 @@ R34 sets new Opus-era records for weighted average (4.52) and critical failure c
 - **Re-diagnose `peer_diabetic_insulin`** — the failure mode has shifted from confirmation flow to slot extraction. The LLM gate misses "insulin" → health_care. May need a semantic route or regex keyword, not just a confirmation fix.
 
 **Next sprint:**
-- **Fix cross-location binding** in `slot_extractor.py` — affects both `multi_cross_borough` and `multi_cross_neighborhood`. The plan's investigation steps (print-debug the extractor I/O on the failing input) remain correct.
+- **Fix cross-location binding** in `slot_extraction_regex.py` — affects both `multi_cross_borough` and `multi_cross_neighborhood`. The plan's investigation steps (print-debug the extractor I/O on the failing input) remain correct.
 - **Ship D.1–D.4 unit tests** — the PR 6 fixes landed without the load-bearing unit tests the plan prescribed. These should ship before the next code change to prevent the re-regression pattern.
 - **Investigate `no_result_shelter_thin`** — the "for women" eligibility filter drop is a real UX gap, not just Opus noise.
 
@@ -6058,7 +6058,7 @@ Apply in priority order. Full diagnosis in `r36-analysis.md`.
 
 1. **Apply Option 4 hardening** (pre-drafted at `/mnt/user-data/outputs/phase-2-option-4-hardening/`). Addresses Category A — 3 watch-list scenarios. Short-prompt change + 4 tests + mini-eval. ~30 min.
 
-2. **Port misspelling tolerance to unified regex path** (Category C.2 — `accessibility_low_literacy`). Legacy's location extractor matches "broklyn" → Brooklyn; unified's doesn't. Port fuzzy-match logic from `slot_extractor.py` into `slot_extraction/dispatch.py`. Add typo tests. ~1-2 hr.
+2. **Port misspelling tolerance to unified regex path** (Category C.2 — `accessibility_low_literacy`). Legacy's location extractor matches "broklyn" → Brooklyn; unified's doesn't. Port fuzzy-match logic from `slot_extraction_regex.py` into `slot_extraction/dispatch.py`. Add typo tests. ~1-2 hr.
 
 3. **Port contradiction signals to unified merge** (Category C.1 — `confirm_multi_change`, biggest single regression at −1.18). Compare `_CONTRADICTION_SIGNALS` in new `merge.py` against legacy's `_find_contradiction_signal`. Port missing patterns. Add a reproduction test. ~1-2 hr.
 

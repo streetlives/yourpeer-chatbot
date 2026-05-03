@@ -17,7 +17,7 @@ Status key: ✅ done · ⚠️ partial · ❌ gap.
 
 | # | Gap                                            | Status | Evidence                                                                                                                                                                                                                                |
 |---|------------------------------------------------|:------:|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| 1 | Full mutation testing                          | ⚠️     | Only 5 critical modules. Several high-blast-radius modules (`slot_extractor.py`, `query_templates.py`, `query_executor.py`, `chatbot/execution.py`, `chatbot/pipeline.py`) are NOT in the matrix. See Section 4 for the ranking.         |
+| 1 | Full mutation testing                          | ⚠️     | Only 5 critical modules. Several high-blast-radius modules (`slot_extraction_regex`, `query_templates.py`, `query_executor.py`, `chatbot/execution.py`, `chatbot/pipeline.py`) are NOT in the matrix. See Section 4 for the ranking.         |
 | 2 | Branch coverage                                | ✅     | `test-quality.yml` runs `pytest --cov-branch`.                                                                                                                                                                                         |
 | 3 | CI coverage gate                               | ✅     | `--cov-fail-under=85` in `test-quality.yml`. Artifact uploaded, summary posted to PR.                                                                                                                                                   |
 | 4 | CI audit gate                                  | ✅     | `check_audit_baseline.py` runs before tests in `test-quality.yml`. Fails on any new finding above baseline.                                                                                                                             |
@@ -38,12 +38,12 @@ entirely). Plan below addresses all three.
 
 | # | File:Line                                       | Description                                                               | Disposition                                                                                                                     |
 |---|-------------------------------------------------|---------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------|
-| 1 | `test_llm_slot_extractor.py:131`               | `hospital` regex keyword overrides LLM's correct `shelter` classification | **Fix in slot extractor.** The override logic should lose to the LLM when the LLM has HIGHER confidence (not just any match). P1. |
-| 2 | `test_llm_slot_extractor.py:224`               | Same bug, different scenario                                              | Paired with #1 — will flip together when fixed.                                                                                 |
+| 1 | `test_llm_slot_extractor:131`               | `hospital` regex keyword overrides LLM's correct `shelter` classification | **Fix in slot extractor.** The override logic should lose to the LLM when the LLM has HIGHER confidence (not just any match). P1. |
+| 2 | `test_llm_slot_extractor:224`               | Same bug, different scenario                                              | Paired with #1 — will flip together when fixed.                                                                                 |
 | 3 | `test_results_enhancements.py:65`              | Auto-execute for urgent+complete queries not implemented                  | **Design decision needed.** Trade-off: skipping confirmation saves a turn for urgent users, but the confirmation was added intentionally in R30 for safety. Recommend adding a feature flag and A/B eval. P2. |
 | 4 | `test_results_enhancements.py:76`              | Paired with #3                                                            | Flips with #3.                                                                                                                  |
-| 5 | `test_slot_extractor.py:221`                   | Word-to-number conversion ("twenty-three" → 23) for voice-transcribed ages | **Ship when voice UI ships.** Currently a frontend stub; no user impact yet. P2, gate with voice rollout.                       |
-| 6 | `test_slot_extractor.py:968`                   | Prepositional family phrases ("for me and my kids", "have a baby")        | **Extend regex.** Small fix to `_FAMILY_PATTERNS` in `slot_extractor.py`. P1.                                                    |
+| 5 | `test_slot_extraction_regex:221`                   | Word-to-number conversion ("twenty-three" → 23) for voice-transcribed ages | **Ship when voice UI ships.** Currently a frontend stub; no user impact yet. P2, gate with voice rollout.                       |
+| 6 | `test_slot_extraction_regex:968`                   | Prepositional family phrases ("for me and my kids", "have a baby")        | **Extend regex.** Small fix to `_FAMILY_PATTERNS` in `slot_extraction_regex`. P1.                                                    |
 
 **Risk not currently mitigated:** `xfail_strict` is not set in pytest
 config, so an xfailed test that starts passing (xpassed) does not fail
@@ -223,7 +223,7 @@ broken by module size (bigger = more surface).
 |:---:|-----|---:|-----|
 | 6 | `services/chatbot/pipeline.py`            |  292 | **Unified LLM gate.** Bug here affects ALL tier-3 classification. Controls when LLM fires vs regex. Add. |
 | 7 | `services/chatbot/execution.py`           |  760 | **Runs every DB query, formats every service card.** Contains the fallback dedup + label-pick logic from §3. Add. |
-| 8 | `services/slot_extractor.py`              | 1788 | Extracts service_type, location, urgency, populations. Every downstream decision reads these. Largest module in the codebase. Add. |
+| 8 | `services/slot_extraction_regex`              | 1788 | Extracts service_type, location, urgency, populations. Every downstream decision reads these. Largest module in the codebase. Add. |
 | 9 | `rag/query_templates.py`                  | 1416 | SQL templates. Wrong query = wrong results. Latent risk because tests mostly assert on SQL string shape, not execution semantics. Add. |
 | 10 | `services/chatbot/handlers/confirmation.py` |  660 | Confirmation flow — "yes/no" misinterpretation is high user-visibility. Add. |
 
@@ -267,7 +267,7 @@ despite containing the known bugs in §3.1, §3.2, §3.4.
 **Initial thresholds** (can ratchet up):
 - `pipeline.py`: 65%
 - `execution.py`: 60% (contains some hard-to-isolate DB paths)
-- `slot_extractor.py`: 70%
+- `slot_extraction_regex.py`: 70%
 - `query_templates.py`: 75% (pure logic)
 - `handlers/confirmation.py`: 65%
 
@@ -287,12 +287,12 @@ despite containing the known bugs in §3.1, §3.2, §3.4.
 
 | #  | Item | Effort | Rationale |
 |----|------|:------:|------|
-| P1.1 | **Fix hospital-keyword regex override** (§2.1 #1 + #2). Flip 2 xfails to passing. | S | Already has test coverage. Fix is probably a conditional in `slot_extractor.py`'s override logic: "prefer regex ONLY when LLM confidence < 0.8 and regex keyword is unambiguous." |
+| P1.1 | **Fix hospital-keyword regex override** (§2.1 #1 + #2). Flip 2 xfails to passing. | S | Already has test coverage. Fix is probably a conditional in `slot_extraction_regex`'s override logic: "prefer regex ONLY when LLM confidence < 0.8 and regex keyword is unambiguous." |
 | P1.2 | **Add prepositional family-phrase regex** (§2.1 #6). | XS | One-line fix to `_FAMILY_PATTERNS`. |
 | P1.3 | **Decide and implement unrecognized-service LLM bypass** (§3.3, recommended option (a)). | M | Add `service_type="unrecognized"` to the LLM prompt enum + pipeline routing. Affects multi-intent, escalation, peer-navigator offer timing. |
 | P1.4 | **Delete the dead `_fallback_results` stash** (§3.1). | XS | One line + audit event replacement. Zero user-facing change; removes a confusing dead field. |
 | P1.5 | **Add pytest markers for test categorization**: register `unit`, `integration`, `eval`, `slow`, `requires_llm`, `requires_db` in `[tool.pytest.ini_options]`. Annotate existing tests. | M | Enables `pytest -m "not slow"`, `pytest -m "integration and not requires_db"`. Currently categorization is directory-only. |
-| P1.6 | **Extend mutation-testing matrix** with Tier 2 modules (§4). | M | Adds `pipeline.py`, `execution.py`, `slot_extractor.py`, `query_templates.py`, `handlers/confirmation.py` to weekly job. CI time impact: ~20 min added to parallel matrix. |
+| P1.6 | **Extend mutation-testing matrix** with Tier 2 modules (§4). | M | Adds `pipeline.py`, `execution.py`, `slot_extraction_regex`, `query_templates.py`, `handlers/confirmation.py` to weekly job. CI time impact: ~20 min added to parallel matrix. |
 | P1.7 | **Remove back-compat re-exports** in `chatbot/__init__.py` (§1 gap #5). | S | Risk: breaks the 3-4 test files that import `from app.services.chatbot import detect_crisis, claude_reply, _build_confirmation_message`. Migrate those imports; re-exports go. Kills the D7 footgun at the source. |
 | P1.8 | **Lift 3 D5 env-reading tests into a conftest fixture** (§2.5). | S | Audit README's explicit follow-up. Reduces D5 findings from 8 to 5 (all deliberate). |
 

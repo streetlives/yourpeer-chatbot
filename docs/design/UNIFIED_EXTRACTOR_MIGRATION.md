@@ -346,7 +346,7 @@ Exit criterion (full Phase 4 complete): all tests green including the 56-asserts
 
 ## What doesn't change
 
-- `slot_extractor.py` (regex extraction) — untouched. Its API is exactly what the new unified extractor takes as input.
+- `slot_extraction_regex.py` (regex extraction) — untouched. Its API is exactly what the new unified extractor takes as input.
 - Semantic router (`semantic_router.py`) — still called from `_run_early_extraction`, unchanged.
 - PII redaction — unchanged.
 - All downstream handlers — unchanged, they consume the same `merged` dict shape.

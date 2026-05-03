@@ -47,7 +47,7 @@ pytest tests/integration/ -v
 **Run a single test file:**
 
 ```
-pytest tests/unit/test_slot_extractor.py -v
+pytest tests/unit/test_slot_extraction_regex.py -v
 ```
 
 **Run a single test:**
@@ -186,7 +186,7 @@ All backend modules and all public functions are covered. Tests are in `tests/un
 | `phrase_lists.py` | `unit/test_phrase_audit.py` | 41 | Full |
 | `responses.py` | `integration/test_classification_and_routing.py`, `integration/test_format_pipeline_and_admin.py` | (inline) | Full |
 | `confirmation.py` | `unit/test_edge_cases.py`, `unit/test_gender_extraction.py`, `integration/test_classification_and_routing.py` | (inline) | Full |
-| `slot_extractor.py` | `unit/test_slot_extractor.py`, `unit/test_gender_extraction.py`, `unit/test_edge_cases.py`, `unit/test_location_boundaries.py`, `unit/test_populations.py`, `unit/test_org_name_search.py`, `unit/test_walk_in_and_card_extras.py` | 330+ | Full |
+| `slot_extraction_regex.py` | `unit/test_slot_extraction_regex.py`, `unit/test_gender_extraction.py`, `unit/test_edge_cases.py`, `unit/test_location_boundaries.py`, `unit/test_populations.py`, `unit/test_org_name_search.py`, `unit/test_walk_in_and_card_extras.py` | 330+ | Full |
 | `rag/__init__.py` | `unit/test_query_templates.py`, `unit/test_populations.py`, `unit/test_org_name_search.py`, `unit/test_walk_in_and_card_extras.py`, `integration/test_browser_geolocation.py` | 125+ | Full |
 | `query_templates.py` | `unit/test_query_templates.py`, `unit/test_location_boundaries.py`, `unit/test_service_card_display.py`, `unit/test_walk_in_and_card_extras.py` | 120+ | Full |
 | `query_executor.py` | `unit/test_location_boundaries.py`, `unit/test_edge_cases.py` | 65 | Full |
@@ -251,7 +251,7 @@ Validates the main chatbot routing — message classification (split classifier 
 | Escalation phrase variants | 3 | "connect with a person" routes to escalation, "connect with peer navigator" routes to escalation, peer navigator label standardized |
 | Location change UX | 1 | Location change shows "Use my location" as first option |
 
-### `test_slot_extractor.py` — 117 tests
+### `test_slot_extraction_regex.py` — 117 tests
 
 Validates the regex-based slot extraction pipeline.
 
@@ -663,7 +663,7 @@ Validates the boundary between post-results follow-up questions and new service 
 
 The four industry-recommended ambiguity handling patterns — confidence scoring, disambiguation prompts, correction recovery, and ambiguity logging — are now exercised across `tests/unit/test_audit_regression.py` (regression guards for the individual behaviors) and `tests/eval/eval_llm_judge.py` (end-to-end scoring of ambiguous scenarios). Behaviors covered: confidence scoring for regex/reset/keyword/correction/disambiguation cases, unmatched-name disambiguation prompts, the 5 correction phrases with their slot-clearing semantics, "Not what I meant" button wiring, and audit-event logging of the correction/disambiguation categories with confidence fields.
 
-### `test_populations.py` — 89 tests
+### `test_populations.py` — 93 tests
 
 Validates Phase 3 (population context extraction and query boosts) and Phase 5 (DV crisis → population injection). Covers the full pipeline: regex extraction → session merge → query parameter generation → ORDER BY SQL → confirmation message → LLM schema compliance.
 
@@ -791,7 +791,7 @@ These are documented behaviors, not bugs:
 
 | Tests | File | Reason |
 |---|---|---|
-| `test_spoken_number_age_extraction` | `test_slot_extractor.py` | Word-to-number conversion ("seventeen" → 17) not implemented in regex extractor |
+| `test_spoken_number_age_extraction` | `test_slot_extraction_regex.py` | Word-to-number conversion ("seventeen" → 17) not implemented in regex extractor |
 | `test_auto_execute_urgent_query` (×2) | `test_results_enhancements.py` | Auto-execute for urgent queries not yet implemented — chatbot always confirms |
 
 ## Adding New Tests
