@@ -316,7 +316,7 @@ class TestValidateLocation:
         # the list includes specific neighborhoods but not every
         # regional shorthand). Strict exact-match drops.
         # If this regresses when the list changes, update the test.
-        from app.services.slot_extractor import _KNOWN_LOCATIONS
+        from app.services.slot_extraction_regex import _KNOWN_LOCATIONS
         if "midtown" not in _KNOWN_LOCATIONS:
             assert _validate_location("midtown") is None
 
@@ -328,7 +328,7 @@ def test_womens_shelter_location_correctly_extracted():
     flagged this as a potential edge case; behavior audit found it
     resolved. Test asserts the working behavior so a future regex
     change that DOES break it gets caught."""
-    from app.services.slot_extractor import extract_slots
+    from app.services.slot_extraction_regex import extract_slots
     slots = extract_slots("women's shelter in Brooklyn")
     assert slots["location"] == "brooklyn"
 
@@ -371,7 +371,7 @@ def test_third_person_age_is_schema_intended():
     intended behavior, not a bug. Earlier doc revisions flagged it as
     an xfail edge case; audit found it correctly implements the
     schema. Test asserts the working behavior."""
-    from app.services.slot_extractor import extract_slots
+    from app.services.slot_extraction_regex import extract_slots
     slots = extract_slots("I have a 3-year-old who needs clothes")
     assert slots["age"] == 3
 
@@ -1384,7 +1384,7 @@ def test_brother_in_jail_does_not_trigger_reentry_fp():
     rule would accept; audit found the regex's negation/attribution
     logic already handles it. Test asserts the correct behavior so
     a regression becomes visible."""
-    from app.services.slot_extractor import extract_slots
+    from app.services.slot_extraction_regex import extract_slots
     slots = extract_slots("my brother's in jail and I need food")
     assert "reentry" not in (slots.get("_populations") or [])
 
@@ -1776,7 +1776,7 @@ class TestIsSimpleMessage:
         assert _is_simple_message("food", regex) is False
 
     def test_near_me_sentinel_is_simple(self):
-        from app.services.slot_extractor import NEAR_ME_SENTINEL
+        from app.services.slot_extraction_regex import NEAR_ME_SENTINEL
         regex = _empty_regex_result()
         regex.update({
             "service_type": "food",
@@ -2569,7 +2569,7 @@ class TestPromptSanity:
         CATEGORY, not the service_detail. Validated implicitly by
         tests elsewhere.)
         """
-        from app.services.slot_extractor import _NOTABLE_SUB_TYPES
+        from app.services.slot_extraction_regex import _NOTABLE_SUB_TYPES
         sd_desc = _EXTRACT_SLOTS_TOOL["input_schema"]["properties"][
             "service_detail"
         ]["description"]

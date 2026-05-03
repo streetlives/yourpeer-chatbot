@@ -35,7 +35,7 @@ sys.path.insert(0, ".")
 
 from app.rag.query_templates import TEMPLATES
 from app.rag.query_executor import resolve_template_key, SLOT_SERVICE_TO_TEMPLATE
-from app.services.slot_extractor import SERVICE_KEYWORDS, extract_slots
+from app.services.slot_extraction_regex import SERVICE_KEYWORDS, extract_slots
 
 
 # Path to the narrowing-config file, resolved from this test module's
@@ -1874,7 +1874,7 @@ class TestDescriptionFilterCleanup:
     def test_dialysis_not_in_notable_sub_types(self):
         """'dialysis' removed from _NOTABLE_SUB_TYPES — no description filter
         exists to narrow with, so the sub-type label would be misleading."""
-        from app.services.slot_extractor import _NOTABLE_SUB_TYPES
+        from app.services.slot_extraction_regex import _NOTABLE_SUB_TYPES
         assert "dialysis" not in _NOTABLE_SUB_TYPES, (
             "'dialysis' back in _NOTABLE_SUB_TYPES but 'dialysis services' "
             "description filter was removed (0 DB matches). The sub-type "

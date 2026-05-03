@@ -11,7 +11,7 @@ Run with: python -m pytest tests/unit/test_slot_extraction_keywords.py -v
 """
 
 import pytest
-from app.services.slot_extractor import (
+from app.services.slot_extraction_regex import (
     extract_slots,
     _extract_populations,
     _is_negated,

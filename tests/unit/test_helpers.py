@@ -11,7 +11,7 @@ import uuid
 from unittest.mock import patch
 
 from app.services.chatbot import generate_reply, _DISPLAY_PAGE_SIZE
-from app.services.slot_extractor import NEAR_ME_SENTINEL
+from app.services.slot_extraction_regex import NEAR_ME_SENTINEL
 from app.services.session_store import (
     clear_session, get_session_slots, save_session_slots,
 )

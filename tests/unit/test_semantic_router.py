@@ -1104,7 +1104,7 @@ class TestRouteAlignment:
     def test_service_routes_align_with_slot_extractor(self):
         """SERVICE_ROUTES keys should match SERVICE_KEYWORDS keys in
         slot_extractor.py (the service types the system recognizes)."""
-        from app.services.slot_extractor import SERVICE_KEYWORDS
+        from app.services.slot_extraction_regex import SERVICE_KEYWORDS
 
         route_keys = set(SERVICE_ROUTES.keys())
         keyword_keys = set(SERVICE_KEYWORDS.keys())

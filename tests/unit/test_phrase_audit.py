@@ -12,7 +12,7 @@ import pytest
 from unittest.mock import patch
 from app.services.crisis_detector import detect_crisis
 from app.services.classifier import _classify_tone, _classify_action
-from app.services.slot_extractor import extract_slots
+from app.services.slot_extraction_regex import extract_slots
 from conftest import assert_classified, send
 
 

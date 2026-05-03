@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 def _get_service_categories() -> dict:
     """Service categories from the slot extractor (live, not hardcoded)."""
     try:
-        from app.services.slot_extractor import SERVICE_KEYWORDS
+        from app.services.slot_extraction_regex import SERVICE_KEYWORDS
         return {
             cat: keywords[:5]  # first 5 keywords as examples
             for cat, keywords in SERVICE_KEYWORDS.items()
@@ -44,7 +44,7 @@ def _get_pii_categories() -> list:
 def _get_location_count() -> int:
     """Number of known NYC locations (live)."""
     try:
-        from app.services.slot_extractor import _KNOWN_LOCATIONS
+        from app.services.slot_extraction_regex import _KNOWN_LOCATIONS
         return len(_KNOWN_LOCATIONS)
     except ImportError:
         return 0
@@ -53,7 +53,7 @@ def _get_location_count() -> int:
 def _get_zip_code_count() -> int:
     """Number of NYC zip codes mapped to neighborhoods (live)."""
     try:
-        from app.services.slot_extractor import _NYC_ZIP_TO_NEIGHBORHOOD
+        from app.services.slot_extraction_regex import _NYC_ZIP_TO_NEIGHBORHOOD
         return len(_NYC_ZIP_TO_NEIGHBORHOOD)
     except ImportError:
         return 0

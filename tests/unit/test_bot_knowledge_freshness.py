@@ -87,7 +87,7 @@ class TestBotKnowledgeFreshness:
     def test_services_summary_count_matches_service_keywords(self):
         """Summary claim 'N service categories' must equal live count."""
         import re
-        from app.services.slot_extractor import SERVICE_KEYWORDS
+        from app.services.slot_extraction_regex import SERVICE_KEYWORDS
         from app.services.bot_knowledge import TOPICS
 
         summary = TOPICS["services"]["summary"]

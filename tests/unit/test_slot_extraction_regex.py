@@ -9,7 +9,7 @@ import pytest
 
 
 
-from app.services.slot_extractor import (
+from app.services.slot_extraction_regex import (
     extract_slots,
     merge_slots,
     is_enough_to_answer,
@@ -999,7 +999,7 @@ def test_service_detail_aa_meeting():
 
 def test_merge_slots_clears_stale_detail():
     """When service_type changes and new extraction has no detail, old detail is cleared."""
-    from app.services.slot_extractor import merge_slots
+    from app.services.slot_extraction_regex import merge_slots
     existing = {"service_type": "medical", "service_detail": "dental care", "location": "Brooklyn"}
     new = {"service_type": "food", "service_detail": None, "location": None}
     merged = merge_slots(existing, new)
@@ -1009,7 +1009,7 @@ def test_merge_slots_clears_stale_detail():
 
 def test_merge_slots_keeps_detail_when_same_service():
     """When service_type doesn't change, service_detail should persist."""
-    from app.services.slot_extractor import merge_slots
+    from app.services.slot_extraction_regex import merge_slots
     existing = {"service_type": "medical", "service_detail": "dental care"}
     new = {"service_type": None, "location": "Queens"}
     merged = merge_slots(existing, new)
@@ -1018,7 +1018,7 @@ def test_merge_slots_keeps_detail_when_same_service():
 
 def test_merge_slots_updates_detail_with_new_subtype():
     """When service_type changes and new extraction has a detail, use the new one."""
-    from app.services.slot_extractor import merge_slots
+    from app.services.slot_extraction_regex import merge_slots
     existing = {"service_type": "food", "service_detail": None, "location": "Brooklyn"}
     new = {"service_type": "medical", "service_detail": "dental care"}
     merged = merge_slots(existing, new)
@@ -1164,7 +1164,7 @@ def test_family_status_children_with_service():
 
 def test_followup_asks_family_for_shelter():
     """Shelter search with age but no family_status should ask about family."""
-    from app.services.slot_extractor import next_follow_up_question
+    from app.services.slot_extraction_regex import next_follow_up_question
     slots = {"service_type": "shelter", "location": "Brooklyn", "age": 30}
     question = next_follow_up_question(slots)
     assert "family" in question.lower() or "children" in question.lower()
@@ -1172,7 +1172,7 @@ def test_followup_asks_family_for_shelter():
 
 def test_followup_skips_family_for_food():
     """Food search should NOT ask about family status."""
-    from app.services.slot_extractor import next_follow_up_question
+    from app.services.slot_extraction_regex import next_follow_up_question
     slots = {"service_type": "food", "location": "Brooklyn"}
     question = next_follow_up_question(slots)
     assert "family" not in question.lower()
@@ -1180,7 +1180,7 @@ def test_followup_skips_family_for_food():
 
 def test_followup_skips_family_when_already_set():
     """Shelter with family_status already set should not ask again."""
-    from app.services.slot_extractor import next_follow_up_question
+    from app.services.slot_extraction_regex import next_follow_up_question
     slots = {"service_type": "shelter", "location": "Brooklyn", "age": 25,
              "family_status": "with_children"}
     question = next_follow_up_question(slots)
@@ -1193,7 +1193,7 @@ def test_followup_skips_family_when_already_set():
 
 def test_extract_all_two_services():
     """'food and shelter' should extract both service types."""
-    from app.services.slot_extractor import _extract_all_service_types
+    from app.services.slot_extraction_regex import _extract_all_service_types
     results = _extract_all_service_types("I need food and shelter in Brooklyn")
     types = [r[0] for r in results]
     assert "food" in types
@@ -1203,7 +1203,7 @@ def test_extract_all_two_services():
 
 def test_extract_all_three_services():
     """Three services should all be extracted."""
-    from app.services.slot_extractor import _extract_all_service_types
+    from app.services.slot_extraction_regex import _extract_all_service_types
     results = _extract_all_service_types("I need food, shelter, and clothing")
     types = [r[0] for r in results]
     assert len(types) == 3
@@ -1214,7 +1214,7 @@ def test_extract_all_three_services():
 
 def test_extract_all_no_duplicates():
     """Same category mentioned twice should only appear once."""
-    from app.services.slot_extractor import _extract_all_service_types
+    from app.services.slot_extraction_regex import _extract_all_service_types
     # "food" and "food pantry" are both category "food"
     results = _extract_all_service_types("I need food from a food pantry")
     types = [r[0] for r in results]
@@ -1223,7 +1223,7 @@ def test_extract_all_no_duplicates():
 
 def test_extract_all_mental_health_not_double_match():
     """'mental health' should match mental_health, not also 'health' as medical."""
-    from app.services.slot_extractor import _extract_all_service_types
+    from app.services.slot_extraction_regex import _extract_all_service_types
     results = _extract_all_service_types("I need mental health support")
     types = [r[0] for r in results]
     assert "mental_health" in types
@@ -1232,7 +1232,7 @@ def test_extract_all_mental_health_not_double_match():
 
 def test_extract_all_preserves_detail():
     """Sub-type details should be preserved for each service."""
-    from app.services.slot_extractor import _extract_all_service_types
+    from app.services.slot_extraction_regex import _extract_all_service_types
     results = _extract_all_service_types("I need dental care and therapy")
     details = {r[0]: r[1] for r in results}
     assert details.get("medical") == "dental care"
@@ -1241,7 +1241,7 @@ def test_extract_all_preserves_detail():
 
 def test_extract_all_single_service():
     """Single service should return a list of one."""
-    from app.services.slot_extractor import _extract_all_service_types
+    from app.services.slot_extraction_regex import _extract_all_service_types
     results = _extract_all_service_types("I need food")
     assert len(results) == 1
     assert results[0][0] == "food"
@@ -1249,7 +1249,7 @@ def test_extract_all_single_service():
 
 def test_extract_all_no_service():
     """No service keywords should return empty list."""
-    from app.services.slot_extractor import _extract_all_service_types
+    from app.services.slot_extraction_regex import _extract_all_service_types
     results = _extract_all_service_types("hello how are you")
     assert results == []
 
@@ -1283,7 +1283,7 @@ def test_extract_slots_additional_none_message():
 
 def test_merge_slots_skips_additional_services():
     """merge_slots should not persist additional_services in session."""
-    from app.services.slot_extractor import merge_slots
+    from app.services.slot_extraction_regex import merge_slots
     existing = {"service_type": "food", "location": "Brooklyn"}
     new = {"service_type": "food", "additional_services": [("shelter", None)]}
     merged = merge_slots(existing, new)
@@ -1292,7 +1292,7 @@ def test_merge_slots_skips_additional_services():
 
 def test_extract_all_food_and_legal():
     """'food and legal help' should extract both."""
-    from app.services.slot_extractor import _extract_all_service_types
+    from app.services.slot_extraction_regex import _extract_all_service_types
     results = _extract_all_service_types("I need food and legal help in Manhattan")
     types = [r[0] for r in results]
     assert "food" in types
@@ -1301,7 +1301,7 @@ def test_extract_all_food_and_legal():
 
 def test_extract_all_complex_multi_intent():
     """Complex multi-intent with details should work."""
-    from app.services.slot_extractor import _extract_all_service_types
+    from app.services.slot_extraction_regex import _extract_all_service_types
     results = _extract_all_service_types(
         "I need a shower, some food, and help with my immigration case"
     )
@@ -1319,7 +1319,7 @@ def test_extract_all_find_scans_forward():
     """find() should scan past overlapping spans to find later occurrences.
     Bug: 'food stamps and food' — first 'food' at pos 7 is inside 'food stamps',
     but 'food' at pos 23 is independent and should be found."""
-    from app.services.slot_extractor import _extract_all_service_types
+    from app.services.slot_extraction_regex import _extract_all_service_types
     results = _extract_all_service_types("I need food stamps and food")
     types = [r[0] for r in results]
     assert "other" in types, "'food stamps' should match 'other' category"
@@ -1336,7 +1336,7 @@ def test_extract_all_text_position_order():
     test_extract_all_cross_tier_priority below. Use medical+shelter
     (both tier 1) here to test the position tiebreak.
     """
-    from app.services.slot_extractor import _extract_all_service_types
+    from app.services.slot_extraction_regex import _extract_all_service_types
     results = _extract_all_service_types("I need a doctor and a bed tonight")
     # Both tier 1. Medical mentioned first → medical primary.
     assert results[0][0] == "medical", f"Expected medical first, got {results[0][0]}"
@@ -1349,7 +1349,7 @@ def test_extract_all_cross_tier_priority():
     Housing First: shelter (tier 1) beats food (tier 2) even if food is
     mentioned first. See _SERVICE_NEED_PRIORITY in slot_extractor.py.
     """
-    from app.services.slot_extractor import _extract_all_service_types
+    from app.services.slot_extraction_regex import _extract_all_service_types
     # Food first in text, but shelter (tier 1) wins the priority.
     results = _extract_all_service_types("I need food and shelter")
     assert results[0][0] == "shelter", f"Expected shelter first (priority), got {results[0][0]}"
@@ -1358,7 +1358,7 @@ def test_extract_all_cross_tier_priority():
 
 def test_extract_all_text_position_order_reversed():
     """Reversed mention order still respects priority (shelter wins)."""
-    from app.services.slot_extractor import _extract_all_service_types
+    from app.services.slot_extraction_regex import _extract_all_service_types
     results = _extract_all_service_types("I need shelter and food")
     assert results[0][0] == "shelter", f"Expected shelter first, got {results[0][0]}"
     assert results[1][0] == "food", f"Expected food second, got {results[1][0]}"
@@ -1372,7 +1372,7 @@ def test_extract_all_word_boundary_ordered():
     (b) the result is sorted by _SERVICE_NEED_PRIORITY — shelter (tier 1)
     wins over food (tier 2) regardless of mention order.
     """
-    from app.services.slot_extractor import _extract_all_service_types
+    from app.services.slot_extraction_regex import _extract_all_service_types
     results = _extract_all_service_types("I need food and a bed")
     types = [r[0] for r in results]
     assert "shelter" in types, f"'bed' should match shelter, got {types}"

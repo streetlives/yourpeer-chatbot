@@ -11,7 +11,7 @@ import pytest
 
 from app.services.classifier import _classify_tone, _classify_action
 from app.services.chatbot import _DISPLAY_PAGE_SIZE
-from app.services.slot_extractor import NEAR_ME_SENTINEL
+from app.services.slot_extraction_regex import NEAR_ME_SENTINEL
 from app.services.session_store import get_session_slots, save_session_slots
 
 from test_helpers import _fresh, _send
@@ -140,7 +140,7 @@ class TestFrustrationRestatementPhrases:
     def test_service_intent_overrides_frustration_tone(self):
         """'I already said I need food' has frustration tone but service
         intent should take routing priority."""
-        from app.services.slot_extractor import extract_slots
+        from app.services.slot_extraction_regex import extract_slots
         extracted = extract_slots("I already said I need food")
         tone = _classify_tone("I already said I need food", crisis_result=None)
         assert extracted.get("service_type") == "food"

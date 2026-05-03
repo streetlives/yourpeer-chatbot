@@ -13,7 +13,7 @@ from unittest.mock import patch, MagicMock, AsyncMock
 
 from app.services.session_store import clear_session, get_session_slots, save_session_slots
 from app.services.chatbot import generate_reply
-from app.services.slot_extractor import NEAR_ME_SENTINEL
+from app.services.slot_extraction_regex import NEAR_ME_SENTINEL
 from app.services.audit_log import (
     clear_audit_log, log_feedback, get_stats,
     log_conversation_turn,
@@ -265,7 +265,7 @@ class TestNearMeSentinelSafety:
 
     def test_is_enough_to_answer_rejects_sentinel_without_coords(self):
         """is_enough_to_answer should return False for sentinel-only location."""
-        from app.services.slot_extractor import is_enough_to_answer
+        from app.services.slot_extraction_regex import is_enough_to_answer
         slots = {"service_type": "food", "location": NEAR_ME_SENTINEL}
         assert is_enough_to_answer(slots) is False
 

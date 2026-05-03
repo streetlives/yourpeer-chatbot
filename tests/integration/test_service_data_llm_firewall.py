@@ -422,7 +422,7 @@ class TestStructuredLLMOutputs:
         no `"response"` key, no user-facing text.
         """
         from app.services.slot_extraction import extract
-        from app.services.slot_extractor import extract_slots as regex_extract
+        from app.services.slot_extraction_regex import extract_slots as regex_extract
         # Mock the inner LLM call; result must be a dict, never text.
         mock_block = MagicMock()
         mock_block.type = "tool_use"

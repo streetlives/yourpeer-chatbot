@@ -12,7 +12,7 @@ from unittest.mock import patch
 from app.services.classifier import _classify_tone
 from app.services.responses import _ESCALATION_RESPONSE
 from app.services.chatbot import generate_reply
-from app.services.slot_extractor import extract_slots
+from app.services.slot_extraction_regex import extract_slots
 from app.services.crisis_detector import detect_crisis
 from app.services.session_store import clear_session, get_session_slots, save_session_slots
 

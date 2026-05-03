@@ -17,7 +17,7 @@ from unittest.mock import patch
 sys.path.insert(0, ".")
 
 from app.rag.query_templates import build_query, build_relaxed_query, TEMPLATES
-from app.services.slot_extractor import (
+from app.services.slot_extraction_regex import (
     _NOTABLE_SUB_TYPES,
     SERVICE_KEYWORDS,
     extract_slots,

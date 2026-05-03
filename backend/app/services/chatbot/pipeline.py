@@ -9,7 +9,7 @@ import logging
 
 from app.privacy.pii_redactor import redact_pii
 from app.services.session_store import save_session_slots
-from app.services.slot_extractor import NEAR_ME_SENTINEL, extract_slots
+from app.services.slot_extraction_regex import NEAR_ME_SENTINEL, extract_slots
 from app.services import slot_extraction
 
 from .context import _USE_LLM

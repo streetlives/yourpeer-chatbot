@@ -306,7 +306,7 @@ class TestBug14SmartExtractorFallback:
     def test_fallback_preserves_additional_services(self):
         """Regex additional_services must survive the LLM fallback path."""
         from app.services.slot_extraction import extract
-        from app.services.slot_extractor import extract_slots as regex_extract
+        from app.services.slot_extraction_regex import extract_slots as regex_extract
 
         # Regex extraction first (unified architecture: caller does
         # this and passes regex_result into extract()).
@@ -350,7 +350,7 @@ class TestBug14SmartExtractorFallback:
         """On LLM-empty fallback, the returned dict should match regex's
         choices for primary fields (service_type, location)."""
         from app.services.slot_extraction import extract
-        from app.services.slot_extractor import extract_slots as regex_extract
+        from app.services.slot_extraction_regex import extract_slots as regex_extract
 
         regex_result = regex_extract("I need food in Queens")
 

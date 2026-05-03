@@ -21,7 +21,7 @@ Run: pytest tests/unit/test_group_fixes_regression.py -v
 import uuid
 import pytest
 
-from app.services.slot_extractor import extract_slots
+from app.services.slot_extraction_regex import extract_slots
 from app.services.classifier import _classify_action
 from app.services.post_results import classify_post_results_question
 from app.services.session_store import clear_session, get_session_slots

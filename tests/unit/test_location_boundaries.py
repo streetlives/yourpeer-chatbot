@@ -20,7 +20,7 @@ from app.rag.query_executor import (
     get_borough_city_names,
     is_borough,
 )
-from app.services.slot_extractor import extract_slots, NEAR_ME_SENTINEL
+from app.services.slot_extraction_regex import extract_slots, NEAR_ME_SENTINEL
 
 
 # -----------------------------------------------------------------------
@@ -911,7 +911,7 @@ def test_all_alias_neighborhoods_have_coordinates():
 
 def test_all_known_locations_have_aliases():
     """Every location in slot_extractor._KNOWN_LOCATIONS should be in the alias map."""
-    from app.services.slot_extractor import _KNOWN_LOCATIONS
+    from app.services.slot_extraction_regex import _KNOWN_LOCATIONS
     from app.rag.query_executor import NYC_LOCATION_ALIASES
 
     missing = [loc for loc in _KNOWN_LOCATIONS if loc not in NYC_LOCATION_ALIASES]
@@ -972,7 +972,7 @@ def test_duplicate_neighborhood_names_same_coords():
 
 def test_new_neighborhoods_extracted_from_messages():
     """Newly added neighborhoods should be extractable from user messages."""
-    from app.services.slot_extractor import extract_slots
+    from app.services.slot_extraction_regex import extract_slots
 
     test_cases = [
         ("food in chinatown", "chinatown"),

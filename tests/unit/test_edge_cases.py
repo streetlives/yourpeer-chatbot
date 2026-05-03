@@ -8,7 +8,7 @@ Or just:  python tests/test_edge_cases.py
 
 
 
-from app.services.slot_extractor import (
+from app.services.slot_extraction_regex import (
     extract_slots,
     merge_slots,
     is_enough_to_answer,

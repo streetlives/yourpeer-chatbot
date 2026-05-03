@@ -25,7 +25,7 @@ from datetime import datetime
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "backend"))
 
-from app.services.slot_extractor import (
+from app.services.slot_extraction_regex import (
     _extract_populations,
     extract_slots,
     merge_slots,

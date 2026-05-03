@@ -11,7 +11,7 @@ Run with: python -m pytest tests/unit/test_response_escalation.py -v
 import pytest
 from unittest.mock import patch
 from conftest import send_multi, MOCK_QUERY_RESULTS
-from app.services.slot_extractor import extract_slots as _regex_extract
+from app.services.slot_extraction_regex import extract_slots as _regex_extract
 
 # Patch LLM slot extraction to use regex-only, so unrecognized-service
 # routing is deterministic (not subject to LLM nondeterminism).

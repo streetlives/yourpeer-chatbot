@@ -8,7 +8,7 @@ Handles:
   - Borough suggestion logic (service-type aware)
 """
 
-from app.services.slot_extractor import NEAR_ME_SENTINEL
+from app.services.slot_extraction_regex import NEAR_ME_SENTINEL
 from app.privacy.pii_redactor import redact_pii
 from app.services.phrase_lists import (
     _SERVICE_LABELS,

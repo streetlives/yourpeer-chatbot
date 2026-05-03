@@ -10,7 +10,7 @@ Run: pytest tests/unit/test_service_keywords.py -v
 """
 
 import pytest
-from app.services.slot_extractor import extract_slots
+from app.services.slot_extraction_regex import extract_slots
 
 
 class TestHIVHarmReduction:
@@ -652,7 +652,7 @@ class TestNarrowingSyncIntegrity:
     def test_taxonomy_narrowing_keys_are_reachable(self):
         """Every key in _DETAIL_TO_TAXONOMY_NARROWING must be producible
         as a service_detail value from _NOTABLE_SUB_TYPES."""
-        from app.services.slot_extractor import _NOTABLE_SUB_TYPES
+        from app.services.slot_extraction_regex import _NOTABLE_SUB_TYPES
 
         # These are the narrowing map keys from rag/__init__.py
         narrowing_keys = [
@@ -669,7 +669,7 @@ class TestNarrowingSyncIntegrity:
     def test_description_pattern_keys_are_reachable(self):
         """Every key in _DETAIL_DESCRIPTION_PATTERNS must be producible
         as a service_detail value from _NOTABLE_SUB_TYPES."""
-        from app.services.slot_extractor import _NOTABLE_SUB_TYPES
+        from app.services.slot_extraction_regex import _NOTABLE_SUB_TYPES
 
         # These are the description pattern keys from rag/__init__.py
         description_keys = [

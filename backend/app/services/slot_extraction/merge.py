@@ -44,7 +44,7 @@ import re
 from typing import Any, Optional
 
 from .prompts import _SERVICE_TYPE_ENUM
-from app.services.slot_extractor import _SERVICE_NEED_PRIORITY
+from app.services.slot_extraction_regex import _SERVICE_NEED_PRIORITY
 
 logger = logging.getLogger(__name__)
 
@@ -102,7 +102,7 @@ def _validate_service_detail(llm_value: Optional[str]) -> Optional[str]:
     # import at package load time. The _NOTABLE_SUB_TYPES dict is
     # built from several hundred lines of keyword mappings, so we
     # pull only the canonical-values set.
-    from app.services.slot_extractor import _NOTABLE_SUB_TYPES
+    from app.services.slot_extraction_regex import _NOTABLE_SUB_TYPES
     # Sorted for deterministic iteration — a Python set's iteration
     # order depends on hash seeding, which means "care" could map
     # to "urgent care" in one process and "diabetes / insulin care"
@@ -213,7 +213,7 @@ def _validate_location(llm_value: Optional[str]) -> Optional[str]:
 
     # Local import: same pattern as _validate_service_detail — avoid
     # forcing a slot_extractor import at package load time.
-    from app.services.slot_extractor import _KNOWN_LOCATIONS
+    from app.services.slot_extraction_regex import _KNOWN_LOCATIONS
 
     llm_norm = _normalize_for_match(llm_value)
     if not llm_norm:
@@ -266,7 +266,7 @@ def _validate_org_name(llm_value: Optional[str]) -> Optional[str]:
     if not llm_value or not isinstance(llm_value, str):
         return None
 
-    from app.services.slot_extractor import (
+    from app.services.slot_extraction_regex import (
         _KNOWN_ORGS,
         _KNOWN_ORG_ABBREVIATIONS,
     )

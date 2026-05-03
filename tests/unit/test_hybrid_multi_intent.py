@@ -24,7 +24,7 @@ from app.services.semantic_router import (
     DEFAULT_SERVICE_THRESHOLD,
 )
 from app.services.semantic_routes import SERVICE_ROUTES, POPULATION_ROUTES
-from app.services.slot_extractor import extract_slots, _extract_all_service_types
+from app.services.slot_extraction_regex import extract_slots, _extract_all_service_types
 from app.services.confirmation import _display_location
 
 
@@ -654,7 +654,7 @@ class TestNeedBasedPriority:
 
     def test_priority_table_complete(self):
         """Every service category has a priority rank assigned."""
-        from app.services.slot_extractor import SERVICE_KEYWORDS
+        from app.services.slot_extraction_regex import SERVICE_KEYWORDS
         # The priority table is defined inside _extract_all_service_types,
         # so we test by extraction: every category should sort deterministically
         all_categories = set(SERVICE_KEYWORDS.keys())

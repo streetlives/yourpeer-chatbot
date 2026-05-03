@@ -24,7 +24,7 @@ import pytest
 from app.services.classifier import _classify_tone
 from app.services.responses import _pick_emotional_response, _EMOTIONAL_RESPONSES
 from app.services.crisis_detector import detect_crisis
-from app.services.slot_extractor import extract_slots
+from app.services.slot_extraction_regex import extract_slots
 from conftest import send, send_multi
 
 

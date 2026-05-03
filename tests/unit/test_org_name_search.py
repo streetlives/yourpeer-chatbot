@@ -15,7 +15,7 @@ Run with: python -m pytest tests/unit/test_org_name_search.py -v
 import uuid
 from unittest.mock import patch
 
-from app.services.slot_extractor import (
+from app.services.slot_extraction_regex import (
     _extract_org_name,
     extract_slots,
     is_enough_to_answer,

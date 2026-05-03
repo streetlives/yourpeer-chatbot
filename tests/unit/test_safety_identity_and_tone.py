@@ -14,7 +14,7 @@ Tests for session changes — prevents regressions on:
 import pytest
 from unittest.mock import patch
 from app.services.chatbot import generate_reply
-from app.services.slot_extractor import extract_slots, _extract_populations
+from app.services.slot_extraction_regex import extract_slots, _extract_populations
 from app.services.confirmation import _build_confirmation_message
 from app.services.crisis_detector import detect_crisis
 
