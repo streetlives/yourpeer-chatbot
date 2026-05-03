@@ -60,8 +60,18 @@
  *   - SW logic changed (reset-epoch awareness in the sync handler;
  *     queuedAt threading through storePendingResponse). Existing
  *     in-flight v4 SWs would not honor those filters; making the
- *     new SW activate ASAP closes that gap. */
-const CACHE_VERSION = "v5";
+ *     new SW activate ASAP closes that gap.
+ *
+ * v6 bumped because the 12 apple-splash-*.png files were regenerated
+ * from a yellow-on-yellow design (the original brand-color background
+ * made the yellow logo nearly invisible) to a dark-grey background
+ * with the brand-yellow logo centered. The filenames and dimensions
+ * are unchanged; only the pixel content. Without a cache bump, iOS
+ * users with the PWA already installed would continue to see the
+ * old yellow-on-yellow splash on every launch since the SW's
+ * cache-first strategy serves the old image from STATIC_CACHE
+ * indefinitely. */
+const CACHE_VERSION = "v6";
 const STATIC_CACHE = `yourpeer-${CACHE_VERSION}-static`;
 const SHELL_CACHE = `yourpeer-${CACHE_VERSION}-shell`;
 
