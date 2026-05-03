@@ -145,7 +145,7 @@ def extract(
                 _narrative_regex_fallback(regex_result, message),
                 llm_result,
             )
-        return merge(regex_result, _filter_valid_service_types(llm_result), extraction_source)
+        return merge(regex_result, _filter_valid_service_types(llm_result), message, extraction_source)
 
     # Short path, non-simple: call the short LLM and merge its output
     # with the caller's regex_result using per-field trust models.
@@ -170,7 +170,7 @@ def extract(
         # Preserve LLM tone/action even when slots are empty.
         return _with_classification(dict(regex_result), llm_result)
 
-    return merge(regex_result, _filter_valid_service_types(llm_result), extraction_source)
+    return merge(regex_result, _filter_valid_service_types(llm_result), message, extraction_source)
 
 
 # ---------------------------------------------------------------------------
