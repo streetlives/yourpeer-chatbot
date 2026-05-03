@@ -131,11 +131,23 @@ def ignored_lines(content: str) -> set[int]:
 # -----------------------------------------------------------------------
 
 def all_md_files() -> list[Path]:
-    """Return all markdown files from repo root, docs/, scripts/ (recursive)."""
-    files: list[Path] = list(ROOT.glob("*.md"))
-    files.extend(DOCS_DIR.rglob("*.md"))
+    """Return all markdown files from repo root, docs/, scripts/ (recursive).
+
+    Skips macOS AppleDouble companion files (`._*`) which appear when
+    a tarball made on macOS is extracted on another platform — those are
+    binary metadata blobs that look like markdown by extension but crash
+    UTF-8 readers. Real `.md` files starting with `._` are vanishingly
+    rare in this repo's convention.
+    """
+    def collect(root: Path) -> list[Path]:
+        return [p for p in root.rglob("*.md")
+                if not p.name.startswith("._")]
+
+    files: list[Path] = [p for p in ROOT.glob("*.md")
+                          if not p.name.startswith("._")]
+    files.extend(collect(DOCS_DIR))
     if SCRIPTS_DIR.exists():
-        files.extend(SCRIPTS_DIR.rglob("*.md"))
+        files.extend(collect(SCRIPTS_DIR))
     return sorted(set(files))
 
 
@@ -374,6 +386,16 @@ def check_test_counts(args):
     if not testing_md_path.exists():
         return
     testing_md = testing_md_path.read_text()
+    if file_is_ignored(testing_md):
+        return
+    # 1-indexed line numbers where any warning should be suppressed (the
+    # `<!-- drift:ignore -->` marker on the previous non-blank line, or
+    # an inline marker at end of line).
+    ignored = ignored_lines(testing_md)
+
+    def line_of(match: re.Match) -> int:
+        """1-indexed line number of the line containing `match`."""
+        return testing_md.count("\n", 0, match.start()) + 1
 
     # Gap 2 fix: rglob finds tests/unit/ and tests/integration/.
     # AST-based counting (fixed from `^def test_` regex which missed
@@ -381,31 +403,147 @@ def check_test_counts(args):
     # TestServiceRoutes class).
     actual_counts: dict[str, int] = {}
     total_actual = 0
+    actual_files_count = 0
     for f in sorted(TESTS_DIR.rglob("test_*.py")):
         if "__pycache__" in f.parts:
             continue
         count = _count_tests_in_file(f)
+        # NOTE: keying by filename collapses any name collisions (e.g.
+        # `test_browser_geolocation.py` exists in both unit/ and integration/).
+        # That's fine for the per-file count check below — they'd warn the
+        # same way for both. But it understates the *file count*, which is
+        # tracked separately via `actual_files_count`.
         actual_counts[f.name] = count
+        actual_files_count += 1
         total_actual += count
 
-    # Total-count claim
-    total_match = re.search(r"(\d+) tests across", testing_md)
-    if total_match:
-        doc_total = int(total_match.group(1))
-        # Allow ±5% tolerance for "approximately N" claims
-        tolerance = max(5, total_actual * 0.05)
+    # Total-count claim — robust to formatting variants:
+    #   "3845 tests across 69 files"            (original)
+    #   "~3,845 collected tests across 69 test files"  (current)
+    # Captures the count, an optional "collected" infix, and the file count
+    # in one sentence so both can drift independently and still be checked.
+    #
+    # Counter mismatch caveat: `_count_tests_in_file` returns an AST-walked
+    # count (incl. class methods, no parametrize expansion). When the doc
+    # says "collected tests" it means post-parametrize pytest collection,
+    # which is higher than the AST count. We still warn on big gaps, but we
+    # auto-fix only the file count — the test-count value would need an
+    # actual `pytest --collect-only` run to be authoritative.
+    total_re = re.compile(
+        r"(~?)(\d[\d,]*)((?: collected)?) tests across (\d+) (test )?files"
+    )
+    total_match = total_re.search(testing_md)
+    if total_match and line_of(total_match) not in ignored:
+        tilde, num_str, collected, files_str, test_word = total_match.groups()
+        doc_total = int(num_str.replace(",", ""))
+        doc_files = int(files_str)
+        actual_files = actual_files_count
+
+        # Allow ±5% tolerance for "approximately N" claims. When the doc
+        # says "collected" we widen it to ±20% to absorb the AST-vs-pytest
+        # gap so we only fire on real drift, not measurement convention.
+        is_collected = "collected" in collected
+        tol_pct = 0.20 if is_collected else 0.05
+        tolerance = max(5, total_actual * tol_pct)
+
         if abs(doc_total - total_actual) > tolerance:
+            measure_note = (
+                " (note: 'collected' counts post-parametrize; checker uses "
+                "AST-walked def count, so small gaps are expected)"
+                if is_collected else ""
+            )
             warn("docs/TESTING.md",
-                 f"says {doc_total} total tests, actual {total_actual}",
+                 f"says {doc_total} total tests, AST count {total_actual}"
+                 f"{measure_note}",
                  category="test-count")
+
+        if doc_files != actual_files:
+            warn("docs/TESTING.md",
+                 f"says {doc_files} test files, actual {actual_files}",
+                 category="test-count")
+
+            # Auto-fix: only the file count, since that's unambiguous.
+            # Leave the test-count number for a human to update with the
+            # right convention (collected vs raw vs AST).
             if args.fix:
-                _apply_replace(testing_md_path,
-                               f"{doc_total} tests across",
-                               f"{total_actual} tests across",
-                               f"total count {doc_total} → {total_actual}")
+                new_phrase = (
+                    f"{tilde}{num_str}{collected} tests across "
+                    f"{actual_files} {test_word or ''}files"
+                )
+                _apply_replace(
+                    testing_md_path,
+                    total_match.group(0),
+                    new_phrase,
+                    f"file count {doc_files} → {actual_files}",
+                )
+
+    # "Raw def test_*" claim — describes module-level def count, distinct
+    # from the parametrize-expanded "collected" number above. Matches:
+    #   "(853 raw `def test_*` functions ...)"
+    #   "853 raw def test_* functions"
+    raw_def_re = re.compile(
+        r"(\d[\d,]*) raw\s+`?def test_\*`?\s+functions"
+    )
+    raw_match = raw_def_re.search(testing_md)
+    if raw_match and line_of(raw_match) not in ignored:
+        doc_raw = int(raw_match.group(1).replace(",", ""))
+        # Count only module-level def test_* (no class methods).
+        actual_raw = 0
+        for f in sorted(TESTS_DIR.rglob("test_*.py")):
+            if "__pycache__" in f.parts:
+                continue
+            tree = _parse_py(f)
+            if tree is None:
+                continue
+            for node in tree.body:  # top-level only
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    if node.name.startswith("test_"):
+                        actual_raw += 1
+        tolerance = max(5, actual_raw * 0.05)
+        if abs(doc_raw - actual_raw) > tolerance:
+            warn("docs/TESTING.md",
+                 f"says {doc_raw} raw def test_* functions, "
+                 f"actual {actual_raw}",
+                 category="test-count")
+
+    # Per-directory file counts in TESTING.md prose:
+    #   "`tests/unit/` (57 files — no DB...)"
+    #   "`tests/integration/` (12 files — use mocked...)"
+    # These drift independently of the headline "across N test files" claim
+    # because the prose is hand-written.
+    dir_counts = {
+        "unit": len(list(TESTS_DIR.glob("unit/test_*.py"))),
+        "integration": len(list(TESTS_DIR.glob("integration/test_*.py"))),
+    }
+    for subdir, actual_dir_count in dir_counts.items():
+        pat = re.compile(
+            rf"`tests/{subdir}/`\s*\((\d+)\s+files"
+        )
+        for m in pat.finditer(testing_md):
+            if line_of(m) in ignored:
+                continue
+            doc_count = int(m.group(1))
+            if doc_count != actual_dir_count:
+                warn("docs/TESTING.md",
+                     f"says tests/{subdir}/ has {doc_count} files, "
+                     f"actual {actual_dir_count}",
+                     category="test-count")
+                if args.fix:
+                    _apply_replace(
+                        testing_md_path,
+                        m.group(0),
+                        m.group(0).replace(
+                            f"({doc_count} files",
+                            f"({actual_dir_count} files",
+                        ),
+                        f"tests/{subdir}/ files {doc_count} → "
+                        f"{actual_dir_count}",
+                    )
 
     # Per-file counts like "### `test_chatbot.py` — 47 tests"
     for match in re.finditer(r"### `(test_\w+\.py)` — (\d+) tests", testing_md):
+        if line_of(match) in ignored:
+            continue
         name, doc_count = match.group(1), int(match.group(2))
         if name in actual_counts and actual_counts[name] != doc_count:
             warn("docs/TESTING.md",
@@ -421,8 +559,14 @@ def check_test_counts(args):
     readme_path = ROOT / "README.md"
     if readme_path.exists():
         readme = readme_path.read_text()
+        if file_is_ignored(readme):
+            return
+        readme_ignored = ignored_lines(readme)
         rm = re.search(r"(\d+) unit tests", readme)
         if rm:
+            rm_line = readme.count("\n", 0, rm.start()) + 1
+            if rm_line in readme_ignored:
+                return
             rc = int(rm.group(1))
             if rc != total_actual and abs(rc - total_actual) > 5:
                 warn("README.md",
