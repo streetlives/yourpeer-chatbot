@@ -2408,6 +2408,82 @@ def test_b2_preserves_location_from_existing_when_not_provided(fresh_session):
     )
 
 
+def test_b2_post_pending_uses_pre_promotion_tone(fresh_session, monkeypatch):
+    """Regression guard: ``_handle_post_pending_confirmation`` must
+    pick its nudge prefix based on the PRE-promotion tone, not the
+    post-B.2-promotion tone.
+
+    Background: when B.2 promotes negative_preference → service in the
+    middle of a pending confirmation, ``tone`` may be reassigned from
+    None to "frustrated". The original code captured ``_response_tone``
+    BEFORE the promotion so the post-pending nudge prefix reflected
+    what the user originally expressed, not the heuristic frustration
+    label B.2 applied. After Phase D D-4 cleanup, this contract lives
+    on ``MessageContext.snapshot_response_tone``.
+
+    A previous attempt to "simplify" by using ``ctx.tone`` directly
+    silently changed nudge-prefix selection in this exact compound
+    flow — an error that the existing B.2 tests didn't catch because
+    they assert the response CONTAINS frustration acknowledgment, but
+    the acknowledgment comes from elsewhere in the service-flow
+    response builder, not the post-pending nudge.
+
+    This test pins the snapshot semantics by intercepting the
+    ``_compute_tone_prefix`` call at the orchestrator's late
+    recomputation site and asserting it receives ``response_tone=None``
+    (the original) rather than ``response_tone="frustrated"`` (the
+    post-promotion value).
+    """
+    from app.services.chatbot import tone as tone_module
+
+    captured_tones = []
+    original = tone_module._compute_tone_prefix
+
+    def spy(*args, **kwargs):
+        captured_tones.append(kwargs.get("response_tone"))
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(tone_module, "_compute_tone_prefix", spy)
+    # Also patch the binding at the orchestrator import site
+    monkeypatch.setattr(
+        "app.services.chatbot.orchestrator._compute_tone_prefix", spy,
+    )
+
+    send_multi(
+        [
+            "I need food in Queens",
+            "Yes, search",
+            # Message chosen carefully:
+            # - "None of these match" triggers negative_preference action
+            # - "I need shelter" provides a new concrete service intent
+            #   different from the existing primary (food), triggering
+            #   B.2's promotion to service
+            # - The phrasing avoids regex frustration markers (no
+            #   "isn't helpful", "I already tried", "useless"), so the
+            #   pre-promotion tone classification is None
+            # That combination is what makes the B.2 promotion's
+            # tone reassignment (None → "frustrated") observable.
+            "None of these match, I need shelter instead",
+        ],
+        session_id=fresh_session,
+    )
+
+    # The B.2 promotion fires on turn 3. ``ctx.snapshot_response_tone``
+    # is captured at orchestrator entry, BEFORE the promotion, so it
+    # holds the original None tone classification. Both
+    # ``_compute_tone_prefix`` call sites must see this snapshot value
+    # (or equivalently, ``tone`` at the early site, since promotion
+    # hasn't happened yet there). Neither site should ever observe
+    # "frustrated" — that's only set by the B.2 block.
+    assert "frustrated" not in captured_tones, (
+        "_compute_tone_prefix received post-promotion tone='frustrated' "
+        "instead of pre-promotion None. This breaks the snapshot contract "
+        "documented on MessageContext.snapshot_response_tone — see the "
+        "comment at the snapshot capture site in orchestrator.py. "
+        f"All captured response_tone values: {captured_tones!r}"
+    )
+
+
 # ---------------------------------------------------------------------------
 # RUN 22 — Privacy routing exception
 # ---------------------------------------------------------------------------

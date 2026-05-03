@@ -181,12 +181,6 @@ def generate_reply(
     # depends only on tone/action/has_service_intent/early_extracted/
     # extraction_source/message, all finalized by this point.
     action = _action_pre
-    # Note: ``tone`` is not reassigned anywhere downstream in
-    # ``generate_reply`` — it's set once at lines 170/172 and read in
-    # multiple places. Earlier versions kept a ``_response_tone = tone``
-    # alias intended to capture a "snapshot before negative_preference
-    # promotion," but no such promotion mutates ``tone`` itself; the
-    # alias was dead weight. Dropped during Phase D D-4 cleanup.
     category, _confidence = _compute_routing_category(
         tone=tone,
         action=action,
@@ -254,6 +248,17 @@ def generate_reply(
         merged=None,                       # late-set after merge_slots (service flow)
         unified_extraction=_unified,       # cached gate output (None if gate didn't fire)
     )
+
+    # Capture ``tone`` BEFORE the negative_preference B.2 promotion block
+    # below (which may reassign ``tone`` from None to "frustrated").
+    # Several downstream sites need the PRE-promotion tone:
+    #   * the late ``_compute_tone_prefix`` recomputation in the service
+    #     branch, which deliberately recomputes with the original tone
+    #     after correcting only ``is_service_flow``.
+    #   * ``_handle_post_pending_confirmation``'s nudge-prefix selection,
+    #     which should reflect the user's original emotional disclosure.
+    # See ``MessageContext.snapshot_response_tone`` for the contract.
+    ctx.snapshot_response_tone = tone
 
     if tone == "crisis":
         pass  # handled below in routing
@@ -333,7 +338,13 @@ def generate_reply(
     _is_service_flow = category == "service"
     _tone_prefix, _emotional_context_update = _compute_tone_prefix(
         message=message,
-        response_tone=tone,
+        # Read from the snapshot for uniformity with the late
+        # ``_compute_tone_prefix`` call below — at this point in
+        # ``generate_reply`` ``tone`` and ``ctx.snapshot_response_tone``
+        # are equal (the negative_preference promotion hasn't run yet),
+        # so this is functionally identical, but using the snapshot
+        # makes both call sites read from the same documented contract.
+        response_tone=ctx.snapshot_response_tone,
         is_service_flow=_is_service_flow,
         prior_emotional_context=existing.get("_emotional_context"),
     )
@@ -459,12 +470,10 @@ def generate_reply(
 
     # If pending confirmation but user typed something new
     if ctx.snapshot_pending:
-        # Snapshot the response tone — preserved here in case future
-        # logic mutates ``tone`` between this point and the handler.
-        # Today ``tone`` is invariant after the early classification
-        # at line 170/172, so this is just ``tone``; the snapshot field
-        # exists for the contract documented on MessageContext.
-        ctx.snapshot_response_tone = tone
+        # ``ctx.snapshot_response_tone`` was captured EARLY (before the
+        # negative_preference promotion block) so it reflects the
+        # original tone classification, not any post-promotion override.
+        # Don't overwrite it here.
         return _handle_post_pending_confirmation(ctx)
 
     # --- Service request or general conversation ---
@@ -562,7 +571,12 @@ def generate_reply(
     _is_service_flow = category == "service"
     _tone_prefix, _emotional_context_update = _compute_tone_prefix(
         message=message,
-        response_tone=tone,
+        # Use the early-captured snapshot — ``tone`` may have been
+        # promoted to "frustrated" by the negative_preference B.2 block
+        # above, but this recomputation should preserve the original
+        # tone classification (only ``is_service_flow`` is being
+        # corrected here).
+        response_tone=ctx.snapshot_response_tone,
         is_service_flow=_is_service_flow,
         prior_emotional_context=existing.get("_emotional_context"),
     )

@@ -105,13 +105,12 @@ class MessageContext:
     # --- Merged slot state (set late, after merge_slots in service flow) ---
     # Stays Optional because there's a real "not yet computed" state: the
     # orchestrator only sets ``ctx.merged`` after ``merge_slots`` runs in
-    # the service-flow branch (orchestrator.py:519). Handlers that route
-    # to the service flow's tail (currently only ``_handle_general_
-    # conversation``) read this — they're guaranteed to see a populated
-    # value by then. Handlers that fire EARLIER (crisis, emotional,
-    # confirmation, etc.) must NOT read ``merged`` directly — use
-    # ``require_merged()`` if you must, or read from ``existing`` /
-    # ``early_extracted`` instead.
+    # the service-flow branch. Handlers that route to the service flow's
+    # tail (currently only ``_handle_general_conversation``) read this —
+    # they're guaranteed to see a populated value by then. Handlers that
+    # fire EARLIER (crisis, emotional, confirmation, etc.) must NOT read
+    # ``merged`` directly — use ``require_merged()`` if you must, or read
+    # from ``existing`` / ``early_extracted`` instead.
     #
     # Tightening this to a non-Optional type would force a synthetic
     # initial value, masking the "not yet set" condition. The
@@ -165,10 +164,10 @@ class MessageContext:
         if self.merged is None:
             raise RuntimeError(
                 "ctx.merged accessed before it was populated. This handler "
-                "is running before the orchestrator's merge_slots call (see "
-                "orchestrator.py around line 519). Handler should either "
-                "read from ctx.existing / ctx.early_extracted instead, or "
-                "be moved to the post-merge dispatch path."
+                "is running before the orchestrator's merge_slots call. "
+                "Handler should either read from ctx.existing / "
+                "ctx.early_extracted instead, or be moved to the post-merge "
+                "dispatch path."
             )
         return self.merged
 

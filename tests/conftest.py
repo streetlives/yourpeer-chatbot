@@ -620,7 +620,7 @@ def make_ctx(
     has_service_intent: bool = False,
     crisis_result: tuple | None = None,
     last_results: list | None = None,
-    is_confirmation_action: bool = False,
+    is_confirmation_action: bool | None = None,
     latitude: float | None = None,
     longitude: float | None = None,
     spanish_acknowledgment: str = "",
@@ -637,11 +637,24 @@ def make_ctx(
     your test cares about. ``redacted_message`` defaults to ``message``
     (matching the most common case where there's nothing to redact).
 
+    ``is_confirmation_action`` is auto-derived from ``action`` using the
+    same membership check the orchestrator uses, so a test that sets
+    ``action="confirm_yes"`` automatically gets the consistent
+    ``is_confirmation_action=True``. Pass an explicit bool to override
+    the derivation (rare — useful only for tests that want to exercise
+    inconsistent ctx states).
+
     ``existing`` and ``early_extracted`` default to fresh dicts to avoid
     accidental sharing between tests. Don't change this default to a
     module-level constant.
     """
     from app.services.chatbot.context import MessageContext
+
+    if is_confirmation_action is None:
+        is_confirmation_action = action in (
+            "confirm_yes", "confirm_deny", "confirm_change_service",
+            "confirm_change_location", "reset", "greeting",
+        )
 
     return MessageContext(
         session_id=session_id,
