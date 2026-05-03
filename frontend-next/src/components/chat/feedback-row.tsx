@@ -44,16 +44,16 @@ export function FeedbackRow({ onFeedback }: FeedbackRowProps) {
     <div
       role="group"
       aria-label="Rate these results"
-      className="flex items-center gap-1.5 px-2.5 py-1.5 bg-white/95 backdrop-blur-sm border border-neutral-200 rounded-full shadow-md animate-in fade-in slide-in-from-bottom-1"
+      className="flex items-center gap-1.5 px-2.5 py-1.5 bg-white/95 backdrop-blur-sm border border-neutral-200 rounded-full shadow-md animate-in fade-in slide-in-from-bottom-1 dark:bg-neutral-900/95 dark:border-neutral-700"
     >
-      <span className="text-[0.7rem] text-neutral-400 font-medium">{label}</span>
+      <span className="text-[0.7rem] text-neutral-400 dark:text-neutral-500 font-medium">{label}</span>
       {!submitted && (
         <>
           <button
             type="button"
             onClick={() => submit("up")}
             aria-label="Thumbs up"
-            className="w-7 h-7 rounded-full border border-neutral-200 bg-white text-neutral-400 flex items-center justify-center transition-all hover:bg-green-50 hover:border-green-300 hover:text-green-600"
+            className="w-7 h-7 rounded-full border border-neutral-200 bg-white text-neutral-400 flex items-center justify-center transition-all hover:bg-green-50 hover:border-green-300 hover:text-green-600 dark:bg-neutral-900 dark:border-neutral-700 dark:text-neutral-500 dark:hover:bg-green-950/40 dark:hover:border-green-800 dark:hover:text-green-400"
           >
             <ThumbsUp size={13} />
           </button>
@@ -61,7 +61,7 @@ export function FeedbackRow({ onFeedback }: FeedbackRowProps) {
             type="button"
             onClick={() => submit("down")}
             aria-label="Thumbs down"
-            className="w-7 h-7 rounded-full border border-neutral-200 bg-white text-neutral-400 flex items-center justify-center transition-all hover:bg-red-50 hover:border-red-200 hover:text-red-500"
+            className="w-7 h-7 rounded-full border border-neutral-200 bg-white text-neutral-400 flex items-center justify-center transition-all hover:bg-red-50 hover:border-red-200 hover:text-red-500 dark:bg-neutral-900 dark:border-neutral-700 dark:text-neutral-500 dark:hover:bg-red-950/40 dark:hover:border-red-900 dark:hover:text-red-400"
           >
             <ThumbsDown size={13} />
           </button>

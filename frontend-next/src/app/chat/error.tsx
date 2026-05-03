@@ -21,15 +21,15 @@ export default function ChatError({
 
   return (
     <div className="flex flex-col items-center justify-center max-w-[820px] mx-auto px-4 min-h-dvh text-center">
-      <div className="bg-white border border-neutral-200 rounded-2xl p-8 shadow-sm max-w-md w-full">
-        <h2 className="text-lg font-semibold text-neutral-900 mb-2">
+      <div className="bg-white border border-neutral-200 rounded-2xl p-8 shadow-sm max-w-md w-full dark:bg-neutral-900 dark:border-neutral-800">
+        <h2 className="text-lg font-semibold text-neutral-900 mb-2 dark:text-neutral-100">
           Chat isn&apos;t loading right now
         </h2>
-        <p className="text-sm text-neutral-500 mb-6 leading-relaxed">
+        <p className="text-sm text-neutral-500 mb-6 leading-relaxed dark:text-neutral-400">
           Something unexpected happened. You can try reloading, or visit{" "}
           <a
             href="https://yourpeer.nyc"
-            className="text-amber-500 underline hover:text-amber-600"
+            className="text-amber-500 underline hover:text-amber-600 dark:text-amber-400 dark:hover:text-amber-300"
           >
             yourpeer.nyc
           </a>{" "}
@@ -39,19 +39,19 @@ export default function ChatError({
         <div className="flex flex-col gap-2.5">
           <button
             onClick={reset}
-            className="w-full px-4 py-2.5 text-sm font-medium text-white bg-amber-500 rounded-lg hover:bg-amber-600 transition-colors"
+            className="w-full px-4 py-2.5 text-sm font-medium text-white bg-amber-500 rounded-lg hover:bg-amber-600 transition-colors dark:bg-amber-600 dark:hover:bg-amber-500"
           >
             Try again
           </button>
           <a
             href="/chat"
-            className="w-full px-4 py-2.5 text-sm font-medium text-neutral-700 bg-neutral-100 rounded-lg hover:bg-neutral-200 transition-colors inline-block"
+            className="w-full px-4 py-2.5 text-sm font-medium text-neutral-700 bg-neutral-100 rounded-lg hover:bg-neutral-200 transition-colors inline-block dark:text-neutral-200 dark:bg-neutral-800 dark:hover:bg-neutral-700"
           >
             Restart chat
           </a>
         </div>
 
-        <p className="text-xs text-neutral-400 mt-5">
+        <p className="text-xs text-neutral-400 mt-5 dark:text-neutral-500">
           If you&apos;re in crisis, call or text{" "}
           <a href="tel:988" className="underline">
             988

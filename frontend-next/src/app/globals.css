@@ -10,6 +10,86 @@
   :root {
     --radius: 0.5rem;
   }
+
+  /* Smooth the theme transition. Without this, toggling dark mode
+     swaps colors instantly on every element, which feels harsh on
+     the eyes — especially mid-scroll. 120ms is short enough to not
+     feel sluggish but long enough to read as an intentional fade.
+     Limit properties to colors + fill/stroke; transitioning all
+     properties would affect layout transitions that were never meant
+     to animate. */
+  *,
+  *::before,
+  *::after {
+    transition:
+      background-color 120ms ease,
+      border-color 120ms ease,
+      color 120ms ease,
+      fill 120ms ease,
+      stroke 120ms ease;
+  }
+
+  /* Opt out of the above transition during the very first paint so
+     the FOUC-prevention script's instant class-swap doesn't animate
+     on load. Without this, users see an unwanted fade-in from light
+     to dark on initial render in dark mode. The class is toggled off
+     by the PWA register on mount — see pwa-register.tsx. */
+  html.theme-transitions-off *,
+  html.theme-transitions-off *::before,
+  html.theme-transitions-off *::after {
+    transition: none !important;
+  }
+
+  /* Selection color — default is a bright blue that's jarring on the
+     dark-mode near-black. Use the brand amber at low opacity in both
+     modes so it reads as "YourPeer yellow" rather than "browser chrome". */
+  ::selection {
+    background-color: rgba(255, 213, 79, 0.35); /* amber-300 */
+    color: inherit;
+  }
+  .dark ::selection {
+    background-color: rgba(252, 211, 77, 0.45); /* amber-300 but
+        slightly more opaque on dark since dark surfaces absorb more
+        of the tint */
+    color: inherit;
+  }
+
+  /* Input autofill — Chrome / Safari override background color with
+     their own yellow, which breaks dark mode. Force the saved-form
+     styling to match our dark theme. The -webkit-text-fill-color
+     trick is the canonical fix since autofill background is painted
+     at a lower level than `background-color`. */
+  .dark input:-webkit-autofill,
+  .dark input:-webkit-autofill:hover,
+  .dark input:-webkit-autofill:focus,
+  .dark textarea:-webkit-autofill {
+    -webkit-box-shadow: 0 0 0 1000px #171717 inset; /* neutral-900 */
+    -webkit-text-fill-color: #f5f5f5; /* neutral-100 */
+    caret-color: #f5f5f5;
+  }
+
+  /* Scrollbar colors — on dark mode, default browser scrollbars
+     render as light gray/white thumbs on a light track, which is
+     starkly visible over a dark page background. Tint them to
+     match. Firefox uses scrollbar-color; WebKit uses ::-webkit-
+     scrollbar pseudos. */
+  .dark {
+    scrollbar-color: #404040 #171717; /* thumb, track */
+  }
+  .dark ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  .dark ::-webkit-scrollbar-track {
+    background: #171717; /* neutral-900 */
+  }
+  .dark ::-webkit-scrollbar-thumb {
+    background: #404040; /* neutral-700 */
+    border-radius: 5px;
+  }
+  .dark ::-webkit-scrollbar-thumb:hover {
+    background: #525252; /* neutral-600 */
+  }
 }
 
 @layer utilities {

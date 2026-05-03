@@ -78,7 +78,7 @@ export function ServiceCarousel({ services }: ServiceCarouselProps) {
         <span
           aria-live="polite"
           aria-atomic="true"
-          className="text-xs text-neutral-400 font-medium"
+          className="text-xs text-neutral-400 font-medium dark:text-neutral-500"
         >
           {groups.length === services.length
             ? `Result ${currentIndex + 1} of ${groups.length}`
@@ -90,7 +90,7 @@ export function ServiceCarousel({ services }: ServiceCarouselProps) {
             disabled={currentIndex === 0}
             onClick={() => scrollToIndex(currentIndex - 1)}
             aria-label="Previous result"
-            className="w-8 h-8 rounded-full border border-neutral-200 bg-white text-neutral-500 flex items-center justify-center transition hover:bg-neutral-50 hover:border-neutral-300 disabled:opacity-30 disabled:cursor-default"
+            className="w-8 h-8 rounded-full border border-neutral-200 bg-white text-neutral-500 flex items-center justify-center transition hover:bg-neutral-50 hover:border-neutral-300 disabled:opacity-30 disabled:cursor-default dark:bg-neutral-900 dark:border-neutral-700 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:border-neutral-600"
           >
             <ChevronLeft size={16} />
           </button>
@@ -99,7 +99,7 @@ export function ServiceCarousel({ services }: ServiceCarouselProps) {
             disabled={currentIndex >= groups.length - 1}
             onClick={() => scrollToIndex(currentIndex + 1)}
             aria-label="Next result"
-            className="w-8 h-8 rounded-full border border-neutral-200 bg-white text-neutral-500 flex items-center justify-center transition hover:bg-neutral-50 hover:border-neutral-300 disabled:opacity-30 disabled:cursor-default"
+            className="w-8 h-8 rounded-full border border-neutral-200 bg-white text-neutral-500 flex items-center justify-center transition hover:bg-neutral-50 hover:border-neutral-300 disabled:opacity-30 disabled:cursor-default dark:bg-neutral-900 dark:border-neutral-700 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:border-neutral-600"
           >
             <ChevronRight size={16} />
           </button>
@@ -144,8 +144,8 @@ export function ServiceCarousel({ services }: ServiceCarouselProps) {
               key={i}
               className={`h-1.5 rounded-full transition-all ${
                 i === currentIndex
-                  ? "w-4 bg-neutral-900"
-                  : "w-1.5 bg-neutral-300"
+                  ? "w-4 bg-neutral-900 dark:bg-neutral-100"
+                  : "w-1.5 bg-neutral-300 dark:bg-neutral-700"
               }`}
             />
           ))}

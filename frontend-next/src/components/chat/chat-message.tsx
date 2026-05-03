@@ -48,26 +48,26 @@ function MessageStatusIndicator({
   switch (status) {
     case "sending":
       return (
-        <div className={`${base} text-neutral-400`} aria-label="Sending">
+        <div className={`${base} text-neutral-400 dark:text-neutral-500`} aria-label="Sending">
           <Check size={12} aria-hidden="true" />
         </div>
       );
     case "sent":
       return (
-        <div className={`${base} text-neutral-500`} aria-label="Sent">
+        <div className={`${base} text-neutral-500 dark:text-neutral-400`} aria-label="Sent">
           <CheckCheck size={12} aria-hidden="true" />
         </div>
       );
     case "pending":
       return (
-        <div className={`${base} text-amber-700`} aria-label="Waiting to send">
+        <div className={`${base} text-amber-700 dark:text-amber-400`} aria-label="Waiting to send">
           <Clock size={12} aria-hidden="true" />
           <span>Waiting to send</span>
           {onCancel && (
             <button
               type="button"
               onClick={onCancel}
-              className="ml-1 underline underline-offset-2 hover:text-amber-900 focus:outline-none focus:ring-2 focus:ring-amber-400 rounded"
+              className="ml-1 underline underline-offset-2 hover:text-amber-900 dark:hover:text-amber-200 focus:outline-none focus:ring-2 focus:ring-amber-400 rounded"
               aria-label="Cancel this message"
             >
               Cancel
@@ -77,14 +77,14 @@ function MessageStatusIndicator({
       );
     case "failed":
       return (
-        <div className={`${base} text-red-700`} aria-label="Not sent">
+        <div className={`${base} text-red-700 dark:text-red-400`} aria-label="Not sent">
           <AlertTriangle size={12} aria-hidden="true" />
           <span>Not sent</span>
         </div>
       );
     case "cancelled":
       return (
-        <div className={`${base} text-neutral-400`} aria-label="Cancelled">
+        <div className={`${base} text-neutral-400 dark:text-neutral-500`} aria-label="Cancelled">
           <X size={12} aria-hidden="true" />
           <span>Cancelled</span>
         </div>
@@ -121,8 +121,19 @@ export function ChatMessage({ message, onQuickReply, onRetry, onCancel }: ChatMe
           aria-label={isUser ? "You said" : "YourPeer said"}
           className={`px-4 py-3 rounded-2xl text-[0.94rem] leading-relaxed whitespace-pre-wrap animate-in fade-in slide-in-from-bottom-1 ${
             isUser
+              // User bubble: brand amber in light mode stays identical
+              // in dark mode. text-neutral-900 (near-black) on amber-300
+              // is legible at WCAG AA on both themes — amber-300 is
+              // light enough that dark text works regardless of
+              // surrounding page color. Keeping the user bubble
+              // brand-colored (rather than desaturating it for dark)
+              // preserves the conversational signal "this is you".
               ? `bg-amber-300 text-neutral-900 rounded-br-md ${cancelledStyle}`
-              : "bg-neutral-100 text-neutral-900 rounded-bl-md"
+              // Bot bubble: neutral-100 on light page, neutral-800 on
+              // dark. Stays one shade above the surrounding surface
+              // so the bubble reads as raised. dark:text-neutral-100
+              // reverses the near-black default.
+              : "bg-neutral-100 text-neutral-900 dark:bg-neutral-800 dark:text-neutral-100 rounded-bl-md"
           }`}
         >
           {isUser ? message.text : stripMarkdown(message.text)}
@@ -131,7 +142,7 @@ export function ChatMessage({ message, onQuickReply, onRetry, onCancel }: ChatMe
             <button
               onClick={() => onRetry(message.id, message.retryMessage!)}
               aria-label="Retry sending this message"
-              className="flex items-center gap-1.5 mt-2 px-3 py-1.5 text-xs font-medium text-amber-800 bg-amber-100 hover:bg-amber-200 rounded-lg transition-colors"
+              className="flex items-center gap-1.5 mt-2 px-3 py-1.5 text-xs font-medium text-amber-800 bg-amber-100 hover:bg-amber-200 dark:text-amber-200 dark:bg-amber-900/40 dark:hover:bg-amber-900/60 rounded-lg transition-colors"
             >
               <RotateCcw size={12} />
               Retry

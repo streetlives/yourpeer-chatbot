@@ -47,23 +47,23 @@ export function EarlierResultsLink({
   return (
     <div
       role="status"
-      className="mx-1 mb-2 px-3 py-2.5 rounded-lg bg-neutral-50 border border-neutral-200 text-sm text-neutral-700 flex items-center gap-2"
+      className="mx-1 mb-2 px-3 py-2.5 rounded-lg bg-neutral-50 border border-neutral-200 text-sm text-neutral-700 flex items-center gap-2 dark:bg-neutral-900 dark:border-neutral-800 dark:text-neutral-300"
     >
-      <History size={16} className="shrink-0 text-neutral-500" aria-hidden="true" />
+      <History size={16} className="shrink-0 text-neutral-500 dark:text-neutral-400" aria-hidden="true" />
       <div className="flex-1">
         <button
           type="button"
           onClick={onRestore}
-          className="underline underline-offset-2 font-medium text-neutral-900 hover:text-amber-700 focus:outline-none focus:ring-2 focus:ring-amber-400 rounded"
+          className="underline underline-offset-2 font-medium text-neutral-900 hover:text-amber-700 focus:outline-none focus:ring-2 focus:ring-amber-400 rounded dark:text-neutral-100 dark:hover:text-amber-300"
         >
           See earlier results
         </button>{" "}
-        <span className="text-neutral-500">— {label}</span>
+        <span className="text-neutral-500 dark:text-neutral-400">— {label}</span>
       </div>
       <button
         type="button"
         onClick={onDismiss}
-        className="shrink-0 text-xs text-neutral-500 hover:text-neutral-700 underline underline-offset-2 focus:outline-none focus:ring-2 focus:ring-neutral-400 rounded px-1"
+        className="shrink-0 text-xs text-neutral-500 hover:text-neutral-700 underline underline-offset-2 focus:outline-none focus:ring-2 focus:ring-neutral-400 rounded px-1 dark:text-neutral-400 dark:hover:text-neutral-200"
         aria-label="Dismiss earlier results"
       >
         Dismiss

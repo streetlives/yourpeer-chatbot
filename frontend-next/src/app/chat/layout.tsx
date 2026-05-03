@@ -10,6 +10,6 @@ export default function ChatLayout({
   children: React.ReactNode;
 }) {
   return (
-    <main className="min-h-dvh bg-neutral-50">{children}</main>
+    <main className="min-h-dvh bg-neutral-50 dark:bg-neutral-950">{children}</main>
   );
 }

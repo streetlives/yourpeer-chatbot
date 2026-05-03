@@ -42,7 +42,7 @@ export class ChatMessageBoundary extends Component<Props, State> {
   render() {
     if (this.state.hasError) {
       return (
-        <div className="self-start max-w-[82%] px-4 py-3 rounded-2xl bg-neutral-100 text-sm text-neutral-400 italic">
+        <div className="self-start max-w-[82%] px-4 py-3 rounded-2xl bg-neutral-100 text-sm text-neutral-400 italic dark:bg-neutral-800 dark:text-neutral-500">
           This message couldn&apos;t be displayed.
         </div>
       );
