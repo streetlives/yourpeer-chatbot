@@ -176,6 +176,14 @@ def _build_confirmation_message(slots: dict) -> str:
         _prefix = "veteran-friendly "
     elif "disabled" in populations:
         _prefix = "accessible "
+    elif "immigration" in populations:
+        # "immigration-friendly" labels services that work with
+        # immigration-status-related needs (undocumented, asylum, etc.).
+        # Placed above reentry in the elif chain because the LLM
+        # historically conflated undocumented with reentry — checking
+        # immigration first ensures the correct label wins on the rare
+        # case both tags are set.
+        _prefix = "immigration-friendly "
     elif "reentry" in populations:
         _prefix = "reentry-friendly "
     elif "foster_youth" in populations:

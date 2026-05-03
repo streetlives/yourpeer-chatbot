@@ -111,6 +111,45 @@ class TestPopulationExtraction:
         assert "senior" in _extract_populations("I'm an older adult")
         assert "senior" in _extract_populations("senior citizen needing shelter")
 
+    def test_immigration_phrases(self):
+        """Immigration population covers undocumented status, asylum,
+        refugee, and recent-arrival contexts.
+
+        Distinct from reentry (criminal justice). Pre-fix the LLM
+        conflated these because the populations enum didn't include
+        an immigration value. The eval scenario
+        ``peer_undocumented_papers`` regressed from 3.82 to 3.0 when
+        the bot rendered "reentry-friendly legal help" for an
+        undocumented user. This test pins the regex side of the fix.
+        """
+        assert "immigration" in _extract_populations("I'm undocumented")
+        assert "immigration" in _extract_populations("I'm an asylum seeker")
+        assert "immigration" in _extract_populations("I am seeking asylum")
+        assert "immigration" in _extract_populations("I'm a refugee from Venezuela")
+        assert "immigration" in _extract_populations("I recently arrived in the country")
+        assert "immigration" in _extract_populations(
+            "I'm without papers and need legal help"
+        )
+        assert "immigration" in _extract_populations(
+            "I have no papers, need help in Queens"
+        )
+        # Population is NOT reentry — confirms the conflation is fixed
+        result = _extract_populations("I'm undocumented and need legal help")
+        assert "reentry" not in result
+        assert "immigration" in result
+
+    def test_immigration_does_not_overmatch_papers(self):
+        """Bare 'papers' is too ambiguous to map to immigration —
+        could be newspapers, term papers, papers to sign, etc.
+        Confirm the regex only fires on disambiguated phrases.
+        """
+        # Should NOT extract immigration
+        assert _extract_populations("I have a lot of papers to sort") == []
+        assert _extract_populations("I read the papers every morning") == []
+        assert _extract_populations("I need help with my papers") == []
+        # SHOULD extract immigration when disambiguating context is present
+        assert "immigration" in _extract_populations("I'm undocumented, need help with papers")
+
     def test_no_population(self):
         assert _extract_populations("I need food in Brooklyn") == []
         assert _extract_populations("shelter near me") == []
@@ -398,6 +437,38 @@ class TestConfirmationPopulations:
         msg = _build_confirmation_message(slots)
         assert "reentry-friendly" in msg
 
+    def test_immigration_friendly(self):
+        """The immigration population renders 'immigration-friendly'
+        in the confirmation. Pre-fix, undocumented users were being
+        labeled 'reentry-friendly' because the populations enum
+        lacked an immigration value — see ``peer_undocumented_papers``
+        eval scenario.
+        """
+        slots = {
+            "service_type": "legal",
+            "location": "Queens",
+            "_populations": ["immigration"],
+        }
+        msg = _build_confirmation_message(slots)
+        assert "immigration-friendly" in msg
+        assert "reentry-friendly" not in msg
+
+    def test_immigration_takes_priority_over_reentry(self):
+        """If both immigration and reentry are somehow set (LLM error
+        or merge-layer union), immigration wins. The ``elif`` order in
+        ``confirmation.py`` puts immigration before reentry for this
+        reason — undocumented status is the more common cause and the
+        more dignity-sensitive label.
+        """
+        slots = {
+            "service_type": "legal",
+            "location": "Queens",
+            "_populations": ["reentry", "immigration"],
+        }
+        msg = _build_confirmation_message(slots)
+        assert "immigration-friendly" in msg
+        assert "reentry-friendly" not in msg
+
     def test_senior_without_age(self):
         slots = {
             "service_type": "food",
@@ -609,10 +680,11 @@ class TestUnifiedExtractorPopulationsContract:
         from app.services.slot_extraction.prompts import _EXTRACT_SLOTS_TOOL
         pops_field = _EXTRACT_SLOTS_TOOL["input_schema"]["properties"]["populations"]
         enum = pops_field.get("items", {}).get("enum", [])
-        # These six were the legacy set; foster_youth was added in Phase 4
-        # Stage 1 (foster youth ≠ reentry fix).
+        # foster_youth was added in Phase 4 Stage 1 (foster youth ≠ reentry fix).
+        # immigration was added in May 2026 (undocumented ≠ reentry fix —
+        # see peer_undocumented_papers eval scenario).
         for value in ("veteran", "disabled", "reentry", "dv_survivor",
-                      "pregnant", "senior"):
+                      "pregnant", "senior", "foster_youth", "immigration"):
             assert value in enum, f"populations enum missing '{value}'"
 
     def test_narrative_prompt_mentions_populations(self):

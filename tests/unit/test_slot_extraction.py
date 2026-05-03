@@ -385,13 +385,18 @@ class TestTrustModel3SetAgreement:
     LLM picks primary. The six worked-examples table rows are each
     one test."""
 
-    def test_row1_cross_borough_sets_match_llm_wins(self):
+    def test_row1_cross_borough_sets_match_tier1_carveout_promotes_shelter(self):
         # "food in Brooklyn and shelter in Manhattan"
-        # This is the multi_cross_borough migration headline win.
-        # Under Ext-2b, the LLM's primary (food/brooklyn, matching the
-        # scenario name's first-mentioned ordering) wins the sets-match
-        # case. Pre-Ext-2b this returned shelter/manhattan (regex priority
-        # tier 1).
+        # Bug B (May 2026): when sets match AND regex has cross-loc AND
+        # LLM has cross-loc AND tier-winner is Tier 1 (shelter/medical),
+        # regex's tier-priority wins. This was the
+        # ``multi_cross_borough_food_brooklyn_shelter_manhattan`` fix —
+        # eval description explicitly calls for shelter as primary
+        # ("uses priority-ordering (shelter > food per
+        # _SERVICE_NEED_PRIORITY) to pick the primary").
+        #
+        # Pre-Bug-B: Ext-2b's first-mentioned wins → food (the bug).
+        # Post-Bug-B: Tier-1 cross-loc carve-out fires → shelter.
         regex = _empty_regex_result()
         regex.update({
             "service_type": "shelter",
@@ -405,11 +410,13 @@ class TestTrustModel3SetAgreement:
         )
         primary, loc, additional = \
             _merge_service_type_and_primary_location(regex, llm)
-        # Sets both = {food, shelter}. Ext-2b: LLM wins → food/brooklyn.
-        assert primary == "food"
-        assert loc == "brooklyn"
-        # LLM's additional_services come through when LLM wins
-        assert additional == [("shelter", None, "manhattan")]
+        # Sets both = {food, shelter}. Tier-1 cross-loc carve-out:
+        # shelter (T1) beats food (T2) when both have cross-location.
+        assert primary == "shelter"
+        assert loc == "manhattan"  # shelter's location preserved
+        # Promoted primary's old location preserved as additional;
+        # displaced LLM primary (food/brooklyn) goes to front.
+        assert ("food", None, "brooklyn") in additional
 
     def test_row2_same_location_multi_intent_llm_wins(self):
         # "I need food and shelter in Brooklyn"
@@ -460,10 +467,22 @@ class TestTrustModel3SetAgreement:
             _merge_service_type_and_primary_location(regex, llm)
         assert primary == "food"
 
-    def test_row5_three_services_sets_match_llm_wins(self):
+    def test_row5_three_services_tier_carveout_promotes_higher_tier(self):
         # "food, shelter, and a job"
-        # Short prompt teaches first-mentioned wins → food.
-        # Ext-2b trusts the LLM on sets-match regardless of path.
+        # Bug B (May 2026): when sets match AND len(set) >= 3 AND the
+        # LLM's first pick is at strictly worse tier than regex's
+        # tier-winner, regex tier-priority wins. The eval scenario
+        # ``multi_three_services_legal_benefits_food`` ("asylum case,
+        # food stamps, somewhere to get food") demonstrated this:
+        # legal (T4) was the LLM's first-mention but food (T2) is the
+        # tier-winner and what the eval expected.
+        #
+        # Here both regex and LLM have set={food, shelter, employment}.
+        # LLM picks food (T2, first-mentioned), regex's tier-winner is
+        # shelter (T1). Bug B promotes shelter.
+        #
+        # Pre-Bug-B: Ext-2b's first-mentioned wins → food.
+        # Post-Bug-B: n>=3 carve-out fires → shelter.
         regex = _empty_regex_result()
         regex.update({
             "service_type": "shelter",
@@ -481,7 +500,9 @@ class TestTrustModel3SetAgreement:
         )
         primary, loc, additional = \
             _merge_service_type_and_primary_location(regex, llm)
-        assert primary == "food"  # Ext-2b: LLM's first-mentioned wins
+        assert primary == "shelter"
+        # Displaced LLM primary (food) becomes the head of additional.
+        assert additional[0] == ("food", None, None)
 
     def test_row6_regex_empty_llm_wins(self):
         # "I ran out of insulin" — regex has no keyword for this; LLM does.
@@ -523,6 +544,11 @@ class TestTrustModel3SetAgreement:
         regex wins → primary=medical (wrong). With the exception, LLM's
         primary wins → primary=shelter (correct).
         """
+        message = (
+            "I just got out of the hospital and I've been staying with friends "
+            "in East New York but they can't keep me anymore. I need to find "
+            "somewhere to stay."
+        )
         regex = _empty_regex_result()
         regex.update({
             "service_type": "medical",
@@ -535,7 +561,7 @@ class TestTrustModel3SetAgreement:
             location="east new york",
         )
         primary, loc, additional = \
-            _merge_service_type_and_primary_location(regex, llm)
+            _merge_service_type_and_primary_location(regex, llm, message)
         # LLM's primary wins on narrative-path set-match
         assert primary == "shelter", (
             f"narrative-path exception should promote LLM primary; got {primary!r}"
@@ -561,6 +587,7 @@ class TestTrustModel3SetAgreement:
         # Regex (priority table): primary=shelter, additional=food
         # LLM (Option 4, first-mentioned): primary=food, additional=shelter
         # Sets match ({food, shelter}). Ext-2b: LLM wins.
+        message = "I need food and shelter in Brooklyn"
         regex = _empty_regex_result()
         regex.update({
             "service_type": "shelter",
@@ -573,7 +600,7 @@ class TestTrustModel3SetAgreement:
             location="brooklyn",
         )
         primary, loc, additional = \
-            _merge_service_type_and_primary_location(regex, llm)
+            _merge_service_type_and_primary_location(regex, llm, message)
         assert primary == "food", (
             f"Ext-2b: short-path sets-match should return LLM's primary; "
             f"got {primary!r}"
@@ -611,6 +638,11 @@ class TestTrustModel3SetAgreement:
         """
         # Long message where regex over-extracts (catches a keyword the
         # LLM correctly treats as context and filters out).
+        message = (
+            "My case worker mentioned legal aid might help but honestly "
+            "what I really need right now is food for my kids and a place "
+            "to stay tonight in the Bronx."
+        )
         regex = _empty_regex_result()
         regex.update({
             "service_type": "legal",
@@ -628,7 +660,7 @@ class TestTrustModel3SetAgreement:
             location="bronx",
         )
         primary, loc, additional = \
-            _merge_service_type_and_primary_location(regex, llm)
+            _merge_service_type_and_primary_location(regex, llm, message)
         # regex_set = {legal, food, shelter}, llm_set = {shelter, food}
         # Sets differ → LLM wins (existing rule, unchanged).
         assert primary == "shelter"
@@ -660,7 +692,7 @@ class TestTrustModel3CrossBoroughCarveOut:
             additional_services=[("shelter", None, "Manhattan")],
         )
         primary, loc, additional = \
-            _merge_service_type_and_primary_location(regex, llm)
+            _merge_service_type_and_primary_location(regex, llm, "I need food in Brooklyn and shelter in Manhattan")
         assert primary == "shelter"
         assert loc == "manhattan"
         assert additional == [("food", None, "brooklyn")]
@@ -682,7 +714,7 @@ class TestTrustModel3CrossBoroughCarveOut:
             additional_services=[("food", None, "chinatown")],
         )
         primary, loc, additional = \
-            _merge_service_type_and_primary_location(regex, llm)
+            _merge_service_type_and_primary_location(regex, llm, "I want to shower in the Lower East Side and grab food in Chinatown")
         assert primary == "personal_care"
         assert loc == "lower east side"
         assert additional == [("food", None, "chinatown")]
@@ -702,7 +734,7 @@ class TestTrustModel3CrossBoroughCarveOut:
             additional_services=[("shelter", None, None)],
         )
         primary, loc, additional = \
-            _merge_service_type_and_primary_location(regex, llm)
+            _merge_service_type_and_primary_location(regex, llm, "I need food and shelter in Brooklyn")
         assert primary == "food"
         assert loc == "brooklyn"
         assert additional == [("shelter", None, None)]
@@ -747,6 +779,308 @@ class TestTrustModel3CrossBoroughCarveOut:
         # Plain Ext-2b: LLM wins.
         assert primary == "food"
         assert loc == "brooklyn"
+
+
+class TestBugBPriorityCarveOuts:
+    """Bug B carve-outs (May 2026): when the LLM and regex agree on
+    the SET of services but disagree on the primary, regex's tier-
+    priority winner should beat LLM's first-mentioned in two specific
+    shapes:
+
+      B.1 — Three-or-more services. The LLM's "first-mentioned" rule
+            loses to tier-priority when the user names a compound
+            survival need. Eval evidence:
+            multi_three_services_legal_benefits_food regressed to
+            3.73 when LLM picked legal (T4) instead of food (T2).
+
+      B.2 — Tier-1 + cross-location. When both extractors preserve
+            cross-location structure AND the tier-winner is Tier 1
+            (life/safety: shelter, medical), regex's tier-priority
+            wins. Eval evidence:
+            multi_cross_borough_food_brooklyn_shelter_manhattan
+            ("food in Brooklyn and shelter in Manhattan" → expected
+            shelter via priority-ordering).
+
+    Together these carve-outs preserve all 5 audit scenarios where
+    first-mentioned should win on n=2 same-location messages, while
+    fixing the 2 scenarios where tier-priority is correct.
+
+    See ``tests/integration/test_merge_priority_carveouts.py`` for the
+    end-to-end audit data and ``backend/app/services/slot_extraction/
+    merge.py::_merge_service_type_and_primary_location`` for the
+    implementation.
+    """
+
+    # --- B.1: three-or-more-service tier promotion ---
+
+    def test_b1_three_services_legal_first_food_tier_wins(self):
+        """multi_three_services_legal_benefits_food shape: user names
+        legal/asylum first, but food (T2) outweighs legal (T4) and
+        other (T5) on tier-priority. Bug B promotes food."""
+        regex = _empty_regex_result()
+        regex.update({
+            "service_type": "food",
+            "location": "jackson heights",
+            "additional_services": [
+                ("legal", "asylum services", None),
+                ("other", "food stamps / SNAP", None),
+            ],
+        })
+        llm = _llm_result(
+            service_type="legal",
+            location="jackson heights",
+            additional_services=[
+                ("other", "food stamps / SNAP", None),
+                ("food", None, None),
+            ],
+        )
+        primary, loc, additional = \
+            _merge_service_type_and_primary_location(regex, llm)
+        assert primary == "food", (
+            "n>=3 carve-out should promote food (T2) over legal (T4)"
+        )
+        # Displaced LLM primary (legal) goes to front of additional.
+        assert additional[0][0] == "legal"
+
+    def test_b1_three_services_no_tier_disagreement_does_not_fire(self):
+        """multi_three_services_youth_drop_in: 'eat, shower, clothes' —
+        food/personal_care/clothing. LLM's first pick is food (T2).
+        Regex's tier-winner is also food (T2 beats T3 & T3). Both rules
+        agree on food. The carve-out checks
+        ``llm_primary_tier > tier_w_tier`` strictly, so when tiers tie
+        the carve-out does NOT fire and Ext-2b's first-mentioned
+        wins (which happens to also be food)."""
+        regex = _empty_regex_result()
+        regex.update({
+            "service_type": "food",
+            "additional_services": [
+                ("personal_care", "showers", None),
+                ("clothing", None, None),
+            ],
+        })
+        llm = _llm_result(
+            service_type="food",
+            additional_services=[
+                ("personal_care", "showers", None),
+                ("clothing", None, None),
+            ],
+        )
+        primary, loc, additional = \
+            _merge_service_type_and_primary_location(regex, llm)
+        # Both predict food. LLM wins primary on the agreement path.
+        assert primary == "food"
+
+    def test_b1_two_services_does_not_fire(self):
+        """n=2 messages NEVER trigger the n>=3 carve-out. multi_food_
+        and_shelter_brooklyn ("food and a place to sleep in Brooklyn")
+        must keep first-mentioned semantics. shelter is T1 and food is
+        T2 — without the n=2 guard, the carve-out would wrongly
+        promote shelter."""
+        regex = _empty_regex_result()
+        regex.update({
+            "service_type": "shelter",
+            "location": "brooklyn",
+            "additional_services": [("food", None, None)],
+        })
+        llm = _llm_result(
+            service_type="food",
+            location="brooklyn",
+            additional_services=[("shelter", None, None)],
+        )
+        primary, loc, additional = \
+            _merge_service_type_and_primary_location(regex, llm)
+        # n=2, no cross-loc → falls through to Ext-2b's first-mentioned.
+        assert primary == "food"
+
+    # --- B.2: Tier-1 + cross-location safety promotion ---
+
+    def test_b2_cross_borough_shelter_promoted_over_food(self):
+        """multi_cross_borough_food_brooklyn_shelter_manhattan: "food in
+        Brooklyn and shelter in Manhattan". Both extractors preserve
+        cross-loc; tier-winner is shelter (T1); LLM picks food (T2).
+        Bug B promotes shelter."""
+        regex = _empty_regex_result()
+        regex.update({
+            "service_type": "shelter",
+            "location": "manhattan",
+            "additional_services": [("food", None, "brooklyn")],
+        })
+        llm = _llm_result(
+            service_type="food",
+            location="brooklyn",
+            additional_services=[("shelter", None, "manhattan")],
+        )
+        primary, loc, additional = \
+            _merge_service_type_and_primary_location(regex, llm)
+        assert primary == "shelter"
+        assert loc == "manhattan"
+        # Displaced LLM primary (food/brooklyn) preserved as additional.
+        assert ("food", None, "brooklyn") in additional
+
+    def test_b2_cross_neighborhood_personal_care_food_does_not_fire(self):
+        """multi_cross_neighborhood_shower_les_food_chinatown: shower
+        in LES and food in Chinatown. Both have cross-loc, but
+        tier-winner is food (T2) — NOT Tier 1. Carve-out gates on
+        Tier-1 strictly, so it does NOT fire and personal_care wins
+        via Ext-2b's first-mentioned."""
+        regex = _empty_regex_result()
+        regex.update({
+            "service_type": "food",
+            "location": "chinatown",
+            "additional_services": [("personal_care", "showers", "lower east side")],
+        })
+        llm = _llm_result(
+            service_type="personal_care",
+            location="lower east side",
+            additional_services=[("food", None, "chinatown")],
+        )
+        primary, loc, additional = \
+            _merge_service_type_and_primary_location(regex, llm)
+        # Tier-winner is food (T2), NOT T1 → carve-out doesn't fire.
+        # Falls through to Ext-2b: LLM's personal_care wins.
+        assert primary == "personal_care"
+        assert loc == "lower east side"
+
+    def test_b2_same_location_does_not_fire(self):
+        """multi_food_and_shelter_brooklyn shape but ensuring B.2 does
+        NOT fire when same-location. Tier-winner is shelter (T1) but
+        no cross-loc signal → carve-out does NOT fire and food wins
+        via Ext-2b's first-mentioned."""
+        regex = _empty_regex_result()
+        regex.update({
+            "service_type": "shelter",
+            "location": "brooklyn",
+            "additional_services": [("food", None, None)],
+        })
+        llm = _llm_result(
+            service_type="food",
+            location="brooklyn",
+            additional_services=[("shelter", None, None)],
+        )
+        primary, loc, additional = \
+            _merge_service_type_and_primary_location(regex, llm)
+        assert primary == "food"
+
+    def test_b2_only_regex_has_cross_handled_by_existing_carveout(self):
+        """When regex has cross-loc but LLM collapsed, the EXISTING
+        cross-loc carve-out (not Bug B) fires first. Bug B's B.2 is a
+        narrower case: BOTH extractors preserve cross-loc. This test
+        confirms the older carve-out still fires and Bug B doesn't
+        double-fire."""
+        regex = _empty_regex_result()
+        regex.update({
+            "service_type": "shelter",
+            "location": "manhattan",
+            "additional_services": [("food", None, "brooklyn")],
+        })
+        llm = _llm_result(
+            service_type="food",
+            location="manhattan",  # LLM collapsed both to manhattan
+            additional_services=[("shelter", None, "manhattan")],
+        )
+        primary, loc, additional = \
+            _merge_service_type_and_primary_location(regex, llm)
+        # Existing carve-out: regex wins on primary+loc+additional.
+        assert primary == "shelter"
+        assert loc == "manhattan"
+        # Existing carve-out returns regex's additional (with brooklyn).
+        assert additional == [("food", None, "brooklyn")]
+
+    # --- Edge cases ---
+
+    def test_displaced_primary_goes_to_front_of_additional(self):
+        """When the carve-out fires, the LLM's old primary gets
+        displaced. It must be inserted at the FRONT of additional —
+        front placement matches user intent (the previous primary
+        stays the highest-priority queued service)."""
+        regex = _empty_regex_result()
+        regex.update({
+            "service_type": "food",
+            "additional_services": [
+                ("legal", "asylum services", None),
+                ("other", "food stamps / SNAP", None),
+            ],
+        })
+        llm = _llm_result(
+            service_type="legal",  # LLM's first pick
+            additional_services=[
+                ("other", "food stamps / SNAP", None),
+                ("food", None, None),
+            ],
+        )
+        primary, loc, additional = \
+            _merge_service_type_and_primary_location(regex, llm)
+        assert primary == "food"  # promoted by B.1
+        # legal (the displaced primary) is FIRST in the new additional list
+        assert additional[0][0] == "legal"
+
+    def test_displaced_primary_detail_preserved(self):
+        """LLM's primary often carries a service_detail (e.g. 'asylum
+        services'). When displaced into additional, that detail must
+        survive."""
+        regex = _empty_regex_result()
+        regex.update({
+            "service_type": "food",
+            "additional_services": [
+                ("legal", "asylum services", None),
+                ("other", "food stamps / SNAP", None),
+            ],
+        })
+        llm = _llm_result(
+            service_type="legal",
+            service_detail="asylum services",
+            additional_services=[
+                ("other", "food stamps / SNAP", None),
+                ("food", None, None),
+            ],
+        )
+        primary, loc, additional = \
+            _merge_service_type_and_primary_location(regex, llm)
+        assert primary == "food"
+        # Displaced legal preserves its detail
+        legal_entry = next(
+            item for item in additional if item[0] == "legal"
+        )
+        assert legal_entry[1] == "asylum services"
+
+    def test_no_double_promotion_when_set_size_2_and_no_cross_loc(self):
+        """The most important non-regression: classic n=2 same-location
+        scenarios (5 of them in the audit) must keep first-mentioned
+        wins. Sweep them in one test."""
+        cases = [
+            # (regex_primary, llm_primary, llm_additional, expected)
+            # multi_food_and_shelter_brooklyn
+            ("shelter", "food", [("shelter", None, None)], "food"),
+            # multi_shower_and_food_drop_in
+            ("food", "personal_care", [("food", None, None)], "personal_care"),
+            # multi_clothing_and_food_harlem
+            ("food", "clothing", [("food", None, None)], "clothing"),
+            # multi_emotional_food_and_shelter_empathy (same shape as #1)
+            ("shelter", "food", [("shelter", None, None)], "food"),
+        ]
+        for regex_p, llm_p, llm_add, expected in cases:
+            regex_add = []
+            # Build regex side: regex puts tier-winner as primary, others
+            # as additional. We need to derive what regex would have here.
+            # For our purposes just the primary matters — the LLM's set
+            # determines the set match.
+            regex = _empty_regex_result()
+            regex.update({
+                "service_type": regex_p,
+                "additional_services": [
+                    (s[0], None, None) for s in llm_add
+                ] + ([] if llm_p in [s[0] for s in llm_add] else [(llm_p, None, None)]),
+            })
+            llm = _llm_result(
+                service_type=llm_p,
+                additional_services=llm_add,
+            )
+            primary, loc, additional = \
+                _merge_service_type_and_primary_location(regex, llm)
+            assert primary == expected, (
+                f"n=2 same-loc case regressed: "
+                f"regex={regex_p}, llm={llm_p}, expected={expected}, got={primary}"
+            )
 
 
 class TestMergeServiceTypeWithExtractionSource:
@@ -794,7 +1128,7 @@ class TestMergeServiceTypeWithExtractionSource:
         )
         primary, loc, additional = \
             _merge_service_type_and_primary_location(
-                regex, llm, "regex"
+                regex, llm, None, "regex"
             )
         assert primary == "other"  # LLM still wins
 
@@ -814,7 +1148,7 @@ class TestMergeServiceTypeWithExtractionSource:
         )
         primary, loc, additional = \
             _merge_service_type_and_primary_location(
-                regex, llm, "semantic"
+                regex, llm, None, "semantic"
             )
         # Semantic wins on primary
         assert primary == "medical"
@@ -842,7 +1176,7 @@ class TestMergeServiceTypeWithExtractionSource:
         # Both with semantic source and without should produce identical results
         primary_sem, loc_sem, additional_sem = \
             _merge_service_type_and_primary_location(
-                regex, llm, "semantic"
+                regex, llm, None, "semantic"
             )
         primary_def, loc_def, additional_def = \
             _merge_service_type_and_primary_location(regex, llm)
@@ -870,7 +1204,7 @@ class TestMergeServiceTypeWithExtractionSource:
         )
         primary, loc, additional = \
             _merge_service_type_and_primary_location(
-                regex, llm, "semantic"
+                regex, llm, None, "semantic"
             )
         # Empty-regex branch fires first — LLM wins
         assert primary == "food"
@@ -892,7 +1226,7 @@ class TestMergeServiceTypeWithExtractionSource:
         )
         primary, loc, additional = \
             _merge_service_type_and_primary_location(
-                regex, llm, "semantic"
+                regex, llm, None, "semantic"
             )
         # Empty-LLM branch fires — regex wins (carries semantic value)
         assert primary == "medical"
@@ -916,14 +1250,14 @@ class TestMergeServiceTypeWithExtractionSource:
         # "Semantic" with capital S — case-sensitive
         primary, loc, additional = \
             _merge_service_type_and_primary_location(
-                regex, llm, "Semantic"
+                regex, llm, None, "Semantic"
             )
         assert primary == "other"  # falls through to default
 
         # llm_gate (a real value used elsewhere, but not the special branch)
         primary, loc, additional = \
             _merge_service_type_and_primary_location(
-                regex, llm, "llm_gate"
+                regex, llm, None, "llm_gate"
             )
         assert primary == "other"  # falls through to default
 
@@ -940,10 +1274,15 @@ class TestPrimaryLocationBinding:
     the fix that preserves the primary-to-location binding.
     """
 
-    def test_mcb_llm_primary_keeps_llm_location(self):
-        """LLM wins primary via Ext-2b with its own location; that
-        location must survive into the final merged output, not be
-        overridden by regex's (rejected primary's) location."""
+    def test_mcb_tier1_carveout_promotes_shelter_keeps_shelter_location(self):
+        """Bug B Tier-1 cross-loc carve-out: when both regex and LLM
+        preserve cross-location AND tier-winner is Tier 1, regex's
+        tier-priority winner becomes primary with its bound location.
+
+        Sister test of ``test_row1_cross_borough_sets_match_tier1_carveout_promotes_shelter``
+        in TestTrustModel3SetAgreement, but exercising the full ``merge``
+        entry point rather than just the trust-model-3 helper.
+        """
         regex_result = dict(
             service_type="shelter",
             location="manhattan",
@@ -957,12 +1296,12 @@ class TestPrimaryLocationBinding:
             _populations=[], service_detail=None, org_name=None,
             no_requirements=False,
         )
-        merged = merge(regex_result, llm_result)
-        # LLM primary won (Ext-2b); LLM's Brooklyn must bind to food,
-        # not get overridden by regex's manhattan (which went with
-        # shelter as primary in the regex view).
-        assert merged["service_type"] == "food"
-        assert merged["location"].lower() == "brooklyn"
+        merged = merge(regex_result, llm_result,
+                       message="I need food in Brooklyn and shelter in Manhattan")
+        # Bug B: Tier-1 cross-loc carve-out fires; shelter wins.
+        assert merged["service_type"] == "shelter"
+        # shelter's location (manhattan) is preserved.
+        assert merged["location"].lower() == "manhattan"
 
     def test_accessibility_low_literacy_still_falls_back_to_llm(self):
         """Regression guard: when primary winner has no location (regex
@@ -1003,7 +1342,8 @@ class TestPrimaryLocationBinding:
             _populations=[], service_detail=None, org_name=None,
             no_requirements=False,
         )
-        merged = merge(regex_result, llm_result)
+        merged = merge(regex_result, llm_result,
+                       message="I need food in Brooklyn and shelter in Manhattan")
         # Carve-out fires (regex has cross-borough, LLM collapsed).
         # Regex wins: primary=shelter, location=manhattan.
         assert merged["service_type"] == "shelter"
@@ -1363,7 +1703,7 @@ class TestTopLevelMerge:
             location="brooklyn",  # LLM successfully interpreted "broklyn"
             additional_services=[],
         )
-        result = merge(regex, llm)
+        result = merge(regex, llm, message="were food broklyn free")
         assert result["service_type"] == "food"
         assert result["location"] == "brooklyn", (
             "LLM's canonical location should fill the regex gap"
@@ -1383,7 +1723,7 @@ class TestTopLevelMerge:
             service_type="food",
             location="Chicago",  # not in _KNOWN_LOCATIONS
         )
-        result = merge(regex, llm)
+        result = merge(regex, llm, message="I need food")
         assert result["service_type"] == "food"
         assert result["location"] is None, (
             "Non-canonical LLM location should be dropped"
@@ -2925,10 +3265,8 @@ class TestMergeAdditionalServicesEdgeCases:
         assert result == [("shelter", "emergency", "brooklyn")]
 
     def test_unpack_two_tuple(self):
-        """Defensive: a 2-tuple ``(type, detail)`` should unpack to
-        ``(type, detail, None)``. Production producers emit 3-tuples;
-        this guards against malformed/partial entries from session
-        deserialization or future LLM output."""
+        """Legacy 2-tuple `(type, detail)` should unpack to
+        `(type, detail, None)`."""
         from app.services.slot_extraction.merge import _unpack_additional_item
         assert _unpack_additional_item(("food", "pantries")) == \
             ("food", "pantries", None)
@@ -2938,9 +3276,8 @@ class TestMergeAdditionalServicesEdgeCases:
         assert _unpack_additional_item(("food",)) == ("food", None, None)
 
     def test_unpack_string_treated_as_type(self):
-        """Defensive: a string ``"shelter"`` (rather than a tuple)
-        should coerce to ``(shelter, None, None)``. Guards against
-        malformed LLM output or session deserialization."""
+        """If the LLM returned `["shelter"]` (legacy string list
+        format), coerce to `(shelter, None, None)`."""
         from app.services.slot_extraction.merge import _unpack_additional_item
         assert _unpack_additional_item("shelter") == ("shelter", None, None)
 
