@@ -11,7 +11,7 @@ Run with: python -m pytest tests/unit/test_change_mind_and_decline.py -v
 
 import pytest
 from app.services.classifier import _classify_action
-from app.services.slot_extractor import extract_slots
+from app.services.slot_extraction_regex import extract_slots
 from conftest import send_multi, MOCK_QUERY_RESULTS
 
 
@@ -339,7 +339,7 @@ class TestMergeSlotsContradiction:
     negation failed to filter the old service (defense-in-depth)."""
 
     def test_promotion_when_same_service_with_contradiction(self):
-        from app.services.slot_extractor import merge_slots
+        from app.services.slot_extraction_regex import merge_slots
         existing = {"service_type": "food", "location": "manhattan"}
         new_vals = {
             "service_type": "food",  # negation didn't catch it
@@ -350,7 +350,7 @@ class TestMergeSlotsContradiction:
         assert merged["service_type"] == "shelter"
 
     def test_no_promotion_without_contradiction(self):
-        from app.services.slot_extractor import merge_slots
+        from app.services.slot_extraction_regex import merge_slots
         existing = {"service_type": "food", "location": "manhattan"}
         new_vals = {
             "service_type": "food",
@@ -361,7 +361,7 @@ class TestMergeSlotsContradiction:
         assert merged["service_type"] == "food"
 
     def test_contradiction_clears_pending_confirmation(self):
-        from app.services.slot_extractor import merge_slots
+        from app.services.slot_extraction_regex import merge_slots
         existing = {
             "service_type": "food",
             "location": "manhattan",
@@ -376,14 +376,14 @@ class TestMergeSlotsContradiction:
         assert "_pending_confirmation" not in merged
 
     def test_contradiction_flag_not_persisted(self):
-        from app.services.slot_extractor import merge_slots
+        from app.services.slot_extraction_regex import merge_slots
         existing = {"service_type": "food"}
         new_vals = {"service_type": "shelter", "_contradiction": True}
         merged = merge_slots(existing, new_vals)
         assert "_contradiction" not in merged
 
     def test_demographics_preserved_on_contradiction(self):
-        from app.services.slot_extractor import merge_slots
+        from app.services.slot_extraction_regex import merge_slots
         existing = {"service_type": "food", "location": "brooklyn", "age": 19}
         new_vals = {"service_type": "shelter", "_contradiction": True}
         merged = merge_slots(existing, new_vals)

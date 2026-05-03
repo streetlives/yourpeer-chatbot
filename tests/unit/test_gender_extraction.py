@@ -21,7 +21,7 @@ class TestExtractGender:
 
     @pytest.fixture(autouse=True)
     def _import(self):
-        from app.services.slot_extractor import _extract_gender
+        from app.services.slot_extraction_regex import _extract_gender
         self.extract = _extract_gender
 
     # --- Explicit gender ---
@@ -132,7 +132,7 @@ class TestExtractSlotsGender:
 
     @pytest.fixture(autouse=True)
     def _import(self):
-        from app.services.slot_extractor import extract_slots
+        from app.services.slot_extraction_regex import extract_slots
         self.extract_slots = extract_slots
 
     def test_gender_in_slots(self):
@@ -482,21 +482,21 @@ class TestGenderSlotPrivacy:
 
     def test_extract_slots_returns_underscore_gender(self):
         """extract_slots must return '_gender', not 'gender'."""
-        from app.services.slot_extractor import extract_slots
+        from app.services.slot_extraction_regex import extract_slots
         result = extract_slots("I'm a trans woman and need shelter")
         assert "_gender" in result
         assert "gender" not in result
 
     def test_merge_slots_preserves_gender(self):
         """merge_slots correctly handles _gender key."""
-        from app.services.slot_extractor import merge_slots
+        from app.services.slot_extraction_regex import merge_slots
         existing = {"service_type": "shelter", "_gender": None}
         new = {"_gender": "lgbtq"}
         merged = merge_slots(existing, new)
         assert merged["_gender"] == "lgbtq"
 
     def test_merge_slots_overwrites_gender(self):
-        from app.services.slot_extractor import merge_slots
+        from app.services.slot_extraction_regex import merge_slots
         existing = {"_gender": "lgbtq"}
         new = {"_gender": "male"}
         merged = merge_slots(existing, new)

@@ -13,7 +13,7 @@ from unittest.mock import patch
 from app.models.chat_models import ChatRequest
 from app.services.chatbot import generate_reply
 from app.services.session_store import clear_session, get_session_slots
-from app.services.slot_extractor import NEAR_ME_SENTINEL
+from app.services.slot_extraction_regex import NEAR_ME_SENTINEL
 from app.rag import query_services
 from conftest import MOCK_QUERY_RESULTS, send, send_multi
 

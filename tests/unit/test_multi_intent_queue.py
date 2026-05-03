@@ -10,7 +10,7 @@ Run with: python -m pytest tests/unit/test_multi_intent_queue.py -v
 """
 
 import pytest
-from app.services.slot_extractor import extract_slots
+from app.services.slot_extraction_regex import extract_slots
 from conftest import send_multi
 
 

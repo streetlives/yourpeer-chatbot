@@ -137,7 +137,7 @@ The system scans the message for known keywords. "food" is in a list of food-rel
 
 The limitation: it only works when the user uses a word that's literally in the keyword list. "I need food" works. "I'm hungry" doesn't — "hungry" isn't a keyword.
 
-→ `backend/app/services/slot_extractor.py` — keyword lists, extraction logic, and the `_SERVICE_NEED_PRIORITY` tier table (Housing First ordering — see Section 6)
+→ `backend/app/services/slot_extraction_regex.py` — keyword lists, extraction logic, and the `_SERVICE_NEED_PRIORITY` tier table (Housing First ordering — see Section 6)
 
 ### Tier 2: Semantic embedding
 
@@ -155,7 +155,7 @@ The model is pre-warmed at server startup (in `main.py`) so the first message af
 
 Tiers 1 and 2 both run on every message — they're complementary, not sequential. Regex catches exact keyword matches, while the semantic router catches novel phrasings that regex misses. The results are merged and deduplicated. This is critical for multi-intent extraction: when a user says "I just got out of Rikers and I don't have anywhere to sleep or anything to eat," regex catches "eat" → food, while the semantic router catches "anywhere to sleep" → shelter. Neither tier alone would find both.
 
-The semantic router uses an `exclude` parameter to skip service categories that regex already found, avoiding duplicate work. After merging, services are sorted by a **Housing-First need-based priority** (shelter/medical before food/mental_health before clothing/personal_care before legal/employment) — not by which tier found them, and not by mention order. See `_SERVICE_NEED_PRIORITY` in `slot_extractor.py`.
+The semantic router uses an `exclude` parameter to skip service categories that regex already found, avoiding duplicate work. After merging, services are sorted by a **Housing-First need-based priority** (shelter/medical before food/mental_health before clothing/personal_care before legal/employment) — not by which tier found them, and not by mention order. See `_SERVICE_NEED_PRIORITY` in `slot_extraction_regex.py`.
 
 ### Tier 3: LLM classification
 
@@ -377,7 +377,7 @@ The package exports `generate_reply()` from its `__init__.py` so existing caller
 
 These modules sit alongside the `chatbot/` package:
 
-**`slot_extractor.py`** — Tier 1 extraction. Contains the `SERVICE_KEYWORDS` dictionary (9 categories after housing_assistance retirement), the `_SERVICE_NEED_PRIORITY` tier table for Housing First ordering, location parsing (59 NYC neighborhoods, 5 boroughs, 200+ zip codes), population detection (veteran, disabled, reentry, foster_youth, dv_survivor, pregnant, senior), and multi-intent extraction.
+**`slot_extraction_regex.py`** — Tier 1 extraction. Contains the `SERVICE_KEYWORDS` dictionary (9 categories after housing_assistance retirement), the `_SERVICE_NEED_PRIORITY` tier table for Housing First ordering, location parsing (59 NYC neighborhoods, 5 boroughs, 200+ zip codes), population detection (veteran, disabled, reentry, foster_youth, dv_survivor, pregnant, senior), and multi-intent extraction.
 
 **`semantic_router.py`** — Tier 2 semantic embedding. Loads `all-MiniLM-L6-v2`, pre-embeds all route utterances at server startup, and provides `classify_all_services()` for multi-intent matching. Has a `SentenceTransformer = None` fallback so tests can mock it when the optional dep isn't installed.
 
@@ -647,7 +647,7 @@ We use `cosmic-ray` (not `mutmut`, which fights our `backend/` layout). Mutation
 | `session_token.py` | T1 | Security-adjacent; bugs affect identity | 85% |
 | `chatbot/pipeline.py` | T2 | Unified LLM gate; controls when LLM fires vs regex | 55% |
 | `chatbot/execution.py` | T2 | Runs every DB query, formats every service card | 55% |
-| `slot_extractor.py` | T2 | Extracts every slot; every downstream decision reads these | 60% |
+| `slot_extraction_regex.py` | T2 | Extracts every slot; every downstream decision reads these | 60% |
 | `rag/query_templates.py` | T2 | SQL templates; wrong query = wrong results | 60% |
 | `chatbot/handlers/confirmation.py` | T2 | Yes/no misinterpretation is high user-visibility | 55% |
 
@@ -736,7 +736,7 @@ After Phase 3, "where to add a thing" is more specific than it used to be becaus
 
 | I want to... | Start here |
 |---|---|
-| Add a new service keyword | `backend/app/services/slot_extractor.py` → `SERVICE_KEYWORDS` dict |
+| Add a new service keyword | `backend/app/services/slot_extraction_regex.py` → `SERVICE_KEYWORDS` dict |
 | Add a new semantic route phrase | `backend/app/services/semantic_routes.py` → `SERVICE_ROUTES` dict |
 | Change a bot response message | Usually `backend/app/services/responses.py`; crisis ones are in `crisis_detector.py`; handler-specific ones are in that handler |
 | Change a greeting / help / reset response | `backend/app/services/chatbot/handlers/general.py` |
@@ -750,7 +750,7 @@ After Phase 3, "where to add a thing" is more specific than it used to be becaus
 | Change how results are sorted | `backend/app/rag/query_templates.py` → `_BASE_ORDER_PARTS` list |
 | Add a new database filter | `backend/app/rag/query_templates.py` → add a `FILTER_BY_*` constant |
 | Change how service cards look | `frontend-next/src/components/chat/service-card.tsx` (backend: `models/chat_models.py::ServiceCard` for the schema) |
-| Change the Housing-First priority ordering | `backend/app/services/slot_extractor.py` → `_SERVICE_NEED_PRIORITY` dict (mirrored in `tests/unit/test_hybrid_multi_intent.py`) |
+| Change the Housing-First priority ordering | `backend/app/services/slot_extraction_regex.py` → `_SERVICE_NEED_PRIORITY` dict (mirrored in `tests/unit/test_hybrid_multi_intent.py`) |
 | Add a new quick reply button | The handler that emits it (greetings → `general.py`, confirmations → `confirmation.py`, post-results → `post_results.py`). Update `phrase_lists.py` if the button's *value* is a new phrase the classifier needs to recognize. |
 | Add a new admin metric | `frontend-next/src/lib/admin/metric-definitions.ts` + `backend/app/services/audit_log.py` |
 | Change the chat UI layout | `frontend-next/src/components/chat/chat-container.tsx` |

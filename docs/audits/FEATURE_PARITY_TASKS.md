@@ -55,7 +55,7 @@ Users say "tell me about Safe Horizon" or "where is Covenant House." Currently f
 
 ### Tasks
 
-- **3.1** Add `org_name` slot to `slot_extractor.py` — regex match against top 50–100 org names from DB
+- **3.1** Add `org_name` slot to `slot_extraction_regex.py` — regex match against top 50–100 org names from DB
 - **3.2** Add `org_name` to LLM extractor schema in `llm_slot_extractor.py`
 - **3.3** Add to unified classifier in `llm_classifier.py` — when org name detected, classify as `service`
 - **3.4** Add `OrgNameQuery` template in `query_templates.py` — `organizations.name ILIKE '%{org_name}%'` with common abbreviation handling
@@ -144,7 +144,7 @@ yourpeer.nyc offers Nearby / Recently Updated / Most Services sort toggles.
 
 ### Tasks
 
-- **8.1** Add `sort_by` slot to `slot_extractor.py` — detect "most recently updated", "newest", "closest"
+- **8.1** Add `sort_by` slot to `slot_extraction_regex.py` — detect "most recently updated", "newest", "closest"
 - **8.2** Support three ORDER BY modes in `query_templates.py`: `nearby` (PostGIS), `recently_updated` (last_validated_at DESC), `most_services` (co-located count DESC)
 - **8.3** Wire `sort_by` into `query_executor.py`
 - **8.4** After 3+ results, show sort quick replies: "📍 Nearest" / "🕐 Recently updated" / "📋 Most services"
@@ -176,7 +176,7 @@ YourPeer supports three requirement filters: no requirements, referral required,
 
 ### Tasks
 
-- **10.1** Add requirement phrases to `slot_extractor.py`: "walk-in only", "no referral", "no appointment", "drop-in"
+- **10.1** Add requirement phrases to `slot_extraction_regex.py`: "walk-in only", "no referral", "no appointment", "drop-in"
 - **10.2** Add `FILTER_BY_NO_REQUIREMENTS` SQL fragment in `query_templates.py` — exclude services where `eligibility.eligible_values @> '["true"]'` for `membership` parameter
 - **10.3** Wire `no_requirements` param through `rag/__init__.py` → `query_services()`
 - **10.4** Tests: "walk-in shelter in Manhattan" → results exclude referral-only shelters

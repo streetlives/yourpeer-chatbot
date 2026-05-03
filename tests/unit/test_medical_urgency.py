@@ -15,7 +15,7 @@ scored low because the bot showed no understanding of the medical urgency
 import uuid
 import pytest
 
-from app.services.slot_extractor import extract_slots
+from app.services.slot_extraction_regex import extract_slots
 from app.services.session_store import clear_session, get_session_slots
 
 from conftest import send, send_multi

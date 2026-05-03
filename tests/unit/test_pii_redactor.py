@@ -196,7 +196,7 @@ class TestOverlap:
 class TestIntegration:
     def test_redaction_preserves_service_extraction(self):
         """Slot extraction runs on original text, not redacted."""
-        from app.services.slot_extractor import extract_slots
+        from app.services.slot_extraction_regex import extract_slots
         msg = "My name is Sarah and I need food in Brooklyn"
         redacted, dets = redact_pii(msg)
         slots = extract_slots(msg)  # original text

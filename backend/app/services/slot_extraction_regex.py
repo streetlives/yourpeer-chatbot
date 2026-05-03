@@ -1402,6 +1402,29 @@ _POPULATION_PHRASES = {
     "elderly": "senior",
     "older adult": "senior",
     "senior citizen": "senior",
+
+    # Immigration — undocumented status, asylum seekers, refugees,
+    # immigration-case context. Distinct from reentry (criminal justice)
+    # — pre-fix, the LLM was conflating "undocumented" with "reentry"
+    # because the populations enum didn't have an immigration value.
+    # See: peer_undocumented_papers eval scenario (R30 3.82 → R32 3.0).
+    "undocumented": "immigration",
+    "without papers": "immigration",
+    "no papers": "immigration",
+    "asylum seeker": "immigration",
+    "asylum seeking": "immigration",
+    "seeking asylum": "immigration",
+    "refugee": "immigration",
+    "recently arrived": "immigration",
+    "newly arrived": "immigration",
+    "just arrived in the country": "immigration",
+    "no green card": "immigration",
+    "no visa": "immigration",
+    # NOTE: bare "papers" is intentionally NOT mapped — too ambiguous
+    # ("papers" = newspapers, term papers, papers to sign, etc.). The
+    # LLM handles "papers" via the context window.
+    # NOTE: "no documentation" is intentionally NOT mapped — common in
+    # contexts unrelated to immigration ("no documentation of the bug").
 }
 
 # Phrases that contain population keywords but aren't identity statements.

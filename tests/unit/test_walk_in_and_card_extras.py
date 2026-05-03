@@ -22,7 +22,7 @@ from app.rag.query_templates import (
     _clean_list,
     _BASE_QUERY,
 )
-from app.services.slot_extractor import (
+from app.services.slot_extraction_regex import (
     _extract_no_requirements,
     extract_slots,
 )

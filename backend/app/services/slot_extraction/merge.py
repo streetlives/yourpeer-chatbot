@@ -44,6 +44,7 @@ import re
 from typing import Any, Optional
 
 from .prompts import _SERVICE_TYPE_ENUM
+from app.services.slot_extraction_regex import _SERVICE_NEED_PRIORITY
 
 logger = logging.getLogger(__name__)
 
@@ -101,7 +102,7 @@ def _validate_service_detail(llm_value: Optional[str]) -> Optional[str]:
     # import at package load time. The _NOTABLE_SUB_TYPES dict is
     # built from several hundred lines of keyword mappings, so we
     # pull only the canonical-values set.
-    from app.services.slot_extractor import _NOTABLE_SUB_TYPES
+    from app.services.slot_extraction_regex import _NOTABLE_SUB_TYPES
     # Sorted for deterministic iteration — a Python set's iteration
     # order depends on hash seeding, which means "care" could map
     # to "urgent care" in one process and "diabetes / insulin care"
@@ -211,8 +212,8 @@ def _validate_location(llm_value: Optional[str]) -> Optional[str]:
         return None
 
     # Local import: same pattern as _validate_service_detail — avoid
-    # forcing a slot_extractor import at package load time.
-    from app.services.slot_extractor import _KNOWN_LOCATIONS
+    # forcing a slot_extraction_regex import at package load time.
+    from app.services.slot_extraction_regex import _KNOWN_LOCATIONS
 
     llm_norm = _normalize_for_match(llm_value)
     if not llm_norm:
@@ -265,7 +266,7 @@ def _validate_org_name(llm_value: Optional[str]) -> Optional[str]:
     if not llm_value or not isinstance(llm_value, str):
         return None
 
-    from app.services.slot_extractor import (
+    from app.services.slot_extraction_regex import (
         _KNOWN_ORGS,
         _KNOWN_ORG_ABBREVIATIONS,
     )
@@ -343,9 +344,104 @@ def _merge_llm_semantic(
 # TRUST MODEL 3 — set-agreement decides ordering for service_type
 # ---------------------------------------------------------------------------
 
+def _regex_tier_winner(service_set: set) -> Optional[str]:
+    """Pick the highest-priority service from a set, ties broken by
+    string order (deterministic, matches how regex's
+    ``_extract_all_service_types`` resolves intra-tier ties when
+    text positions tie).
+
+    Used by the Bug B carve-outs in
+    ``_merge_service_type_and_primary_location`` to determine which
+    service deserves to be primary when tier-priority should override
+    the LLM's first-mentioned pick.
+    """
+    if not service_set:
+        return None
+    return min(
+        service_set,
+        key=lambda s: (_SERVICE_NEED_PRIORITY.get(s, 99), s),
+    )
+
+
+def _find_service_in_additional(
+    target: str,
+    regex_additional: list,
+    llm_additional: list,
+) -> tuple[Optional[str], Optional[str]]:
+    """Return ``(location, service_detail)`` for ``target`` from the
+    additional-services lists. Searches regex first (richer per-service
+    location binding), falls back to LLM. Returns ``(None, None)`` if
+    not found in either.
+
+    Used by the Bug B carve-outs to preserve location and detail when
+    promoting a queued service to primary.
+    """
+    for source in (regex_additional or [], llm_additional or []):
+        for item in source:
+            if not item or not item[0]:
+                continue
+            if item[0] == target:
+                detail = item[1] if len(item) >= 2 else None
+                location = item[2] if len(item) >= 3 else None
+                return location, detail
+    return None, None
+
+
+def _rebuild_additional_after_promotion(
+    *,
+    promoted_primary: str,
+    promoted_detail: Optional[str],
+    displaced_primary: Optional[str],
+    displaced_loc: Optional[str],
+    displaced_detail: Optional[str],
+    base_additional: list,
+) -> list:
+    """Rebuild the ``additional_services`` list after promoting a
+    service from additional to primary in a Bug B carve-out.
+
+    Operations:
+      1. Drop ``promoted_primary`` from ``base_additional`` (it just
+         became the primary; can't appear twice).
+      2. Insert ``displaced_primary`` (the LLM's old primary) at the
+         FRONT of the remaining list, with its location and detail
+         preserved. Front placement matches user intent: the previous
+         primary stays the highest-priority queued service.
+      3. Drop any duplicate of ``displaced_primary`` further down.
+
+    Tuple shape: ``(service_type, service_detail, location)`` —
+    matches the regex side's three-tuple format. LLM-only contributions
+    that come in as two-tuples are normalized to three by appending
+    ``None`` for location.
+    """
+    # Step 1: filter out the promoted service from base
+    filtered: list = []
+    for item in base_additional or []:
+        if not item or not item[0]:
+            continue
+        if item[0] == promoted_primary:
+            continue
+        # Normalize to 3-tuple
+        s_type = item[0]
+        s_detail = item[1] if len(item) >= 2 else None
+        s_loc = item[2] if len(item) >= 3 else None
+        if s_type == displaced_primary:
+            # Skip duplicates of the displaced primary; we'll insert it at
+            # the front with the canonical fields below.
+            continue
+        filtered.append((s_type, s_detail, s_loc))
+
+    # Step 2: insert displaced primary at the front
+    result: list = []
+    if displaced_primary is not None:
+        result.append((displaced_primary, displaced_detail, displaced_loc))
+    result.extend(filtered)
+    return result
+
+
 def _merge_service_type_and_primary_location(
     regex_result: dict,
     llm_result: dict,
+    message: Optional[str] = None,
     extraction_source: Optional[str] = None,
 ) -> tuple[Optional[str], Optional[str], list]:
     """Trust Model 3: the set-agreement rule for `service_type` and
@@ -395,6 +491,11 @@ def _merge_service_type_and_primary_location(
         can. This rule change unifies the treatment across paths and
         lets the prompt — not the merge — be the locus of primary-
         selection logic going forward.
+
+        `message` is preserved in the signature for backward
+        compatibility with direct-caller unit tests and for possible
+        future use; it is no longer consulted in the sets-match
+        branch.
 
     Semantic-priority carve-out (Phase 4 Stage 3 follow-up,
     April 2026):
@@ -482,8 +583,9 @@ def _merge_service_type_and_primary_location(
         #     The prompts can.
         #
         # This collapses the earlier short/narrative distinction. The
-        # primary-selection logic now lives entirely in the LLM prompts;
-        # the merge layer just trusts the LLM's pick when the sets agree.
+        # `message` parameter is no longer consulted in this branch;
+        # it's preserved in the signature for backward compatibility
+        # with direct-caller unit tests and for future use.
         #
         # Scenarios this rule serves (R36 Category A + B, same fix):
         #   - multi_food_and_shelter_brooklyn (short, food-first)
@@ -535,6 +637,119 @@ def _merge_service_type_and_primary_location(
                 f"regex wins on primary+location+additional (set={sorted(regex_set)})"
             )
             return regex_primary, regex_result.get("location"), regex_additional
+
+        # Bug B carve-outs: Ext-2b's "LLM first-mentioned wins on
+        # set-match" rule fails for two specific shapes where
+        # priority-ordering is the user's actual intent.
+        #
+        # Both carve-outs require regex's tier-priority winner to be at
+        # a strictly better tier than the LLM's first pick. Without that,
+        # there's no priority disagreement to resolve and Ext-2b's
+        # default (first-mentioned) is correct.
+        #
+        # The narrow gating below is the result of an audit of all 17
+        # multi_* eval scenarios where rules-disagree (see
+        # ``tests/integration/test_merge_priority_carveouts.py``). The
+        # carve-outs preserve the 5 scenarios where first-mentioned
+        # wins on n=2 same-location messages while fixing the 2
+        # scenarios where tier-priority should win:
+        #   * multi_three_services_legal_benefits_food (n>=3)
+        #   * multi_cross_borough_food_brooklyn_shelter_manhattan
+        #     (Tier-1 with cross-location)
+        regex_tier_winner = _regex_tier_winner(regex_set)
+        if regex_tier_winner and regex_tier_winner != llm_primary:
+            llm_primary_tier = _SERVICE_NEED_PRIORITY.get(llm_primary, 99)
+            tier_w_tier = _SERVICE_NEED_PRIORITY.get(regex_tier_winner, 99)
+
+            # Carve-out B.1: three-or-more-service tier promotion.
+            # When the user names ≥3 needs, the LLM's "first-mentioned"
+            # heuristic loses to tier-priority. The user is signaling a
+            # compound survival need; the survival-tier service is the
+            # right primary regardless of which one they happened to
+            # mention first. Eval evidence:
+            # ``multi_three_services_legal_benefits_food`` (R32 4.27 →
+            # stage-3 3.73) — "asylum case, food stamps, somewhere to
+            # get food" picks legal first-mentioned but should pick
+            # food (Tier 2) over legal (Tier 4).
+            if len(regex_set) >= 3 and llm_primary_tier > tier_w_tier:
+                # Find the additional-services entry matching the
+                # promoted primary so we can preserve its location and
+                # detail. Search regex first (its tuples have richer
+                # location info per the cross-loc binding); fall back
+                # to LLM. None location is fine — the merged primary
+                # location below handles that.
+                _winner_loc, _winner_detail = _find_service_in_additional(
+                    regex_tier_winner, regex_additional, llm_additional,
+                )
+                _new_primary_loc = _winner_loc or regex_result.get("location") or llm_primary_loc
+                # Rebuild additional from the LLM's set (Ext-2b's
+                # default trust on additional content), but drop the
+                # promoted primary and re-insert the displaced LLM
+                # primary as an additional service.
+                _new_additional = _rebuild_additional_after_promotion(
+                    promoted_primary=regex_tier_winner,
+                    promoted_detail=_winner_detail,
+                    displaced_primary=llm_primary,
+                    displaced_loc=llm_primary_loc,
+                    displaced_detail=llm_result.get("service_detail"),
+                    base_additional=llm_additional,
+                )
+                logger.info(
+                    f"Set-agreement: n>={len(regex_set)} services, "
+                    f"regex tier-winner '{regex_tier_winner}' (T{tier_w_tier}) "
+                    f"beats LLM first-mention '{llm_primary}' (T{llm_primary_tier}) — "
+                    f"regex tier-priority wins"
+                )
+                return regex_tier_winner, _new_primary_loc, _new_additional
+
+            # Carve-out B.2: Tier-1 + cross-location safety promotion.
+            # When BOTH extractors preserve cross-location structure
+            # AND the tier-winner is Tier 1 (life/safety: shelter,
+            # medical), regex's tier-priority wins. The cross-location
+            # gate is essential — without it,
+            # ``multi_food_and_shelter_brooklyn`` ("food and a place
+            # to sleep in Brooklyn", same location, expected: food)
+            # would regress to shelter.
+            #
+            # Eval evidence:
+            # ``multi_cross_borough_food_brooklyn_shelter_manhattan``
+            # ("food in Brooklyn and shelter in Manhattan", expected:
+            # shelter) — regex correctly picks shelter via tier;
+            # without this carve-out, Ext-2b's first-mentioned rule
+            # gives food.
+            #
+            # Why cross-location gates this: when the user binds
+            # services to distinct locations, they're explicitly
+            # naming separate needs (not casually listing). At that
+            # point the safety-tier service deserves to be primary.
+            # When both services share a location ("food and shelter
+            # in Brooklyn"), the user is more often listing in
+            # priority order — first mentioned is the more urgent.
+            if (
+                tier_w_tier == 1
+                and llm_primary_tier > 1
+                and regex_has_cross
+                and llm_has_cross
+            ):
+                _winner_loc, _winner_detail = _find_service_in_additional(
+                    regex_tier_winner, regex_additional, llm_additional,
+                )
+                _new_primary_loc = _winner_loc or regex_result.get("location") or llm_primary_loc
+                _new_additional = _rebuild_additional_after_promotion(
+                    promoted_primary=regex_tier_winner,
+                    promoted_detail=_winner_detail,
+                    displaced_primary=llm_primary,
+                    displaced_loc=llm_primary_loc,
+                    displaced_detail=llm_result.get("service_detail"),
+                    base_additional=llm_additional,
+                )
+                logger.info(
+                    f"Set-agreement: cross-location with Tier-1 "
+                    f"need '{regex_tier_winner}' (T1) — "
+                    f"regex tier-priority beats LLM first-mention "
+                    f"'{llm_primary}' (T{llm_primary_tier})"
+                )
+                return regex_tier_winner, _new_primary_loc, _new_additional
 
         logger.info(
             f"Set-agreement: regex set={sorted(regex_set)}, "
@@ -722,20 +937,11 @@ def _merge_additional_services(
 
 
 def _unpack_additional_item(item: Any) -> tuple:
-    """Coerce an additional-services entry into a ``(type, detail,
-    location)`` triple.
+    """Coerce an additional-services entry into a (type, detail,
+    location) triple.
 
-    The canonical shape produced by current callers is a 3-tuple. The
-    1-tuple, 2-tuple, and string branches are defensive: they let the
-    function tolerate malformed or partial entries that might appear in
-    deserialized session data, third-party fixtures, or future LLM
-    output that drops fields. Returns ``(None, None, None)`` for
-    anything unparseable so callers can skip-filter.
-
-    The defensive branches are exercised by unit tests in
-    ``tests/unit/test_slot_extraction.py`` to guarantee the unpacker
-    doesn't crash on unexpected inputs — that's the contract, not a
-    backwards-compatibility commitment to producers.
+    Accepts both legacy 2-tuples and new 3-tuples. Returns `(None, None,
+    None)` for anything unparseable so callers can skip-filter.
     """
     if not item:
         return (None, None, None)
@@ -760,6 +966,7 @@ def _unpack_additional_item(item: Any) -> tuple:
 def merge(
     regex_result: dict,
     llm_result: dict,
+    message: Optional[str] = None,
     extraction_source: Optional[str] = None,
 ) -> dict:
     """Merge regex and LLM extraction results into the 15-field dict
@@ -771,14 +978,20 @@ def merge(
       - `llm_result` has the 12 LLM-contributed fields populated where
         possible — the 10 slot fields plus `tone` and `action`. The 3
         regex-only Trust Model 5 fields are not present.
+      - `message` (optional) is the original user message. When
+        supplied, Trust Model 3 uses it to distinguish narrative-path
+        messages (≥ _NARRATIVE_THRESHOLD words) from short-path ones
+        and applies the narrative-path exception to the sets-match
+        rule. When None, the original sets-match rule (regex priority
+        wins) applies — this preserves backward compatibility for
+        unit tests that call `merge()` without the path distinction.
       - `extraction_source` (optional): one of "regex" / "semantic" /
         "llm_gate" / None, identifying where `regex_result.service_type`
         came from. Trust Model 3 uses this to give semantic-router
         classifications priority over the LLM on sets-disagree (see
         `_merge_service_type_and_primary_location` docstring).
-        The default is ``None`` for test convenience — production callers
-        should always pass an explicit value to make the source-tracking
-        behavior visible at the call site.
+        Default None means "treat as regex" — backwards-compatible
+        with callers that don't track source.
 
     Postconditions:
       - returned dict has 15 keys: the 13 fields from regex_result
@@ -798,7 +1011,7 @@ def merge(
     # regex's Manhattan (which was regex's primary-for-shelter value).
     service_type, location_from_primary, winner_additional = \
         _merge_service_type_and_primary_location(
-            regex_result, llm_result, extraction_source
+            regex_result, llm_result, message, extraction_source
         )
 
     # TRUST MODEL 1: location (regex-literal, validator-gated LLM fallback)

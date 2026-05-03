@@ -1101,10 +1101,10 @@ class TestIntegrationFallthrough:
 class TestRouteAlignment:
     """Verify route definitions align with the rest of the codebase."""
 
-    def test_service_routes_align_with_slot_extractor(self):
+    def test_service_routes_align_with_slot_extraction_regex(self):
         """SERVICE_ROUTES keys should match SERVICE_KEYWORDS keys in
-        slot_extractor.py (the service types the system recognizes)."""
-        from app.services.slot_extractor import SERVICE_KEYWORDS
+        slot_extraction_regex.py (the service types the system recognizes)."""
+        from app.services.slot_extraction_regex import SERVICE_KEYWORDS
 
         route_keys = set(SERVICE_ROUTES.keys())
         keyword_keys = set(SERVICE_KEYWORDS.keys())

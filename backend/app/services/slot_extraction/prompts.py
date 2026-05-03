@@ -187,7 +187,7 @@ _EXTRACT_SLOTS_TOOL = {
                     "enum": [
                         "veteran", "disabled", "reentry",
                         "dv_survivor", "pregnant", "senior",
-                        "foster_youth",
+                        "foster_youth", "immigration",
                     ],
                 },
                 "description": (
@@ -197,7 +197,11 @@ _EXTRACT_SLOTS_TOOL = {
                     "disabled = physical or cognitive disability, wheelchair user. "
                     "reentry = released from jail/prison, on parole/probation. "
                     "Do NOT use reentry for foster care — use foster_youth instead. "
+                    "Do NOT use reentry for undocumented or asylum status — use immigration instead. "
                     "foster_youth = in foster care, aging out of foster care, aged out, former foster youth. "
+                    "immigration = undocumented, asylum seeker, refugee, recently arrived, "
+                    "needs help with papers/visa/green card/citizenship/deportation. "
+                    "Use this for any immigration-status-related context, NOT reentry. "
                     "dv_survivor = escaping or recovering from domestic violence/abuse. "
                     "pregnant = currently expecting a baby. "
                     "senior = elderly or older adult. "

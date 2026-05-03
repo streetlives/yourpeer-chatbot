@@ -89,7 +89,7 @@ def _is_simple_message(message: str, regex_result: dict) -> bool:
 
     # Check if the extracted location is a known NYC location
     # (not a greedy-captured sentence fragment).
-    from app.services.slot_extractor import _KNOWN_LOCATIONS, NEAR_ME_SENTINEL
+    from app.services.slot_extraction_regex import _KNOWN_LOCATIONS, NEAR_ME_SENTINEL
     location = regex_result.get("location", "")
     if location == NEAR_ME_SENTINEL:
         return True  # "near me" is simple
@@ -101,7 +101,7 @@ def _is_simple_message(message: str, regex_result: dict) -> bool:
         return False  # Unknown location may be garbled — let LLM handle
 
     # Check for multiple service-type keywords (conflicting signals)
-    from app.services.slot_extractor import SERVICE_KEYWORDS
+    from app.services.slot_extraction_regex import SERVICE_KEYWORDS
     lower = message.lower()
     matched_categories = set()
     for cat, keywords in SERVICE_KEYWORDS.items():

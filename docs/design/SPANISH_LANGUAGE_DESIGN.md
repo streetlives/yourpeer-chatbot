@@ -402,7 +402,7 @@ Add a new dimension or sub-metric: `Language Consistency` — did the bot respon
 - Spanish quick-reply button labels
 - Spanish service category labels
 - Spanish LLM system prompt
-- Spanish keywords for all 9 service categories in `slot_extractor.py`
+- Spanish keywords for all 9 service categories in `slot_extraction_regex.py`
 - Spanish confirmation/action phrase lists in `classifier.py`
 - 5-10 Spanish utterances per semantic route
 

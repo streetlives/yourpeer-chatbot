@@ -88,7 +88,7 @@ information, preventing hallucination.
 | `backend/app/services/confirmation.py` | `_build_confirmation_message()`, no-results fallback via `_build_no_results_message()`, borough-suggestion phrasing. (NOT the same file as `chatbot/handlers/confirmation.py` — this is the top-level confirmation module.) |
 | `backend/app/services/bot_knowledge.py` | Bot self-knowledge: live capability sourcing, topic matching, LLM context generation |
 | `backend/app/services/crisis_detector.py` | Two-stage crisis detection (regex + Sonnet LLM), 8 crisis categories with population-specific resources: suicide_self_harm, medical_emergency, domestic_violence, youth_runaway (Runaway Safeline, Covenant House), assault_victim (Safe Horizon), safety_concern (911, 988, 311 — no DV hotlines), trafficking, violence (threats to harm others, weapons) |
-| `backend/app/services/slot_extractor.py` | Regex-based slot extraction (9 service categories after April 15 housing_assistance retirement), `SERVICE_KEYWORDS` dict, `_SERVICE_NEED_PRIORITY` tier table for Housing First ordering, negation-phrase shelter keywords (Feature A — "nowhere to sleep"), gender/LGBTQ identity extraction, population context extraction, organization name extraction, walk-in/no-requirements detection, Spanish service keywords |
+| `backend/app/services/slot_extraction_regex.py` | Regex-based slot extraction (9 service categories after April 15 housing_assistance retirement), `SERVICE_KEYWORDS` dict, `_SERVICE_NEED_PRIORITY` tier table for Housing First ordering, negation-phrase shelter keywords (Feature A — "nowhere to sleep"), gender/LGBTQ identity extraction, population context extraction, organization name extraction, walk-in/no-requirements detection, Spanish service keywords |
 | `backend/app/services/post_results.py` | Filter-subcategory engine: `_handle_filter_subcategory()` returns paginated `services` + full `_full_filtered` set for session persistence; `classify_post_results_question()` disambiguates refinement phrases ("ones for families", "more like those", "exclude DHS") via two-phase regex |
 | `backend/app/services/semantic_router.py` | Tier 2 semantic routing: `all-MiniLM-L6-v2` sentence embedding model, cosine similarity against pre-embedded route utterances, per-route confidence thresholds, population detection, `get_status()` for health checks, `SentenceTransformer = None` fallback for mocking |
 | `backend/app/services/semantic_routes.py` | Route definitions: example utterances per service category and population category. No code changes needed to add utterances — just edit and restart |
@@ -198,7 +198,7 @@ source venv/bin/activate
 pytest                                    # all tests (no API key or DB needed)
 pytest tests/unit/                        # fast unit tests only
 pytest tests/integration/                 # integration tests (mocked DB/LLM)
-pytest tests/unit/test_slot_extractor.py  # single file
+pytest tests/unit/test_slot_extraction_regex.py  # single file
 pytest -k reset                           # filter by test name
 ```
 
@@ -250,13 +250,13 @@ See `docs/TESTING.md` → Drift Guards for the full catalog, decision table, and
 
 ## Common Pitfalls
 
-- Editing slot extraction logic without updating both `slot_extractor.py` (regex) **and**
+- Editing slot extraction logic without updating both `slot_extraction_regex.py` (regex) **and**
   `slot_extraction/` (LLM, Phase 4 unified) — they must stay in sync on supported slot
   names/values. The LLM tool schema lives in `slot_extraction/prompts.py:_EXTRACT_SLOTS_TOOL`.
 - Adding a new service category requires updates in `query_templates.py` (SQL template),
-  `slot_extractor.py` (keywords), `semantic_routes.py` (example utterances), and
+  `slot_extraction_regex.py` (keywords), `semantic_routes.py` (example utterances), and
   `phrase_lists.py` (service label). The semantic route definitions must use the same
-  category keys as `SERVICE_KEYWORDS` in `slot_extractor.py`.
+  category keys as `SERVICE_KEYWORDS` in `slot_extraction_regex.py`.
 - Adding new example utterances to semantic routes requires no code changes — just edit
   `semantic_routes.py` and restart. But don't add the same utterance to two different
   routes (cross-route duplicates cause nondeterministic routing).

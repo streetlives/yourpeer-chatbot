@@ -7,7 +7,7 @@ tests/
 ├── conftest.py              # Shared fixtures, helpers (send, send_multi, assert_classified)
 │
 ├── unit/                    # Fast, isolated tests — no DB, no LLM, no network (57 files)
-│   ├── test_slot_extractor.py          # Slot extraction (service, location, age, family)
+│   ├── test_slot_extraction_regex.py          # Slot extraction (service, location, age, family)
 │   ├── test_slot_extraction_keywords.py # Keyword-specific slot extraction
 │   ├── test_service_keywords.py        # Service keyword coverage and alignment
 │   ├── test_semantic_router.py         # Semantic routing (classification, thresholds, populations)
@@ -82,17 +82,17 @@ pytest tests/unit/
 pytest tests/integration/
 
 # Specific module
-pytest tests/unit/test_slot_extractor.py
+pytest tests/unit/test_slot_extraction_regex.py
 
 # With coverage
-pytest tests/unit/ --cov=app.services.slot_extractor
+pytest tests/unit/ --cov=app.services.slot_extraction_regex
 ```
 
 ## Where to Add New Tests
 
 | You're testing... | Add to... |
 |---|---|
-| A new slot extractor function | `unit/test_slot_extractor.py` |
+| A new slot extractor function | `unit/test_slot_extraction_regex.py` |
 | A new phrase list or keyword | `unit/test_phrase_audit.py` |
 | Classification (action/tone) | `unit/test_contraction_normalization.py` or add `unit/test_classifier.py` |
 | Confirmation message formatting | Add `unit/test_confirmation.py` |
@@ -107,7 +107,7 @@ pytest tests/unit/ --cov=app.services.slot_extractor
 
 | Source module | Primary test file(s) |
 |---|---|
-| `slot_extractor.py` | `unit/test_slot_extractor.py`, `unit/test_gender_extraction.py`, `unit/test_location_boundaries.py` |
+| `slot_extraction_regex.py` | `unit/test_slot_extraction_regex.py`, `unit/test_gender_extraction.py`, `unit/test_location_boundaries.py` |
 | `classifier.py` | `unit/test_contraction_normalization.py`, `unit/test_phrase_audit.py` |
 | `responses.py` | `integration/test_service_data_llm_firewall.py` (prompt isolation) |
 | `confirmation.py` | `unit/test_confirmation_flow.py` |

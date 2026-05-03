@@ -60,7 +60,7 @@ class TestConfirmationRequired:
         (shelter=1, employment=4) and employment queues as an additional
         service.
 
-        If this regresses, check `slot_extractor.py` shelter keywords
+        If this regresses, check `slot_extraction_regex.py` shelter keywords
         for 'don't have anywhere to go' / 'dont have anywhere to go'.
         """
         r = send_multi([
@@ -73,7 +73,7 @@ class TestConfirmationRequired:
             "Shelter must be primary (priority 1) over employment "
             f"(priority 4). Got {slots.get('service_type')!r}. If this "
             "is 'employment', the 'don't have anywhere to go' shelter "
-            "keyword may have been removed from slot_extractor.py."
+            "keyword may have been removed from slot_extraction_regex.py."
         )
         assert "foster_youth" in (slots.get("_populations") or [])
         # Bot response should reference both services (primary + queued)
@@ -257,3 +257,116 @@ class TestOtherR25Regressions:
         r = send_multi(["I'm pregnant and my partner and I need a place tonight in Brooklyn"])
         assert r[0]["result_count"] == 0, "Must confirm"
         assert r[0]["follow_up_needed"] is True
+
+    def test_peer_undocumented_papers_does_not_say_reentry(self, monkeypatch):
+        """``peer_undocumented_papers`` regressed from 3.82 to 3.0 when
+        the bot rendered "reentry-friendly legal help" for an
+        undocumented user. Two fixes ship together:
+
+        1. Regex side: "undocumented" maps to ``immigration`` via
+           ``_extract_populations``, so even with no LLM call the
+           confirmation renders "immigration-friendly".
+        2. LLM/merge side: when the LLM mistakenly returns
+           ``_populations: ["reentry"]`` (which is what the eval was
+           catching — the LLM ignoring the prompt's "do not use reentry
+           for undocumented" instruction), the merge layer unions
+           regex's ``["immigration"]`` with the LLM's ``["reentry"]``,
+           and the confirmation prefix logic checks ``immigration``
+           BEFORE ``reentry`` in its elif chain — so the correct label
+           wins.
+
+        This test pins (2) by mocking the LLM extractor to return
+        ``_populations: ["reentry"]`` deterministically. Without the
+        ``elif "immigration"`` branch in ``confirmation.py`` AND the
+        regex-side ``immigration`` mapping in ``slot_extraction_regex.py``,
+        this test fails — the bot says "reentry-friendly".
+
+        Bidirectional reproduction:
+            * pre-fix → "I'll look for reentry-friendly legal help"
+            * post-fix → "I'll look for immigration-friendly legal help"
+
+        See ``test_populations.py::TestConfirmationPopulations::
+        test_immigration_takes_priority_over_reentry`` for the unit
+        test of just the confirmation rendering.
+        """
+        from unittest.mock import patch
+        from app.services.chatbot import generate_reply, orchestrator, pipeline
+        from app.services.session_store import clear_session
+
+        # Force _USE_LLM=True so the LLM gate path actually fires —
+        # without this, no API key in the test env means the gate is
+        # skipped and the LLM mocks are never called. Patch every bind
+        # site (context owns the value; orchestrator and pipeline both
+        # do ``from .context import _USE_LLM`` at module load).
+        monkeypatch.setattr(orchestrator, "_USE_LLM", True)
+        monkeypatch.setattr(pipeline, "_USE_LLM", True)
+
+        # Mock the LLM extractors to return _populations=["reentry"]
+        # for this message, simulating the LLM's enum-conflation bug.
+        # Both narrative and short paths get the same fake to keep
+        # the test agnostic to which path the dispatch picks.
+        def fake_llm_extract(message, conversation_history=None):
+            return {
+                "service_type": "legal",
+                "service_detail": None,
+                "additional_services": [],
+                "location": "queens",
+                "age": None,
+                "urgency": None,
+                "_gender": None,
+                "family_status": None,
+                "_populations": ["reentry"],  # ← The LLM mistake
+                "org_name": None,
+                "tone": None,
+                "action": None,
+            }
+
+        sid = "test-undoc-bidirectional"
+        clear_session(sid)
+        try:
+            with patch("app.services.chatbot.handlers.meta.claude_reply",
+                       return_value="ok"), \
+                 patch("app.services.chatbot.execution.query_services",
+                       return_value=MOCK_QUERY_RESULTS), \
+                 patch("app.services.chatbot.orchestrator.detect_crisis",
+                       return_value=None), \
+                 patch("app.services.classifier.detect_crisis",
+                       return_value=None), \
+                 patch("app.services.slot_extraction.extract_slots_narrative",
+                       side_effect=fake_llm_extract), \
+                 patch("app.services.slot_extraction.extract_slots_short",
+                       side_effect=fake_llm_extract):
+                r = generate_reply(
+                    "I'm undocumented and need help with my papers in Queens",
+                    session_id=sid,
+                )
+
+            # Should reach confirmation, not auto-search
+            assert r["result_count"] == 0, "Must confirm before searching"
+
+            # The merged populations should contain BOTH immigration (from
+            # regex) and reentry (from the LLM mock), proving the merge
+            # layer behaved as expected.
+            populations = r.get("slots", {}).get("_populations") or []
+            assert "immigration" in populations, (
+                f"Regex should have extracted 'immigration' from "
+                f"'undocumented'. Got populations={populations!r}"
+            )
+            assert "reentry" in populations, (
+                f"LLM mock should have contributed 'reentry'. "
+                f"Got populations={populations!r}"
+            )
+
+            # Crucial assertion: the confirmation prefix MUST be
+            # "immigration-friendly", NOT "reentry-friendly".
+            response = r.get("response", "").lower()
+            assert "immigration-friendly" in response, (
+                f"Confirmation should label this as immigration-friendly. "
+                f"Response: {r.get('response')!r}"
+            )
+            assert "reentry-friendly" not in response, (
+                f"Bot must not label undocumented user as reentry-friendly. "
+                f"Response: {r.get('response')!r}"
+            )
+        finally:
+            clear_session(sid)

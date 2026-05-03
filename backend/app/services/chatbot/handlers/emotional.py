@@ -25,7 +25,7 @@ from app.services.responses import (
     _pick_emotional_response,
 )
 from app.services.session_store import save_session_slots
-from app.services.slot_extractor import (
+from app.services.slot_extraction_regex import (
     NEAR_ME_SENTINEL,
     is_enough_to_answer,
     merge_slots,

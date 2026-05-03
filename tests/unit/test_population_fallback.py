@@ -590,7 +590,7 @@ class TestGpsUserFallback:
     """
 
     def test_gps_user_in_soho_triggers_fallback(self):
-        from app.services.slot_extractor import NEAR_ME_SENTINEL
+        from app.services.slot_extraction_regex import NEAR_ME_SENTINEL
         main = [_card(f"g{i}", ["Shelter", "Single Adult"]) for i in range(5)]
         fallback = [_card("afc", ["Shelter", "LGBTQ Young Adult"],
                           name="Ali Forney Center")]
@@ -616,7 +616,7 @@ class TestGpsUserFallback:
         LGBTQ young adult shelter must see Ali Forney Center (Manhattan)
         because it's the only such service in the DB. Under borough-
         scoped fallback this user would see nothing."""
-        from app.services.slot_extractor import NEAR_ME_SENTINEL
+        from app.services.slot_extraction_regex import NEAR_ME_SENTINEL
         main = [_card("g1", ["Shelter", "Single Adult"])]
         fallback = [_card("afc", ["Shelter", "LGBTQ Young Adult"],
                           name="Ali Forney Center")]
@@ -912,7 +912,7 @@ class TestCrossBoroughFallback:
     def test_far_rockaway_gps_user_gets_manhattan_afc(self):
         """The motivating scenario: GPS user in Far Rockaway, Queens,
         rare population (LGBTQ YA), should surface Ali Forney (Manhattan)."""
-        from app.services.slot_extractor import NEAR_ME_SENTINEL
+        from app.services.slot_extraction_regex import NEAR_ME_SENTINEL
         main = [_card("gen-q1", ["Shelter", "Single Adult"]),
                 _card("gen-q2", ["Shelter", "Single Adult"])]
         # AFC tagged with LGBTQ YA only (not Youth) — matches the pattern
@@ -969,7 +969,7 @@ class TestCrossBoroughFallback:
         connection to Manhattan). Under borough scoping, a SI user
         would have basically zero options for rare populations. Option
         B makes sure they're not cut off from NYC-wide resources."""
-        from app.services.slot_extractor import NEAR_ME_SENTINEL
+        from app.services.slot_extraction_regex import NEAR_ME_SENTINEL
         main = [_card("gen-si", ["Shelter", "Single Adult"])]
         fallback = [_card("afc", ["Shelter", "LGBTQ Young Adult"],
                           name="Ali Forney Center")]

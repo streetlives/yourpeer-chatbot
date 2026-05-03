@@ -25,7 +25,7 @@ user-visible failure.
 
 import pytest
 
-from app.services.slot_extractor import merge_slots
+from app.services.slot_extraction_regex import merge_slots
 
 
 class TestServiceChangeClearsQueueState:

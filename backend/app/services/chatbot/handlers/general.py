@@ -18,7 +18,7 @@ import re
 from app.services.phrase_lists import _WELCOME_QUICK_REPLIES
 from app.services.responses import _fallback_response
 from app.services.session_store import save_session_slots
-from app.services.slot_extractor import NEAR_ME_SENTINEL
+from app.services.slot_extraction_regex import NEAR_ME_SENTINEL
 
 from ..context import MessageContext, _empty_reply
 from ..logging import _log_turn

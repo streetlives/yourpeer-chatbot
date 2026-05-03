@@ -158,7 +158,7 @@ def _run_one(case: MiniEvalCase, verbose: bool) -> tuple[bool, dict]:
     print them in the report.
     """
     # Import lazily so the --help path works without the full backend.
-    from app.services.slot_extractor import extract_slots
+    from app.services.slot_extraction_regex import extract_slots
     from app.services.slot_extraction.dispatch import extract_slots_short
 
     # The short path needs conversation_history=[] and extracts from the
@@ -236,7 +236,7 @@ def main(argv: Optional[list] = None) -> int:
     sys.path.insert(0, backend_path)
 
     try:
-        from app.services.slot_extractor import extract_slots  # noqa: F401
+        from app.services.slot_extraction_regex import extract_slots  # noqa: F401
     except ImportError as e:
         _bail(2, f"Cannot import backend: {e}")
 

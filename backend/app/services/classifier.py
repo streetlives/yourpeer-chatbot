@@ -307,7 +307,7 @@ def _classify_message(text: str) -> str:
     The leading underscore signals "internal — not part of the
     chatbot's public API". Tests are the only consumer.
     """
-    from app.services.slot_extractor import extract_slots
+    from app.services.slot_extraction_regex import extract_slots
 
     lower = text.lower().strip()
     cleaned = re.sub(r"[^\w\s']", "", lower).strip()
