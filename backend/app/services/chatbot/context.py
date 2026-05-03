@@ -104,6 +104,16 @@ class MessageContext:
     tone_prefix: str = ""     # sensitive-context / warmth prefix from _compute_tone_prefix
     # --- Merged slot state (set late, after merge_slots in service flow) ---
     merged: Optional[dict] = None  # post-merge dict; same identity as orchestrator's `merged`
+    # --- Cached LLM extraction (set when ``_run_llm_gate`` fires) ---
+    # Full 15-field merged dict from ``slot_extraction.extract()``, captured
+    # by the gate so the orchestrator's service branch and
+    # ``_handle_post_pending_confirmation`` can reuse it instead of re-
+    # invoking the LLM on the same message. ``None`` when the gate
+    # condition didn't fire (short message, prior service intent, etc.) or
+    # when the call raised — consumers must handle that case by either
+    # falling through to a fresh ``slot_extraction.extract()`` call or
+    # using ``early_extracted`` directly.
+    unified_extraction: Optional[dict] = None
 
 
 # ---------------------------------------------------------------------------

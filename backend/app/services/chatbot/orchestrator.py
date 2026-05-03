@@ -146,7 +146,7 @@ def generate_reply(
 
     # --- UNIFIED LLM CLASSIFICATION GATE ---
     _regex_tone_pre = _classify_tone(message, crisis_result=_CRISIS_NOT_CHECKED)
-    has_service_intent, _action_pre, _extraction_source, _llm_tone, _llm_action = _run_llm_gate(
+    has_service_intent, _action_pre, _extraction_source, _llm_tone, _llm_action, _unified = _run_llm_gate(
         message=message,
         early_extracted=early_extracted,
         has_service_intent=has_service_intent,
@@ -247,6 +247,7 @@ def generate_reply(
         spanish_acknowledgment="",         # late-set after spanish detection
         tone_prefix="",                    # late-set after _compute_tone_prefix
         merged=None,                       # late-set after merge_slots (service flow)
+        unified_extraction=_unified,       # cached gate output (None if gate didn't fire)
     )
 
     if tone == "crisis":
@@ -478,6 +479,18 @@ def generate_reply(
         if awaiting_clear and regex_confident:
             extracted = dict(early_extracted)
             _clear_awaiting_service_after_clear(session_id, existing)
+        elif ctx.unified_extraction is not None:
+            # LLM-1: Reuse the gate's already-computed result. The gate
+            # fired ``slot_extraction.extract()`` on this same message
+            # (the only way ``unified_extraction`` gets populated), and
+            # the second call here would invoke the same LLM with the
+            # same regex_result for a near-identical (modulo non-
+            # determinism) output. Skip it.
+            #
+            # See PHASE_AC_AFTERMATH.md `LLM-1` and the comment at
+            # ``slot_extraction/__init__.py:162-163`` (the deferred
+            # latency note that anticipated this fix).
+            extracted = ctx.unified_extraction
         else:
             # Phase 4 (April 2026): the legacy `extract_slots_smart`
             # path was removed and the feature flag deleted; slot

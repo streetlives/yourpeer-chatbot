@@ -162,14 +162,28 @@ class TestCrisisStepDownMultiIntent:
 
 class TestLLMContradictoryCategory:
     """When the LLM classifier returns a category that conflicts with
-    other detectors, the chatbot should not crash or loop."""
+    other detectors, the chatbot should not crash or loop.
+
+    Both tests in this class exercise paths that route through
+    ``_handle_general_conversation`` → ``_fallback_response``, which
+    imports ``claude_reply`` from ``app.services.responses`` (a
+    different bind site than the one used by service-flow handlers in
+    ``app.services.chatbot.handlers.meta``). Both bindings must be
+    patched independently — patching only one leaks the other through
+    to the real Claude SDK (or to a MagicMock from a leaked
+    ``app.llm.claude_client._client`` cache; see the
+    ``_reset_claude_client_cache`` autouse fixture in
+    ``tests/conftest.py`` for the related defense).
+    """
 
     @patch("app.services.chatbot.orchestrator.detect_crisis", return_value=None)
     @patch("app.services.chatbot.execution.query_services", return_value=MOCK_QUERY_RESULTS)
     @patch("app.services.chatbot.handlers.meta.claude_reply", return_value="I can help with that.")
+    @patch("app.services.responses.claude_reply", return_value="I can help with that.")
     @patch("app.llm.claude_client.classify_message_llm", return_value="crisis")
     def test_llm_says_crisis_but_detector_says_no(
-        self, mock_llm_cls, mock_claude, mock_query, mock_crisis
+        self, mock_llm_cls, mock_resp_claude, mock_meta_claude,
+        mock_query, mock_crisis,
     ):
         """LLM classifier returns 'crisis' but detect_crisis returned None.
         Should not re-trigger crisis flow — detect_crisis is authoritative."""
@@ -186,8 +200,12 @@ class TestLLMContradictoryCategory:
     @patch("app.services.chatbot.orchestrator.detect_crisis", return_value=None)
     @patch("app.services.chatbot.execution.query_services", return_value=MOCK_QUERY_RESULTS)
     @patch("app.services.chatbot.handlers.meta.claude_reply", return_value="Let me help.")
+    @patch("app.services.responses.claude_reply", return_value="Let me help.")
     @patch("app.llm.claude_client.classify_message_llm", return_value=None)
-    def test_llm_returns_none(self, mock_llm_cls, mock_claude, mock_query, mock_crisis):
+    def test_llm_returns_none(
+        self, mock_llm_cls, mock_resp_claude, mock_meta_claude,
+        mock_query, mock_crisis,
+    ):
         """LLM classifier returns None — should fall back to general."""
         sid = _fresh_session()
         result = generate_reply("asdf", session_id=sid)

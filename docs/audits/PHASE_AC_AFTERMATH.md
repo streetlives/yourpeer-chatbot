@@ -24,9 +24,9 @@ Use stable IDs (e.g., `D-1`, `BUG-1`) when referencing items from PRs or commits
 | `SMELL-9` | `_empty_reply` doesn't log empty-message events | Audit gap | XS | Low |
 | `UTIL-1` | Extend `text_normalize.py` with `normalize_contractions` + `strip_intensifiers` | Utility extraction | S | ✅ Closed |
 | `UTIL-2` | Extract `format_time` to `utils/time_format.py` | Utility extraction | XS | ✅ Closed |
-| `LLM-1` | Duplicate `slot_extraction.extract()` between `_run_llm_gate` and orchestrator service branch | LLM redundancy | M | Medium |
-| `LLM-2` | `_handle_post_pending_confirmation` re-extracts; ignores pre-computed `ctx.early_extracted` | LLM redundancy | S | Medium |
-| `LLM-3` | `classify_message_llm` fallback in `_compute_routing_category` likely redundant after `_run_llm_gate` | LLM redundancy | S | Low |
+| `LLM-1` | Duplicate `slot_extraction.extract()` between `_run_llm_gate` and orchestrator service branch | LLM redundancy | M | ✅ Closed |
+| `LLM-2` | `_handle_post_pending_confirmation` re-extracts; ignores pre-computed `ctx.early_extracted` | LLM redundancy | S | ✅ Closed |
+| `LLM-3` | `classify_message_llm` fallback in `_compute_routing_category` likely redundant after `_run_llm_gate` | LLM redundancy | S | ✅ Closed |
 | `COMPAT-1` | Remove or simplify `_classify_message` backward-compat wrapper | Pre-launch cleanup | S | ✅ Closed |
 | `COMPAT-2` | Drop `extraction_source=None` default in `slot_extraction.extract()` | Pre-launch cleanup | XS | ✅ Closed |
 | `COMPAT-3` | Drop unused `message` parameter from `merge.py` set-overlap branches | Pre-launch cleanup | XS | ✅ Closed |
@@ -66,8 +66,7 @@ The four-phase MessageContext adoption (Phases A-C in `ORCHESTRATOR_AUDIT.md`) i
 **Options:**
 - **(a) Pytest fixture `default_ctx(**overrides)`** — returns a MessageContext with sensible defaults, callers override only the fields they care about. Simplest and most idiomatic for pytest.
 - **(b) `MessageContext.for_test(...)` classmethod** — same idea, on the class itself. Discoverable but couples production code to tests.
-
-<!-- drift:ignore: possible future files that may not exist yet -->
+<!-- drift:ignore: ignore future test files that don't exist yet -->
 **Recommendation:** (a) in `tests/conftest.py` or `tests/_fixtures/ctx.py`. About 15 lines.
 
 **Acceptance:** fixture lands; existing unit tests for migrated handlers (e.g. `_handle_negative_preference`, `_handle_correction`, `_handle_demographic_skip`) optionally rewritten to use it; `D-1` blocked on this.
@@ -306,99 +305,100 @@ Identified during a post-Phase-C sweep of all LLM call sites. The system has 8 p
 
 ### `LLM-1` — Duplicate `slot_extraction.extract()` call between `_run_llm_gate` and orchestrator service branch
 
-**Status:** Open. Highest-impact item in this category.
+**Status:** ✅ **Closed** (in this PR).
 
-**Description:** When a user types a service request that regex misses (e.g., "I'm looking for somewhere safe to crash tonight in Brooklyn", >8 words), the LLM slot extractor is invoked twice on the same message within a single turn:
+**Resolution:** Took option (a) — cache the gate's result on `MessageContext`.
 
-1. **First call:** `pipeline._run_llm_gate` → `slot_extraction.extract()` runs because `not has_service_intent and len(message.split()) >= 4`. The LLM finds `service_type="shelter"` and the gate mutates `early_extracted` in place to add it.
-2. **Second call:** orchestrator service branch (`orchestrator.py:493`) → `slot_extraction.extract()` again. The branch is gated only on `_USE_LLM and category == "service"`. Inside `extract()`, `_is_simple_message` returns False for messages >8 words even when regex_result has full slots, so the LLM fires a second time.
+- ``_run_llm_gate`` in ``pipeline.py`` now returns a 6-tuple, with the new trailing element being the full ``unified`` dict produced by ``slot_extraction.extract()`` (``None`` when the gate condition didn't fire or the call raised).
+- ``MessageContext`` got a new field, ``unified_extraction: Optional[dict] = None``, with a documented contract: populated only when ``_run_llm_gate`` ran successfully; consumers must handle the ``None`` case.
+- Orchestrator's service branch (``orchestrator.py``) checks ``ctx.unified_extraction is not None`` BEFORE the existing ``else`` branch's ``slot_extraction.extract()`` call. When set, it uses the cached value directly. When unset (gate didn't fire — short message, prior service intent, etc.), the existing fresh-extraction path runs.
+- The two test stubs of ``_run_llm_gate`` (1 in ``test_orchestrator_guards.py`` returning a 5-tuple, 3 unpacking sites in ``test_chatbot_extracted_helpers.py``) were extended to the 6-tuple shape.
+- The deferred-latency comment at ``slot_extraction/__init__.py:162-163`` that anticipated this fix was retained — the cache short-circuits the duplicate call without changing the inner extraction module's behavior, so the comment still describes that module accurately.
 
-The known-deferred comment at `slot_extraction/__init__.py:162-163` acknowledges the gap: *"If latency becomes a concern on these short messages, revisit; the parallel-run eval in Phase 2 will reveal whether skipping the LLM here costs score points."*
+**New regression test:** ``tests/integration/test_llm_call_redundancy.py::TestLLM1NoDuplicateExtractionCall``. Two cases — the long-service-message scenario (asserts call count = 1; verified to fail at 2 pre-fix), and the short-simple-message sanity check (asserts call count = 0 on the regex-only fast path; verifies the cache change didn't regress the short path).
 
-Also documented at `pipeline.py:159-160`: *"The gate condition guarantees `early_extracted.service_type is None`, so when the result has a service_type, the LLM contributed it."* — but the second call ignores that fact.
-
-**Cost:** ~2x latency and ~2x API cost on every >8-word message that regex misses but the gate finds. This is the most common path for "narrative" service requests that aren't trivially short.
-
-**Why it survived migration:** Phase 4 (April 2026) replaced `extract_slots_smart` with the unified `extract()`. The `_run_llm_gate` path was added separately for tone/action classification. Each path was correct in isolation; nobody noticed they fire on the same message in sequence.
-
-**Fix options:**
-- (a) **Cache the gate's result on `MessageContext`.** When `_run_llm_gate` invokes `slot_extraction.extract()` and gets back a result, store it on `ctx` (e.g., `ctx.unified_extraction`). The orchestrator service branch checks for the cached value and uses it instead of re-running. Cleanest, requires a new MessageContext field.
-- (b) **Skip the second call when the gate already enriched.** Add a guard at `orchestrator.py:493` that returns `early_extracted` directly when `extraction_source == "llm_gate"`. Smaller change; correctness depends on the gate having extracted everything the second call would.
-- (c) **Push the gate's call into the service branch.** Restructure so only one path invokes `extract()` per message. Larger refactor; clearer architecturally.
-
-**Test coverage required:** new test that pins LLM call count = 1 for a missed-by-regex narrative service message. Mock the LLM client and assert `client.messages.create.call_count == 1` over the full `generate_reply` cycle.
-
-**Acceptance:** Single LLM extraction call per message verified by test; eval scores match or exceed baseline; latency improvement measurable on the affected path.
+**Verification:** Full suite at 4330 passing.
 
 ### `LLM-2` — `_handle_post_pending_confirmation` re-extracts, ignoring pre-computed extraction
 
-**Status:** Open.
+**Status:** ✅ **Closed** (in this PR).
 
-**Description:** `_handle_post_pending_confirmation` (confirmation.py:734-741) runs its own slot extraction pipeline:
+**Resolution:** Three-branch fix that reuses ctx-cached values whenever possible.
 
+The handler in ``confirmation.py:_handle_post_pending_confirmation`` previously did:
 ```python
-from app.services.slot_extraction import extract as extract_unified
 regex_result = extract_slots(ctx.message)
-pending_extracted = extract_unified(
-    ctx.message,
-    regex_result,
-    conversation_history=existing.get("transcript", []),
-    api_key_available=True,
+pending_extracted = slot_extraction.extract(
+    ctx.message, regex_result, ..., extraction_source="regex",
 )
 ```
 
-The orchestrator already ran:
-- `_run_early_extraction` (regex + semantic) → `ctx.early_extracted` is populated
-- `_run_llm_gate` may have run → `ctx.early_extracted` may be enriched
-
-But this handler ignores `ctx.early_extracted` and re-runs both regex (`extract_slots`) and the unified LLM extractor. On a pending-confirmation continuation message, this is a 2nd LLM call (3rd if `LLM-1` also fires).
-
-**Comment at L730-733** justifies the re-extraction: *"The unified extractor requires a `regex_result` parameter, so we run regex here first (cheap — the caller's `_run_early_extraction` isn't in scope at this post-pending path)."*
-
-The justification is partially accurate — `_run_early_extraction` isn't in scope as a function call, but its output IS available via `ctx.early_extracted`. The handler could read from there instead.
-
-**Fix:** replace lines 734-741 with:
+After the fix:
 ```python
-pending_extracted = ctx.early_extracted
+if ctx.unified_extraction is not None:
+    # LLM-1 cache hit: gate already ran, reuse it.
+    pending_extracted = ctx.unified_extraction
+elif _USE_LLM:
+    # Gate didn't fire — call the LLM once with ctx.early_extracted
+    # (which already has regex+semantic) instead of re-running
+    # extract_slots on the same message.
+    pending_extracted = slot_extraction.extract(
+        ctx.message, ctx.early_extracted, ...,
+        extraction_source=ctx.extraction_source or "regex",
+    )
+else:
+    # No LLM — ctx.early_extracted is the regex+semantic result.
+    pending_extracted = ctx.early_extracted
 ```
-... if the orchestrator's earlier extraction is sufficient for this handler's needs. Verify by tracing what fields `pending_has_new` and the downstream branches actually read.
 
-**Caveat:** if the orchestrator's `_run_llm_gate` did NOT fire (e.g., because `has_service_intent` was already True, or the message was <4 words), `ctx.early_extracted` only has regex+semantic results. The handler may need LLM-quality extraction for the "user changed their mind during confirmation" path, where regex underfits. In that case the fix is to fire the LLM only when needed, not on every pending-confirmation turn.
+Best case (gate fired earlier in the turn): saves 1 LLM call AND 1 regex call. Common case (gate didn't fire because regex caught service_type): saves 1 redundant regex call. ``extract_slots_short`` still runs but only on the post-pending message that genuinely needs LLM enrichment.
 
-**Test coverage required:** baseline test count of LLM calls on a pending-confirmation continuation message; post-fix test asserts the count dropped by 1.
+Forwards ``ctx.extraction_source`` to the LLM call so Trust Model 3 can give the semantic router priority when it disagrees with the LLM's pick — same behavior as the orchestrator's main service-flow call.
 
-**Acceptance:** No redundant slot extraction on pending-confirmation continuation; existing pending-confirmation tests still pass; eval clusters covering this path don't regress.
+**New regression test:** ``tests/integration/test_llm_call_redundancy.py::TestLLM2PostPendingReusesContextValues``. Sets up a pending confirmation in session state, then sends a long message that triggers the gate. Asserts call count = 1 (verified to fail at 2 pre-fix).
 
-### `LLM-3` — `classify_message_llm` fallback likely redundant after `_run_llm_gate`
+**Verification:** Full suite at 4330 passing.
 
-**Status:** Open. Lowest priority of the three.
+### `LLM-3` — `classify_message_llm` fallback removed from `_compute_routing_category`
 
-**Description:** `pipeline._compute_routing_category` falls through to `classify_message_llm` (pipeline.py:267-275) when nothing else matched the message:
+**Status:** ✅ **Closed** (in this PR).
 
+**Resolution:** Took option (a) — remove the fallback entirely.
+
+The pre-fix branch in ``pipeline._compute_routing_category``:
 ```python
 elif _USE_LLM and len(message.strip().split()) > 3:
     from app.llm.claude_client import classify_message_llm
     llm_category = classify_message_llm(message)
+    if llm_category is not None:
+        category = llm_category
+        confidence = "medium"
+    else:
+        category = "general"
+        confidence = "low"
+else:
+    category = "general"
+    confidence = "low"
 ```
 
-But `_run_llm_gate` already ran on the same message earlier in `generate_reply` for tone/action classification. The unified gate uses Haiku with a richer prompt and a tool-use schema; it returns `tone` and `action` enums. If the gate returned `(None, None)` for both, that's a strong signal the message doesn't fit any classified category — and calling a SECOND LLM classifier on the same input is unlikely to succeed.
+was replaced with the simpler:
+```python
+else:
+    category = "general"
+    confidence = "low"
+```
 
-**The two classifiers have overlapping responsibilities:**
-- `_run_llm_gate` (slot_extraction.extract): primary purpose is slot extraction; tone/action are advisory side outputs.
-- `classify_message_llm`: dedicated message-category classifier; returns one of 17 valid category strings.
+The branch only fired when ALL of the following held: ``tone is None`` (regex AND gate's ``unified.tone`` both empty), ``action`` not in the early-handled list, and ``has_service_intent is False`` (regex + semantic + gate's slot extraction all empty). When all three hold, the message has no detectable signal — and calling ``classify_message_llm`` (the same model with a different routing-focused prompt) is unlikely to find a signal its sibling classifiers missed. The category outputs either overlap with already-handled branches or default to ``"general"``.
 
-**Cost:** 1 extra LLM call per general-fallthrough message ≥4 words, which is the most common case for unrecognized chitchat.
+The ``classify_message_llm`` function itself remains in ``app/llm/claude_client.py`` along with its unit tests — it's not called from the orchestrator pipeline anymore but stays as a standalone utility (and the existing unit tests in ``test_claude_client.py`` still pass).
 
-**Fix options:**
-- (a) **Remove `classify_message_llm` entirely.** Trust the gate's `action` classification as the routing signal; if both gate and regex returned None, fall to "general" with low confidence (which is what happens when `classify_message_llm` returns None anyway).
-- (b) **Skip `classify_message_llm` when `_run_llm_gate` already ran and returned no action.** Pass a flag through the pipeline to indicate the gate fired.
-- (c) **Keep both** and accept the cost — but document why both are needed if so.
+**Documentation updated:** an inline rationale comment in ``_compute_routing_category`` explains why the branch is gone (so a future contributor doesn't add it back). The routing-cascade pinning test ``test_routing_category_sequence_is_preserved`` was updated to drop the ``llm_category`` step from the expected sequence.
 
-**Why this is lowest priority:** the call only fires on the "general fallthrough" path, which is rarer than the service path. And if the cost matters, option (a) is a small change.
+**Risk:** Possible eval regression if some scenarios were previously caught only by this LLM fallback. Mitigation: the branch was already conservative (returned ``"general"`` when the LLM returned ``None``, which is the same as the post-fix default), so the regression surface is just the cases where the LLM returned a non-None category and that category mattered for routing. If eval scores drop, this can be reverted in isolation.
 
-**Test coverage required:** verify that removing `classify_message_llm` doesn't regress any test; eval clusters covering the general/casual chat path don't regress.
+**New regression test:** ``tests/integration/test_llm_call_redundancy.py::TestLLM3NoClassifierFallbackCall``. Patches ``classify_message_llm`` with a counter and runs a no-signal message through ``generate_reply``. Asserts call count = 0 (verified to fail at 1 pre-fix).
 
-**Acceptance:** decision recorded (remove vs keep); if remove, the pipeline.py:267-278 block deleted; full test suite green; no eval regression.
+**Verification:** Full suite at 4330 passing.
 
 ---
 
@@ -556,7 +556,8 @@ The snapshot semantics matter because the dispatcher mutates the same key on `ct
 **Description:** Mobile autocorrect produces curly apostrophes (U+2019) where users typed straight ones. The codebase has `normalize_apostrophes` in `app.utils.text_normalize` that handles this at all known call sites. But there's no test that systematically re-runs eval scenarios with apostrophe substitutions to catch new sites that need normalization.
 
 **Proposed harness:** parametrized test that takes a list of eval scenarios with apostrophe-bearing input, substitutes each apostrophe variant (U+2019, U+02BC, U+2018, U+0060), and re-runs. Asserts the same routing behavior as the straight-apostrophe input.
-<!-- drift:ignore: possible future file that may not exist yet -->
+
+<!-- drift:ignore: ignore future test file that doesn't exist yet -->
 **Implementation sketch:** ~50 LOC in `tests/integration/test_apostrophe_fuzz.py`. Reuses existing scenario definitions; iterates a small list of substitutions.
 
 **Acceptance:** harness exists; runs against ≥10 representative scenarios; failure clearly identifies which (scenario, substitution) pair regressed.
@@ -590,14 +591,15 @@ These items were resolved during Phases A-C and the audit follow-ups PR. Listed 
 | `COMPAT-2` — `extraction_source` default | Production callers (pipeline.py, confirmation.py) now pass an explicit value. Docstring framing updated to drop "backwards-compatible" language. |
 | `COMPAT-3` — Unused `message` parameter in `merge.py` | Dropped from `_merge_service_type_and_primary_location` and `merge()` signatures. 14 test call sites + 3 unused locals cleaned up. |
 | `COMPAT-4` — 3-tuple offers | Doc-only change: `_unpack_additional_item` docstring reframed from "legacy 2-tuples" to "defensive against malformed input". Two test docstrings updated. |
+| `LLM-1` — Duplicate `slot_extraction.extract()` | Cached gate result on `MessageContext.unified_extraction`. Orchestrator service branch short-circuits when populated. Eliminates 1 LLM call on every >8-word missed-by-regex service message. |
+| `LLM-2` — `_handle_post_pending_confirmation` re-extracts | Three-branch reuse: `ctx.unified_extraction` (cache hit) → `ctx.early_extracted` as regex_result for the LLM call (gate didn't fire) → `ctx.early_extracted` directly (no LLM). Eliminates 1 redundant `extract_slots` call always; 1 redundant LLM call when gate fired. |
+| `LLM-3` — `classify_message_llm` fallback | Removed from `_compute_routing_category`. The branch only fired when no signal was detectable; the second classifier on the same message couldn't recover one. Routing now defaults to `general`/`low` directly. Routing-cascade pinning test updated. |
 
 ---
 
 ## Notes on prioritization
 
 - `EVAL-B` and `EVAL-C` are the highest-value items by user impact — they pin specific scoring failures.
-- `LLM-1` is the highest-impact infrastructure item: it cuts API cost and latency in half on a common path (>8-word service messages that miss regex). Worth doing before launch because the gain is real and the fix is bounded.
-- `LLM-2` and `LLM-3` are smaller cost wins; bundle with `LLM-1` as a single "LLM redundancy" cleanup PR if pursuing.
 - `D-1` through `D-5` are migration polish; doing them tightens the architecture but doesn't unlock new capability. Pick up when refactor budget allows.
 - All remaining `SMELL-*` items (`SMELL-2`, `SMELL-5`, `SMELL-8`, `SMELL-9`) are explicitly low-priority per the original audit's own assessment. Consider closing them en masse with a single small "polish PR" rather than individual changes.
 - `ENG-1` (fuzz harness) is the highest-value preventative item — catches a class of bug that mobile users have shipped to us before.

@@ -345,6 +345,46 @@ def _clear_rate_limits():
     clear()
 
 
+@pytest.fixture(autouse=True)
+def _reset_claude_client_cache():
+    """Reset the lazy-initialized Anthropic client cache between tests.
+
+    ``app.llm.claude_client`` lazily caches the SDK client in a module-
+    level ``_client`` global so production calls don't reinitialize on
+    every request. Tests that use ``@patch("app.llm.claude_client.anthropic")``
+    (e.g. ``tests/unit/test_claude_client.py``) install a MagicMock as
+    ``cc.anthropic.Anthropic`` and then call ``get_client()``, which
+    populates ``cc._client`` with a MagicMock instance.
+
+    Without this fixture, that MagicMock-shaped client lingers in the
+    module global after the test completes. Subsequent tests in the
+    same pytest process — even ones that don't patch anthropic at all —
+    then get the stale MagicMock back from ``get_client()`` because the
+    early-return at the top of the function short-circuits the real
+    initialization. The leaked client returns MagicMock-shaped responses
+    from ``client.messages.create()``, and downstream string operations
+    (e.g. ``response += "..."`` in ``handlers/general.py``) produce a
+    MagicMock-typed ``result["response"]`` that fails string-only
+    consumers (``redact_pii``, ``len(result["response"])``, etc.).
+
+    This was observed in CI on PR #74 where
+    ``test_llm_returns_none`` failed with a MagicMock-typed response;
+    a prior test in the same process had patched anthropic and left the
+    cached client behind. Local runs without ``ANTHROPIC_API_KEY`` set
+    didn't reproduce because ``get_client()`` raised on the missing key
+    before reaching the cache-check, so the leak was invisible.
+
+    Same shape as ``_clear_rate_limits`` — clear before AND after each
+    test to be robust against tests that are themselves the leak source.
+    """
+    import app.llm.claude_client as cc
+    cc._client = None
+    cc._init_error = None
+    yield
+    cc._client = None
+    cc._init_error = None
+
+
 @pytest.fixture
 def mock_service_card():
     """A single realistic service card dict."""
