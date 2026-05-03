@@ -277,5 +277,5 @@ offline → admin pages are unreachable (as expected).
 
 For the **closed-tab** scenarios that this doc cannot cover from
 DevTools — Background Sync drain, SW response reconciliation, reset-
-during-drain race — see `docs/TESTING_BACKGROUND_SYNC.md`. That
+during-drain race — see `docs/design/TESTING_BACKGROUND_SYNC.md`. That
 runbook requires a real Android device with USB debugging.
