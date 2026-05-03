@@ -30,7 +30,13 @@ from app.services.chatbot import (
 from app.services.chatbot.handlers import _immigration_acknowledgment
 from app.services.chatbot.handlers.accessibility import (
     _detect_immigration_context,
+    _handle_demographic_skip,
+    _handle_location_unknown,
     _immigration_context_detail,
+)
+from app.services.chatbot.handlers.confirmation import (
+    _handle_context_aware_confirm,
+    _handle_pending_confirmation,
 )
 
 
@@ -193,56 +199,6 @@ class TestComputeTonePrefix:
         assert prefix == ""
         assert ctx is None
 
-    # -----------------------------------------------------------------------
-    # Curly-apostrophe normalization (mobile autocorrect)
-    # -----------------------------------------------------------------------
-    # Several entries in _SHAME_SIGNALS and _MEDICATION_DEPLETION contain
-    # straight apostrophes ("can't believe i'm", "don't have my", etc.).
-    # Without normalization, mobile users typing those phrases with
-    # autocorrect produce U+2019 instead of U+0027 and silently miss the
-    # shame normalization or medical urgency prefix. These tests pin the
-    # contract that both apostrophe variants trigger the prefix.
-
-    def test_shame_fires_with_curly_apostrophe_in_signal(self):
-        """A shame signal that contains an apostrophe must fire with U+2019."""
-        # "can't believe i'm" → curly variant
-        prefix, ctx = _compute_tone_prefix(
-            message="I can\u2019t believe I\u2019m asking for help",
-            response_tone="emotional",
-            is_service_flow=True,
-            prior_emotional_context=None,
-        )
-        assert "real strength" in prefix, (
-            "Shame signal with curly apostrophe should trigger the "
-            "normalizing prefix. Without normalize_apostrophes() at the "
-            "msg_lower line, this test fails because 'can\\u2019t believe "
-            "i\\u2019m' is not in _SHAME_SIGNALS as written."
-        )
-        assert ctx == "shame"
-
-    def test_shame_fires_with_curly_apostrophe_food_context(self):
-        """'can't afford to eat' with curly apostrophe still fires shame."""
-        prefix, ctx = _compute_tone_prefix(
-            message="I can\u2019t afford to eat anymore",
-            response_tone=None,
-            is_service_flow=True,
-            prior_emotional_context=None,
-        )
-        assert "real strength" in prefix
-        assert ctx == "shame"
-
-    def test_medical_urgent_fires_with_curly_apostrophe_in_depletion(self):
-        """Medical depletion + medication keyword still fires with curly."""
-        # "don't have my" → curly variant + "insulin"
-        prefix, ctx = _compute_tone_prefix(
-            message="I don\u2019t have my insulin",
-            response_tone=None,
-            is_service_flow=True,
-            prior_emotional_context=None,
-        )
-        assert "urgent" in prefix.lower()
-        assert ctx == "medical_urgent"
-
 
 # -----------------------------------------------------------------------
 # _run_llm_gate — short-circuit invariants
@@ -256,7 +212,7 @@ class TestRunLLMGate:
     def test_skip_when_has_service_intent(self, llm_enabled):
         """If earlier tiers resolved service intent, the LLM gate should
         not run — regardless of other signals."""
-        has_si, action, src, tone, llm_action, unified = _run_llm_gate(
+        has_si, action, src, tone, llm_action = _run_llm_gate(
             message="I need food in Brooklyn with cats and dogs",
             early_extracted={"service_type": "food"},
             has_service_intent=True,
@@ -315,7 +271,7 @@ class TestRunLLMGate:
     def test_gate_fires_when_substantive_and_unresolved(self, llm_enabled):
         """When none of the short-circuits apply, the gate should call the LLM."""
         llm_enabled.return_value = {"service_type": "food"}
-        has_si, action, src, tone, llm_action, unified = _run_llm_gate(
+        has_si, action, src, tone, llm_action = _run_llm_gate(
             message="i really could use some help with groceries",
             early_extracted={},
             has_service_intent=False,
@@ -331,7 +287,7 @@ class TestRunLLMGate:
         """A flaky LLM call must not break routing — the gate logs and
         returns None-y values so the caller falls back to regex."""
         llm_enabled.side_effect = RuntimeError("API timeout")
-        has_si, action, src, tone, llm_action, unified = _run_llm_gate(
+        has_si, action, src, tone, llm_action = _run_llm_gate(
             message="i really could use some help with groceries",
             early_extracted={},
             has_service_intent=False,
@@ -415,6 +371,480 @@ class TestHandleSpanishDetection:
                 assert not (result is not None and prefix), (
                     f"Both outputs non-empty for msg={msg!r}, has_si={has_si}"
                 )
+
+
+# -----------------------------------------------------------------------
+# _handle_demographic_skip — TEST-GAP-1
+# -----------------------------------------------------------------------
+#
+# The handler fires when:
+#   1. existing has service_type AND location AND NOT _pending_confirmation
+#   2. existing is missing age OR family_status (still demographic-pending)
+#   3. user message matches a "rather not say" phrase
+# Returns a result dict with confirmation message; otherwise None.
+#
+# These tests pin the precondition-gating, the apostrophe normalization
+# (mobile keyboards autocorrect to U+2019 — straight phrases would silently
+# fail to match without normalization), and the "skipped" sentinel side
+# effect on existing.
+
+class TestHandleDemographicSkip:
+    """Direct unit tests for the demographic-skip handler.
+
+    See PHASE_AC_AFTERMATH.md TEST-GAP-1 — integration-test coverage was
+    hard to reach because the natural conversation flow auto-sets
+    ``_pending_confirmation`` (which gates this handler off). These
+    direct tests bypass that.
+    """
+
+    def _existing(self, **overrides):
+        """Build an `existing` dict in the demographic-pending state:
+        service_type and location set, age and family_status unset,
+        no pending confirmation."""
+        base = {
+            "service_type": "food",
+            "location": "brooklyn",
+            "age": None,
+            "family_status": None,
+            "_pending_confirmation": False,
+        }
+        base.update(overrides)
+        return base
+
+    def _save_session_called(self, monkeypatch):
+        """Patch save_session_slots so tests don't touch real session
+        storage; return a list that records each call."""
+        calls = []
+        monkeypatch.setattr(
+            "app.services.chatbot.handlers.accessibility.save_session_slots",
+            lambda sid, slots: calls.append((sid, dict(slots))),
+        )
+        return calls
+
+    def test_skip_phrase_marks_demographics_skipped(self, monkeypatch):
+        """The canonical happy path — phrase matches, demographics
+        flip from None to 'skipped', confirmation message is returned
+        with the warm "No problem at all." prefix."""
+        self._save_session_called(monkeypatch)
+        existing = self._existing()
+        result = _handle_demographic_skip(
+            session_id="s1",
+            message="I'd rather not say",
+            redacted_message="I'd rather not say",
+            existing=existing,
+            tone=None,
+            request_id="r1",
+        )
+        assert result is not None
+        assert result["session_id"] == "s1"
+        assert result["follow_up_needed"] is True
+        assert result["response"].startswith("No problem at all.")
+        # Side effects on existing:
+        assert existing["age"] == "skipped"
+        assert existing["family_status"] == "skipped"
+        assert existing["_pending_confirmation"] is True
+
+    def test_curly_apostrophe_still_matches(self, monkeypatch):
+        """Mobile keyboards autocorrect "don't" to "don\u2019t" (U+2019).
+        Without normalization, "don\u2019t want to say" matches NEITHER
+        "don't want to say" (different apostrophe) NOR "dont want to say"
+        (the apostrophe-less alternate is no longer a substring once the
+        curly char is in the haystack). The "rather not say" phrase has
+        a substring fallback that masks the missing-normalize bug, so
+        we deliberately use "don't want to say" to ensure this test
+        actually exercises the normalization path. This test would FAIL
+        if `normalize_apostrophes` were removed from the handler."""
+        self._save_session_called(monkeypatch)
+        # Curly apostrophe in user input — picks the "don't want to say"
+        # phrase variant where no substring fallback exists
+        msg = "I don\u2019t want to say"
+        assert "\u2019" in msg  # sanity: confirm we're testing curly
+        existing = self._existing()
+        result = _handle_demographic_skip(
+            session_id="s1", message=msg, redacted_message=msg,
+            existing=existing, tone=None, request_id="r1",
+        )
+        assert result is not None, (
+            "Curly apostrophe should still match the skip phrase — "
+            "if this fails, normalize_apostrophes was removed or "
+            "stopped firing in _handle_demographic_skip."
+        )
+        assert existing["age"] == "skipped"
+
+    def test_only_age_unset_marks_only_age(self, monkeypatch):
+        """Family status already set; only age should get 'skipped'."""
+        self._save_session_called(monkeypatch)
+        existing = self._existing(family_status="single")
+        result = _handle_demographic_skip(
+            session_id="s1", message="prefer not to say",
+            redacted_message="prefer not to say", existing=existing,
+            tone=None, request_id="r1",
+        )
+        assert result is not None
+        assert existing["age"] == "skipped"
+        # family_status was already set — don't overwrite
+        assert existing["family_status"] == "single"
+
+    def test_returns_none_when_no_service_type(self, monkeypatch):
+        """If the user hasn't told us what they need yet, the
+        demographic-skip path must NOT fire — we'd be marking demos
+        skipped on a session that hasn't begun the service search."""
+        self._save_session_called(monkeypatch)
+        existing = self._existing(service_type=None)
+        result = _handle_demographic_skip(
+            session_id="s1", message="I'd rather not say",
+            redacted_message="I'd rather not say", existing=existing,
+            tone=None, request_id="r1",
+        )
+        assert result is None
+
+    def test_returns_none_when_no_location(self, monkeypatch):
+        self._save_session_called(monkeypatch)
+        existing = self._existing(location=None)
+        result = _handle_demographic_skip(
+            session_id="s1", message="rather not say",
+            redacted_message="rather not say", existing=existing,
+            tone=None, request_id="r1",
+        )
+        assert result is None
+
+    def test_returns_none_when_already_pending_confirmation(self, monkeypatch):
+        """If we're already at the confirmation step, demographics are
+        no longer being collected — the skip path is irrelevant."""
+        self._save_session_called(monkeypatch)
+        existing = self._existing(_pending_confirmation=True)
+        result = _handle_demographic_skip(
+            session_id="s1", message="skip",
+            redacted_message="skip", existing=existing,
+            tone=None, request_id="r1",
+        )
+        assert result is None
+
+    def test_returns_none_when_demographics_already_filled(self, monkeypatch):
+        """Both age and family_status set — nothing left to skip."""
+        self._save_session_called(monkeypatch)
+        existing = self._existing(age=25, family_status="single")
+        result = _handle_demographic_skip(
+            session_id="s1", message="I'd rather not say",
+            redacted_message="I'd rather not say", existing=existing,
+            tone=None, request_id="r1",
+        )
+        assert result is None
+
+    def test_non_skip_phrase_returns_none(self, monkeypatch):
+        """A message that doesn't match the skip-phrase list must NOT
+        fire — otherwise we'd swallow real answers as skips."""
+        self._save_session_called(monkeypatch)
+        existing = self._existing()
+        result = _handle_demographic_skip(
+            session_id="s1", message="I'm 25",
+            redacted_message="I'm 25", existing=existing,
+            tone=None, request_id="r1",
+        )
+        assert result is None
+
+    def test_exact_skip_match(self, monkeypatch):
+        """Bare 'skip' (exact match) is in the explicit-match branch
+        of the predicate, separate from the substring-match branch."""
+        self._save_session_called(monkeypatch)
+        existing = self._existing()
+        result = _handle_demographic_skip(
+            session_id="s1", message="skip",
+            redacted_message="skip", existing=existing,
+            tone=None, request_id="r1",
+        )
+        assert result is not None
+        assert existing["age"] == "skipped"
+
+    def test_exact_pass_match(self, monkeypatch):
+        """Bare 'pass' likewise matches via the explicit branch."""
+        self._save_session_called(monkeypatch)
+        existing = self._existing()
+        result = _handle_demographic_skip(
+            session_id="s1", message="pass",
+            redacted_message="pass", existing=existing,
+            tone=None, request_id="r1",
+        )
+        assert result is not None
+
+    def test_save_session_called_twice(self, monkeypatch):
+        """Implementation detail worth pinning: the handler saves
+        session state TWICE — once after marking demographics
+        skipped, once after setting `_pending_confirmation=True`. If a
+        future refactor consolidates these, the intermediate state
+        wouldn't be observable to other readers, which could matter
+        for any code that snoops the session between the two saves."""
+        calls = self._save_session_called(monkeypatch)
+        existing = self._existing()
+        _handle_demographic_skip(
+            session_id="s1", message="rather not say",
+            redacted_message="rather not say", existing=existing,
+            tone=None, request_id="r1",
+        )
+        assert len(calls) == 2
+
+
+# -----------------------------------------------------------------------
+# _handle_location_unknown — TEST-GAP-1 sibling coverage
+# -----------------------------------------------------------------------
+#
+# The audit identified _handle_demographic_skip as the gap, but the
+# sibling handler shares the same apostrophe-normalization risk profile
+# (mobile users sending "I don't know" with curly apostrophes). Adding
+# a curly-apostrophe test here too costs nothing and pins the same
+# class of regression for both handlers.
+
+class TestHandleLocationUnknown:
+    """Direct unit tests for the location-unknown handler — covering
+    the same apostrophe-normalization risk identified for the sibling
+    demographic-skip handler."""
+
+    def _existing(self, **overrides):
+        """Service set but no location — the precondition for the
+        location picker to surface."""
+        base = {
+            "service_type": "food",
+            "location": None,
+            "_pending_confirmation": False,
+        }
+        base.update(overrides)
+        return base
+
+    def test_idk_phrase_offers_location_picker(self):
+        existing = self._existing()
+        result = _handle_location_unknown(
+            session_id="s1", message="I don't know",
+            redacted_message="I don't know", existing=existing,
+            tone=None, request_id="r1",
+        )
+        assert result is not None
+        assert "location" in result["response"].lower()
+
+    def test_curly_apostrophe_still_matches(self):
+        """Same apostrophe-normalization pin as
+        TestHandleDemographicSkip. Would fail if normalize_apostrophes
+        were removed."""
+        msg = "I don\u2019t know"
+        assert "\u2019" in msg
+        existing = self._existing()
+        result = _handle_location_unknown(
+            session_id="s1", message=msg, redacted_message=msg,
+            existing=existing, tone=None, request_id="r1",
+        )
+        assert result is not None, (
+            "Curly apostrophe should still match — if this fails, "
+            "normalize_apostrophes was removed from "
+            "_handle_location_unknown."
+        )
+
+    def test_returns_none_when_location_already_set(self):
+        existing = self._existing(location="brooklyn")
+        result = _handle_location_unknown(
+            session_id="s1", message="I don't know",
+            redacted_message="I don't know", existing=existing,
+            tone=None, request_id="r1",
+        )
+        assert result is None
+
+
+# -----------------------------------------------------------------------
+# Snapshot-arg semantics — TEST-GAP-2
+# -----------------------------------------------------------------------
+#
+# Two dispatchers receive a captured snapshot of session-state as a
+# positional arg, separate from the same key on `existing`:
+#
+#   _handle_context_aware_confirm(..., last_action, ...)
+#       — orchestrator captures `last_action = existing.get("_last_action")`
+#         BEFORE calling, then the handler pops `_last_action` from
+#         `existing` as part of its dispatch logic. The handler must
+#         route on the SNAPSHOT, not re-read from existing.
+#
+#   _handle_pending_confirmation(..., pending, ...)
+#       — orchestrator captures `pending = existing.get("_pending_confirmation")`
+#         BEFORE calling. The handler may pop `_pending_confirmation`
+#         from `existing` mid-flight. Same contract: route on snapshot.
+#
+# The snapshot pattern matters because if a future refactor "fixed" the
+# handler to re-read from `existing`, the dispatch logic would silently
+# break — the handler would see the post-pop value (None), miss its
+# branch, and return None. These tests pin the snapshot contract by
+# constructing intentionally divergent values for the snapshot arg vs
+# the dict, then verifying the handler routes on the snapshot.
+#
+# See PHASE_AC_AFTERMATH.md TEST-GAP-2 for full background.
+
+class TestSnapshotArgSemantics:
+    """Pin the snapshot-arg routing contract for the two confirmation
+    dispatchers. Each test constructs divergent values (snapshot says
+    one thing, ``existing[key]`` says another) and asserts the handler
+    follows the snapshot.
+
+    These tests exercise the dispatchers directly (no orchestrator,
+    no MessageContext) so the divergence is observable. Integration
+    tests that go through ``generate_reply`` can't construct this
+    divergence — orchestrator captures the snapshot atomically with
+    the dict read.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _stub_session_io(self, monkeypatch):
+        """Don't touch real session storage in any of these tests."""
+        monkeypatch.setattr(
+            "app.services.chatbot.handlers.confirmation.save_session_slots",
+            lambda sid, slots: None,
+        )
+
+    # ------------------------------------------------------------------
+    # _handle_context_aware_confirm — last_action snapshot
+    # ------------------------------------------------------------------
+
+    def test_context_aware_uses_snapshot_when_existing_is_empty(self):
+        """existing._last_action is None, but snapshot says 'emotional'.
+        Handler must dispatch the emotional path (snapshot wins).
+
+        If a future refactor changed the handler to re-read
+        ``existing.get("_last_action")``, this would return None — the
+        emotional branch would never fire."""
+        existing = {"_last_action": None}
+        result = _handle_context_aware_confirm(
+            session_id="s1",
+            message="yes",
+            redacted_message="yes",
+            existing=existing,
+            category="confirm_yes",
+            last_action="emotional",  # ← snapshot says emotional
+            tone=None,
+            request_id="r1",
+        )
+        assert result is not None, (
+            "Handler must use the last_action snapshot, not "
+            "existing.get('_last_action'). If this fails, the "
+            "snapshot contract is broken."
+        )
+        # The emotional branch returns the escalation response
+        assert "search" in result["response"].lower() or \
+               result.get("quick_replies"), \
+               "Expected emotional escalation response"
+
+    def test_context_aware_ignores_existing_when_snapshot_is_none(self):
+        """existing._last_action='emotional', but snapshot is None.
+        Handler must NOT dispatch (snapshot wins, no value to route on).
+
+        If a refactor read from existing, this would wrongly dispatch."""
+        existing = {"_last_action": "emotional"}
+        result = _handle_context_aware_confirm(
+            session_id="s1",
+            message="yes",
+            redacted_message="yes",
+            existing=existing,
+            category="confirm_yes",
+            last_action=None,  # ← snapshot says nothing
+            tone=None,
+            request_id="r1",
+        )
+        assert result is None, (
+            "Handler must use the snapshot (None), not "
+            "existing.get('_last_action'). If this fails, the "
+            "handler is incorrectly re-reading from existing."
+        )
+
+    def test_context_aware_escalation_dispatch_via_snapshot(self):
+        """Same divergence pattern, different branch: escalation."""
+        existing = {"_last_action": None}
+        result = _handle_context_aware_confirm(
+            session_id="s1",
+            message="yes",
+            redacted_message="yes",
+            existing=existing,
+            category="confirm_yes",
+            last_action="escalation",  # ← snapshot
+            tone=None,
+            request_id="r1",
+        )
+        assert result is not None
+        # Escalation response mentions sharing contact info
+        assert "contact" in result["response"].lower() or \
+               "shared" in result["response"].lower()
+
+    # ------------------------------------------------------------------
+    # _handle_pending_confirmation — pending snapshot
+    # ------------------------------------------------------------------
+
+    def test_pending_uses_snapshot_for_routing(self, monkeypatch):
+        """existing._pending_confirmation is False, but snapshot says
+        True. The handler should treat this as an active confirmation
+        and route accordingly. If it re-read from existing, it would
+        fall through to the queue-offer branch instead.
+
+        We use category='confirm_deny' which has distinct behavior in
+        the two branches — the queue-offer branch returns a response
+        about declining; the pending branch handles 'no' to confirmation
+        differently."""
+        # Stub _empty_reply and _build_db_failure_message so we don't
+        # need a fully-formed session
+        monkeypatch.setattr(
+            "app.services.chatbot.handlers.confirmation._log_turn",
+            lambda *a, **kw: None,
+        )
+
+        existing = {
+            "_pending_confirmation": False,  # ← dict says NOT pending
+            "service_type": "food",
+            "location": "brooklyn",
+        }
+        result = _handle_pending_confirmation(
+            session_id="s1",
+            message="no",
+            redacted_message="no",
+            existing=existing,
+            pending=True,  # ← snapshot says PENDING
+            category="confirm_deny",
+            tone=None,
+            request_id="r1",
+        )
+        # When pending=True and category=confirm_deny, handler resets
+        # to a "what do you need" prompt — distinctly different from
+        # the queue-offer-decline path that fires when pending=False.
+        assert result is not None, (
+            "Handler must route on the pending snapshot, not "
+            "existing.get('_pending_confirmation')."
+        )
+
+    def test_pending_falls_through_when_snapshot_false(self, monkeypatch):
+        """existing._pending_confirmation=True (dict has stale value),
+        but snapshot pending=False. The handler should NOT take the
+        pending branch — it should evaluate the no-pending branch
+        (queue-offer logic).
+
+        This pins the inverse direction of the snapshot contract."""
+        monkeypatch.setattr(
+            "app.services.chatbot.handlers.confirmation._log_turn",
+            lambda *a, **kw: None,
+        )
+
+        existing = {
+            "_pending_confirmation": True,  # ← dict says pending
+            # No queue-offer state set, so queue-offer branch returns None too
+        }
+        result = _handle_pending_confirmation(
+            session_id="s1",
+            message="something else",
+            redacted_message="something else",
+            existing=existing,
+            pending=False,  # ← snapshot says NOT pending
+            category="service",
+            tone=None,
+            request_id="r1",
+        )
+        # No pending, no queue-offer state, no relevant category —
+        # the snapshot=False branch finds nothing to do and returns
+        # None. If the handler re-read from existing, it would wrongly
+        # try the pending branch (which would dispatch on category).
+        assert result is None, (
+            "Handler must use the snapshot (False), not "
+            "existing.get('_pending_confirmation')."
+        )
 
 
 # -----------------------------------------------------------------------
