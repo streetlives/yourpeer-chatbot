@@ -181,7 +181,12 @@ def generate_reply(
     # depends only on tone/action/has_service_intent/early_extracted/
     # extraction_source/message, all finalized by this point.
     action = _action_pre
-    _response_tone = tone
+    # Note: ``tone`` is not reassigned anywhere downstream in
+    # ``generate_reply`` — it's set once at lines 170/172 and read in
+    # multiple places. Earlier versions kept a ``_response_tone = tone``
+    # alias intended to capture a "snapshot before negative_preference
+    # promotion," but no such promotion mutates ``tone`` itself; the
+    # alias was dead weight. Dropped during Phase D D-4 cleanup.
     category, _confidence = _compute_routing_category(
         tone=tone,
         action=action,
@@ -306,10 +311,7 @@ def generate_reply(
         ctx.category = "general"
 
     # --- Spanish / non-English detection ---
-    _spanish_result, _spanish_acknowledgment = _handle_spanish_detection(
-        session_id, message, redacted_message, existing,
-        has_service_intent, tone, request_id,
-    )
+    _spanish_result, _spanish_acknowledgment = _handle_spanish_detection(ctx)
     if _spanish_result:
         return _spanish_result
     # Late-set: read in the service-flow prefix-injection block below.
@@ -331,7 +333,7 @@ def generate_reply(
     _is_service_flow = category == "service"
     _tone_prefix, _emotional_context_update = _compute_tone_prefix(
         message=message,
-        response_tone=_response_tone,
+        response_tone=tone,
         is_service_flow=_is_service_flow,
         prior_emotional_context=existing.get("_emotional_context"),
     )
@@ -427,13 +429,18 @@ def generate_reply(
         return _handle_escalation(ctx)
 
     # --- Context-aware "yes" / "no" handling ---
-    last_action = existing.get("_last_action")
-    context_result = _handle_context_aware_confirm(ctx, last_action)
+    # Snapshot _last_action onto ctx so the handler can dispatch on the
+    # pre-mutation value (the handler pops _last_action on confirm_yes
+    # paths) and so the post-handler ``_consume_last_action`` call below
+    # sees the same value the handler dispatched on. See
+    # ``MessageContext.snapshot_last_action`` for the contract.
+    ctx.snapshot_last_action = existing.get("_last_action")
+    context_result = _handle_context_aware_confirm(ctx)
     if context_result:
         return context_result
 
     # Clear the last_action tracker now that we've checked it
-    _consume_last_action(session_id, existing, last_action)
+    _consume_last_action(session_id, existing, ctx.snapshot_last_action)
 
     # --- Handle "change location" / "change service" outside pending ---
     if not existing.get("_pending_confirmation"):
@@ -443,14 +450,22 @@ def generate_reply(
             return _handle_change_service_request(ctx)
 
     # --- Handle confirmation responses ---
-    pending = existing.get("_pending_confirmation")
-    confirm_result = _handle_pending_confirmation(ctx, pending)
+    # Snapshot _pending_confirmation: handler pops it on confirm paths;
+    # the ``if pending:`` guard below must see the pre-mutation value.
+    ctx.snapshot_pending = existing.get("_pending_confirmation")
+    confirm_result = _handle_pending_confirmation(ctx)
     if confirm_result:
         return confirm_result
 
     # If pending confirmation but user typed something new
-    if pending:
-        return _handle_post_pending_confirmation(ctx, _response_tone)
+    if ctx.snapshot_pending:
+        # Snapshot the response tone — preserved here in case future
+        # logic mutates ``tone`` between this point and the handler.
+        # Today ``tone`` is invariant after the early classification
+        # at line 170/172, so this is just ``tone``; the snapshot field
+        # exists for the contract documented on MessageContext.
+        ctx.snapshot_response_tone = tone
+        return _handle_post_pending_confirmation(ctx)
 
     # --- Service request or general conversation ---
     if _USE_LLM and category == "service":
@@ -547,7 +562,7 @@ def generate_reply(
     _is_service_flow = category == "service"
     _tone_prefix, _emotional_context_update = _compute_tone_prefix(
         message=message,
-        response_tone=_response_tone,
+        response_tone=tone,
         is_service_flow=_is_service_flow,
         prior_emotional_context=existing.get("_emotional_context"),
     )

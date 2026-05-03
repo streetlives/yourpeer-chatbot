@@ -54,8 +54,7 @@ _SPANISH_RE = re.compile(
 )
 
 
-def _handle_demographic_skip(session_id, message, redacted_message, existing,
-                             tone, request_id):
+def _handle_demographic_skip(ctx):
     """If a demographic question is pending and the user declined, mark the
     slots "skipped" and proceed to confirmation.
 
@@ -67,48 +66,47 @@ def _handle_demographic_skip(session_id, message, redacted_message, existing,
     # silently miss the match. See `tests/integration/
     # test_classification_and_routing.py::test_curly_apostrophe_*` for
     # the broader pattern this fixes.
-    skip_lower = (normalize_apostrophes(message) or "").lower().strip()
+    skip_lower = (normalize_apostrophes(ctx.message) or "").lower().strip()
     is_skip = (
         any(p in skip_lower for p in _DEMOGRAPHIC_SKIP_PHRASES)
         or skip_lower in ("skip", "pass")
     )
     is_demographic_pending = (
-        existing.get("service_type")
-        and existing.get("location")
-        and not existing.get("_pending_confirmation")
-        and (not existing.get("age") or not existing.get("family_status"))
+        ctx.existing.get("service_type")
+        and ctx.existing.get("location")
+        and not ctx.existing.get("_pending_confirmation")
+        and (not ctx.existing.get("age") or not ctx.existing.get("family_status"))
     )
     if not (is_skip and is_demographic_pending):
         return None
 
     # Mark skipped demographics so we don't re-ask
-    if not existing.get("age"):
-        existing["age"] = "skipped"
-    if not existing.get("family_status"):
-        existing["family_status"] = "skipped"
-    save_session_slots(session_id, existing)
+    if not ctx.existing.get("age"):
+        ctx.existing["age"] = "skipped"
+    if not ctx.existing.get("family_status"):
+        ctx.existing["family_status"] = "skipped"
+    save_session_slots(ctx.session_id, ctx.existing)
 
     # Proceed to confirmation with what we have
-    existing["_pending_confirmation"] = True
-    save_session_slots(session_id, existing)
-    confirm_msg = "No problem at all. " + _build_confirmation_message(existing)
+    ctx.existing["_pending_confirmation"] = True
+    save_session_slots(ctx.session_id, ctx.existing)
+    confirm_msg = "No problem at all. " + _build_confirmation_message(ctx.existing)
     result = {
-        "session_id": session_id,
+        "session_id": ctx.session_id,
         "response": confirm_msg,
         "follow_up_needed": True,
-        "slots": existing,
+        "slots": ctx.existing,
         "services": [],
         "result_count": 0,
         "relaxed_search": False,
-        "quick_replies": _confirmation_quick_replies(existing),
+        "quick_replies": _confirmation_quick_replies(ctx.existing),
     }
-    _log_turn(session_id, redacted_message, result, "demographic_skip",
-              request_id=request_id, tone=tone)
+    _log_turn(ctx.session_id, ctx.redacted_message, result, "demographic_skip",
+              request_id=ctx.request_id, tone=ctx.tone)
     return result
 
 
-def _handle_location_unknown(session_id, message, redacted_message, existing,
-                             tone, request_id):
+def _handle_location_unknown(ctx):
     """If the user has a service_type but no location, and replied with an
     "I don't know" phrase, offer the geolocation+borough picker.
 
@@ -117,25 +115,25 @@ def _handle_location_unknown(session_id, message, redacted_message, existing,
     # See `_handle_demographic_skip` for the apostrophe-normalization
     # rationale — same mobile-input risk applies to "I don't know" /
     # "I'm not sure" with curly apostrophes.
-    msg_lower = (normalize_apostrophes(message) or "").lower().strip()
+    msg_lower = (normalize_apostrophes(ctx.message) or "").lower().strip()
     is_location_unknown = (
         any(p in msg_lower for p in _LOCATION_UNKNOWN_PHRASES)
         or msg_lower in _LOCATION_UNKNOWN_EXACT
     )
     needs_location_picker = (
-        existing.get("service_type")
-        and not existing.get("location")
-        and not existing.get("_pending_confirmation")
+        ctx.existing.get("service_type")
+        and not ctx.existing.get("location")
+        and not ctx.existing.get("_pending_confirmation")
         and is_location_unknown
     )
     if not needs_location_picker:
         return None
 
     result = _empty_reply(
-        session_id,
+        ctx.session_id,
         "No problem! You can share your location and I'll find what's "
         "nearby, or pick a borough:",
-        existing,
+        ctx.existing,
         quick_replies=[
             {"label": "📍 Use my location", "value": "__use_geolocation__"},
             {"label": "Manhattan", "value": "Manhattan"},
@@ -145,13 +143,12 @@ def _handle_location_unknown(session_id, message, redacted_message, existing,
             {"label": "Staten Island", "value": "Staten Island"},
         ],
     )
-    _log_turn(session_id, redacted_message, result, "location_unknown",
-              request_id=request_id, tone=tone)
+    _log_turn(ctx.session_id, ctx.redacted_message, result, "location_unknown",
+              request_id=ctx.request_id, tone=ctx.tone)
     return result
 
 
-def _handle_spanish_detection(session_id, message, redacted_message, existing,
-                              has_service_intent, tone, request_id):
+def _handle_spanish_detection(ctx):
     """Detect Spanish phrases and either return a bilingual response outright
     (Spanish-only message) or return an acknowledgment prefix to prepend to
     the downstream response (Spanish + service request).
@@ -161,24 +158,24 @@ def _handle_spanish_detection(session_id, message, redacted_message, existing,
       - acknowledgment_prefix is non-empty when the caller should continue
         processing and prepend the prefix to its eventual response
     """
-    if not _SPANISH_RE.search(message):
+    if not _SPANISH_RE.search(ctx.message):
         return None, ""
 
-    if not has_service_intent:
+    if not ctx.has_service_intent:
         # Spanish only, no service request — return bilingual message
         result = _empty_reply(
-            session_id,
+            ctx.session_id,
             "I'm sorry — right now I can only help in English. "
             "A peer navigator may be able to help in Spanish.\n\n"
             "Lo siento — por ahora solo puedo ayudar en inglés. "
             "Un navegador comunitario puede ayudarte en español.",
-            existing,
+            ctx.existing,
             quick_replies=[
                 {"label": "🤝 Peer navigator", "value": "Connect with peer navigator"},
             ],
         )
-        _log_turn(session_id, redacted_message, result, "spanish_detected",
-                  request_id=request_id, tone=tone)
+        _log_turn(ctx.session_id, ctx.redacted_message, result, "spanish_detected",
+                  request_id=ctx.request_id, tone=ctx.tone)
         return result, ""
 
     # Spanish + service intent — process normally with a bilingual prefix

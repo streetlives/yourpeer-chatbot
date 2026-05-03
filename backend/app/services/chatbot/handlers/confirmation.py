@@ -287,19 +287,20 @@ def _handle_negative_preference(ctx):
     return result
 
 
-def _handle_context_aware_confirm(ctx, last_action):
+def _handle_context_aware_confirm(ctx):
     """Handle yes/no after escalation, emotional, crisis, confused, frustration.
 
-    Args:
-        last_action: Captured snapshot of ``ctx.existing.get("_last_action")``
-            from the orchestrator. Passed explicitly because this handler
-            mutates ``_last_action`` (pops it on confirm_yes paths) and the
-            orchestrator's subsequent ``_consume_last_action`` call must
-            see the same value the handler dispatched on. Same snapshot
-            shape as ``last_results`` and ``pending`` elsewhere.
+    Reads ``ctx.snapshot_last_action`` — a snapshot of
+    ``ctx.existing.get("_last_action")`` captured by the orchestrator
+    BEFORE this handler ran, because this handler pops ``_last_action``
+    from ``existing`` on confirm_yes paths. The orchestrator's subsequent
+    ``_consume_last_action`` call also reads the snapshot, so both
+    callers see the same value. See ``MessageContext.snapshot_last_action``
+    for the full contract.
 
     Returns a result dict, or None if no context-aware handling applies.
     """
+    last_action = ctx.snapshot_last_action
     if last_action == "escalation" and ctx.category == "confirm_yes":
         ctx.existing.pop("_last_action", None)
         save_session_slots(ctx.session_id, ctx.existing)
@@ -483,20 +484,21 @@ def _promote_queued_offer(ctx, offer, location_override=None):
     return result
 
 
-def _handle_pending_confirmation(ctx, pending):
+def _handle_pending_confirmation(ctx):
     """Handle confirm_yes, confirm_change_*, confirm_deny during pending confirmation.
 
-    Args:
-        pending: Captured snapshot of ``ctx.existing.get("_pending_confirmation")``
-            from the orchestrator. Passed explicitly because this handler
-            mutates ``_pending_confirmation`` (pops it on confirm paths) and
-            the orchestrator's subsequent ``if pending:`` guard before
-            ``_handle_post_pending_confirmation`` must see the same value
-            this handler dispatched on. Same snapshot shape as ``last_action``
-            in ``_handle_context_aware_confirm``.
+    Reads ``ctx.snapshot_pending`` — a snapshot of
+    ``ctx.existing.get("_pending_confirmation")`` captured by the
+    orchestrator BEFORE this handler ran, because this handler pops
+    ``_pending_confirmation`` from ``existing`` on confirm paths. The
+    orchestrator's subsequent ``if pending:`` guard before
+    ``_handle_post_pending_confirmation`` must see the same value this
+    handler dispatched on. See ``MessageContext.snapshot_pending`` for
+    the full contract.
 
     Returns a result dict, or None if no pending handling applies.
     """
+    pending = ctx.snapshot_pending
     # Local alias — handler may rebind via ``merge_slots`` below, which
     # returns a new dict. The orchestrator's ``ctx.existing`` reference
     # stays pointing at the original; subsequent reads of ``ctx.existing``
@@ -695,7 +697,7 @@ def _handle_pending_confirmation(ctx, pending):
     return None
 
 
-def _handle_post_pending_confirmation(ctx, response_tone):
+def _handle_post_pending_confirmation(ctx):
     """Handle messages that arrive while a confirmation was pending, after
     ``_handle_pending_confirmation`` has already had a chance to match a
     direct yes/no/change.
@@ -709,17 +711,18 @@ def _handle_post_pending_confirmation(ctx, response_tone):
        without re-confirmation.
     3. **No new info** — re-nudge with a tone-matched confirmation prompt.
 
-    Args:
-        response_tone: Captured snapshot of the response tone before any
-            negative_preference → service promotion. Used at the bottom
-            of the function to pick a tone-matched nudge prefix. Distinct
-            from ``ctx.tone`` because the orchestrator may have promoted
-            a None tone to "frustrated" along the negative_preference
-            path; ``response_tone`` preserves the pre-promotion value
-            so the nudge prefix reflects what the user originally said.
+    Reads ``ctx.snapshot_response_tone`` — a snapshot of the response tone
+    captured by the orchestrator BEFORE any negative_preference → service
+    promotion. Used at the bottom of the function to pick a tone-matched
+    nudge prefix. Distinct from ``ctx.tone`` because the orchestrator may
+    have promoted a None tone to "frustrated" along the negative_preference
+    path; the snapshot preserves the pre-promotion value so the nudge
+    prefix reflects what the user originally said. See
+    ``MessageContext.snapshot_response_tone`` for the full contract.
 
     Returns a result dict in all three cases.
     """
+    response_tone = ctx.snapshot_response_tone
     # Local alias — handler may rebind via ``merge_slots`` below. See
     # the analogous note in ``_handle_pending_confirmation``.
     existing = ctx.existing

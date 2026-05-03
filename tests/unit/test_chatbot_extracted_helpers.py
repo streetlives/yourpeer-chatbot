@@ -38,6 +38,7 @@ from app.services.chatbot.handlers.confirmation import (
     _handle_context_aware_confirm,
     _handle_pending_confirmation,
 )
+from conftest import make_ctx
 
 
 @pytest.fixture
@@ -212,7 +213,7 @@ class TestRunLLMGate:
     def test_skip_when_has_service_intent(self, llm_enabled):
         """If earlier tiers resolved service intent, the LLM gate should
         not run — regardless of other signals."""
-        has_si, action, src, tone, llm_action = _run_llm_gate(
+        has_si, action, src, tone, llm_action, unified = _run_llm_gate(
             message="I need food in Brooklyn with cats and dogs",
             early_extracted={"service_type": "food"},
             has_service_intent=True,
@@ -271,7 +272,7 @@ class TestRunLLMGate:
     def test_gate_fires_when_substantive_and_unresolved(self, llm_enabled):
         """When none of the short-circuits apply, the gate should call the LLM."""
         llm_enabled.return_value = {"service_type": "food"}
-        has_si, action, src, tone, llm_action = _run_llm_gate(
+        has_si, action, src, tone, llm_action, unified = _run_llm_gate(
             message="i really could use some help with groceries",
             early_extracted={},
             has_service_intent=False,
@@ -287,7 +288,7 @@ class TestRunLLMGate:
         """A flaky LLM call must not break routing — the gate logs and
         returns None-y values so the caller falls back to regex."""
         llm_enabled.side_effect = RuntimeError("API timeout")
-        has_si, action, src, tone, llm_action = _run_llm_gate(
+        has_si, action, src, tone, llm_action, unified = _run_llm_gate(
             message="i really could use some help with groceries",
             early_extracted={},
             has_service_intent=False,
@@ -312,44 +313,32 @@ class TestHandleSpanishDetection:
 
     def test_english_message_returns_neither(self):
         """A non-Spanish message gets (None, '') — caller proceeds normally."""
-        result, prefix = _handle_spanish_detection(
-            session_id="s1",
+        ctx = make_ctx(
             message="I need food in Brooklyn",
-            redacted_message="I need food in Brooklyn",
-            existing={},
             has_service_intent=True,
-            tone=None,
-            request_id="r1",
         )
+        result, prefix = _handle_spanish_detection(ctx)
         assert result is None
         assert prefix == ""
 
     def test_spanish_only_returns_result(self):
         """Spanish + no service intent → full bilingual message, no prefix."""
-        result, prefix = _handle_spanish_detection(
-            session_id="s1",
+        ctx = make_ctx(
             message="hola, necesito ayuda",
-            redacted_message="hola, necesito ayuda",
-            existing={},
             has_service_intent=False,
-            tone=None,
-            request_id="r1",
         )
+        result, prefix = _handle_spanish_detection(ctx)
         assert result is not None
         assert "Lo siento" in result["response"]
         assert prefix == ""
 
     def test_spanish_with_service_returns_prefix(self):
         """Spanish + service intent → fall through with bilingual prefix."""
-        result, prefix = _handle_spanish_detection(
-            session_id="s1",
+        ctx = make_ctx(
             message="necesito comida en Brooklyn",
-            redacted_message="necesito comida en Brooklyn",
-            existing={},
             has_service_intent=True,
-            tone=None,
-            request_id="r1",
         )
+        result, prefix = _handle_spanish_detection(ctx)
         assert result is None  # caller should continue processing
         assert "Spanish" in prefix
         assert "do my best" in prefix
@@ -358,15 +347,8 @@ class TestHandleSpanishDetection:
         """Invariant check: result and prefix are mutually exclusive."""
         for has_si in (True, False):
             for msg in ("hello world", "hola mundo"):
-                result, prefix = _handle_spanish_detection(
-                    session_id="s1",
-                    message=msg,
-                    redacted_message=msg,
-                    existing={},
-                    has_service_intent=has_si,
-                    tone=None,
-                    request_id="r1",
-                )
+                ctx = make_ctx(message=msg, has_service_intent=has_si)
+                result, prefix = _handle_spanish_detection(ctx)
                 # Not both non-empty
                 assert not (result is not None and prefix), (
                     f"Both outputs non-empty for msg={msg!r}, has_si={has_si}"
@@ -427,14 +409,13 @@ class TestHandleDemographicSkip:
         with the warm "No problem at all." prefix."""
         self._save_session_called(monkeypatch)
         existing = self._existing()
-        result = _handle_demographic_skip(
-            session_id="s1",
+        ctx = make_ctx(
             message="I'd rather not say",
-            redacted_message="I'd rather not say",
             existing=existing,
-            tone=None,
+            session_id="s1",
             request_id="r1",
         )
+        result = _handle_demographic_skip(ctx)
         assert result is not None
         assert result["session_id"] == "s1"
         assert result["follow_up_needed"] is True
@@ -460,10 +441,8 @@ class TestHandleDemographicSkip:
         msg = "I don\u2019t want to say"
         assert "\u2019" in msg  # sanity: confirm we're testing curly
         existing = self._existing()
-        result = _handle_demographic_skip(
-            session_id="s1", message=msg, redacted_message=msg,
-            existing=existing, tone=None, request_id="r1",
-        )
+        ctx = make_ctx(message=msg, existing=existing)
+        result = _handle_demographic_skip(ctx)
         assert result is not None, (
             "Curly apostrophe should still match the skip phrase — "
             "if this fails, normalize_apostrophes was removed or "
@@ -475,11 +454,8 @@ class TestHandleDemographicSkip:
         """Family status already set; only age should get 'skipped'."""
         self._save_session_called(monkeypatch)
         existing = self._existing(family_status="single")
-        result = _handle_demographic_skip(
-            session_id="s1", message="prefer not to say",
-            redacted_message="prefer not to say", existing=existing,
-            tone=None, request_id="r1",
-        )
+        ctx = make_ctx(message="prefer not to say", existing=existing)
+        result = _handle_demographic_skip(ctx)
         assert result is not None
         assert existing["age"] == "skipped"
         # family_status was already set — don't overwrite
@@ -491,21 +467,15 @@ class TestHandleDemographicSkip:
         skipped on a session that hasn't begun the service search."""
         self._save_session_called(monkeypatch)
         existing = self._existing(service_type=None)
-        result = _handle_demographic_skip(
-            session_id="s1", message="I'd rather not say",
-            redacted_message="I'd rather not say", existing=existing,
-            tone=None, request_id="r1",
-        )
+        ctx = make_ctx(message="I'd rather not say", existing=existing)
+        result = _handle_demographic_skip(ctx)
         assert result is None
 
     def test_returns_none_when_no_location(self, monkeypatch):
         self._save_session_called(monkeypatch)
         existing = self._existing(location=None)
-        result = _handle_demographic_skip(
-            session_id="s1", message="rather not say",
-            redacted_message="rather not say", existing=existing,
-            tone=None, request_id="r1",
-        )
+        ctx = make_ctx(message="rather not say", existing=existing)
+        result = _handle_demographic_skip(ctx)
         assert result is None
 
     def test_returns_none_when_already_pending_confirmation(self, monkeypatch):
@@ -513,22 +483,16 @@ class TestHandleDemographicSkip:
         no longer being collected — the skip path is irrelevant."""
         self._save_session_called(monkeypatch)
         existing = self._existing(_pending_confirmation=True)
-        result = _handle_demographic_skip(
-            session_id="s1", message="skip",
-            redacted_message="skip", existing=existing,
-            tone=None, request_id="r1",
-        )
+        ctx = make_ctx(message="skip", existing=existing)
+        result = _handle_demographic_skip(ctx)
         assert result is None
 
     def test_returns_none_when_demographics_already_filled(self, monkeypatch):
         """Both age and family_status set — nothing left to skip."""
         self._save_session_called(monkeypatch)
         existing = self._existing(age=25, family_status="single")
-        result = _handle_demographic_skip(
-            session_id="s1", message="I'd rather not say",
-            redacted_message="I'd rather not say", existing=existing,
-            tone=None, request_id="r1",
-        )
+        ctx = make_ctx(message="I'd rather not say", existing=existing)
+        result = _handle_demographic_skip(ctx)
         assert result is None
 
     def test_non_skip_phrase_returns_none(self, monkeypatch):
@@ -536,11 +500,8 @@ class TestHandleDemographicSkip:
         fire — otherwise we'd swallow real answers as skips."""
         self._save_session_called(monkeypatch)
         existing = self._existing()
-        result = _handle_demographic_skip(
-            session_id="s1", message="I'm 25",
-            redacted_message="I'm 25", existing=existing,
-            tone=None, request_id="r1",
-        )
+        ctx = make_ctx(message="I'm 25", existing=existing)
+        result = _handle_demographic_skip(ctx)
         assert result is None
 
     def test_exact_skip_match(self, monkeypatch):
@@ -548,11 +509,8 @@ class TestHandleDemographicSkip:
         of the predicate, separate from the substring-match branch."""
         self._save_session_called(monkeypatch)
         existing = self._existing()
-        result = _handle_demographic_skip(
-            session_id="s1", message="skip",
-            redacted_message="skip", existing=existing,
-            tone=None, request_id="r1",
-        )
+        ctx = make_ctx(message="skip", existing=existing)
+        result = _handle_demographic_skip(ctx)
         assert result is not None
         assert existing["age"] == "skipped"
 
@@ -560,11 +518,8 @@ class TestHandleDemographicSkip:
         """Bare 'pass' likewise matches via the explicit branch."""
         self._save_session_called(monkeypatch)
         existing = self._existing()
-        result = _handle_demographic_skip(
-            session_id="s1", message="pass",
-            redacted_message="pass", existing=existing,
-            tone=None, request_id="r1",
-        )
+        ctx = make_ctx(message="pass", existing=existing)
+        result = _handle_demographic_skip(ctx)
         assert result is not None
 
     def test_save_session_called_twice(self, monkeypatch):
@@ -576,11 +531,8 @@ class TestHandleDemographicSkip:
         for any code that snoops the session between the two saves."""
         calls = self._save_session_called(monkeypatch)
         existing = self._existing()
-        _handle_demographic_skip(
-            session_id="s1", message="rather not say",
-            redacted_message="rather not say", existing=existing,
-            tone=None, request_id="r1",
-        )
+        ctx = make_ctx(message="rather not say", existing=existing)
+        _handle_demographic_skip(ctx)
         assert len(calls) == 2
 
 
@@ -612,11 +564,8 @@ class TestHandleLocationUnknown:
 
     def test_idk_phrase_offers_location_picker(self):
         existing = self._existing()
-        result = _handle_location_unknown(
-            session_id="s1", message="I don't know",
-            redacted_message="I don't know", existing=existing,
-            tone=None, request_id="r1",
-        )
+        ctx = make_ctx(message="I don't know", existing=existing)
+        result = _handle_location_unknown(ctx)
         assert result is not None
         assert "location" in result["response"].lower()
 
@@ -627,10 +576,8 @@ class TestHandleLocationUnknown:
         msg = "I don\u2019t know"
         assert "\u2019" in msg
         existing = self._existing()
-        result = _handle_location_unknown(
-            session_id="s1", message=msg, redacted_message=msg,
-            existing=existing, tone=None, request_id="r1",
-        )
+        ctx = make_ctx(message=msg, existing=existing)
+        result = _handle_location_unknown(ctx)
         assert result is not None, (
             "Curly apostrophe should still match — if this fails, "
             "normalize_apostrophes was removed from "
@@ -639,11 +586,8 @@ class TestHandleLocationUnknown:
 
     def test_returns_none_when_location_already_set(self):
         existing = self._existing(location="brooklyn")
-        result = _handle_location_unknown(
-            session_id="s1", message="I don't know",
-            redacted_message="I don't know", existing=existing,
-            tone=None, request_id="r1",
-        )
+        ctx = make_ctx(message="I don't know", existing=existing)
+        result = _handle_location_unknown(ctx)
         assert result is None
 
 
@@ -700,26 +644,24 @@ class TestSnapshotArgSemantics:
     # ------------------------------------------------------------------
 
     def test_context_aware_uses_snapshot_when_existing_is_empty(self):
-        """existing._last_action is None, but snapshot says 'emotional'.
-        Handler must dispatch the emotional path (snapshot wins).
+        """existing._last_action is None, but ctx.snapshot_last_action
+        says 'emotional'. Handler must dispatch the emotional path
+        (snapshot wins).
 
         If a future refactor changed the handler to re-read
-        ``existing.get("_last_action")``, this would return None — the
+        ``ctx.existing.get("_last_action")``, this would return None — the
         emotional branch would never fire."""
         existing = {"_last_action": None}
-        result = _handle_context_aware_confirm(
-            session_id="s1",
+        ctx = make_ctx(
             message="yes",
-            redacted_message="yes",
             existing=existing,
             category="confirm_yes",
-            last_action="emotional",  # ← snapshot says emotional
-            tone=None,
-            request_id="r1",
+            snapshot_last_action="emotional",  # ← snapshot says emotional
         )
+        result = _handle_context_aware_confirm(ctx)
         assert result is not None, (
-            "Handler must use the last_action snapshot, not "
-            "existing.get('_last_action'). If this fails, the "
+            "Handler must use ctx.snapshot_last_action, not "
+            "ctx.existing.get('_last_action'). If this fails, the "
             "snapshot contract is broken."
         )
         # The emotional branch returns the escalation response
@@ -733,35 +675,29 @@ class TestSnapshotArgSemantics:
 
         If a refactor read from existing, this would wrongly dispatch."""
         existing = {"_last_action": "emotional"}
-        result = _handle_context_aware_confirm(
-            session_id="s1",
+        ctx = make_ctx(
             message="yes",
-            redacted_message="yes",
             existing=existing,
             category="confirm_yes",
-            last_action=None,  # ← snapshot says nothing
-            tone=None,
-            request_id="r1",
+            snapshot_last_action=None,  # ← snapshot says nothing
         )
+        result = _handle_context_aware_confirm(ctx)
         assert result is None, (
             "Handler must use the snapshot (None), not "
-            "existing.get('_last_action'). If this fails, the "
+            "ctx.existing.get('_last_action'). If this fails, the "
             "handler is incorrectly re-reading from existing."
         )
 
     def test_context_aware_escalation_dispatch_via_snapshot(self):
         """Same divergence pattern, different branch: escalation."""
         existing = {"_last_action": None}
-        result = _handle_context_aware_confirm(
-            session_id="s1",
+        ctx = make_ctx(
             message="yes",
-            redacted_message="yes",
             existing=existing,
             category="confirm_yes",
-            last_action="escalation",  # ← snapshot
-            tone=None,
-            request_id="r1",
+            snapshot_last_action="escalation",
         )
+        result = _handle_context_aware_confirm(ctx)
         assert result is not None
         # Escalation response mentions sharing contact info
         assert "contact" in result["response"].lower() or \
@@ -781,8 +717,6 @@ class TestSnapshotArgSemantics:
         the two branches — the queue-offer branch returns a response
         about declining; the pending branch handles 'no' to confirmation
         differently."""
-        # Stub _empty_reply and _build_db_failure_message so we don't
-        # need a fully-formed session
         monkeypatch.setattr(
             "app.services.chatbot.handlers.confirmation._log_turn",
             lambda *a, **kw: None,
@@ -793,22 +727,19 @@ class TestSnapshotArgSemantics:
             "service_type": "food",
             "location": "brooklyn",
         }
-        result = _handle_pending_confirmation(
-            session_id="s1",
+        ctx = make_ctx(
             message="no",
-            redacted_message="no",
             existing=existing,
-            pending=True,  # ← snapshot says PENDING
             category="confirm_deny",
-            tone=None,
-            request_id="r1",
+            snapshot_pending=True,  # ← snapshot says PENDING
         )
-        # When pending=True and category=confirm_deny, handler resets
-        # to a "what do you need" prompt — distinctly different from
-        # the queue-offer-decline path that fires when pending=False.
+        result = _handle_pending_confirmation(ctx)
+        # When snapshot_pending=True and category=confirm_deny, handler
+        # resets to a "what do you need" prompt — distinctly different
+        # from the queue-offer-decline path that fires when not pending.
         assert result is not None, (
-            "Handler must route on the pending snapshot, not "
-            "existing.get('_pending_confirmation')."
+            "Handler must route on ctx.snapshot_pending, not "
+            "ctx.existing.get('_pending_confirmation')."
         )
 
     def test_pending_falls_through_when_snapshot_false(self, monkeypatch):
@@ -827,23 +758,20 @@ class TestSnapshotArgSemantics:
             "_pending_confirmation": True,  # ← dict says pending
             # No queue-offer state set, so queue-offer branch returns None too
         }
-        result = _handle_pending_confirmation(
-            session_id="s1",
+        ctx = make_ctx(
             message="something else",
-            redacted_message="something else",
             existing=existing,
-            pending=False,  # ← snapshot says NOT pending
             category="service",
-            tone=None,
-            request_id="r1",
+            snapshot_pending=False,  # ← snapshot says NOT pending
         )
+        result = _handle_pending_confirmation(ctx)
         # No pending, no queue-offer state, no relevant category —
         # the snapshot=False branch finds nothing to do and returns
         # None. If the handler re-read from existing, it would wrongly
         # try the pending branch (which would dispatch on category).
         assert result is None, (
             "Handler must use the snapshot (False), not "
-            "existing.get('_pending_confirmation')."
+            "ctx.existing.get('_pending_confirmation')."
         )
 
 
