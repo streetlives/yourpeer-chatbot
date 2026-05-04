@@ -346,7 +346,7 @@ jobs:
           PY
 
       - name: Upload mutation report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: always()
         with:
           # Replace slashes in module name with dashes so artifact name is valid.

@@ -213,7 +213,7 @@ jobs:
 
       - name: Upload mutation report for ${{ matrix.safe_name }}
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           # Unique per-module artifact name. Pre-fix used a single shared
           # name ("pr-mutation-reports"), which causes a second matrix

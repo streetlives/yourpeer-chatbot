@@ -90,7 +90,7 @@ jobs:
             --tb=short
 
       - name: Upload coverage report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: always()  # Upload even on failure so you can debug locally
         with:
           name: coverage-report
