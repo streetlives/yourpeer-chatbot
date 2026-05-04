@@ -2,7 +2,7 @@
 
 ## Decision: Local Embedding Model with `all-MiniLM-L6-v2`
 
-**Status:** Approved for implementation
+**Status:** ✅ Shipped (April 2026). Implementation lives in `backend/app/services/semantic_router.py`. The 3-tier classification cascade described below is what the chatbot runs in production.
 **Author:** Engineering team
 **Date:** April 2026
 

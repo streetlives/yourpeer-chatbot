@@ -53,7 +53,7 @@ default.
 
 The CI gate (in `test-quality.yml`) is:
 
-- **Line coverage ≥ 85%** (currently 88%)
+- **Line coverage ≥ 85%** (CI gate; the `--cov-fail-under=85` flag is set in `.github/workflows/test-quality.yml`). Actual coverage typically hovers a few points above the gate; raise the gate when you confirm a comfortable margin.
 - **Branch coverage** is measured but not yet gated. Will be gated at
   75% once we confirm it's above that with the current suite.
 
@@ -103,23 +103,25 @@ findings against `tests/_tools/audit_baseline.txt`. The build fails if
 any category's count INCREASES. Decreases are allowed silently but
 should prompt a baseline regenerate.
 
-**Current baseline (post April 2026 audit cleanup):**
+**Current baseline (`tests/_tools/audit_baseline.txt`, regenerated post-April 2026 cleanup):**
 
-| Category | Count | Notes |
-|---|---|---|
-| D1 Dead patch targets | 0 | Enforced by codemod + D7 gate |
-| D2 No-assertion tests | 0 | All assertionless stubs replaced |
-| D3 Mock-only assertions | 19 | Advisory, not in CI gate (high false-positive rate) |
-| D4 Unverified mock return_value | 0 | Clean |
-| D5 Env-dependent | 8 | Deliberate (tests that exercise env-var handling) |
-| D6 Admin without auth | 0 | All admin tests carry `Authorization` header |
-| D7 Package-level re-export patches | 0 | Codemod applied, 130 rewrites across 21 files |
-| D8 Real-time comparisons | 1 | `test_ping_cache_expires` — legitimate |
-| D9 `time.sleep()` | 1 | `test_audit_log` — flaky risk, accepted |
-| **TOTAL** | **29** | Down from 203 pre-cleanup |
+| Category | Baseline count | In CI gate? | Notes |
+|---|---|---|---|
+| D1 Dead patch targets | 1 | ✅ Yes | Edge case — single legacy site retained as a documented exception |
+| D2 No-assertion tests | 0 | ✅ Yes | All assertionless stubs replaced |
+| D3 Mock-only assertions | 27 | ❌ Advisory | High false-positive rate; surfaced for human review but never gates the build |
+| D4 Unverified mock return_value | 0 | ✅ Yes | Clean |
+| D5 Env-dependent | 8 | ✅ Yes | Deliberate (tests that exercise env-var handling) |
+| D6 Admin without auth | 0 | ✅ Yes | All admin tests carry `Authorization` header |
+| D7 Package-level re-export patches | 0 | ✅ Yes | Codemod applied, 130 rewrites across 21 files |
+| D8 Real-time comparisons | 1 | ✅ Yes | `test_ping_cache_expires` — legitimate |
+| D9 `time.sleep()` | 1 | ✅ Yes | `test_audit_log` — flaky risk, accepted |
+| **TOTAL (scan)** | **38** | — | What `audit_tests.py` reports against 77 scanned files |
+| **TOTAL (gated)** | **11** | ✅ | What `check_audit_baseline.py` actually fails the build on (excludes D3) |
 
-If you genuinely need to introduce a new D5 (for example), update the
-baseline deliberately:
+The build only fails when a **gated** category increases above its baseline. D3 is reported but never gates — its detection has a high false-positive rate (tests that deliberately verify a mock contract look identical to tests that forgot to verify behavior). Pre-cleanup the scan total was around 203 findings.
+
+The actual current scan may report slightly higher totals than the baseline (most often in D3, since that's not in the gate) as new tests are added — that's fine. If a *gated* category drifts up legitimately (e.g., you added 5 new tests with deliberate env-var handling and they're each justified), regenerate the baseline deliberately:
 
 ```bash
 make audit-baseline   # writes tests/_tools/audit_baseline.txt
@@ -166,11 +168,12 @@ These get mutation testing. Listed in priority order:
 | orchestrator.py | 70% | Dispatch logic; some paths are hard to isolate |
 | session_token.py | 85% | Security; should be high |
 
-Thresholds live in three places that must stay in sync:
+Thresholds are enforced in the two CI workflows that need to fail builds:
 
-- `Makefile` — for `make mutation-module`
 - `.github/workflows/mutation-testing.yml` — for the weekly job
 - `.github/workflows/mutation-testing-pr.yml` — for the PR job
+
+Both define a `THRESHOLD_FOR_MODULE` associative array; the values must match. The `Makefile`'s `mutation-module` target runs cosmic-ray and prints the report but doesn't enforce a threshold itself — local runs are advisory.
 
 ### Running locally
 
@@ -232,7 +235,7 @@ you must patch `A.foo`.
 
 ## CI workflows
 
-Three workflows in `.github/workflows/`:
+Three test-related workflows in `.github/workflows/` gate test quality (the directory also contains workflows for ruff, frontend checks, backend tests, and doc drift, which are out of scope here):
 
 ### `test-quality.yml` — every PR and push to main
 

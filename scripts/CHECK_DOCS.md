@@ -38,6 +38,14 @@ None of these were caught by tests. This script exists so they're caught before 
 | **Category counts** | Claims like "7 crisis categories" cross-referenced against `len(_CRISIS_CATEGORIES)`. Supports word-form captures ("Eight crisis categories"). Configured in `CATEGORY_COUNTS`. |
 | **Cross-doc contradictions** | When two docs claim different values for the same thing ("7 categories" vs "8 categories"), flag both — even if the source-of-truth is deleted. |
 
+**Drift-of-stale-docs checks (May 2026 additions):**
+
+| Check | What It Validates |
+|---|---|
+| **Status banners** | Top-of-file `**Status:**` banners on docs in `docs/design/` and `docs/audits/`. Flags pre-ship phrases (`Approved for implementation`, `Draft for review`, `Approved`, `Ready to implement`, `Active remediation in progress`) — which routinely outlive the work they describe. To opt out, either flip the banner to a post-ship phrase (`Shipped`, `Resolved`, `Complete`, `Closed`, `Fixed`) or use `<!-- drift:ignore-file -->` for genuinely-still-pre-ship docs. |
+| **Audit-ID closure** | Catches the `PHASE_AC_AFTERMATH.md` failure mode: code has a `# LLM-1: <resolution>` comment marking that an audit ID is closed, but the doc's quick-status table still lists `LLM-1` as Open. Scans backend/ comments for audit-ID-shaped tokens (`LLM-1`, `D-5`, `BUG-1`, etc.), filters out known false-positive prefixes (`HTTP-`, `RFC-`, `N-` for immigration-form names), and warns when the doc disagrees with code. Only fires on the strong signal direction (code says closed, doc says open) — the inverse is too noisy because closures often happen as deletions with no leftover comment. |
+| **Inventory table counts** | Validates multi-row inventory tables in audit/design docs against doc-declared HTML directives. A row's description cell can carry `<!-- check:phrase-count: app.services.phrase_lists._EMOTIONAL_PHRASES -->` and the checker will resolve the dotted reference, compute `len()` (or `sum(len(v) for v in d.values())` for dict-of-lists like `SERVICE_KEYWORDS`), and compare against the row's count. Subtotal rows and rows with composite formats use `<!-- check:phrase-count: skip -->`. The mapping lives in the doc itself, so adding a new row means adding a directive next to it — no separate update to this script. |
+
 **Quality-of-life checks:**
 
 | Check | What It Validates |

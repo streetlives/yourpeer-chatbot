@@ -141,7 +141,7 @@ Clears all session state (slots, transcript, pending confirmation). Shows a fres
 
 ### Correction ("Not what I meant")
 
-Triggered by phrases like "not what I meant", "you misunderstood", "wrong thing", "I didn't ask for that" (15 phrases total). Clears `_pending_confirmation`, `_last_action`, and `_last_results` to prevent the user from re-entering the wrong flow, but preserves `service_type` and `location` so they don't lose their search context entirely.
+Triggered by phrases like "not what I meant", "you misunderstood", "wrong thing", "I didn't ask for that" (22 phrases total). Clears `_pending_confirmation`, `_last_action`, and `_last_results` to prevent the user from re-entering the wrong flow, but preserves `service_type` and `location` so they don't lose their search context entirely.
 
 Shows a context-aware response: if the user had an active search, acknowledges it ("Sorry about that! I was searching for food in Brooklyn."). Presents the full service menu plus a peer navigator button. Logged with `confidence="low"` for ambiguity tracking.
 
@@ -259,7 +259,7 @@ Shows only one button — "🤝 Talk to a person" — not the service menu or "N
 
 When the bot has just asked for the user's location (service_type is set, location is missing, no pending confirmation) and the user responds with uncertainty ("I don't know", "idk", "not sure", "no clue"), indifference ("anywhere", "wherever", "doesn't matter"), or self-location ("where I am", "here", "right here"), the bot offers geolocation and borough buttons instead of falling into the confused handler.
 
-The handler recognizes 19 phrases via substring matching plus 2 exact-match phrases ("here" and "right here" — exact match prevents false positives on "here's what I need" or "there"). Guards ensure this only fires when the user has a service_type set, no location yet, and no pending confirmation. Without those guards, "I don't know" would always be intercepted rather than routing to the confused handler for users who genuinely don't know what they need.
+The handler recognizes 22 phrases via substring matching plus 2 exact-match phrases ("here" and "right here" — exact match prevents false positives on "here's what I need" or "there"). Guards ensure this only fires when the user has a service_type set, no location yet, and no pending confirmation. Without those guards, "I don't know" would always be intercepted rather than routing to the confused handler for users who genuinely don't know what they need.
 
 Response: "No problem! You can share your location and I'll find what's nearby, or pick a borough:" with a "📍 Use my location" button followed by the five borough buttons.
 
@@ -293,7 +293,7 @@ Extracts structured slots (service type, service detail, location, age, urgency,
 
 **Auto-execute for urgent queries:** When urgency is "high" and all required slots are filled (e.g., "I need a bed tonight in Brooklyn"), the confirmation step is skipped and the search executes immediately. Medium urgency and incomplete slots still go through normal confirmation.
 
-**Walk-in filter:** When a user says "walk-in only", "no referral needed", or similar (20 phrases), the `no_requirements` slot is set. This excludes services requiring membership or referral from the results.
+**Walk-in filter:** When a user says "walk-in only", "no referral needed", or similar (21 phrases), the `no_requirements` slot is set. This excludes services requiring membership or referral from the results.
 
 **Family composition:** For shelter searches, the chatbot asks "Are you on your own, or do you have family or children with you?" after collecting age. The `family_status` slot (with_children, with_family, alone) is shown in the confirmation and used to enrich shelter taxonomy queries.
 
@@ -436,7 +436,7 @@ After search results are displayed, follow-up questions are answered determinist
 
 **Sort options:** Users can type "sort by recently verified" or "sort by most services" to re-sort `_last_results` in Python and return re-ordered cards. Sort is available via text input only — the quick reply button was removed to reduce visual clutter.
 
-**Pagination / show more:** Initial query fetches 25 results but displays the first 5 (`_DISPLAY_PAGE_SIZE` in `chatbot/context.py`). When undisplayed results exist, a "📋 Show N more results" quick reply is offered. "Show more", "more results", "any others", "what else" (10 patterns) return the undisplayed remainder.
+**Pagination / show more:** Initial query fetches 25 results but displays the first 5 (`_DISPLAY_PAGE_SIZE` in `chatbot/context.py`). When undisplayed results exist, a "📋 Show N more results" quick reply is offered. "Show more", "more results", "any others", "what else" (11 patterns) return the undisplayed remainder.
 
 **Day-specific hours:** When the user asks about a specific day ("are they open Saturday?"), the system detects the day name, queries `holiday_schedules` for that weekday (ISO DOW: Monday=1, Sunday=7), and returns per-service hours. Weekend queries fetch both Saturday and Sunday.
 
@@ -575,7 +575,26 @@ Each prompt contains strict rules that instruct the LLM on what to avoid: no fab
 
 ### Testing
 
-Conversation routing is covered by 193 tests in `integration/test_classification_and_routing.py`, 56 context routing tests in `integration/test_multi_turn_and_context.py`, 31 post-results boundary tests in `unit/test_post_results_boundary.py`, 26 ambiguity handling tests in `integration/test_narrative_and_eval_scenarios.py`, 28 structural fix tests in `integration/test_crisis_and_flow_regressions.py`, 41 phrase audit tests in `unit/test_phrase_audit.py`, 19 contraction normalization tests in `unit/test_contraction_normalization.py`, 29 edge-case tests in `unit/test_edge_cases.py`, 36 crisis detection tests in `unit/test_crisis_detector.py`, 39 gender extraction tests in `unit/test_gender_extraction.py`, 34 PII redaction tests in `unit/test_pii_redactor.py`, and 88 population tests in `unit/test_populations.py` (extraction, merge, false positives, query boosts, DV crisis injection, ORDER BY generation, confirmation prefixes). Use `assert_classified(message, category)` from `conftest.py` for classification tests and `send(message)` for full routing tests.
+Conversation routing has dedicated coverage across both integration and unit suites. Approximate counts as of May 2026:
+
+<!-- drift:ignore: per-file test counts in this table grow with feature work; the drift checker covers `tests/unit/` totals already. Re-verify with `python -c "import ast; ...; len(ast.parse(...).body)"` if you want exact numbers. -->
+
+| File | Approx. tests | What it covers |
+| --- | --- | --- |
+| `integration/test_classification_and_routing.py` | ~210 | Core routing across all categories — most central routing-behavior file |
+| `integration/test_multi_turn_and_context.py` | ~55 | Context-aware yes/no after emotional / crisis step-down / frustration |
+| `integration/test_narrative_and_eval_scenarios.py` | ~30 | Long-message narratives, ambiguity handling, end-to-end conversation flows |
+| `integration/test_crisis_and_flow_regressions.py` | ~30 | Crisis-flow regression guards from earlier eval-failing scenarios |
+| `unit/test_post_results_boundary.py` | ~30 | Post-results → new-request transition handling |
+| `unit/test_phrase_audit.py` | ~40 | Keyword coverage and phrase-list audits |
+| `unit/test_contraction_normalization.py` | ~20 | Contraction expansion, intensifier stripping |
+| `unit/test_edge_cases.py` | ~30 | Slot extractor edge cases |
+| `unit/test_crisis_detector.py` | ~40 | Crisis category detection (regex layer) |
+| `unit/test_gender_extraction.py` | ~60 | Gender / LGBTQ identity extraction |
+| `unit/test_pii_redactor.py` | ~35 | PII detection and redaction |
+| `unit/test_populations.py` | ~90 | Population context — extraction, merge, false positives, query boosts, DV crisis injection, ORDER BY generation, confirmation prefixes |
+
+Use `assert_classified(message, category)` from `conftest.py` for classification tests and `send(message)` for full routing tests.
 
 ```bash
 # Run conversation tests

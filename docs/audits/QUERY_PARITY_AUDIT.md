@@ -3,7 +3,7 @@
 Date: April 16, 2026 (DB-verified update)
 Source of truth: [`streetlives/yourpeer.nyc`](https://github.com/streetlives/yourpeer.nyc) (`streetlives-api-service.ts`, `common.ts`, `get-side-panel-component-data.ts`)
 API: [`streetlives/streetlives-api`](https://github.com/streetlives/streetlives-api) (Node.js, Sequelize, PostgreSQL)
-Status: **DRAFT — active remediation in progress; DB verification complete**
+Status: ✅ **Resolved (April 16, 2026)** — all 4 P0 critical divergences remediated. P1/P2 items tracked under "Remaining P1/P2 Items"; the body sections below describe what was found and the resolution.
 
 ---
 
@@ -11,18 +11,18 @@ Status: **DRAFT — active remediation in progress; DB verification complete**
 
 The chatbot bypasses the YourPeer REST API and queries the Streetlives PostgreSQL database directly via parameterized SQL templates. This architectural decision (documented in Architecture Docs v0.3) was intentional — it eliminates hallucination risk by grounding all results in deterministic queries.
 
-However, this means the chatbot's query logic was written independently from YourPeer's. This audit compared the chatbot's full query construction, filtering, sorting, and enrichment logic against what YourPeer actually does, using a line-by-line review of both codebases.
+However, this means the chatbot's query logic was written independently from YourPeer's. This audit compared the chatbot's full query construction, filtering, sorting, and enrichment logic against what YourPeer actually does, using a line-by-line review of both codebases. **All four critical divergences identified by this audit have since been resolved** — see `## April 16, 2026 — DB Verification & Remediation Update` below for the work completed.
 
 ### Findings Summary
 
-| Severity | Count | Description |
-|----------|-------|-------------|
-| 🔴 Critical divergence | 4 | Shelter sub-filter logic, health-care taxonomy scope, open-now semantics, category structure |
-| 🟠 Novel behavior (needs validation) | 14 | Chatbot-invented features not in YourPeer |
-| 🟡 Unvalidated business rules | 6 | Assumptions requiring data steward sign-off |
-| 🟢 Validated equivalent | 5 | Chatbot correctly reimplements YourPeer behavior |
-| ℹ️ Informational | 4 | Differences that may be intentional improvements |
-| ⚠️ YourPeer bugs/gaps | 2 | Issues found in YourPeer itself during this audit |
+| Severity | Count | Status | Description |
+|----------|-------|--------|-------------|
+| 🔴 Critical divergence | 4 | ✅ All resolved | Shelter sub-filter logic, health-care taxonomy scope, open-now semantics, category structure |
+| 🟠 Novel behavior (needs validation) | 14 | Validated and kept (intentional divergences) | Chatbot-invented features not in YourPeer |
+| 🟡 Unvalidated business rules | 6 | Tracked separately | Assumptions requiring data steward sign-off |
+| 🟢 Validated equivalent | 5 | n/a | Chatbot correctly reimplements YourPeer behavior |
+| ℹ️ Informational | 4 | n/a | Differences that may be intentional improvements |
+| ⚠️ YourPeer bugs/gaps | 2 | Reported upstream | Issues found in YourPeer itself during this audit |
 
 **No parity audit was previously conducted against YourPeer's source code.** Prior audits validated taxonomy names against the DB schema, but never compared the chatbot's query construction, filtering, sorting, or enrichment logic against what YourPeer actually does.
 

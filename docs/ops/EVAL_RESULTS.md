@@ -2,6 +2,20 @@
 
 Tracks LLM-as-judge evaluation results across releases to measure improvement.
 
+> **Heading levels.** The doc uses three nested heading conventions accreted over time:
+> `## Run N` for Runs 1–22 (the original 142-scenario suite, Sonnet judge),
+> `# Run N — <title>` for Runs 23–34 (167-scenario suite, Opus judge transition at R28),
+> `# Eval Run N` for Runs 35+ (171-scenario suite, post-Phase-3 unified extractor migration).
+> All three styles are kept as-is to avoid pollution in `git blame` for prior history; new entries should follow the `# Eval Run N` style.
+
+> **Header glance:**
+> R1–R22: original suite, Sonnet judge.
+> R28: judge upgrade to Opus (new baseline; not directly comparable to R14–R27).
+> R31+: semantic router enabled; new `youth_runaway` and `assault_victim` crisis categories landed in this run.
+> R35: Sprint 1 fixes during partial extractor migration.
+> R36: feature-flag wiring; first cleanly-runnable comparison of legacy vs unified.
+> R37: unified extractor flag default flipped ON. Last full eval before Phase 4 deletions.
+
 ---
 
 ## Run 1 — 2026-04-03 (Pre-fix baseline)
@@ -6080,6 +6094,61 @@ Apply in priority order. Full diagnosis in `r36-analysis.md`.
 - **`peer_aging_out_foster`** — worsened 3.73 → 3.55 in unified. May be Opus non-determinism or may indicate unified extractor interacting poorly with foster-youth population tag. Investigate after Category C fixes.
 - **Proactive safety resources** (PATH / 311 / 988) — carry-forward theme; 6 CFs tagged "safety resources missing" in R36 unified. Next sprint candidate.
 - **Human calibration** — 97.7% passing on R36 legacy makes signal/noise extremely low. Human annotation of 20-30 scenarios would validate Opus scoring.
+
+---
+
+# Eval Run 37
+
+**Date:** April 24, 2026 | **Scenarios:** 171 | **Passing:** 167 (97.7%) | **Failing:** 4
+**Changes in this eval:** `UNIFIED_EXTRACTOR_MIGRATION` rev 16 — Phase 3 SHIPPED, `_USE_UNIFIED_EXTRACTOR` flag default flipped to ON in production code. First full eval run with the unified extractor as the default path on every scenario, after the rev-15 cross-borough carve-out and primary-location decoupling fixes.
+
+## Summary
+
+| Metric | R36 Legacy | R36 Unified | R37 (unified default) | Note |
+|---|---|---|---|---|
+| Overall average | 4.56 | 4.55 | **4.59** | Beats R36 Legacy by +0.03 |
+| Passing (≥ 4.0) | 167 / 171 (97.7%) | 159 / 171 (93.0%) | **167 / 171 (97.7%)** | Matches R36 Legacy exactly; recovers all 8 R36-Unified→failing scenarios |
+| Critical failures | 22 | 25 | **19** | Lowest CF count of the Opus era |
+| Headline migration scenario `multi_cross_borough_food_brooklyn_shelter_manhattan` | 4.73 | 4.73 | passing | Migration's primary target |
+| Judge model | claude-opus-4-6 | claude-opus-4-6 | claude-opus-4-6 | · |
+| Semantic router | enabled | enabled | enabled | · |
+| Extractor path | legacy | unified | **unified (default)** | Phase 3 flag-flip |
+
+## What this run validated
+
+Phase 3 of the unified extractor migration ships the new `slot_extraction/` package as the default path. R37 was the gate condition for the flag flip — it had to:
+
+1. Pass the headline scenario (`multi_cross_borough_food_brooklyn_shelter_manhattan`) — passed.
+2. Match or beat R36 Legacy on overall passing rate — matched (167/171 each).
+3. Not introduce a new critical failure cluster — no new clusters; CF count actually dropped 22 → 19.
+
+All three conditions met. The doc-level Phase 3 acceptance bar from `UNIFIED_EXTRACTOR_MIGRATION.md` was satisfied.
+
+## What's still failing (4 scenarios)
+
+The 4 remaining failing scenarios are all carry-forwards from R36 with deeper roots than the extractor migration:
+
+- `peer_diabetic_insulin` — Sprint 4 candidate. Slot extraction for "insulin" → `health_care` plus confirmation-flow debug. Now 3.00 (best Opus-era score for this scenario).
+- `peer_aging_out_foster` — interacts poorly with foster-youth population tag under unified path. Investigate whether population tagging logic regressed.
+- One persistent `peer_*` scenario — same pattern.
+- One `wa_*` (Washington-state-style scenario) — borderline (3.91), product decision deferred.
+
+Per the existing carry-forward themes in R36's "What's Next" — proactive safety resources (PATH/311/988), human calibration, foster-aftercare resource expansion — these remain open and weren't in scope for the Phase 3 flag-flip.
+
+## What's next (post-R37)
+
+R37 cleared the path for Phase 4 of the unified-extractor migration. Phase 4 (started rev 17, April 25) deletes the legacy modules in stages:
+
+1. **Stage 1** — migrate `pipeline._run_llm_gate` from `classify_unified` to `slot_extraction.extract` after extending the unified extractor with advisory `tone` / `action` outputs.
+2. **Stage 2** — delete `_USE_UNIFIED_EXTRACTOR` feature flag entirely; remove obsolete flag tests.
+3. **Stage 3** (April 29) — delete legacy modules entirely.
+4. **Stage 4** — test consolidation (4a done early to de-risk Stage 3; remainder in progress).
+
+Stages 1 and 2 shipped in rev 17 alongside two real behavior bugs caught by a pre-Stage-3 legacy-coverage audit: (a) invalid age values were passing straight through unchecked, (b) string-valued enum fields weren't being lowercased before the merge filter, causing valid-but-uppercase LLM outputs to be silently dropped. Both fixed with `_coerce_age` and `_normalize_string_field` helpers in `dispatch.py`; 29 ported tests in `TestNormalizeToolOutputValidation` lock in the contract.
+
+Stage 3 also brought a Trust Model change: semantic > LLM > regex for `service_type`. On sets-DISAGREE, when the regex result came from the semantic router (caller passes `extraction_source="semantic"`), the semantic value now wins over the LLM's pick. When the source is plain regex or unspecified, LLM still wins on disagree (the R36 Ext-2b default). This restored part of the legacy `extract_slots_smart` regex-override behavior, but only for the semantic case.
+
+The next eval run after Stage 3 will be the first one against a codebase with the legacy modules deleted entirely. Expected: indistinguishable from R37, since Stages 1 + 2 already exercised the unified path everywhere production code ran.
 
 ---
 
