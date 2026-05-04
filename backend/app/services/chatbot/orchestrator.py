@@ -70,6 +70,7 @@ from .handlers import (
     _promote_queued_offer,
 )
 from .pipeline import (
+    _apply_pii_warning,
     _apply_session_geo,
     _compute_routing_category,
     _redact_with_safety_warning,
@@ -294,15 +295,18 @@ def generate_reply(
                 and existing.get("_queued_offer")
                 and early_extracted.get("service_type") == existing["_queued_offer"][0]):
             offer = existing["_queued_offer"]
-            return _promote_queued_offer(
-                ctx, offer,
-                location_override=early_extracted.get("location"),
+            return _apply_pii_warning(
+                _pii_warning,
+                _promote_queued_offer(
+                    ctx, offer,
+                    location_override=early_extracted.get("location"),
+                ),
             )
 
         # --- POST-RESULTS QUESTION CHECK ---
         _post_result = _handle_post_results_interaction(ctx)
         if _post_result:
-            return _post_result
+            return _apply_pii_warning(_pii_warning, _post_result)
 
     # === ROUTE TO HANDLERS ===
 
@@ -318,7 +322,7 @@ def generate_reply(
     # --- Spanish / non-English detection ---
     _spanish_result, _spanish_acknowledgment = _handle_spanish_detection(ctx)
     if _spanish_result:
-        return _spanish_result
+        return _apply_pii_warning(_pii_warning, _spanish_result)
     # Late-set: read in the service-flow prefix-injection block below.
     ctx.spanish_acknowledgment = _spanish_acknowledgment
 
@@ -356,13 +360,32 @@ def generate_reply(
     # handlers can now set sensitive context on the first turn).
     _persist_emotional_context_early(session_id, existing, _emotional_context_update)
 
+    # NOTE: PII safety warnings.
+    # Every category-specific handler return below is wrapped with
+    # `_apply_pii_warning(_pii_warning, ...)`. The wrap is a no-op when
+    # `_pii_warning` is "" (the common case — most messages don't carry
+    # SSN or phone), so the wrap is essentially free. When the user did
+    # share warning-worthy PII (turn 3 of `pre_llm_redact_phone_in_followup`
+    # is the canonical example), the warning is prepended regardless of
+    # which handler the message routes through.
+    #
+    # Crisis is the one path that does NOT get wrapped — `_handle_crisis`
+    # already prepends safety resources (988, etc.), and prepending a
+    # privacy warning ahead of those would invert the priority order.
+    # User safety > privacy reminder.
+    #
+    # The late service-flow path (line ~640 below) prepends `_pii_warning`
+    # via `_tone_prefix`. The `_apply_pii_warning` helper is idempotent —
+    # if a response already starts with `_pii_warning`, the helper
+    # returns it unchanged. Safe to wrap every site.
+
     # --- Reset ---
     if category == "reset":
-        return _handle_reset(ctx)
+        return _apply_pii_warning(_pii_warning, _handle_reset(ctx))
 
     # --- Correction ---
     if category == "correction":
-        return _handle_correction(ctx)
+        return _apply_pii_warning(_pii_warning, _handle_correction(ctx))
 
     # --- Negative preference ---
     if category == "negative_preference":
@@ -390,54 +413,54 @@ def generate_reply(
             ctx.tone = tone
             # Fall through to normal service routing below.
         else:
-            return _handle_negative_preference(ctx)
+            return _apply_pii_warning(_pii_warning, _handle_negative_preference(ctx))
 
     # --- Greeting ---
     if category == "greeting":
-        return _handle_greeting(ctx)
+        return _apply_pii_warning(_pii_warning, _handle_greeting(ctx))
 
     # --- Thanks ---
     if category == "thanks":
-        return _handle_thanks(ctx)
+        return _apply_pii_warning(_pii_warning, _handle_thanks(ctx))
 
     # --- Help ---
     if category == "help":
-        return _handle_help(ctx)
+        return _apply_pii_warning(_pii_warning, _handle_help(ctx))
 
     # --- Bot Identity ---
     if category == "bot_identity":
-        return _handle_bot_identity(ctx)
+        return _apply_pii_warning(_pii_warning, _handle_bot_identity(ctx))
 
     # --- Bot capability questions ---
     if category == "bot_question":
-        return _handle_bot_capability_question(ctx)
+        return _apply_pii_warning(_pii_warning, _handle_bot_capability_question(ctx))
 
     # --- Demographic skip ("I'd rather not say" / "skip") ---
     # SAMHSA Empowerment principle: users control what they share.
     _demo_skip_result = _handle_demographic_skip(ctx)
     if _demo_skip_result:
-        return _demo_skip_result
+        return _apply_pii_warning(_pii_warning, _demo_skip_result)
 
     # --- Location unknown ---
     _loc_unknown_result = _handle_location_unknown(ctx)
     if _loc_unknown_result:
-        return _loc_unknown_result
+        return _apply_pii_warning(_pii_warning, _loc_unknown_result)
 
     # --- Confused / Overwhelmed ---
     if category == "confused":
-        return _handle_confused(ctx)
+        return _apply_pii_warning(_pii_warning, _handle_confused(ctx))
 
     # --- Emotional expression ---
     if category == "emotional":
-        return _handle_emotional(ctx)
+        return _apply_pii_warning(_pii_warning, _handle_emotional(ctx))
 
     # --- Frustration ---
     if category == "frustration":
-        return _handle_frustration(ctx)
+        return _apply_pii_warning(_pii_warning, _handle_frustration(ctx))
 
     # --- Escalation ---
     if category == "escalation":
-        return _handle_escalation(ctx)
+        return _apply_pii_warning(_pii_warning, _handle_escalation(ctx))
 
     # --- Context-aware "yes" / "no" handling ---
     # Snapshot _last_action onto ctx so the handler can dispatch on the
@@ -448,7 +471,7 @@ def generate_reply(
     ctx.snapshot_last_action = existing.get("_last_action")
     context_result = _handle_context_aware_confirm(ctx)
     if context_result:
-        return context_result
+        return _apply_pii_warning(_pii_warning, context_result)
 
     # Clear the last_action tracker now that we've checked it
     _consume_last_action(session_id, existing, ctx.snapshot_last_action)
@@ -456,9 +479,9 @@ def generate_reply(
     # --- Handle "change location" / "change service" outside pending ---
     if not existing.get("_pending_confirmation"):
         if category == "confirm_change_location":
-            return _handle_change_location_request(ctx)
+            return _apply_pii_warning(_pii_warning, _handle_change_location_request(ctx))
         if category == "confirm_change_service":
-            return _handle_change_service_request(ctx)
+            return _apply_pii_warning(_pii_warning, _handle_change_service_request(ctx))
 
     # --- Handle confirmation responses ---
     # Snapshot _pending_confirmation: handler pops it on confirm paths;
@@ -466,7 +489,7 @@ def generate_reply(
     ctx.snapshot_pending = existing.get("_pending_confirmation")
     confirm_result = _handle_pending_confirmation(ctx)
     if confirm_result:
-        return confirm_result
+        return _apply_pii_warning(_pii_warning, confirm_result)
 
     # If pending confirmation but user typed something new
     if ctx.snapshot_pending:
@@ -474,7 +497,7 @@ def generate_reply(
         # negative_preference promotion block) so it reflects the
         # original tone classification, not any post-promotion override.
         # Don't overwrite it here.
-        return _handle_post_pending_confirmation(ctx)
+        return _apply_pii_warning(_pii_warning, _handle_post_pending_confirmation(ctx))
 
     # --- Service request or general conversation ---
     if _USE_LLM and category == "service":
@@ -644,17 +667,26 @@ def generate_reply(
         # pre-existing — see ``ORCHESTRATOR_AUDIT.md`` "Suspect 1" —
         # and is preserved by this refactor; whether to add the prefix
         # is an open product/UX question, not a code-shape question.
+        #
+        # PII warning, however, IS applied here (May 2026): the asymmetry
+        # in the comment above is about whether the warmth-tone prefix
+        # fires; the PII warning is a separate, unconditional safety
+        # signal. A user sharing a phone number mid-service-flow should
+        # be warned regardless of whether the warmth prefix is suppressed.
         follow_up = next_follow_up_question(merged)
-        return _build_follow_up_response(
-            session_id=session_id,
-            redacted_message=redacted_message,
-            response_text=follow_up,
-            merged=merged,
-            quick_replies=_follow_up_quick_replies(merged),
-            log_category="service",
-            request_id=request_id,
-            tone=tone,
+        return _apply_pii_warning(
+            _pii_warning,
+            _build_follow_up_response(
+                session_id=session_id,
+                redacted_message=redacted_message,
+                response_text=follow_up,
+                merged=merged,
+                quick_replies=_follow_up_quick_replies(merged),
+                log_category="service",
+                request_id=request_id,
+                tone=tone,
+            ),
         )
 
     # --- General conversation / unrecognized service ---
-    return _handle_general_conversation(ctx)
+    return _apply_pii_warning(_pii_warning, _handle_general_conversation(ctx))

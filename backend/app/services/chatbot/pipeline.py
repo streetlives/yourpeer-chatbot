@@ -70,6 +70,37 @@ def _redact_with_safety_warning(message: str) -> tuple[str, str, list]:
     return redacted_message, warning_prefix, pii_detections
 
 
+def _apply_pii_warning(pii_warning: str, response: dict | None) -> dict | None:
+    """Prepend the PII safety warning to a handler's response, if applicable.
+
+    Used by the orchestrator to wrap every category-specific handler's
+    return value, so that warnings fire regardless of which path the
+    user's message took. Before May 2026 the warning was prepended only
+    on the late service-flow path (line ~637 of orchestrator.py), which
+    meant a user sharing PII in turn 3 (e.g. "can you call them at
+    212-555-1212" after results were delivered) would route through
+    ``_handle_post_results_interaction`` and never see the warning.
+
+    Idempotent: if the response's text already starts with the warning
+    (because the late service-flow path already prepended it), this
+    function returns the response unchanged. Safe to wrap every return
+    site without worrying about double-warnings.
+
+    Returns ``None`` if ``response`` was ``None`` (handlers signal
+    "fall through to next dispatch step" by returning None).
+    """
+    if response is None:
+        return None
+    if not pii_warning:
+        return response
+    text = response.get("response", "")
+    if text.startswith(pii_warning):
+        # Already prepended (late service-flow path).
+        return response
+    response["response"] = pii_warning + text
+    return response
+
+
 def _run_early_extraction(message: str, session_id: str) -> tuple[dict, str | None]:
     """Regex slot extraction + semantic-router fallback.
 
