@@ -235,7 +235,7 @@ you must patch `A.foo`.
 
 ## CI workflows
 
-Three workflows in `.github/workflows/`:
+Three test-related workflows in `.github/workflows/` gate test quality (the directory also contains workflows for ruff, frontend checks, backend tests, and doc drift, which are out of scope here):
 
 ### `test-quality.yml` — every PR and push to main
 

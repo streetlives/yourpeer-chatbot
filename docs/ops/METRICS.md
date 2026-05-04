@@ -110,7 +110,7 @@ From a DB audit (April 2026), schedule data (`regular_schedules` rows) is only p
 These metrics assess how the system handles crisis situations and sensitive content.
 
 ### 3.1 Crisis Detection Rate
-**Definition:** % of sessions containing crisis language (self-harm, violence, DV, trafficking, medical emergency) that trigger the crisis response path. The system detects 7 distinct crisis categories: suicide/self-harm, medical emergency, domestic violence, youth runaway, assault victim, safety concern, and trafficking — each with population-specific resources.  
+**Definition:** % of sessions containing crisis language (self-harm, violence, DV, trafficking, medical emergency) that trigger the crisis response path. The system detects 8 distinct crisis categories: suicide/self-harm, violence (threats to others), medical emergency, domestic violence, youth runaway, assault victim, safety concern, and trafficking — each with population-specific resources.  
 **Target:** 100% — no crisis message should be silently dropped.  
 **Measurement:** Audit log — `crisis_detected` events; cross-check by manually reviewing a sample of sessions flagged by keyword search on stored transcripts. ✅ Tracked in admin dashboard (overview + metrics).  
 **Phase:** Pilot.
@@ -385,7 +385,7 @@ These metrics answer the ultimate question: did the referral work? They require 
 |---|---|
 | **Definition** | Total calls, tokens, estimated cost, latency p50/p95, failure rate, breakdown by task and model |
 | **Target** | p50 ≤ 600ms, failure rate ≤ 2% |
-| **Method** | `record_llm_call()` in `audit_log.py` logs task, model, input/output tokens, latency, and success for each LLM call. Instrumented in `claude_client.py` (conversational + classification), `crisis_detector.py`, and `slot_extraction/dispatch.py`. ✅ Tracked in admin dashboard. |
+| **Method** | `record_llm_call()` in `audit_log.py` logs task, model, input/output tokens, latency, and success for each LLM call. Instrumented in `claude_client.py` (conversational + classification), `crisis_detector.py`, `slot_extraction/dispatch.py`, and `post_results.py` (post-results intent classification + sub-category filter keyword extraction). ✅ Tracked in admin dashboard. |
 | **Why** | Essential for capacity planning. At 36,000 sessions/month, LLM cost per session determines monthly spend |
 
 ---
