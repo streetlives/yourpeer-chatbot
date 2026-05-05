@@ -165,24 +165,9 @@ Given this research, a chatbot that is "functional but flat" is not meeting the 
 
 ---
 
-## Baselines and the R28 calibration event
+## The R28 baseline
 
-### Baseline runs
-
-The eval runner supports comparing each new run against a saved baseline. A baseline is a snapshot of headline metrics, dimension scores, category averages, and key fix-target scenarios from a specific past run, used to compute deltas in the report.
-
-Two baselines are defined in `tests/eval/eval_llm_judge.py::BASELINES`:
-
-| Baseline | Use it for |
-|---|---|
-| **R38** (default) | Run-over-run comparison and STOP-dimension floor checks. R38 is the strongest Opus-era run — 4.61 overall, 173/175 passing, 8 critical failures. |
-| R28 | Long-trajectory analysis only. R28 was the first Opus-era run and serves as a historical-context anchor. Selected via `--baseline R28`. |
-
-Baselines are hardcoded constants today; Foundation 1 of `EVAL_QUALITY_ENGINEERING_PLAN.md` proposes replacing them with a `history.json` derived from archived run reports. Until then, when a new high-water-mark run lands, update both `R38_BASELINE` (or rename to whichever run) and the multi-run comparison columns in new entries.
-
-### The R28 calibration event
-
-Run 28 (April 2026) was not just a high-water-mark run — it introduced a scoring discontinuity that makes runs 14–27 not directly comparable to run 28+. Three things changed simultaneously:
+Run 28 (April 2026) established a new scoring baseline due to three simultaneous changes:
 
 1. **Judge model upgrade.** The judge switched from Claude Sonnet to Claude Opus. Opus is stricter across all dimensions, scoring approximately 0.10–0.15 lower on the same chatbot behavior. This is intentional — Opus surfaces real gaps that Sonnet missed.
 
@@ -191,8 +176,6 @@ Run 28 (April 2026) was not just a high-water-mark run — it introduced a scori
 3. **Weighted scoring.** Dimension weights were introduced, with safety-critical dimensions weighted up to 3.0× and dialog polish weighted down to 0.5×.
 
 Because of these changes, Runs 14–27 (Sonnet judge, 8 dimensions, unweighted) are not directly comparable to Run 28+ (Opus judge, 11 dimensions, weighted). The historical progress tables in earlier runs show the Sonnet-era trajectory; Run 28 starts a new trajectory.
-
-R38 is the operational baseline; R28 is the start of the comparable era.
 
 ---
 
@@ -217,9 +200,49 @@ python tests/eval/eval_llm_judge.py --category crisis
 # Run a random sample of N scenarios
 python tests/eval/eval_llm_judge.py --scenarios 10
 
-# Save the full report as JSON (for programmatic analysis)
+# Save the full report as JSON to a custom path (in addition to the auto-archived copy in eval_results/runs/, see below)
 python tests/eval/eval_llm_judge.py --output eval_report.json
+
+# Re-run only the scenarios that failed (avg < 4.0) in a prior run.
+# Useful after a targeted fix to verify recovery without paying for the full suite.
+python tests/eval/eval_llm_judge.py \
+    --subset failing \
+    --subset-from eval_results/runs/20260505T120000_redact_on/
+
+# 'borderline' uses avg < 4.5 — useful after a tone/dignity change to confirm
+# at-risk scenarios held or improved.
+python tests/eval/eval_llm_judge.py \
+    --subset borderline \
+    --subset-from eval_results/runs/20260505T120000_redact_on/
+
+# --subset is combinable with --category to narrow further.
+python tests/eval/eval_llm_judge.py \
+    --subset failing \
+    --subset-from eval_results/runs/20260505T120000_redact_on/ \
+    --category multi_intent
 ```
+
+### Output — where runs are archived
+
+Every eval run, regardless of whether `--output` was passed, is archived to a timestamped directory under `eval_results/runs/`:
+
+```
+eval_results/runs/<timestamp>[_redact_on]/
+  scenarios.jsonl   per-scenario JSON, appended after each scenario completes,
+                    flushed every time. Recoverable mid-run.
+  report.json       final aggregated report (atomic write at end of run).
+  report.txt        captured print_report output (atomic write at end of run).
+```
+
+The timestamp directory is created automatically — you don't need to manage it. If the run is killed mid-way (`Ctrl+C`, OOM kill, network blip), the `scenarios.jsonl` still has every completed scenario on disk; only `report.json` and `report.txt` are missing. The `--subset-from` flag accepts either form.
+
+`--subset-from` accepts three path shapes:
+
+1. **A `runs/<timestamp>/` directory** (recommended — most ergonomic, tab-completes naturally). The runner auto-resolves to `report.json` if present, falling back to `scenarios.jsonl` for killed-mid-run cases.
+2. **A `report.json` file** directly. Same as the legacy `--output` behavior.
+3. **A `scenarios.jsonl` file** directly. Useful when a run was killed before the aggregated report was written.
+
+If you also pass `--output PATH`, the report is additionally copied to `PATH` after the run completes. This is useful for keeping a stable filename (`r42_full.json`) alongside the timestamped archive.
 
 ### What to do with the results
 
@@ -259,6 +282,7 @@ These assumptions have NOT been validated and should be reviewed:
 | What | Where |
 |---|---|
 | The eval runner (scenarios + judge + reporter) | `tests/eval/eval_llm_judge.py` |
+| Per-run archive (one directory per run, timestamped) | `eval_results/runs/<timestamp>/` |
 | Full run history with commentary | `docs/ops/EVAL_RESULTS.md` |
 | Dimension weights | `DIMENSION_WEIGHTS` dict in `eval_llm_judge.py` |
 | Scoring rubric (judge prompt) | The `JUDGE_SYSTEM_PROMPT` string in `eval_llm_judge.py` |

@@ -54,17 +54,24 @@ Usage:
     # Re-run only the scenarios that failed (avg < 4.0) in a prior report.
     # Useful after a targeted fix to verify recovery without paying for the
     # full 171-scenario run.
+    #
+    # --subset-from accepts three path forms:
+    #   1. eval_results/runs/<timestamp>/   (most ergonomic — directory)
+    #   2. eval_results/runs/<timestamp>/report.json   (file inside)
+    #   3. eval_results/runs/<timestamp>/scenarios.jsonl   (works on
+    #      killed-mid-run directories where report.json wasn't written)
     ANTHROPIC_API_KEY=sk-... python tests/eval_llm_judge.py \\
-        --subset failing --subset-from eval_report.json
+        --subset failing --subset-from eval_results/runs/20260505T120000_redact_on/
 
     # 'borderline' uses avg < 4.5 — useful after a tone/dignity change to
     # confirm at-risk scenarios held or improved.
     ANTHROPIC_API_KEY=sk-... python tests/eval_llm_judge.py \\
-        --subset borderline --subset-from eval_report.json
+        --subset borderline --subset-from eval_results/runs/20260505T120000_redact_on/
 
     # Combinable with --category to narrow further.
     ANTHROPIC_API_KEY=sk-... python tests/eval_llm_judge.py \\
-        --subset failing --subset-from eval_report.json --category multi_intent
+        --subset failing --subset-from eval_results/runs/20260505T120000_redact_on/ \\
+        --category multi_intent
 
     # Phase 2 of PRE_LLM_REDACTION_SCOPE.md: run the suite with the
     # REDACT_BEFORE_LLM feature flag on, so user text is PII-redacted
@@ -5360,6 +5367,150 @@ _SUBSET_THRESHOLDS = {
 }
 
 
+def _load_prior_scored_scenarios(subset_from):
+    """Load prior-run per-scenario data and return a list of
+    ``(scenario_id, average_score)`` tuples.
+
+    Accepts three input shapes for ``subset_from``:
+
+    1. ``report.json`` — the aggregated final report. Each entry in its
+       ``scenarios`` array has ``id`` and ``average_score`` already.
+       Schema: ``{"scenarios": [{"id": ..., "average_score": ...}, ...]}``.
+
+    2. ``scenarios.jsonl`` — the per-scenario streaming file written
+       by the new ``eval_results/runs/<timestamp>/`` layout. Each line
+       is a JSON object with ``scenario_id`` (note: different key than
+       report.json) and a ``judgment.scores`` dict; ``average_score``
+       is NOT pre-computed and must be derived from the per-dimension
+       scores (mean of all 11 score values). Errored scenarios that
+       have no ``judgment.scores`` are skipped.
+
+    3. A directory path — typically ``eval_results/runs/<timestamp>/``.
+       Prefers ``report.json`` if present (cheaper, pre-computed),
+       falls back to ``scenarios.jsonl``. This is the most ergonomic
+       form for users since they can tab-complete the run directory
+       without having to remember the file inside.
+
+    Returns
+    -------
+    list of (str, float)
+        ``(scenario_id, average_score)`` for every scenario the input
+        ran successfully. Empty list if the input had no scored
+        scenarios. Exits with code 2 on usage/IO errors.
+    """
+    from pathlib import Path
+
+    report_path = Path(subset_from)
+
+    # Case 3: directory — resolve to a file inside.
+    if report_path.is_dir():
+        # Prefer the aggregated report (cheaper, pre-computed). If the
+        # run was killed mid-eval, only scenarios.jsonl exists.
+        candidate_report = report_path / "report.json"
+        candidate_jsonl = report_path / "scenarios.jsonl"
+        if candidate_report.exists():
+            report_path = candidate_report
+        elif candidate_jsonl.exists():
+            report_path = candidate_jsonl
+        else:
+            print(f"ERROR: --subset-from directory {subset_from} contains "
+                  f"neither report.json nor scenarios.jsonl. Is this an "
+                  f"eval_results/runs/<timestamp>/ directory?",
+                  file=sys.stderr)
+            sys.exit(2)
+
+    if not report_path.exists():
+        print(f"ERROR: --subset-from path does not exist: {subset_from}",
+              file=sys.stderr)
+        sys.exit(2)
+
+    # Branch on file type. JSONL = one record per line; JSON = single object.
+    if report_path.suffix == ".jsonl":
+        return _load_scored_from_jsonl(report_path)
+    return _load_scored_from_report_json(report_path)
+
+
+def _load_scored_from_report_json(report_path):
+    """Load scored scenarios from an aggregated ``report.json`` file."""
+    try:
+        with report_path.open() as f:
+            prior = json.load(f)
+    except (json.JSONDecodeError, OSError) as e:
+        print(f"ERROR: could not read prior report at {report_path}: {e}",
+              file=sys.stderr)
+        sys.exit(2)
+
+    if "scenarios" not in prior or not isinstance(prior["scenarios"], list):
+        print(f"ERROR: prior report at {report_path} has no 'scenarios' "
+              f"list. Is this a valid eval report (the file written by "
+              f"--output, or eval_results/runs/<timestamp>/report.json)?",
+              file=sys.stderr)
+        sys.exit(2)
+
+    # Aggregated report: id + average_score are pre-computed.
+    return [
+        (s["id"], s["average_score"])
+        for s in prior["scenarios"]
+        if s.get("id") and s.get("average_score") is not None
+    ]
+
+
+def _load_scored_from_jsonl(jsonl_path):
+    """Load scored scenarios from a per-scenario ``scenarios.jsonl`` file.
+
+    Each line is a JSON object emitted by the streaming writer. Schema:
+
+        {"scenario_id": "...", "judgment": {"scores": {...}, ...}, ...}
+
+    The 11 per-dimension scores live at ``judgment.scores.<dim>.score``
+    (each dimension is itself a dict with score + justification). The
+    aggregated average we want matches what the report.json writer
+    computes: arithmetic mean of all 11 dimension score values.
+
+    Lines for errored scenarios (no judgment, or judgment without
+    scores) are silently skipped — they have no average to compare
+    against the threshold. The user can re-run those by ID.
+    """
+    out = []
+    try:
+        with jsonl_path.open() as f:
+            for lineno, line in enumerate(f, start=1):
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                except json.JSONDecodeError as e:
+                    print(f"WARNING: skipping malformed JSONL line "
+                          f"{lineno} in {jsonl_path}: {e}",
+                          file=sys.stderr)
+                    continue
+                sid = rec.get("scenario_id")
+                judgment = rec.get("judgment") or {}
+                scores = judgment.get("scores") or {}
+                if not sid or not scores:
+                    # Errored scenario or unknown shape — skip.
+                    continue
+                # Each dimension entry is `{"score": int, "justification": str}`.
+                # A few defensive code paths handle malformed entries.
+                numeric_scores = []
+                for dim_data in scores.values():
+                    if isinstance(dim_data, dict) and "score" in dim_data:
+                        try:
+                            numeric_scores.append(float(dim_data["score"]))
+                        except (TypeError, ValueError):
+                            pass
+                if not numeric_scores:
+                    continue
+                avg = sum(numeric_scores) / len(numeric_scores)
+                out.append((sid, avg))
+    except OSError as e:
+        print(f"ERROR: could not read scenarios.jsonl at {jsonl_path}: {e}",
+              file=sys.stderr)
+        sys.exit(2)
+    return out
+
+
 def _apply_subset_filter(all_scenarios, subset, subset_from, threshold_override):
     """Filter `all_scenarios` to those that scored below a threshold in a prior run.
 
@@ -5370,7 +5521,11 @@ def _apply_subset_filter(all_scenarios, subset, subset_from, threshold_override)
     subset : str
         One of "failing" or "borderline" (caller has validated).
     subset_from : str or None
-        Path to a prior eval report JSON (the file written via --output).
+        Path to a prior eval report. Accepts:
+        - report.json (aggregated)
+        - scenarios.jsonl (per-scenario stream from runs/<ts>/)
+        - eval_results/runs/<timestamp>/ directory (auto-resolves to
+          report.json if present, else scenarios.jsonl)
         Required when subset != "all"; this function exits 2 if missing.
     threshold_override : float or None
         If set, overrides the default threshold for the named subset.
@@ -5382,44 +5537,26 @@ def _apply_subset_filter(all_scenarios, subset, subset_from, threshold_override)
 
     if subset_from is None:
         print(f"ERROR: --subset {subset} requires --subset-from PATH "
-              f"(path to a prior eval report JSON, typically the file you "
-              f"wrote with --output on the previous run).", file=sys.stderr)
-        sys.exit(2)
-
-    report_path = Path(subset_from)
-    if not report_path.exists():
-        print(f"ERROR: --subset-from path does not exist: {subset_from}",
+              f"(path to a prior eval report — either eval_results/runs/"
+              f"<timestamp>/, the report.json inside, the scenarios.jsonl "
+              f"inside, or a custom --output PATH from a previous run).",
               file=sys.stderr)
         sys.exit(2)
 
-    try:
-        with report_path.open() as f:
-            prior = json.load(f)
-    except (json.JSONDecodeError, OSError) as e:
-        print(f"ERROR: could not read prior report at {subset_from}: {e}",
-              file=sys.stderr)
-        sys.exit(2)
-
-    if "scenarios" not in prior or not isinstance(prior["scenarios"], list):
-        print(f"ERROR: prior report at {subset_from} has no 'scenarios' "
-              f"list. Is this a valid eval report (the file written by "
-              f"--output)?", file=sys.stderr)
+    scored = _load_prior_scored_scenarios(subset_from)
+    if not scored:
+        print(f"ERROR: prior report at {subset_from} has no scored "
+              f"scenarios. Is this a valid eval report?", file=sys.stderr)
         sys.exit(2)
 
     threshold = (threshold_override if threshold_override is not None
                  else _SUBSET_THRESHOLDS[subset])
 
     # Pull IDs of scenarios that scored under the threshold in the prior run.
-    # Skip entries without average_score (e.g. errored scenarios) since we
-    # don't know whether they failed; they should be re-run via --scenario-id.
-    wanted_ids = {
-        s["id"] for s in prior["scenarios"]
-        if s.get("id") and s.get("average_score") is not None
-        and s["average_score"] < threshold
-    }
+    wanted_ids = {sid for sid, avg in scored if avg < threshold}
 
     if not wanted_ids:
-        print(f"No scenarios in {report_path.name} scored below {threshold}. "
+        print(f"No scenarios in {subset_from} scored below {threshold}. "
               f"Nothing to run.")
         sys.exit(0)
 
@@ -5436,8 +5573,11 @@ def _apply_subset_filter(all_scenarios, subset, subset_from, threshold_override)
               f"found in current SCENARIOS list — likely renamed or removed: "
               f"{sample}{suffix}", file=sys.stderr)
 
+    # Display name of the report — for directories show the dir, for
+    # files show the file. Helps the user confirm which artifact was used.
+    display_name = Path(subset_from).name or subset_from
     print(f"Subset '{subset}': {len(matched)} scenario(s) below threshold "
-          f"{threshold} in {report_path.name}")
+          f"{threshold} in {display_name}")
     return matched
 
 
@@ -5462,8 +5602,12 @@ def main():
                              "'failing' = avg < 4.0; 'borderline' = avg < 4.5. "
                              "Combinable with --category.")
     parser.add_argument("--subset-from", type=str, default=None, metavar="PATH",
-                        help="Path to a prior eval report JSON (the file "
-                             "written by --output on a previous run). "
+                        help="Path to a prior eval run. Accepts: "
+                             "(a) a runs/<timestamp>/ directory (most "
+                             "ergonomic — auto-resolves report.json or "
+                             "scenarios.jsonl inside); "
+                             "(b) a report.json file directly; "
+                             "(c) a scenarios.jsonl file directly. "
                              "Required when --subset is failing or borderline.")
     parser.add_argument("--subset-threshold", type=float, default=None,
                         metavar="FLOAT",

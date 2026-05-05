@@ -283,3 +283,196 @@ class TestToleratesMissingFields:
         ])
         matched = _apply_subset_filter(fake_scenarios, "failing", report, None)
         assert {s["id"] for s in matched} == {"fail_a"}
+
+
+# ---------------------------------------------------------------------------
+# scenarios.jsonl input path (per-scenario streaming format from runs/<ts>/)
+# ---------------------------------------------------------------------------
+
+
+def _write_jsonl(tmp_path, records, name="scenarios.jsonl"):
+    """Write one-record-per-line JSONL in the shape the streaming writer
+    emits during a live eval run."""
+    path = tmp_path / name
+    with path.open("w") as f:
+        for rec in records:
+            f.write(json.dumps(rec) + "\n")
+    return str(path)
+
+
+def _judgment_with_score(avg_score):
+    """Build a judgment dict whose 11 dimension scores average to ~avg_score.
+
+    The scoring function takes the arithmetic mean of all 11 dimension
+    scores. To produce a target average we set every dimension to the
+    target — fine for tests since the mean is what's checked.
+    """
+    dims = (
+        "slot_extraction", "dialog_efficiency", "response_tone",
+        "safety_crisis", "confirmation_ux", "privacy",
+        "hallucination_resistance", "error_recovery",
+        "dignity_anti_stigma", "cultural_responsiveness",
+        "equity_of_access",
+    )
+    return {
+        "scores": {
+            d: {"score": avg_score, "justification": f"placeholder for {d}"}
+            for d in dims
+        },
+        "critical_failures": [],
+        "overall_notes": "test fixture",
+    }
+
+
+class TestSubsetFromJsonl:
+    """The new eval_results/runs/<timestamp>/scenarios.jsonl format must
+    work as a --subset-from path. It uses different field names
+    (`scenario_id` not `id`) and lacks pre-computed average_score."""
+
+    def test_jsonl_failing_subset_works(self, tmp_path, fake_scenarios):
+        path = _write_jsonl(tmp_path, [
+            {"scenario_id": "happy_a", "judgment": _judgment_with_score(5)},
+            {"scenario_id": "happy_b", "judgment": _judgment_with_score(4.5)},
+            {"scenario_id": "fail_a",  "judgment": _judgment_with_score(3.0)},
+            {"scenario_id": "fail_b",  "judgment": _judgment_with_score(3.5)},
+        ])
+        matched = _apply_subset_filter(fake_scenarios, "failing", path, None)
+        assert {s["id"] for s in matched} == {"fail_a", "fail_b"}
+
+    def test_jsonl_borderline_subset_includes_failing(self, tmp_path, fake_scenarios):
+        path = _write_jsonl(tmp_path, [
+            {"scenario_id": "happy_a", "judgment": _judgment_with_score(5)},
+            {"scenario_id": "happy_b", "judgment": _judgment_with_score(4.2)},
+            {"scenario_id": "fail_a",  "judgment": _judgment_with_score(3.5)},
+        ])
+        matched = _apply_subset_filter(fake_scenarios, "borderline", path, None)
+        # borderline default = 4.5; both happy_b and fail_a fall below.
+        assert {s["id"] for s in matched} == {"happy_b", "fail_a"}
+
+    def test_jsonl_skips_errored_scenarios(self, tmp_path, fake_scenarios):
+        """Errored scenarios (no judgment block) must be skipped, not crash."""
+        path = _write_jsonl(tmp_path, [
+            {"scenario_id": "happy_a", "judgment": _judgment_with_score(5)},
+            {"scenario_id": "fail_a",  "elapsed_seconds": 0.1},  # errored, no judgment
+            {"scenario_id": "fail_b",  "judgment": _judgment_with_score(3.0)},
+        ])
+        matched = _apply_subset_filter(fake_scenarios, "failing", path, None)
+        assert {s["id"] for s in matched} == {"fail_b"}
+
+    def test_jsonl_tolerates_blank_lines(self, tmp_path, fake_scenarios):
+        """Trailing newlines or blank lines mid-file must not crash."""
+        path = tmp_path / "scenarios.jsonl"
+        path.write_text(
+            json.dumps({"scenario_id": "fail_a",
+                        "judgment": _judgment_with_score(3.0)}) +
+            "\n\n" +  # blank line in middle
+            json.dumps({"scenario_id": "fail_b",
+                        "judgment": _judgment_with_score(3.5)}) +
+            "\n"
+        )
+        matched = _apply_subset_filter(fake_scenarios, "failing", str(path), None)
+        assert {s["id"] for s in matched} == {"fail_a", "fail_b"}
+
+    def test_jsonl_warns_on_malformed_line_but_continues(
+        self, tmp_path, fake_scenarios, capsys
+    ):
+        """A garbled JSONL line should warn but not abort the filter."""
+        path = tmp_path / "scenarios.jsonl"
+        path.write_text(
+            json.dumps({"scenario_id": "fail_a",
+                        "judgment": _judgment_with_score(3.0)}) +
+            "\n{ this is not json\n" +
+            json.dumps({"scenario_id": "fail_b",
+                        "judgment": _judgment_with_score(3.5)}) +
+            "\n"
+        )
+        matched = _apply_subset_filter(fake_scenarios, "failing", str(path), None)
+        assert {s["id"] for s in matched} == {"fail_a", "fail_b"}
+        captured = capsys.readouterr()
+        assert "malformed JSONL line" in captured.err
+
+
+# ---------------------------------------------------------------------------
+# Directory input path (eval_results/runs/<timestamp>/)
+# ---------------------------------------------------------------------------
+
+
+class TestSubsetFromDirectory:
+    """Pointing --subset-from at a runs/<timestamp>/ directory should
+    auto-resolve to report.json (preferred) or scenarios.jsonl (fallback
+    if the run was killed mid-eval)."""
+
+    def test_directory_with_report_json_uses_it(self, tmp_path, fake_scenarios):
+        # Build a runs/<ts>/ directory with both files. Should prefer
+        # report.json since it's pre-computed.
+        run_dir = tmp_path / "20260505T120000"
+        run_dir.mkdir()
+        (run_dir / "report.json").write_text(json.dumps({
+            "scenarios": [
+                {"id": "fail_a", "average_score": 3.0},
+                {"id": "fail_b", "average_score": 3.5},
+                {"id": "happy_a", "average_score": 5.0},
+            ],
+        }))
+        # Also have a stale scenarios.jsonl with different IDs to prove
+        # report.json takes precedence.
+        (run_dir / "scenarios.jsonl").write_text(json.dumps({
+            "scenario_id": "different_id",
+            "judgment": _judgment_with_score(3.0),
+        }) + "\n")
+
+        matched = _apply_subset_filter(
+            fake_scenarios, "failing", str(run_dir), None,
+        )
+        assert {s["id"] for s in matched} == {"fail_a", "fail_b"}
+
+    def test_directory_falls_back_to_jsonl_when_no_report(
+        self, tmp_path, fake_scenarios,
+    ):
+        """A killed-mid-run directory has only scenarios.jsonl. The
+        filter should still work — that's the whole point of streaming
+        per-scenario."""
+        run_dir = tmp_path / "20260505T120000"
+        run_dir.mkdir()
+        (run_dir / "scenarios.jsonl").write_text(
+            json.dumps({"scenario_id": "fail_a",
+                        "judgment": _judgment_with_score(3.0)}) +
+            "\n" +
+            json.dumps({"scenario_id": "happy_a",
+                        "judgment": _judgment_with_score(5.0)}) +
+            "\n"
+        )
+        matched = _apply_subset_filter(
+            fake_scenarios, "failing", str(run_dir), None,
+        )
+        assert {s["id"] for s in matched} == {"fail_a"}
+
+    def test_empty_directory_exits_2(self, tmp_path, fake_scenarios):
+        """Pointing at a directory that has neither file is a usage
+        error and should exit 2 with a clear message."""
+        run_dir = tmp_path / "empty_run"
+        run_dir.mkdir()
+        with pytest.raises(SystemExit) as exc:
+            _apply_subset_filter(
+                fake_scenarios, "failing", str(run_dir), None,
+            )
+        assert exc.value.code == 2
+
+    def test_directory_works_with_threshold_override(
+        self, tmp_path, fake_scenarios,
+    ):
+        """Directory resolution composes correctly with --subset-threshold."""
+        run_dir = tmp_path / "20260505T120000"
+        run_dir.mkdir()
+        (run_dir / "report.json").write_text(json.dumps({
+            "scenarios": [
+                {"id": "fail_a",  "average_score": 3.0},
+                {"id": "happy_a", "average_score": 4.2},
+                {"id": "happy_b", "average_score": 4.7},
+            ],
+        }))
+        # Override default to 4.5 — happy_a should now be included.
+        matched = _apply_subset_filter(
+            fake_scenarios, "failing", str(run_dir), 4.5,
+        )
+        assert {s["id"] for s in matched} == {"fail_a", "happy_a"}
