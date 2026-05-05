@@ -6,21 +6,26 @@
 
 "use client";
 
-import { useEffect } from "react";
-import { useAdminStore } from "@/lib/admin/store";
+import { useDataSlice } from "@/hooks/use-data-slice";
+import { DataPanel } from "@/components/admin/data-panel";
 import { ConversationTable } from "@/components/admin/conversation-table";
 import { TableSkeleton } from "@/components/admin/loading-skeleton";
 
 export default function ConversationsPage() {
-  const { conversations, fetchConversations } = useAdminStore();
+  const slice = useDataSlice("conversations");
 
-  useEffect(() => {
-    fetchConversations();
-  }, [fetchConversations]);
-
-  if (conversations.loading && conversations.data.length === 0) {
-    return <TableSkeleton rows={6} cols={5} />;
-  }
-
-  return <ConversationTable conversations={conversations.data} />;
+  return (
+    <DataPanel
+      slice={slice}
+      skeleton={<TableSkeleton rows={6} cols={5} />}
+      emptyState={
+        <div className="text-center py-16 text-neutral-400">
+          <div className="text-3xl mb-3">💬</div>
+          <p>No conversations yet. Start chatting to see them here.</p>
+        </div>
+      }
+    >
+      {(data) => <ConversationTable conversations={data} />}
+    </DataPanel>
+  );
 }

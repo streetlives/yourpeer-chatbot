@@ -21,14 +21,8 @@ export function QueryLogTable({ queries }: QueryLogTableProps) {
     "desc",
   );
 
-  if (queries.length === 0) {
-    return (
-      <div className="text-center py-16 text-neutral-400">
-        <div className="text-3xl mb-3">🔍</div>
-        <p>No queries executed yet.</p>
-      </div>
-    );
-  }
+  // Note: the empty state is handled by the page-level <DataPanel>
+  // wrapper; this component assumes it has rows to render.
 
   return (
     <>

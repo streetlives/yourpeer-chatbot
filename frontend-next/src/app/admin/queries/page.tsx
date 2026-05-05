@@ -6,21 +6,26 @@
 
 "use client";
 
-import { useEffect } from "react";
-import { useAdminStore } from "@/lib/admin/store";
+import { useDataSlice } from "@/hooks/use-data-slice";
+import { DataPanel } from "@/components/admin/data-panel";
 import { QueryLogTable } from "@/components/admin/query-log-table";
 import { TableSkeleton } from "@/components/admin/loading-skeleton";
 
 export default function QueriesPage() {
-  const { queries, fetchQueries } = useAdminStore();
+  const slice = useDataSlice("queries");
 
-  useEffect(() => {
-    fetchQueries();
-  }, [fetchQueries]);
-
-  if (queries.loading && queries.data.length === 0) {
-    return <TableSkeleton rows={6} cols={4} />;
-  }
-
-  return <QueryLogTable queries={queries.data} />;
+  return (
+    <DataPanel
+      slice={slice}
+      skeleton={<TableSkeleton rows={6} cols={4} />}
+      emptyState={
+        <div className="text-center py-16 text-neutral-400">
+          <div className="text-3xl mb-3">🔍</div>
+          <p>No queries logged yet. Service searches will appear here.</p>
+        </div>
+      }
+    >
+      {(data) => <QueryLogTable queries={data} />}
+    </DataPanel>
+  );
 }

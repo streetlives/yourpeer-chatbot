@@ -6,46 +6,44 @@
 
 "use client";
 
-import { useEffect, useCallback } from "react";
+import { useCallback } from "react";
 import { useAdminStore } from "@/lib/admin/store";
+import { useDataSlice } from "@/hooks/use-data-slice";
 import { EvalRunner, EvalResults } from "@/components/admin/eval-results";
 import { EvalSkeleton } from "@/components/admin/loading-skeleton";
 
 export default function EvalsPage() {
-  const { evalResults, fetchEvalResults } = useAdminStore();
-
-  useEffect(() => {
-    fetchEvalResults();
-  }, [fetchEvalResults]);
+  const slice = useDataSlice("evalResults");
+  // We still need direct access to the store actions for reset + manual
+  // fetcher invocation (the eval-complete flow is unusual — it discards
+  // existing data before refetching, which `refresh()` doesn't do).
+  const reset = useAdminStore((s) => s.reset);
+  const fetchEvalResults = useAdminStore((s) => s.fetchEvalResults);
 
   const onEvalComplete = useCallback(() => {
-    // Force-reset the entire slice before refetching. This fixes two issues:
-    //  1. If the initial page-load fetch is still in-flight (loading=true),
-    //     fetchEvalResults would see the loading guard and skip — silently
-    //     discarding the upload. Resetting loading=false ensures it runs.
-    //  2. Clearing data to undefined shows the loading skeleton instead of
-    //     stale results from the previous report.
-    useAdminStore.setState({
-      evalResults: { data: undefined, loading: false, error: false, lastFetchedAt: 0 },
-    });
+    // Force-reset the slice before refetching. Two reasons:
+    //  1. If a fetch is in-flight (loading=true), fetchEvalResults would
+    //     see the loading guard and skip, silently discarding the new
+    //     upload. Resetting clears loading=false so the fetch proceeds.
+    //  2. Clearing data shows the loading skeleton instead of the stale
+    //     report from the previous run while the new one downloads.
+    reset("evalResults");
     fetchEvalResults().catch(() => {
-      // Suppress uncaught promise — store sets error:true internally.
-      // Without this, a fetch failure surfaces as a Next.js internal
-      // "Cannot read properties of undefined (reading 'payload')" error.
+      // Store sets error=true internally on failure. The catch here just
+      // suppresses Next.js's "Cannot read properties of undefined (reading
+      // 'payload')" complaint about an uncaught promise.
     });
-  }, [fetchEvalResults]);
+  }, [reset, fetchEvalResults]);
 
-  const report = evalResults.data;
+  const report = slice.data;
 
   return (
     <>
       <EvalRunner onComplete={onEvalComplete} />
 
-      {evalResults.loading && report === undefined && (
-        <EvalSkeleton />
-      )}
+      {slice.loading && report === undefined && <EvalSkeleton />}
 
-      {!evalResults.loading && (report === null || report === undefined) && (
+      {!slice.loading && (report === null || report === undefined) && (
         <div className="text-center py-16 text-neutral-400">
           <div className="text-3xl mb-3">🧪</div>
           <p>No evaluation results yet.</p>

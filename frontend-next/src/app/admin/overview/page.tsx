@@ -6,43 +6,65 @@
 
 "use client";
 
-import { useEffect } from "react";
-import { useAdminStore } from "@/lib/admin/store";
+import { useDataSlice } from "@/hooks/use-data-slice";
+import { DataPanel } from "@/components/admin/data-panel";
 import { StatCard } from "@/components/admin/stat-card";
 import { EventFeed } from "@/components/admin/event-feed";
 import { SystemHealth } from "@/components/admin/system-health";
 import { StatCardSkeleton, TableSkeleton } from "@/components/admin/loading-skeleton";
+import type { AdminStats } from "@/lib/chat/types";
 
 export default function OverviewPage() {
-  const { stats, events, fetchStats, fetchEvents } = useAdminStore();
+  // Two independent slices so a partial failure (events fetch fails but
+  // stats succeeds) keeps the metric cards visible and only renders an
+  // error in the events region.
+  const statsSlice = useDataSlice("stats");
+  const eventsSlice = useDataSlice("events");
 
-  useEffect(() => {
-    fetchStats();
-    fetchEvents();
-  }, [fetchStats, fetchEvents]);
+  return (
+    <>
+      <DataPanel
+        slice={statsSlice}
+        skeleton={<StatCardSkeleton />}
+        isEmpty={(data) => data == null}
+        emptyState={
+          <div className="text-center py-10 text-neutral-400">
+            <div className="text-3xl mb-3">📊</div>
+            <p>No activity yet. Start chatting to see metrics here.</p>
+          </div>
+        }
+      >
+        {(s) => <StatCardsRow stats={s as AdminStats} />}
+      </DataPanel>
 
-  if (stats.error || events.error) {
-    return (
-      <div className="text-center py-16 text-neutral-400">
-        <div className="text-3xl mb-3">📊</div>
-        <p>No data yet. Start chatting to generate activity.</p>
+      <div className="my-6">
+        <SystemHealth />
       </div>
-    );
-  }
 
-  if (!stats.data) {
-    return (
-      <>
-        <StatCardSkeleton />
-        <div className="mt-6">
-          <TableSkeleton rows={5} cols={3} />
-        </div>
-      </>
-    );
-  }
+      <div className="mb-7">
+        <h2 className="text-base font-semibold mb-4">Recent Activity</h2>
+        <DataPanel
+          slice={eventsSlice}
+          skeleton={<TableSkeleton rows={5} cols={3} />}
+          emptyState={
+            <div className="text-center py-10 text-neutral-400">
+              <p className="text-sm">No recent events to display.</p>
+            </div>
+          }
+        >
+          {(events) => <EventFeed events={events.slice(0, 20)} />}
+        </DataPanel>
+      </div>
+    </>
+  );
+}
 
-  const s = stats.data;
+// ---------------------------------------------------------------------------
+// StatCardsRow — extracted so the page-level component stays readable and
+// the threshold logic lives next to its consumers.
+// ---------------------------------------------------------------------------
 
+function StatCardsRow({ stats: s }: { stats: AdminStats }) {
   // --- Task Completion Rate ---
   const taskRate = s.task_completion_rate;
   const taskDisplay = taskRate != null ? `${Math.round(taskRate * 100)}%` : "—";
@@ -87,48 +109,37 @@ export default function OverviewPage() {
           : "text-red-600";
 
   return (
-    <>
-      <div className="grid grid-cols-[repeat(auto-fill,minmax(180px,1fr))] gap-3 mb-6">
-        <StatCard label="Sessions" value={s.unique_sessions} colorClass="text-amber-500" />
-        <StatCard
-          label="Task Completion"
-          value={taskDisplay}
-          colorClass={taskCls}
-          note="target ≥ 80%"
-        />
-        <StatCard
-          label="Avg Turns to Result"
-          value={avgTurnsDisplay}
-          colorClass={avgTurnsCls}
-          note="target ≤ 5"
-        />
-        <StatCard
-          label="Crises Detected"
-          value={s.total_crises}
-          colorClass={s.total_crises > 0 ? "text-red-600" : "text-green-600"}
-        />
-        <StatCard
-          label="User Feedback"
-          value={feedbackDisplay}
-          colorClass={feedbackCls}
-          note={totalFeedback > 0 ? `${totalFeedback} responses · target ≥ 70%` : "target ≥ 70%"}
-        />
-        <StatCard
-          label="No-Result Rate"
-          value={noResultDisplay}
-          colorClass={noResultCls}
-          note="target ≤ 15%"
-        />
-      </div>
-
-      <div className="mb-6">
-        <SystemHealth />
-      </div>
-
-      <div className="mb-7">
-        <h2 className="text-base font-semibold mb-4">Recent Activity</h2>
-        <EventFeed events={events.data.slice(0, 20)} />
-      </div>
-    </>
+    <div className="grid grid-cols-[repeat(auto-fill,minmax(180px,1fr))] gap-3 mb-6">
+      <StatCard label="Sessions" value={s.unique_sessions} colorClass="text-amber-500" />
+      <StatCard
+        label="Task Completion"
+        value={taskDisplay}
+        colorClass={taskCls}
+        note="target ≥ 80%"
+      />
+      <StatCard
+        label="Avg Turns to Result"
+        value={avgTurnsDisplay}
+        colorClass={avgTurnsCls}
+        note="target ≤ 5"
+      />
+      <StatCard
+        label="Crises Detected"
+        value={s.total_crises}
+        colorClass={s.total_crises > 0 ? "text-red-600" : "text-green-600"}
+      />
+      <StatCard
+        label="User Feedback"
+        value={feedbackDisplay}
+        colorClass={feedbackCls}
+        note={totalFeedback > 0 ? `${totalFeedback} responses · target ≥ 70%` : "target ≥ 70%"}
+      />
+      <StatCard
+        label="No-Result Rate"
+        value={noResultDisplay}
+        colorClass={noResultCls}
+        note="target ≤ 15%"
+      />
+    </div>
   );
 }

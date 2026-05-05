@@ -86,15 +86,9 @@ export function ConversationTable({ conversations }: ConversationTableProps) {
   const filtersActive =
     search.trim().length > 0 || outcomeFilter !== "all" || minTurns > 0;
 
-  if (conversations.length === 0) {
-    return (
-      <div className="text-center py-16 text-neutral-400">
-        <div className="text-3xl mb-3">💬</div>
-        <p>No conversations yet. Start chatting to see them here.</p>
-      </div>
-    );
-  }
-
+  // Note: the "no conversations at all" empty state is handled by the
+  // page-level <DataPanel> wrapper; this component renders the filter UI
+  // with a "no matches" state when filters apply but no rows match.
   const outcomeButtons: Array<{ key: OutcomeFilter; label: string }> = [
     { key: "all", label: "All" },
     { key: "results", label: "Has results" },

@@ -47,11 +47,21 @@ interface AdminStore {
   fetchQueries: () => Promise<void>;
   fetchEvents: () => Promise<void>;
   fetchEvalResults: () => Promise<void>;
+
   /** Force all slices to re-fetch on next access. */
   invalidateAll: () => void;
   /** Force a single slice to re-fetch on next access. */
-  invalidate: (key: "stats" | "conversations" | "queries" | "events" | "evalResults") => void;
+  invalidate: (key: SliceName) => void;
+  /**
+   * Reset a single slice back to its initial state (clears data + error,
+   * marks stale). Used when data needs to be discarded entirely — e.g.
+   * after starting a new eval run, the previous report should not be
+   * shown alongside the in-progress status.
+   */
+  reset: (key: SliceName) => void;
 }
+
+type SliceName = "stats" | "conversations" | "queries" | "events" | "evalResults";
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -73,81 +83,78 @@ function isStale(slice: DataSlice<unknown>): boolean {
   return Date.now() - slice.lastFetchedAt > STALE_AFTER_MS;
 }
 
+/**
+ * Build a fetcher action for a given slice. Centralizes the staleness +
+ * dedup + loading + error pattern so each slice's action is a one-liner.
+ *
+ * The fetcher:
+ *   - returns early if a fetch is already in flight or the slice is fresh
+ *   - sets loading=true, error=false at the start
+ *   - on success, replaces data and resets loading/error/timestamp
+ *   - on failure, leaves data intact (stale-while-error UX), sets error=true
+ *
+ * Leaving data intact on failure is deliberate: if we have a 5-minute-old
+ * snapshot, that's more useful than blanking the dashboard. The error
+ * flag drives a banner or retry UI; the data flag stays available to the
+ * page that wants to render it anyway.
+ */
+function createFetcher<K extends SliceName>(
+  key: K,
+  apiFn: () => Promise<AdminStore[K]["data"]>,
+  set: (partial: Partial<AdminStore>) => void,
+  get: () => AdminStore,
+): () => Promise<void> {
+  return async () => {
+    const slice = get()[key] as DataSlice<unknown>;
+    if (slice.loading || !isStale(slice)) return;
+
+    // We need to spread the current slice values when we update so we don't
+    // overwrite siblings; the cast lets TS know the result is still a valid
+    // DataSlice for this key.
+    set({
+      [key]: { ...slice, loading: true, error: false },
+    } as Partial<AdminStore>);
+
+    try {
+      const data = await apiFn();
+      set({
+        [key]: { data, loading: false, error: false, lastFetchedAt: Date.now() },
+      } as Partial<AdminStore>);
+    } catch {
+      const current = get()[key] as DataSlice<unknown>;
+      set({
+        [key]: { ...current, loading: false, error: true },
+      } as Partial<AdminStore>);
+    }
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Store
 // ---------------------------------------------------------------------------
 
 export const useAdminStore = create<AdminStore>((set, get) => ({
-  stats: emptySlice(null),
-  conversations: emptySlice([]),
-  queries: emptySlice([]),
-  events: emptySlice([]),
-  evalResults: emptySlice(undefined),
+  stats: emptySlice<AdminStats | null>(null),
+  conversations: emptySlice<ConversationSummary[]>([]),
+  queries: emptySlice<QueryLogEntry[]>([]),
+  events: emptySlice<AuditEvent[]>([]),
+  evalResults: emptySlice<EvalReport | null | undefined>(undefined),
 
-  fetchStats: async () => {
-    const { stats } = get();
-    if (stats.loading || !isStale(stats)) return;
-
-    set({ stats: { ...stats, loading: true, error: false } });
-    try {
-      const data = await fetchAdminStats();
-      set({ stats: { data, loading: false, error: false, lastFetchedAt: Date.now() } });
-    } catch {
-      set({ stats: { ...get().stats, loading: false, error: true } });
-    }
-  },
-
-  fetchConversations: async () => {
-    const { conversations } = get();
-    if (conversations.loading || !isStale(conversations)) return;
-
-    set({ conversations: { ...conversations, loading: true, error: false } });
-    try {
-      const data = await apiConversations(CONVERSATIONS_LIMIT);
-      set({ conversations: { data, loading: false, error: false, lastFetchedAt: Date.now() } });
-    } catch {
-      set({ conversations: { ...get().conversations, loading: false, error: true } });
-    }
-  },
-
-  fetchQueries: async () => {
-    const { queries } = get();
-    if (queries.loading || !isStale(queries)) return;
-
-    set({ queries: { ...queries, loading: true, error: false } });
-    try {
-      const data = await apiQueries(QUERIES_LIMIT);
-      set({ queries: { data, loading: false, error: false, lastFetchedAt: Date.now() } });
-    } catch {
-      set({ queries: { ...get().queries, loading: false, error: true } });
-    }
-  },
-
-  fetchEvents: async () => {
-    const { events } = get();
-    if (events.loading || !isStale(events)) return;
-
-    set({ events: { ...events, loading: true, error: false } });
-    try {
-      const data = await apiEvents(EVENTS_LIMIT);
-      set({ events: { data, loading: false, error: false, lastFetchedAt: Date.now() } });
-    } catch {
-      set({ events: { ...get().events, loading: false, error: true } });
-    }
-  },
-
-  fetchEvalResults: async () => {
-    const { evalResults } = get();
-    if (evalResults.loading || !isStale(evalResults)) return;
-
-    set({ evalResults: { ...evalResults, loading: true, error: false } });
-    try {
-      const data = await apiEvalResults();
-      set({ evalResults: { data, loading: false, error: false, lastFetchedAt: Date.now() } });
-    } catch {
-      set({ evalResults: { ...get().evalResults, loading: false, error: true } });
-    }
-  },
+  fetchStats: createFetcher("stats", fetchAdminStats, set, get),
+  fetchConversations: createFetcher(
+    "conversations",
+    () => apiConversations(CONVERSATIONS_LIMIT),
+    set,
+    get,
+  ),
+  fetchQueries: createFetcher(
+    "queries",
+    () => apiQueries(QUERIES_LIMIT),
+    set,
+    get,
+  ),
+  fetchEvents: createFetcher("events", () => apiEvents(EVENTS_LIMIT), set, get),
+  fetchEvalResults: createFetcher("evalResults", apiEvalResults, set, get),
 
   invalidateAll: () => {
     const reset = { lastFetchedAt: 0 };
@@ -161,8 +168,27 @@ export const useAdminStore = create<AdminStore>((set, get) => ({
   },
 
   invalidate: (key) => {
-    set((s) => ({
-      [key]: { ...s[key], lastFetchedAt: 0 },
-    }));
+    set(
+      (s) =>
+        ({
+          [key]: { ...s[key], lastFetchedAt: 0 },
+        }) as Partial<AdminStore>,
+    );
+  },
+
+  reset: (key) => {
+    // Map of empty initial values per slice. Has to mirror the create()
+    // call above; if a new slice is added with non-default initial state,
+    // both places need updating. Encoded explicitly rather than reading
+    // from a shared constant because the type per slice differs and a
+    // single `INITIAL` map would lose type narrowing.
+    const initial: { [K in SliceName]: AdminStore[K] } = {
+      stats: emptySlice<AdminStats | null>(null),
+      conversations: emptySlice<ConversationSummary[]>([]),
+      queries: emptySlice<QueryLogEntry[]>([]),
+      events: emptySlice<AuditEvent[]>([]),
+      evalResults: emptySlice<EvalReport | null | undefined>(undefined),
+    };
+    set({ [key]: initial[key] } as Partial<AdminStore>);
   },
 }));
