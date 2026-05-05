@@ -18,11 +18,12 @@ the case.
 """
 
 from __future__ import annotations
-
 import sys
-from unittest.mock import patch
-
 import pytest
+from unittest.mock import patch
+from app.services.chatbot import generate_reply
+from app.services.session_store import clear_session
+from app.services.chatbot.pipeline import _apply_pii_warning
 
 
 # Ensure backend is importable
@@ -32,8 +33,6 @@ _BACKEND = os.path.abspath(
 )
 if _BACKEND not in sys.path:
     sys.path.insert(0, _BACKEND)
-
-from app.services.chatbot.pipeline import _apply_pii_warning
 
 
 # ---------------------------------------------------------------------------
@@ -93,10 +92,6 @@ class TestApplyPIIWarning:
 # greeting, etc.) and assert the PII warning appears in the response.
 #
 # Each test uses a unique session_id to avoid state bleed.
-
-from app.services.chatbot import generate_reply
-from app.services.session_store import clear_session
-
 
 _PHONE_WARNING_PHRASE = "removed your phone number"
 _SSN_WARNING_PHRASE = (

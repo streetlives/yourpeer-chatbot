@@ -19,7 +19,6 @@ Read-only on the input. Writes a new file at the output path.
 from __future__ import annotations
 
 import json
-import re
 import sys
 from pathlib import Path
 from typing import Any

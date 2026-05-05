@@ -90,6 +90,16 @@ import logging
 import io
 from contextlib import redirect_stdout
 import anthropic
+import json as _json
+import pathlib as _pathlib
+import re as _re_elig
+
+from app.services.chatbot.context import _REDACT_BEFORE_LLM
+from app.services.chatbot import generate_reply
+from app.services.session_store import clear_session
+from app.privacy.pii_redactor import redact_pii
+from datetime import datetime
+from unittest.mock import patch
 
 # MUST come before any `from app.*` import below. The `app` package lives
 # under backend/, not at the repo root, so we prepend that to sys.path
@@ -129,16 +139,8 @@ def _early_redact_flag_check() -> bool:
 if _early_redact_flag_check():
     os.environ["REDACT_BEFORE_LLM"] = "true"
 
-
-from app.services.chatbot import generate_reply
-from app.services.session_store import clear_session
-from app.privacy.pii_redactor import redact_pii
-from datetime import datetime
-from unittest.mock import patch
-
 # Suppress noisy logs during eval
 logging.basicConfig(level=logging.WARNING)
-
 
 
 # ---------------------------------------------------------------------------
@@ -3806,9 +3808,6 @@ def _service_card_from_fixture(row: dict) -> dict:
 # what services exist. It's a pure filter on production data. Drift
 # surface goes from "hand-coded everything" to "fixture age."
 
-import json as _json
-import pathlib as _pathlib
-
 _FIXTURE_PATH = _pathlib.Path(__file__).parent / "fixtures" / "services.json"
 
 try:
@@ -4116,7 +4115,6 @@ _FAMILY_STATUS_TAXONOMIES = {
 # the gender exclusion logic. Patterns are matched case-insensitively as
 # whole words to avoid false positives ("women" should not match
 # "womenswear" — though the fixture doesn't have such cases, defensive).
-import re as _re_elig
 _MEN_ONLY_NAME_RE = _re_elig.compile(r"\b(men's|men|male)\b", _re_elig.IGNORECASE)
 _WOMEN_ONLY_NAME_RE = _re_elig.compile(r"\b(women's|women|female)\b", _re_elig.IGNORECASE)
 
@@ -5449,9 +5447,7 @@ def _load_prior_scored_scenarios(subset_from):
         ran successfully. Empty list if the input had no scored
         scenarios. Exits with code 2 on usage/IO errors.
     """
-    from pathlib import Path
-
-    report_path = Path(subset_from)
+    report_path = _pathlib.Path(subset_from)
 
     # Case 3: directory — resolve to a file inside.
     if report_path.is_dir():
@@ -5584,7 +5580,6 @@ def _apply_subset_filter(all_scenarios, subset, subset_from, threshold_override)
     Exits with code 2 on any usage/IO error so the caller doesn't have to
     branch on return values. Exits 0 if zero scenarios match (nothing to do).
     """
-    from pathlib import Path
 
     if subset_from is None:
         print(f"ERROR: --subset {subset} requires --subset-from PATH "
@@ -5626,7 +5621,7 @@ def _apply_subset_filter(all_scenarios, subset, subset_from, threshold_override)
 
     # Display name of the report — for directories show the dir, for
     # files show the file. Helps the user confirm which artifact was used.
-    display_name = Path(subset_from).name or subset_from
+    display_name = _pathlib.Path(subset_from).name or subset_from
     print(f"Subset '{subset}': {len(matched)} scenario(s) below threshold "
           f"{threshold} in {display_name}")
     return matched
@@ -5730,7 +5725,6 @@ def main():
     # so this reflects what actually took effect (env var vs. CLI flag
     # vs. default). If someone exports REDACT_BEFORE_LLM=true in their
     # shell and runs without the CLI flag, this still prints "ON".
-    from app.services.chatbot.context import _REDACT_BEFORE_LLM
     if _REDACT_BEFORE_LLM:
         print("  Pre-LLM redaction: ON (REDACT_BEFORE_LLM=true)")
     else:
@@ -5803,7 +5797,7 @@ def main():
     txt_path = os.path.join(run_dir, "report.txt")
 
     print(f"\n📁 Run outputs will be archived to: {run_dir}/")
-    print(f"   (per-scenario: scenarios.jsonl, final: report.json + report.txt)")
+    print("   (per-scenario: scenarios.jsonl, final: report.json + report.txt)")
     if args.output:
         print(f"   (--output also writes report.json to: {args.output})")
 
@@ -5958,7 +5952,7 @@ def main():
             print(f"   The run is still archived at {run_dir}/")
 
     if saved_paths:
-        print(f"\n📁 Run archived:")
+        print("\n📁 Run archived:")
         for p in saved_paths:
             print(f"   {p}")
         print(f"   {jsonl_path}  (per-scenario, written incrementally)")
