@@ -35,49 +35,62 @@ function groupByLocation(services: ServiceResult[]): LocationGroup[] {
 export function ServiceCarousel({ services }: ServiceCarouselProps) {
   const trackRef = useRef<HTMLDivElement>(null);
   const [currentIndex, setCurrentIndex] = useState(0);
+  // Track scroll boundaries directly. With snap-mandatory + many
+  // cards, the last "snap point" (groups.length-1 * cardWidth) sits
+  // beyond maxScrollLeft and is unreachable, which broke the
+  // currentIndex-based button enable/disable logic. Detecting end
+  // by comparing scrollLeft to maxScrollLeft is the reliable signal.
+  const [atStart, setAtStart] = useState(true);
+  const [atEnd, setAtEnd] = useState(false);
 
   const groups = groupByLocation(services);
 
-  const scrollToIndex = useCallback(
-    (index: number) => {
-      if (!trackRef.current || !trackRef.current.firstElementChild) return;
-      const cardWidth = (trackRef.current.firstElementChild as HTMLElement).offsetWidth;
-      trackRef.current.scrollLeft = index * (cardWidth + 12);
-    },
-    [],
-  );
+  /** Scroll by exactly one card width in the given direction. Uses
+   * scrollBy + smooth instead of assigning scrollLeft so it composes
+   * correctly with snap-mandatory: the browser handles the snap
+   * after the scroll lands, rather than fighting our assignment
+   * mid-animation. */
+  const scrollByCards = useCallback((direction: -1 | 1) => {
+    if (!trackRef.current || !trackRef.current.firstElementChild) return;
+    const cardWidth = (trackRef.current.firstElementChild as HTMLElement).offsetWidth;
+    trackRef.current.scrollBy({
+      left: direction * (cardWidth + 12),
+      behavior: "smooth",
+    });
+  }, []);
 
   function handleScroll() {
-    const track = trackRef.current;
-    if (!track || !track.firstElementChild) return;
-    const cardWidth = (track.firstElementChild as HTMLElement).offsetWidth;
-    const stride = cardWidth + 12;
+    if (!trackRef.current || !trackRef.current.firstElementChild) return;
+    const t = trackRef.current;
+    const cardWidth = (t.firstElementChild as HTMLElement).offsetWidth;
+    const maxScroll = t.scrollWidth - t.clientWidth;
 
-    // Snap currentIndex to the last item when fully scrolled. The
-    // leftmost-card heuristic below stalls at an intermediate index
-    // when multiple cards fit the viewport (e.g. 4 cards / 3 visible:
-    // leftmost never gets past index 1), so without this snap the
-    // pagination dots, "Location N of M" header, and the Next arrow's
-    // disabled state all misreport at the end. The maxScroll > 0 guard
-    // skips the snap when no scrolling is possible. 4px tolerance
-    // absorbs sub-pixel rounding in scrollLeft on some browsers.
-    const maxScroll = track.scrollWidth - track.clientWidth;
-    const atEnd = maxScroll > 0 && track.scrollLeft >= maxScroll - 4;
+    // Boundary state — used directly by button disabled logic.
+    // 1px of slack on each side absorbs sub-pixel rounding from
+    // smooth-scroll endings.
+    setAtStart(t.scrollLeft <= 1);
+    setAtEnd(maxScroll <= 0 || t.scrollLeft >= maxScroll - 1);
 
-    const idx = atEnd
-      ? groups.length - 1
-      : Math.round(track.scrollLeft / stride);
-    const clamped = Math.min(idx, groups.length - 1);
+    // For dots indicator + active card: the leftmost visible card.
+    // When at end, snap currentIndex to the last group so the dot
+    // and "Location N of M" label match what the user actually sees.
+    let idx: number;
+    if (maxScroll > 0 && t.scrollLeft >= maxScroll - 4) {
+      idx = groups.length - 1;
+    } else {
+      idx = Math.round(t.scrollLeft / (cardWidth + 12));
+    }
+    const clamped = Math.max(0, Math.min(idx, groups.length - 1));
     if (clamped !== currentIndex) setCurrentIndex(clamped);
   }
 
   function handleKeyDown(e: React.KeyboardEvent) {
-    if (e.key === "ArrowLeft" && currentIndex > 0) {
+    if (e.key === "ArrowLeft" && !atStart) {
       e.preventDefault();
-      scrollToIndex(currentIndex - 1);
-    } else if (e.key === "ArrowRight" && currentIndex < groups.length - 1) {
+      scrollByCards(-1);
+    } else if (e.key === "ArrowRight" && !atEnd) {
       e.preventDefault();
-      scrollToIndex(currentIndex + 1);
+      scrollByCards(1);
     }
   }
 
@@ -103,8 +116,8 @@ export function ServiceCarousel({ services }: ServiceCarouselProps) {
         <div className="flex gap-1" role="group" aria-label="Carousel navigation">
           <button
             type="button"
-            disabled={currentIndex === 0}
-            onClick={() => scrollToIndex(currentIndex - 1)}
+            disabled={atStart}
+            onClick={() => scrollByCards(-1)}
             aria-label="Previous result"
             className="w-8 h-8 rounded-full border border-neutral-200 bg-white text-neutral-500 flex items-center justify-center transition hover:bg-neutral-50 hover:border-neutral-300 disabled:opacity-30 disabled:cursor-default dark:bg-neutral-900 dark:border-neutral-700 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:border-neutral-600"
           >
@@ -112,8 +125,8 @@ export function ServiceCarousel({ services }: ServiceCarouselProps) {
           </button>
           <button
             type="button"
-            disabled={currentIndex >= groups.length - 1}
-            onClick={() => scrollToIndex(currentIndex + 1)}
+            disabled={atEnd}
+            onClick={() => scrollByCards(1)}
             aria-label="Next result"
             className="w-8 h-8 rounded-full border border-neutral-200 bg-white text-neutral-500 flex items-center justify-center transition hover:bg-neutral-50 hover:border-neutral-300 disabled:opacity-30 disabled:cursor-default dark:bg-neutral-900 dark:border-neutral-700 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:border-neutral-600"
           >

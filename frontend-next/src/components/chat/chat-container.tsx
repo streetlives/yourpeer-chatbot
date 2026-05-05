@@ -16,7 +16,6 @@ import { ChatMessage } from "./chat-message";
 import { ChatMessageBoundary } from "./chat-message-boundary";
 import { ChatInput } from "./chat-input";
 import { ChatStatus } from "./chat-status";
-import { FeedbackRow } from "./feedback-row";
 import { OfflineBanner } from "./offline-banner";
 import { EarlierResultsLink } from "./earlier-results-link";
 import { ThemeToggle } from "@/components/theme-toggle";
@@ -242,7 +241,11 @@ export function ChatContainer() {
         />
       )}
 
-      {/* Chat area wrapper — relative for floating feedback positioning */}
+      {/* Chat area wrapper. The relative positioning here was
+          previously needed to anchor a floating bottom-right
+          feedback row; the feedback row now renders inline inside
+          the latest bot message instead, but the wrapper stays for
+          layout consistency. */}
       <div className="relative flex-1">
         <div
           ref={chatRef}
@@ -275,27 +278,12 @@ export function ChatContainer() {
                   onRetry={retry}
                   onCancel={cancelQueued}
                   isLatestBot={msg.id === latestBotId}
+                  onFeedback={submitFeedback}
                 />
               </ChatMessageBoundary>
             ));
           })()}
         </div>
-
-        {/* Floating feedback — bottom-right of the chat area.
-            Keyed to the latest results message ID so it remounts
-            (resetting hidden/submitted state) when new results arrive. */}
-        {(() => {
-          const lastFeedbackMsg = [...messages].reverse().find((m) => m.showFeedback);
-          if (!lastFeedbackMsg) return null;
-          // Only show if the last results message is also the last bot message
-          const lastBot = [...messages].reverse().find((m) => m.role === "bot");
-          if (lastBot?.id !== lastFeedbackMsg.id) return null;
-          return (
-            <div className="absolute bottom-3 right-3 z-10">
-              <FeedbackRow key={lastFeedbackMsg.id} onFeedback={submitFeedback} />
-            </div>
-          );
-        })()}
       </div>
 
       {connectionState === "degraded" && (

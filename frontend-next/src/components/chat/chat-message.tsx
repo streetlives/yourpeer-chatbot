@@ -6,10 +6,11 @@
 
 "use client";
 
-import type { ChatMessage as ChatMessageType, MessageStatus } from "@/lib/chat/types";
+import type { ChatMessage as ChatMessageType, MessageStatus, FeedbackRating } from "@/lib/chat/types";
 import { ServiceCarousel } from "./service-carousel";
 import { ServiceCarouselBoundary } from "./service-carousel-boundary";
 import { QuickReplies } from "./quick-replies";
+import { FeedbackRow } from "./feedback-row";
 
 import { RotateCcw, Clock, Check, CheckCheck, AlertTriangle, X } from "lucide-react";
 
@@ -104,11 +105,17 @@ interface ChatMessageProps {
   /** True when this is the most recent bot message. Used to suppress
    *  stateful quick replies (specifically "Show more results") on
    *  older messages — clicking them would be ambiguous because the
-   *  pagination cursor has moved past their context. */
+   *  pagination cursor has moved past their context. Also gates
+   *  showing the inline feedback row, which only makes sense for
+   *  the latest results message. */
   isLatestBot?: boolean;
+  /** Submit feedback (thumbs up/down) for the latest bot results.
+   *  Plumbed down so FeedbackRow can render inline at the end of
+   *  the message rather than floating over the chat surface. */
+  onFeedback?: (rating: FeedbackRating) => void;
 }
 
-export function ChatMessage({ message, onQuickReply, onRetry, onCancel, isLatestBot }: ChatMessageProps) {
+export function ChatMessage({ message, onQuickReply, onRetry, onCancel, isLatestBot, onFeedback }: ChatMessageProps) {
   const isUser = message.role === "user";
   const isCancelled = message.status === "cancelled";
 
@@ -196,6 +203,19 @@ export function ChatMessage({ message, onQuickReply, onRetry, onCancel, isLatest
         <ServiceCarouselBoundary>
           <ServiceCarousel services={message.services} />
         </ServiceCarouselBoundary>
+      )}
+
+      {/* Inline feedback row — sits between the cards and quick
+          replies. Only on the latest bot message that asked for
+          feedback (showFeedback flag), so older results don't
+          accumulate stale Helpful? prompts. The previous floating
+          bottom-right placement collided with the quick reply
+          buttons; rendering inline keeps the feedback contextually
+          attached to its message and out of the way. */}
+      {isLatestBot && message.role === "bot" && message.showFeedback && onFeedback && (
+        <div className="self-start mt-1">
+          <FeedbackRow key={message.id} onFeedback={onFeedback} />
+        </div>
       )}
 
       {message.quick_replies && message.quick_replies.length > 0 && (() => {
