@@ -283,7 +283,13 @@ def _handle_hours_for_day(ctx, post_intent):
 def _handle_post_results_question(ctx):
     """Handle questions about specific results ('what are the hours', 'tell me
     about the second one', etc.) after results were displayed."""
-    post_intent = classify_post_results_question(ctx.message)
+    # Pre-LLM redaction (Phase 1): pass both raw and redacted text. The
+    # function uses raw for local regex paths and redacted for the LLM
+    # call sites it makes downstream. See PRE_LLM_REDACTION_SCOPE.md.
+    post_intent = classify_post_results_question(
+        ctx.message,
+        redacted_message=ctx.redacted_message,
+    )
     if post_intent is None:
         return None
 

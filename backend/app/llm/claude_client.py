@@ -223,49 +223,35 @@ classify as "service" — the service need takes priority.
 
 
 def classify_message_llm(text: str) -> str | None:
-    """Classify a message using Claude when regex is uncertain.
+    """Deprecated — fail-fast stub.
 
-    Returns one of the category strings, or None if the LLM call fails
-    (so the caller can fall back to regex classification).
+    This function previously sent user-typed text to Anthropic and
+    returned a classification category. It was removed from production
+    code paths in the LLM-3 cleanup (see PHASE_AC_AFTERMATH.md, and
+    test_llm_call_redundancy.py for the regression test asserting it
+    is never called from the orchestrator).
+
+    The symbol is retained — not deleted outright — because the test
+    suite has multiple `@patch("app.llm.claude_client.classify_message_llm")`
+    decorators that assert this function is not invoked. Deleting the
+    symbol would break those tests' patch targets without changing
+    their intent.
+
+    Calling this function in new code is a privacy regression: it
+    sends raw user text to Anthropic, bypassing the
+    ``_REDACT_BEFORE_LLM`` gate covered by every other LLM call site.
+    Future developers should not reach for this function. The
+    RuntimeError makes that loud at call time. See
+    docs/design/PRE_LLM_REDACTION_SCOPE.md.
     """
-    from app.services.audit_log import record_llm_call
-    try:
-        _track_llm_call("classification")
-        client = get_client()
-        t0 = time.perf_counter()
-        response = client.messages.create(
-            model=CLASSIFICATION_MODEL,
-            max_tokens=20,  # single word category name
-            system=_CLASSIFY_SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": text}],
-        )
-        latency = round((time.perf_counter() - t0) * 1000)
-        record_llm_call(
-            task="classification", model=CLASSIFICATION_MODEL,
-            input_tokens=response.usage.input_tokens,
-            output_tokens=response.usage.output_tokens,
-            latency_ms=latency, success=True,
-        )
-        raw = response.content[0].text.strip().lower()
-
-        # Validate that the response is an expected category
-        valid = {
-            "greeting", "thanks", "reset", "help", "bot_identity",
-            "bot_question", "escalation", "frustration", "confused",
-            "emotional",
-            "confirm_yes", "confirm_deny",
-            "confirm_change_service", "confirm_change_location",
-            "service", "general",
-        }
-        if raw in valid:
-            return raw
-
-        logger.warning(f"LLM classifier returned unexpected category: '{raw}'")
-        return None
-
-    except Exception as e:
-        logger.error(f"LLM message classification failed: {e}")
-        return None
+    raise RuntimeError(
+        "classify_message_llm() is deprecated and intentionally non-functional. "
+        "It was a relic of the LLM-3 routing-category fallback that was removed "
+        "from the orchestrator. If you need to classify a message, use the "
+        "regex/semantic/LLM-gate pipeline in app.services.chatbot.pipeline "
+        "(which routes user text through the pre-LLM redactor when "
+        "REDACT_BEFORE_LLM=true). See docs/design/PRE_LLM_REDACTION_SCOPE.md."
+    )
 
 
 # ---------------------------------------------------------------------------

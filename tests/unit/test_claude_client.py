@@ -13,6 +13,7 @@ Or just:  python tests/test_claude_client.py
 import os
 from unittest.mock import patch, MagicMock
 
+import pytest
 
 import app.llm.claude_client as cc
 
@@ -259,84 +260,28 @@ def test_claude_reply_init_failure():
 
 
 # -----------------------------------------------------------------------
-# CLASSIFY_MESSAGE_LLM — SUCCESS
+# CLASSIFY_MESSAGE_LLM — DEPRECATED
 # -----------------------------------------------------------------------
+# Phase 1 of the pre-LLM redaction work (PRE_LLM_REDACTION_SCOPE.md)
+# converted classify_message_llm() into a fail-fast deprecation stub.
+# The function previously sent raw user text to Anthropic and was
+# already removed from production code paths in the LLM-3 cleanup
+# (see test_llm_call_redundancy.py for the regression test asserting
+# it is not called from the orchestrator). The stub is preserved as a
+# patch target for those regression tests but raises if invoked, so
+# any future code that reaches for it gets a loud failure instead of
+# silently bypassing the pre-LLM redactor.
+#
+# The previous SUCCESS / FAILURE test sections (returns valid
+# category, uses Haiku, rejects invalid category, handles whitespace,
+# API failure returns None, init failure returns None) tested the
+# behavior of the now-deleted body and have been removed. The single
+# test below pins the new contract.
 
-@patch.dict(os.environ, {"ANTHROPIC_API_KEY": "fake-key"})
-@patch("app.llm.claude_client.anthropic")
-def test_classify_returns_valid_category(mock_anthropic):
-    """LLM classifier should return a valid category string."""
-    _reset_globals()
-    mock_client = MagicMock()
-    mock_anthropic.Anthropic.return_value = mock_client
-
-    mock_text_block = MagicMock()
-    mock_text_block.text = "service"
-    mock_response = MagicMock()
-    mock_response.content = [mock_text_block]
-    mock_client.messages.create.return_value = mock_response
-
-    result = cc.classify_message_llm("I just got released and have nowhere to go")
-    assert result == "service"
-
-
-@patch.dict(os.environ, {"ANTHROPIC_API_KEY": "fake-key"})
-@patch("app.llm.claude_client.anthropic")
-def test_classify_uses_classification_model(mock_anthropic):
-    """classify_message_llm should use CLASSIFICATION_MODEL (Haiku)."""
-    _reset_globals()
-    mock_client = MagicMock()
-    mock_anthropic.Anthropic.return_value = mock_client
-
-    mock_text_block = MagicMock()
-    mock_text_block.text = "general"
-    mock_response = MagicMock()
-    mock_response.content = [mock_text_block]
-    mock_client.messages.create.return_value = mock_response
-
-    cc.classify_message_llm("test message")
-
-    call_kwargs = mock_client.messages.create.call_args
-    model_used = call_kwargs[1]["model"]
-    assert model_used == cc.CLASSIFICATION_MODEL
-    assert "haiku" in model_used.lower(), \
-        f"Classifier should use Haiku, got {model_used}"
-
-
-@patch.dict(os.environ, {"ANTHROPIC_API_KEY": "fake-key"})
-@patch("app.llm.claude_client.anthropic")
-def test_classify_rejects_invalid_category(mock_anthropic):
-    """LLM returning an unexpected category should return None (fallback)."""
-    _reset_globals()
-    mock_client = MagicMock()
-    mock_anthropic.Anthropic.return_value = mock_client
-
-    mock_text_block = MagicMock()
-    mock_text_block.text = "definitely_not_a_category"
-    mock_response = MagicMock()
-    mock_response.content = [mock_text_block]
-    mock_client.messages.create.return_value = mock_response
-
-    result = cc.classify_message_llm("test")
-    assert result is None
-
-
-@patch.dict(os.environ, {"ANTHROPIC_API_KEY": "fake-key"})
-@patch("app.llm.claude_client.anthropic")
-def test_classify_handles_whitespace(mock_anthropic):
-    """LLM response with extra whitespace/newlines should still match."""
-    _reset_globals()
-    mock_client = MagicMock()
-    mock_anthropic.Anthropic.return_value = mock_client
-
-    mock_text_block = MagicMock()
-    mock_text_block.text = "  frustration\n"
-    mock_response = MagicMock()
-    mock_response.content = [mock_text_block]
-    mock_client.messages.create.return_value = mock_response
-
-    result = cc.classify_message_llm("this is useless")
-    assert result == "frustration"
+def test_classify_message_llm_raises_runtime_error():
+    """Calling classify_message_llm() must raise RuntimeError."""
+    with pytest.raises(RuntimeError, match="deprecated"):
+        cc.classify_message_llm("any message")
 
 
 # -----------------------------------------------------------------------
@@ -345,31 +290,6 @@ def test_classify_handles_whitespace(mock_anthropic):
 
 def teardown_module():
     _reset_globals()
-
-
-# -----------------------------------------------------------------------
-# CLASSIFY_MESSAGE_LLM — FAILURE
-# -----------------------------------------------------------------------
-
-@patch.dict(os.environ, {"ANTHROPIC_API_KEY": "fake-key"})
-@patch("app.llm.claude_client.anthropic")
-def test_classify_api_failure_returns_none(mock_anthropic):
-    """API failure should return None, not raise."""
-    _reset_globals()
-    mock_client = MagicMock()
-    mock_anthropic.Anthropic.return_value = mock_client
-    mock_client.messages.create.side_effect = Exception("API timeout")
-
-    result = cc.classify_message_llm("test")
-    assert result is None
-
-
-def test_classify_init_failure_returns_none():
-    """If client init fails, classify should return None, not raise."""
-    _reset_globals()
-    with patch.dict(os.environ, {}, clear=True):
-        result = cc.classify_message_llm("test")
-        assert result is None
 
 
 # -----------------------------------------------------------------------

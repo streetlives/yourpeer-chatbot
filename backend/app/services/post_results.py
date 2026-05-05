@@ -502,7 +502,10 @@ def _text_search_cards(cards: list[dict], keywords: list[str]) -> list[dict]:
     return [card for _, card in results]
 
 
-def classify_post_results_question(message: str) -> Optional[dict]:
+def classify_post_results_question(
+    message: str,
+    redacted_message: str | None = None,
+) -> Optional[dict]:
     """Detect whether a message is a follow-up about displayed results.
 
     Returns an intent dict or None if the message isn't about results.
@@ -514,7 +517,31 @@ def classify_post_results_question(message: str) -> Optional[dict]:
         {"type": "specific_index", "index": int}
         {"type": "specific_name", "query": str}
         {"type": "unknown_about_results"}
+
+    PII redaction:
+        Local regex/pattern-matching paths use ``message`` (raw); only
+        the two LLM calls (``_classify_post_results_llm`` and the
+        downstream ``_extract_keywords_llm`` invoked from
+        ``answer_from_results``) swap to ``redacted_message`` when
+        ``_REDACT_BEFORE_LLM`` is on. Same philosophy as the
+        orchestrator's gate: local decisions on raw text so redaction
+        can never mask routing; LLM payloads use redacted to keep PII
+        out of Anthropic. ``redacted_message=None`` (the default)
+        preserves pre-Phase-1 behavior bit-for-bit.
     """
+    # Pick the source for raw_phrase extraction. _extract_raw_phrase is
+    # local regex (no LLM call) but its output is later passed to
+    # _extract_keywords_llm in the filter handler — so the phrase needs
+    # to be PII-free at extraction time, not just at LLM-call time.
+    # Doing the swap here keeps every downstream consumer (the filter
+    # handler, future analytics on filter_event records) consistent.
+    from app.services.chatbot.context import _REDACT_BEFORE_LLM
+    _raw_phrase_source = (
+        redacted_message
+        if (_REDACT_BEFORE_LLM and redacted_message is not None)
+        else message
+    )
+
     lower = message.lower().strip()
 
     # --- New-request escape hatch ---
@@ -562,7 +589,7 @@ def classify_post_results_question(message: str) -> Optional[dict]:
         r")\b", re.I
     )
     if _REFINE_RE.search(lower):
-        return {"type": "filter_subcategory", "raw_phrase": _extract_raw_phrase(message)}
+        return {"type": "filter_subcategory", "raw_phrase": _extract_raw_phrase(_raw_phrase_source)}
 
     # --- Targeted negation refinement (regex — only unambiguous signals) ---
     # Most negation messages ("not the DHS ones", "without referrals") are
@@ -580,7 +607,7 @@ def classify_post_results_question(message: str) -> Optional[dict]:
     if _NEGATION_REFINE_RE.search(lower):
         return {
             "type": "filter_subcategory",
-            "raw_phrase": _extract_raw_phrase(message),
+            "raw_phrase": _extract_raw_phrase(_raw_phrase_source),
             "_is_negation": True,
         }
 
@@ -645,7 +672,7 @@ def classify_post_results_question(message: str) -> Optional[dict]:
     if (_has_open or _has_free) and _has_subcat:
         return {
             "type": "filter_subcategory",
-            "raw_phrase": _extract_raw_phrase(message),
+            "raw_phrase": _extract_raw_phrase(_raw_phrase_source),
             "_compound": True,
             "_has_open": _has_open,
             "_has_free": _has_free,
@@ -674,7 +701,7 @@ def classify_post_results_question(message: str) -> Optional[dict]:
         r"\b(ones like|ones that|ones with|ones for)\b", re.I
     )
     if _ONES_REFINE_RE.search(lower):
-        return {"type": "filter_subcategory", "raw_phrase": _extract_raw_phrase(message)}
+        return {"type": "filter_subcategory", "raw_phrase": _extract_raw_phrase(_raw_phrase_source)}
 
     # General reference to results but we don't understand the question
     if _RESULT_REFERENCE_RE.search(lower):
@@ -690,9 +717,20 @@ def classify_post_results_question(message: str) -> Optional[dict]:
     # Only fires when there's enough content to be ambiguous (4+ words)
     # and the message wasn't already handled by the patterns above.
     if len(message.split()) >= 3:
-        llm_intent = _classify_post_results_llm(message)
+        # Pre-LLM redaction (Phase 1): pass redacted text to the LLM
+        # call when the flag is on. Local _extract_raw_phrase below
+        # still operates on raw — it's a regex helper that doesn't
+        # leave our infrastructure, and downstream LLM use of its
+        # output is gated separately in _extract_keywords_llm.
+        from app.services.chatbot.context import _REDACT_BEFORE_LLM
+        llm_input = (
+            redacted_message
+            if (_REDACT_BEFORE_LLM and redacted_message is not None)
+            else message
+        )
+        llm_intent = _classify_post_results_llm(llm_input)
         if llm_intent == "refine":
-            return {"type": "filter_subcategory", "raw_phrase": _extract_raw_phrase(message)}
+            return {"type": "filter_subcategory", "raw_phrase": _extract_raw_phrase(_raw_phrase_source)}
         elif llm_intent == "new_request":
             return None  # escape to main router
         elif llm_intent == "about_results":

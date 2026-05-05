@@ -41,7 +41,7 @@ from app.services.slot_extraction_regex import (
 )
 from app.services import slot_extraction
 
-from .context import MessageContext, _USE_LLM, _empty_reply
+from .context import MessageContext, _USE_LLM, _REDACT_BEFORE_LLM, _empty_reply
 from .handlers import (
     _handle_bot_capability_question,
     _handle_bot_identity,
@@ -146,7 +146,18 @@ def generate_reply(
     _action_pre = _classify_action(message)
 
     # --- UNIFIED LLM CLASSIFICATION GATE ---
-    _regex_tone_pre = _classify_tone(message, crisis_result=_CRISIS_NOT_CHECKED)
+    # Pass redacted_message so the classifier's internal detect_crisis()
+    # (sentinel-triggered) uses redacted text under the flag. Without
+    # this, the leak would route through _classify_tone -> detect_crisis
+    # -> Anthropic, bypassing the orchestrator's own detect_crisis fix
+    # below. The second _classify_tone call further down passes a
+    # pre-computed crisis_result so it doesn't hit detect_crisis at
+    # all and doesn't need redacted_text.
+    _regex_tone_pre = _classify_tone(
+        message,
+        crisis_result=_CRISIS_NOT_CHECKED,
+        redacted_text=redacted_message,
+    )
     has_service_intent, _action_pre, _extraction_source, _llm_tone, _llm_action, _unified = _run_llm_gate(
         message=message,
         early_extracted=early_extracted,
@@ -154,6 +165,13 @@ def generate_reply(
         action_pre=_action_pre,
         regex_tone_pre=_regex_tone_pre,
         extraction_source=_extraction_source,
+        # Pre-LLM redaction (Phase 1 of PRE_LLM_REDACTION_SCOPE.md): pass
+        # both raw and redacted text to the gate. Local decisions (length
+        # check, gate condition) keep using raw to avoid masking behavior;
+        # only the LLM payload swaps to redacted when the flag is on. With
+        # the flag off (default), the gate sends raw — bit-for-bit
+        # identical to pre-Phase-1 behavior.
+        redacted_message=redacted_message,
     )
 
     # --- CRISIS DETECTION ---
@@ -165,7 +183,20 @@ def generate_reply(
         )
         and len(message.split()) <= 4
     )
-    _crisis_result = detect_crisis(message, skip_llm=_is_safe_short)
+    # Pre-LLM redaction (Phase 1): when the flag is on, send the redacted
+    # version to detect_crisis. Stage 1 (regex) is unaffected — crisis
+    # phrases like "want to die" / "he hits me" don't overlap with the
+    # redactor's structural patterns ([PHONE], [ADDRESS], [NAME], etc.).
+    # Stage 2 (Anthropic Sonnet on ambiguous language) sees the redacted
+    # input. Phase 2 eval explicitly verifies that crisis-detection
+    # scenarios still pass with redacted input — see
+    # ``pre_llm_redact_crisis_indirect`` in eval_llm_judge.py.
+    _crisis_input = (
+        redacted_message
+        if (_REDACT_BEFORE_LLM and redacted_message is not None)
+        else message
+    )
+    _crisis_result = detect_crisis(_crisis_input, skip_llm=_is_safe_short)
 
     if _crisis_result is not None:
         tone = "crisis"
@@ -550,8 +581,15 @@ def generate_reply(
             # disagrees with the LLM's pick (Phase 4 Stage 3
             # follow-up). When the source is "regex" or None, merge
             # behaves as before.
+            #
+            # Pre-LLM redaction (Phase 1): swap to redacted_message
+            # when the flag is on. The conversation_history kwarg below
+            # already passes server-stored redacted text — only the
+            # current-turn message needs the swap to fully close the
+            # leak surface for slot extraction. See
+            # docs/design/PRE_LLM_REDACTION_SCOPE.md.
             extracted = slot_extraction.extract(
-                message,
+                redacted_message if _REDACT_BEFORE_LLM else message,
                 early_extracted,
                 conversation_history=existing.get("transcript", []),
                 api_key_available=True,  # gated by _USE_LLM above
