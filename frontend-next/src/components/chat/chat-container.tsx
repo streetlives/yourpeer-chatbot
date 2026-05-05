@@ -19,6 +19,7 @@ import { ChatStatus } from "./chat-status";
 import { OfflineBanner } from "./offline-banner";
 import { EarlierResultsLink } from "./earlier-results-link";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { QuickExit } from "./quick-exit";
 
 export function ChatContainer() {
   const { messages, isLoading, error, send, retry, submitFeedback, cancelQueued } = useChat();
@@ -168,11 +169,7 @@ export function ChatContainer() {
 
   return (
     <div className="flex flex-col max-w-[820px] mx-auto px-4 pb-7 min-h-dvh">
-      {/* pr-28 reserves horizontal space for the fixed QuickExit
-          button (top-right, ~100px wide). Without this, the
-          ThemeToggle on the right side of the header sits underneath
-          the floating safety button on narrow viewports. */}
-      <div className="flex items-baseline gap-2.5 px-1 pt-5 pb-3.5 pr-28">
+      <div className="flex items-baseline gap-2.5 px-1 pt-5 pb-3.5">
         <h1 className="text-xl font-bold tracking-tight text-neutral-900 dark:text-neutral-100">
           YourPeer AI Chat
         </h1>
@@ -184,14 +181,15 @@ export function ChatContainer() {
         <span className="text-sm text-neutral-400 dark:text-neutral-500">
           Find services near you
         </span>
-        {/* Push the toggle to the right end of the header row. items-
-            baseline on the parent keeps the h1 + status aligned to
-            text baseline; the toggle's ml-auto shoves it to the far
-            right without changing that baseline. self-center keeps
-            the button vertically centered in the header rather than
-            inheriting the text baseline (which would half-cut it). */}
-        <div className="ml-auto self-center">
+        {/* Header right cluster: ThemeToggle + QuickExit, pushed to
+            the right edge by ml-auto. items-baseline on the parent
+            keeps the h1 + status aligned; self-center keeps the
+            buttons vertically centered to the header row rather
+            than inheriting the text baseline. The gap matches the
+            inter-element spacing of the rest of the header. */}
+        <div className="ml-auto self-center flex items-center gap-2">
           <ThemeToggle />
+          <QuickExit />
         </div>
       </div>
 
@@ -270,18 +268,38 @@ export function ChatContainer() {
                 break;
               }
             }
-            return messages.map((msg) => (
-              <ChatMessageBoundary key={msg.id}>
-                <ChatMessage
-                  message={msg}
-                  onQuickReply={send}
-                  onRetry={retry}
-                  onCancel={cancelQueued}
-                  isLatestBot={msg.id === latestBotId}
-                  onFeedback={submitFeedback}
-                />
-              </ChatMessageBoundary>
-            ));
+            return (
+              <>
+                {messages.map((msg) => (
+                  <ChatMessageBoundary key={msg.id}>
+                    <ChatMessage
+                      message={msg}
+                      onQuickReply={send}
+                      onRetry={retry}
+                      onCancel={cancelQueued}
+                      isLatestBot={msg.id === latestBotId}
+                      onFeedback={submitFeedback}
+                    />
+                  </ChatMessageBoundary>
+                ))}
+                {/* Inline "searching" status — same visual treatment
+                    as the geolocation flow's transient "Getting your
+                    location…" bot bubble. ChatStatus below the chat
+                    is too far from the action; users miss it. This
+                    sits inline where the bot reply will land. */}
+                {isLoading && (
+                  <div
+                    role="status"
+                    aria-live="polite"
+                    className="self-start max-w-[82%]"
+                  >
+                    <div className="px-4 py-3 rounded-2xl rounded-bl-md text-[0.94rem] leading-relaxed italic text-neutral-500 bg-neutral-100 dark:bg-neutral-700 dark:text-neutral-400 animate-in fade-in slide-in-from-bottom-1">
+                      Searching for services…
+                    </div>
+                  </div>
+                )}
+              </>
+            );
           })()}
         </div>
       </div>

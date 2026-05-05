@@ -151,12 +151,15 @@ export function QuickExit() {
         aria-label="Leave site immediately and replace this page"
         title="Leave site (or press Esc twice)"
         className={[
-          // Position: fixed top-right, just inside the safe area.
-          // top uses calc + env() so the button sits below the iOS
-          // status bar / notch in standalone PWA mode without making
-          // the BUTTON'S padding asymmetric (which is what would
-          // happen if we added pt-env(...) inline alongside py-2).
-          "fixed top-[calc(0.75rem+env(safe-area-inset-top))] right-3 z-50",
+          // Inline in chat header next to ThemeToggle. Previously
+          // fixed top-right of viewport; moved here for visual
+          // adjacency with the theme toggle. Trade-off: the button
+          // is briefly absent during chat hydration (which renders
+          // <Loading…> until Zustand persist completes). Accepted
+          // because hydration is sub-second on a healthy session
+          // and the Esc-Esc keyboard shortcut still works during
+          // hydration via the document-level keydown listener.
+          "inline-flex items-center",
           // Visual: red, dense, unmissable but not screaming.
           "px-3 py-2 rounded-lg",
           "bg-red-600 text-white text-sm font-semibold",

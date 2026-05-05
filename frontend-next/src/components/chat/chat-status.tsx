@@ -9,17 +9,29 @@ interface ChatStatusProps {
   error: string | null;
 }
 
-export function ChatStatus({ isLoading, error }: ChatStatusProps) {
+/**
+ * Below-the-chat status row.
+ *
+ * Originally also showed "Searching..." during isLoading, but that
+ * indicator sits below the chat scroll area where users don't look.
+ * The searching indicator now renders inline as a transient bot
+ * bubble inside ChatContainer (same visual treatment as the
+ * geolocation flow's "Getting your location..." message), and this
+ * component is only responsible for surfacing errors.
+ *
+ * isLoading is still accepted for API stability and future use
+ * (e.g., a debouncing throttle indicator) but currently unused.
+ */
+export function ChatStatus({ isLoading: _isLoading, error }: ChatStatusProps) {
+  if (!error) return null;
   return (
     <div
       role="status"
       aria-live="polite"
       aria-atomic="true"
-      className={`min-h-[20px] my-2 mx-1 text-sm ${
-        error ? "text-red-600 dark:text-red-400" : "text-neutral-400 dark:text-neutral-500"
-      }`}
+      className="min-h-[20px] my-2 mx-1 text-sm text-red-600 dark:text-red-400"
     >
-      {error || (isLoading ? "Searching..." : "")}
+      {error}
     </div>
   );
 }

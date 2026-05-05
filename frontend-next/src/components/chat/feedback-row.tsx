@@ -44,7 +44,7 @@ export function FeedbackRow({ onFeedback }: FeedbackRowProps) {
     <div
       role="group"
       aria-label="Rate these results"
-      className="flex items-center gap-1.5 px-2.5 py-1.5 bg-white/95 backdrop-blur-sm border border-neutral-200 rounded-full shadow-md animate-in fade-in slide-in-from-bottom-1 dark:bg-neutral-900/95 dark:border-neutral-700"
+      className="inline-flex items-center gap-1.5 px-2.5 py-1.5 bg-white border border-neutral-200 rounded-full animate-in fade-in slide-in-from-bottom-1 dark:bg-neutral-900 dark:border-neutral-700"
     >
       <span className="text-[0.7rem] text-neutral-400 dark:text-neutral-500 font-medium">{label}</span>
       {!submitted && (

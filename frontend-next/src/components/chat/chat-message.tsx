@@ -205,31 +205,46 @@ export function ChatMessage({ message, onQuickReply, onRetry, onCancel, isLatest
         </ServiceCarouselBoundary>
       )}
 
-      {/* Inline feedback row — sits between the cards and quick
-          replies. Only on the latest bot message that asked for
-          feedback (showFeedback flag), so older results don't
-          accumulate stale Helpful? prompts. The previous floating
-          bottom-right placement collided with the quick reply
-          buttons; rendering inline keeps the feedback contextually
-          attached to its message and out of the way. */}
-      {isLatestBot && message.role === "bot" && message.showFeedback && onFeedback && (
-        <div className="self-start mt-1">
-          <FeedbackRow key={message.id} onFeedback={onFeedback} />
-        </div>
-      )}
+      {/* Combined feedback + quick-replies row.
+          The Helpful? thumbs and quick-reply pills share a single
+          flex-wrap container so they fit on one line on wide
+          screens and only break to multi-line when they don't.
+          Cuts the vertical chrome roughly in half on mobile, where
+          the cards already take up most of the screen.
+          Feedback is gated on isLatestBot + showFeedback so older
+          results don't accumulate stale Helpful? prompts. */}
+      {(() => {
+        const showFeedback =
+          isLatestBot &&
+          message.role === "bot" &&
+          message.showFeedback &&
+          !!onFeedback;
 
-      {message.quick_replies && message.quick_replies.length > 0 && (() => {
         // Drop "Show more results" on stale (non-latest) bot messages.
         // The backend attaches it correctly at the time of response, but
         // it lingers on every prior turn. Once a newer turn arrives the
         // pagination cursor has moved past this message, so clicking it
         // would either re-show already-shown results or do nothing
         // useful — confusing either way.
-        const filtered = isLatestBot
-          ? message.quick_replies
-          : message.quick_replies.filter((qr) => qr.value !== "Show more results");
-        if (filtered.length === 0) return null;
-        return <QuickReplies replies={filtered} onSelect={onQuickReply} />;
+        const filtered = message.quick_replies
+          ? isLatestBot
+            ? message.quick_replies
+            : message.quick_replies.filter((qr) => qr.value !== "Show more results")
+          : [];
+
+        if (filtered.length === 0 && !showFeedback) return null;
+
+        const feedbackEl = showFeedback ? (
+          <FeedbackRow key={message.id} onFeedback={onFeedback!} />
+        ) : null;
+
+        return (
+          <QuickReplies
+            replies={filtered}
+            onSelect={onQuickReply}
+            leadingSlot={feedbackEl}
+          />
+        );
       })()}
     </>
   );
