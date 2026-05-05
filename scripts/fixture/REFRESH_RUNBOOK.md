@@ -27,6 +27,11 @@ This runbook describes the May 5 refresh process so it can be repeated quarterly
 - **`normalize_dbeaver_export.py`** — converts the raw DBeaver JSON export (which uses Postgres array literal strings like `'{a,"b c"}'`) into proper JSON arrays. Required after every DBeaver export.
 - **`verify_refresh.py`** — post-refresh sanity check. Validates cohort coverage and required pinned providers. Exits non-zero if anything's missing. Run this before committing the new fixture.
 
+And in `tests/eval/fixtures/`:
+
+- **`services_raw.json`** — DBeaver's raw output, with Postgres array literal strings preserved. Committed to the repo as a provenance/audit trail. `git diff services_raw.json` between refreshes shows what changed in production data, separately from any normalization-script changes.
+- **`services.json`** — normalized version that the eval mock actually reads. Generated from `services_raw.json` via `normalize_dbeaver_export.py`. Both files are committed together.
+
 ## Step-by-step refresh
 
 ### Step 1 — set DBeaver up correctly (one-time)
@@ -67,13 +72,15 @@ Expected: ~270-450 rows depending on what production has. The May 5 run produced
 
 Right-click on the result grid → **Export Data** → JSON.
 
-Save as `services_raw.json` (do NOT save directly as `services.json` — there's a normalization step).
+Save as `tests/eval/fixtures/services_raw.json`, **overwriting the prior version**.
+
+The repo keeps both `services_raw.json` (DBeaver's raw output, with Postgres array literal strings) and `services.json` (the normalized version the eval mock reads). The raw file serves as a provenance/audit trail — `git diff services_raw.json` between refreshes shows exactly what changed in production data, separate from any normalization-script changes. Both files are committed and version-tracked.
 
 ### Step 5 — normalize the export
 
 ```bash
 python3 scripts/fixture/normalize_dbeaver_export.py \
-    services_raw.json \
+    tests/eval/fixtures/services_raw.json \
     tests/eval/fixtures/services.json
 ```
 
@@ -201,10 +208,11 @@ Combined with cluster 1 (eligibility filter), expect R42 to resolve **6-8 of the
 [ ] DBeaver settings: Enable SQL parameters OFF, Blank line delimiter set to Never
 [ ] Run 05_diagnostic_cohort_coverage.sql, eyeball gaps, flag any new ones
 [ ] Run 04_extract_fixture_hybrid.sql (or _cast.sql if settings can't change)
-[ ] Export → JSON, save as services_raw.json
-[ ] python3 scripts/fixture/normalize_dbeaver_export.py services_raw.json tests/eval/fixtures/services.json
+[ ] Export → JSON, save as tests/eval/fixtures/services_raw.json (overwrite prior)
+[ ] python3 scripts/fixture/normalize_dbeaver_export.py tests/eval/fixtures/services_raw.json tests/eval/fixtures/services.json
 [ ] python3 scripts/fixture/verify_refresh.py  → expect exit 0
 [ ] python3 -m pytest tests/unit/ -q  → expect 3870 passing
-[ ] git diff tests/eval/fixtures/services.json → eyeball for sanity
-[ ] Commit, PR
+[ ] git diff tests/eval/fixtures/services_raw.json → eyeball production data changes
+[ ] git diff tests/eval/fixtures/services.json → eyeball normalized output
+[ ] Commit both files together, PR
 ```
