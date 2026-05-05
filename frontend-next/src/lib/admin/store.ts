@@ -19,6 +19,11 @@ import type {
   AuditEvent,
   EvalReport,
 } from "@/lib/chat/types";
+import {
+  CONVERSATIONS_LIMIT,
+  EVENTS_LIMIT,
+  QUERIES_LIMIT,
+} from "./api-limits";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -70,10 +75,9 @@ type SliceName = "stats" | "conversations" | "queries" | "events" | "evalResults
 /** Data older than this is considered stale and will be re-fetched. */
 const STALE_AFTER_MS = 30_000; // 30 seconds
 
-/** Fixed limits — use the largest value any consumer needs. */
-const CONVERSATIONS_LIMIT = 200;
-const QUERIES_LIMIT = 500;
-const EVENTS_LIMIT = 50;
+// Per-table row limits are imported from `./api-limits` so api.ts and
+// store.ts can't drift apart on what "default" means. See that module
+// for the per-limit rationale.
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -133,12 +137,33 @@ function createFetcher<K extends SliceName>(
 // Store
 // ---------------------------------------------------------------------------
 
+/**
+ * Build a fresh map of empty slice values. Used both by the initial
+ * `create()` call and by the `reset(key)` action — having one source
+ * means adding a new slice only requires updating this function (and
+ * SLICE_NAMES below for the `invalidateAll` iteration). Returns a new
+ * object on every call so the two consumers don't share array
+ * references that could be mutated downstream.
+ *
+ * Each slice's initial `data` value matches the type the rest of the
+ * codebase expects: `null` for "haven't fetched yet but expect a single
+ * object," `[]` for collections that downstream consumers iterate over
+ * unconditionally, and `undefined` for the eval report (which has a
+ * meaningful "loaded but reported no results" state distinct from
+ * "never loaded").
+ */
+function makeInitialState() {
+  return {
+    stats: emptySlice<AdminStats | null>(null),
+    conversations: emptySlice<ConversationSummary[]>([]),
+    queries: emptySlice<QueryLogEntry[]>([]),
+    events: emptySlice<AuditEvent[]>([]),
+    evalResults: emptySlice<EvalReport | null | undefined>(undefined),
+  };
+}
+
 export const useAdminStore = create<AdminStore>((set, get) => ({
-  stats: emptySlice<AdminStats | null>(null),
-  conversations: emptySlice<ConversationSummary[]>([]),
-  queries: emptySlice<QueryLogEntry[]>([]),
-  events: emptySlice<AuditEvent[]>([]),
-  evalResults: emptySlice<EvalReport | null | undefined>(undefined),
+  ...makeInitialState(),
 
   fetchStats: createFetcher("stats", fetchAdminStats, set, get),
   fetchConversations: createFetcher(
@@ -187,18 +212,12 @@ export const useAdminStore = create<AdminStore>((set, get) => ({
   },
 
   reset: (key) => {
-    // Map of empty initial values per slice. Has to mirror the create()
-    // call above; if a new slice is added with non-default initial state,
-    // both places need updating. Encoded explicitly rather than reading
-    // from a shared constant because the type per slice differs and a
-    // single `INITIAL` map would lose type narrowing.
-    const initial: { [K in SliceName]: AdminStore[K] } = {
-      stats: emptySlice<AdminStats | null>(null),
-      conversations: emptySlice<ConversationSummary[]>([]),
-      queries: emptySlice<QueryLogEntry[]>([]),
-      events: emptySlice<AuditEvent[]>([]),
-      evalResults: emptySlice<EvalReport | null | undefined>(undefined),
-    };
+    // Build a fresh initial-state map and pluck out just the slice
+    // we're resetting. Building the whole map and discarding the rest
+    // is fine — the slices are shallow objects and the cost is
+    // negligible compared to the readability win of having one
+    // makeInitialState() rather than two parallel structures.
+    const initial = makeInitialState();
     set({ [key]: initial[key] } as Partial<AdminStore>);
   },
 }));

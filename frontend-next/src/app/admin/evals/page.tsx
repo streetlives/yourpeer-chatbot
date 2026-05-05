@@ -38,13 +38,65 @@ export default function EvalsPage() {
 
   const report = slice.data;
 
+  // For the eval slice specifically, `data` carries a meaningful three-way
+  // distinction:
+  //   - undefined → no fetch has resolved yet (initial mount, or just
+  //     reset by onEvalComplete and waiting for the next fetch). Show the
+  //     skeleton.
+  //   - null → fetch resolved with no report on the backend. Show the
+  //     "no evaluation results yet" empty state.
+  //   - non-null → render the report.
+  //
+  // Branching on `loading` alone caused a one-tick empty-state flash
+  // during the reset+refetch flow because reset() flips data to undefined
+  // synchronously while loading=true doesn't catch up until the next
+  // microtask.
+
   return (
     <>
       <EvalRunner onComplete={onEvalComplete} />
 
-      {slice.loading && report === undefined && <EvalSkeleton />}
+      {/* Terminal error: no report ever loaded and the latest fetch
+          failed. Show a clear retry affordance — without it, the page
+          shows the skeleton or empty state and looks like nothing
+          happened, even though the backend rejected the request. */}
+      {slice.error && !slice.hasData && (
+        <div className="text-center py-16" role="alert">
+          <div className="text-3xl mb-3">⚠️</div>
+          <p className="text-neutral-500 mb-4">
+            Could not load eval results. The server may be unavailable.
+          </p>
+          <button
+            onClick={slice.refresh}
+            className="px-3.5 py-1.5 rounded-lg text-sm font-medium border border-neutral-200 bg-white text-neutral-700 hover:bg-neutral-50 transition"
+          >
+            Retry
+          </button>
+        </div>
+      )}
 
-      {!slice.loading && (report === null || report === undefined) && (
+      {/* Stale-data banner: a previous report is still on screen but the
+          latest refresh failed. Mirrors DataPanel's StaleDataBanner
+          behavior — keeps the report visible but flags that it's stale. */}
+      {slice.error && slice.hasData && report && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="bg-amber-50 border border-amber-200 rounded-lg px-3.5 py-2 mb-3 text-sm text-amber-800 flex items-center justify-between gap-3"
+        >
+          <span>Latest refresh failed — showing the previous report.</span>
+          <button
+            onClick={slice.refresh}
+            className="flex-shrink-0 px-2.5 py-0.5 rounded-md text-xs font-semibold bg-amber-100 text-amber-700 hover:bg-amber-200 transition"
+          >
+            Retry
+          </button>
+        </div>
+      )}
+
+      {!slice.error && report === undefined && <EvalSkeleton />}
+
+      {!slice.error && report === null && (
         <div className="text-center py-16 text-neutral-400">
           <div className="text-3xl mb-3">🧪</div>
           <p>No evaluation results yet.</p>

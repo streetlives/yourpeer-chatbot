@@ -35,18 +35,29 @@ import { SCENARIO_COUNT_APPROX } from "@/lib/admin/eval-dimensions";
 // See docs/ops/EVAL_QUALITY_ENGINEERING_PLAN.md §"Foundation 4" for the
 // full discussion of why pinning + recording is the right durable fix.
 
+// Pricing in USD per million tokens, as published in Anthropic's docs.
+// Coupled to the version block above so a version bump that changes
+// pricing stays atomic — previously, MODELS hardcoded prices inline,
+// which meant updating `id` without updating `input`/`output` would
+// silently desync the cost calculator from the actual API charges.
 export const MODEL_VERSIONS = {
   haiku: {
     id: "claude-haiku-4-5-20251001",
     name: "Haiku 4.5",
+    inputPerMTok: 1.0,
+    outputPerMTok: 5.0,
   },
   sonnet: {
     id: "claude-sonnet-4-6",
     name: "Sonnet 4.6",
+    inputPerMTok: 3.0,
+    outputPerMTok: 15.0,
   },
   opus: {
     id: "claude-opus-4-6",
     name: "Opus 4.6",
+    inputPerMTok: 5.0,
+    outputPerMTok: 25.0,
   },
 } as const;
 
@@ -118,8 +129,8 @@ export const MODELS: Record<string, ModelInfo> = {
   haiku: {
     id: MODEL_VERSIONS.haiku.id,
     name: MODEL_VERSIONS.haiku.name,
-    input: 1.0,
-    output: 5.0,
+    input: MODEL_VERSIONS.haiku.inputPerMTok,
+    output: MODEL_VERSIONS.haiku.outputPerMTok,
     speed: "4-5x faster than Sonnet [1]",
     latency: "Est. ~0.4s TTFT [3]",
     context: "200K",
@@ -140,8 +151,8 @@ export const MODELS: Record<string, ModelInfo> = {
   sonnet: {
     id: MODEL_VERSIONS.sonnet.id,
     name: MODEL_VERSIONS.sonnet.name,
-    input: 3.0,
-    output: 15.0,
+    input: MODEL_VERSIONS.sonnet.inputPerMTok,
+    output: MODEL_VERSIONS.sonnet.outputPerMTok,
     speed: "Moderate",
     latency: "Est. ~0.8s TTFT [3]",
     context: "1M (beta)",
@@ -163,8 +174,8 @@ export const MODELS: Record<string, ModelInfo> = {
   opus: {
     id: MODEL_VERSIONS.opus.id,
     name: MODEL_VERSIONS.opus.name,
-    input: 5.0,
-    output: 25.0,
+    input: MODEL_VERSIONS.opus.inputPerMTok,
+    output: MODEL_VERSIONS.opus.outputPerMTok,
     speed: "Slowest (deepest reasoning)",
     latency: "Est. ~1.5s TTFT [3]",
     context: "1M (beta)",

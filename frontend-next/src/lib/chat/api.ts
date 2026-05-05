@@ -16,6 +16,11 @@ import type {
   EvalRunStatus,
 } from "./types";
 import { generateRequestId } from "./request-id";
+import {
+  CONVERSATIONS_LIMIT,
+  EVENTS_LIMIT,
+  QUERIES_LIMIT,
+} from "@/lib/admin/api-limits";
 
 // ---------------------------------------------------------------------------
 // Timeout helper (D4)
@@ -134,7 +139,7 @@ export async function fetchAdminStats(): Promise<AdminStats> {
 }
 
 export async function fetchConversations(
-  limit = 100,
+  limit = CONVERSATIONS_LIMIT,
 ): Promise<ConversationSummary[]> {
   const res = await fetch(`${ADMIN_API}/conversations?limit=${limit}`, { signal: timeoutSignal(ADMIN_TIMEOUT_MS) });
   if (!res.ok) throw new Error("Failed to load conversations");
@@ -150,14 +155,14 @@ export async function fetchConversationDetail(
 }
 
 export async function fetchEvents(
-  limit = 100,
+  limit = EVENTS_LIMIT,
 ): Promise<AuditEvent[]> {
   const res = await fetch(`${ADMIN_API}/events?limit=${limit}`, { signal: timeoutSignal(ADMIN_TIMEOUT_MS) });
   if (!res.ok) throw new Error("Failed to load events");
   return res.json();
 }
 
-export async function fetchQueries(limit = 200): Promise<QueryLogEntry[]> {
+export async function fetchQueries(limit = QUERIES_LIMIT): Promise<QueryLogEntry[]> {
   const res = await fetch(`${ADMIN_API}/queries?limit=${limit}`, { signal: timeoutSignal(ADMIN_TIMEOUT_MS) });
   if (!res.ok) throw new Error("Failed to load queries");
   return res.json();

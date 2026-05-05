@@ -609,7 +609,12 @@ export default function MetricsPage() {
           <MetricRow onClick={onMetricClick} name="Calls by Task" subtitle={Object.entries(llmMetrics.by_task as Record<string, { calls: number; avg_latency_ms: number }>).sort(([, a], [, b]) => b.calls - a.calls).map(([task, info]) => `${task}: ${info.calls} (${info.avg_latency_ms}ms avg)`).join(" · ")} target="—" value={`${Object.keys(llmMetrics.by_task).length} tasks`} status="tracking" />
         )}
         {llmMetrics?.by_model && Object.keys(llmMetrics.by_model).length > 0 && (
-          <MetricRow onClick={onMetricClick} name="Calls by Model" subtitle={Object.entries(llmMetrics.by_model as Record<string, number>).map(([model, count]) => `${model.replace("claude-", "").replace("-20251001", "")}: ${count}`).join(" · ")} target="—" value={`${Object.values(llmMetrics.by_model as Record<string, number>).reduce((a, b) => a + b, 0)} total`} status="tracking" />
+          // Build a compact "haiku-4-5: 234 · sonnet-4-6: 12" subtitle.
+          // Strip the "claude-" prefix and any 8-digit date suffix
+          // (e.g. "-20251001"). Same pattern as model-card.tsx —
+          // hardcoding a specific date string used to drop suffixes
+          // for some models but not others.
+          <MetricRow onClick={onMetricClick} name="Calls by Model" subtitle={Object.entries(llmMetrics.by_model as Record<string, number>).map(([model, count]) => `${model.replace("claude-", "").replace(/-\d{8}$/, "")}: ${count}`).join(" · ")} target="—" value={`${Object.values(llmMetrics.by_model as Record<string, number>).reduce((a, b) => a + b, 0)} total`} status="tracking" />
         )}
       </MetricsSection>
 

@@ -69,6 +69,36 @@ export function formatAbsoluteTooltip(timestamp: string): string {
 }
 
 // ---------------------------------------------------------------------------
+// Public helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Format a timestamp as just the time-of-day in NYC-local time, with
+ * second precision (e.g. "9:21:34 AM"). Used by views like the
+ * transcript drawer where multiple turns can fire within the same
+ * minute and the order matters. For minute-precision (event feed,
+ * query log), use `formatRelativeTime` for the visible cell and rely
+ * on `formatAbsoluteTooltip` for hover detail.
+ */
+export function formatTimeOfDayWithSeconds(timestamp: string): string {
+  try {
+    return new Date(timestamp).toLocaleTimeString("en-US", {
+      timeZone: NYC_TZ,
+      hour: "numeric",
+      minute: "2-digit",
+      second: "2-digit",
+    });
+  } catch {
+    // toLocaleTimeString rarely throws on modern engines, but a malformed
+    // timestamp returning an Invalid Date would render "Invalid Date"
+    // through it. Falling back to the raw input keeps the UI from showing
+    // that nonsense — the drawer can render the original ISO string
+    // instead, which at least lets a viewer reason about the issue.
+    return timestamp;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
 

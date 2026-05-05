@@ -10,6 +10,7 @@ import * as Dialog from "@radix-ui/react-dialog";
 import { X } from "lucide-react";
 import { useMemo } from "react";
 import type { AuditEvent } from "@/lib/chat/types";
+import { formatTimeOfDayWithSeconds } from "@/lib/admin/format-time";
 
 interface TranscriptDrawerProps {
   sessionId: string;
@@ -63,23 +64,6 @@ function diffSlots(before: SlotMap | undefined, after: SlotMap | undefined): Slo
     }
   }
   return { added, overwritten, removed };
-}
-
-// ---------------------------------------------------------------------------
-// Format helpers
-// ---------------------------------------------------------------------------
-
-function formatTime(ts: string): string {
-  try {
-    return new Date(ts).toLocaleTimeString("en-US", {
-      timeZone: "America/New_York",
-      hour: "numeric",
-      minute: "2-digit",
-      second: "2-digit",
-    });
-  } catch {
-    return ts;
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -217,7 +201,7 @@ function renderEvent(e: AuditEvent, i: number, diff: SlotDiff | undefined) {
           key={i}
           className="text-xs text-neutral-400 italic px-3.5 py-1.5 border-l-[3px] border-neutral-200"
         >
-          Session reset · {formatTime(e.timestamp)}
+          Session reset · {formatTimeOfDayWithSeconds(e.timestamp)}
         </div>
       );
     case "feedback":
@@ -249,7 +233,7 @@ function TurnEvent({ e, diff }: { e: AuditEvent; diff: SlotDiff | undefined }) {
       {e.user_message && (
         <div className="bg-amber-50/60 border-l-[3px] border-amber-400 px-3.5 py-2.5 rounded-r-lg mb-2">
           <div className="text-[0.7rem] font-semibold uppercase tracking-wider text-amber-600 mb-1">
-            User · {formatTime(e.timestamp)}
+            User · {formatTimeOfDayWithSeconds(e.timestamp)}
           </div>
           <div className="text-sm whitespace-pre-wrap leading-relaxed">{e.user_message}</div>
         </div>
@@ -306,7 +290,7 @@ function QueryEvent({ e }: { e: AuditEvent }) {
   return (
     <div className="bg-emerald-50/40 border-l-[3px] border-emerald-400 px-3.5 py-2 rounded-r-lg">
       <div className="text-[0.7rem] font-semibold uppercase tracking-wider text-emerald-600 mb-1">
-        Query · {formatTime(e.timestamp)}
+        Query · {formatTimeOfDayWithSeconds(e.timestamp)}
       </div>
       <div className="text-sm font-mono">
         <span className="font-semibold">{e.template_name}</span>
@@ -329,7 +313,7 @@ function CrisisEvent({ e }: { e: AuditEvent }) {
   return (
     <div className="bg-red-50 border-l-[3px] border-red-500 px-3.5 py-2.5 rounded-r-lg">
       <div className="text-[0.7rem] font-semibold uppercase tracking-wider text-red-600 mb-1">
-        ⚠ Crisis Detected · {formatTime(e.timestamp)}
+        ⚠ Crisis Detected · {formatTimeOfDayWithSeconds(e.timestamp)}
       </div>
       <div className="text-sm">
         {e.crisis_category && (
