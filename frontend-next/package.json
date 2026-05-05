@@ -6,33 +6,38 @@
     "dev": "next dev --turbopack",
     "build": "next build",
     "start": "next start -p ${PORT:-3000}",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "verify:redaction": "node scripts/verify/chat-message-redaction.mjs",
+    "verify:pending": "node scripts/verify/pending-responses.mjs",
+    "verify:pii": "node scripts/verify/pii-redactor.mjs",
+    "verify:theme": "node scripts/verify/theme.mjs",
+    "verify": "npm run verify:redaction && npm run verify:pending && npm run verify:pii && npm run verify:theme"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.5",
     "idb-keyval": "^6.2.1",
     "lucide-react": "^0.474.0",
-    "next": "16.2.4",
-    "react": "19.2.5",
-    "react-dom": "19.2.5",
+    "next": "^16.2.4",
+    "react": "19.1.1",
+    "react-dom": "19.1.1",
     "tailwindcss-animate": "^1.0.7",
     "zustand": "^5.0.8"
   },
   "devDependencies": {
     "@tailwindcss/forms": "^0.5.7",
     "@types/node": "^25",
-    "@types/react": "19.2.14",
-    "@types/react-dom": "19.2.3",
+    "@types/react": "19.1.13",
+    "@types/react-dom": "19.1.9",
     "eslint": "^9.39.4",
-    "eslint-config-next": "16.2.4",
+    "eslint-config-next": "^16.2.4",
     "postcss": "^8",
     "tailwind-scrollbar-hide": "^1.1.7",
     "tailwindcss": "^3.4.3",
     "typescript": "^5.7.2"
   },
   "overrides": {
-    "@types/react": "19.2.14",
-    "@types/react-dom": "19.2.3"
+    "@types/react": "19.1.13",
+    "@types/react-dom": "19.1.9"
   },
   "engines": {
     "node": ">=20.9.0"

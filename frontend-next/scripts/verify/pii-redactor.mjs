@@ -7,12 +7,14 @@
 /**
  * Standalone verification for src/lib/chat/pii-redactor.ts.
  *
- * Run with: `node verify-pii-redactor.mjs` from this file's directory
- * (Node 22+ required — uses built-in TypeScript stripping).
+ * Run with: `npm run verify:pii` from frontend-next/, or
+ * `node scripts/verify/pii-redactor.mjs` directly (Node 22+ required
+ * — uses built-in TypeScript stripping).
  *
- * Same philosophy as verify-theme.mjs — no test framework dependency.
- * The redactor is pure, dependency-free, and the verification cases
- * here document the patterns alongside the implementation.
+ * Same philosophy as scripts/verify/theme.mjs — no test framework
+ * dependency. The redactor is pure, dependency-free, and the
+ * verification cases here document the patterns alongside the
+ * implementation.
  *
  * Cases come from three sources:
  *   1. Pattern parity with backend/app/privacy/pii_redactor.py
@@ -28,7 +30,7 @@
  */
 
 import assert from "node:assert/strict";
-import { detectPII, redactPII, hasPII } from "./src/lib/chat/pii-redactor.ts";
+import { detectPII, redactPII, hasPII } from "../../src/lib/chat/pii-redactor.ts";
 
 let passed = 0;
 let failed = 0;

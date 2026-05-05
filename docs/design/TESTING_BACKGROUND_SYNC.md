@@ -204,7 +204,8 @@ network activity.
 IDB — it should contain the timestamp of the reset. Then look at
 `yourpeer:pending-responses:v1` for any entries with `queuedAt <
 resetEpoch` — those should have been dropped by `classifyPending`
-(see `verify-pending-responses.mjs` for the unit-level test of this
+(see `frontend-next/scripts/verify/pending-responses.mjs`, runnable
+via `npm run verify:pending`, for the unit-level test of this
 logic). If `queuedAt` is missing on the entry, it was written by an
 older SW — wait an hour for TTL, then retest.
 
