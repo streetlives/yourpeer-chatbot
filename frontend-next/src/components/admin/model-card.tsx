@@ -12,16 +12,11 @@ export function ModelBadge({ model }: { model: "haiku" | "sonnet" | "opus" }) {
     sonnet: "bg-violet-50 text-violet-700",
     opus: "bg-amber-50 text-amber-700",
   };
-  const labels = {
-    haiku: "Haiku 4.5",
-    sonnet: "Sonnet 4.6",
-    opus: "Opus 4.6",
-  };
   return (
     <span
       className={`inline-block text-xs font-semibold px-2.5 py-0.5 rounded-lg ${colors[model]}`}
     >
-      {labels[model]}
+      {MODELS[model].name}
     </span>
   );
 }

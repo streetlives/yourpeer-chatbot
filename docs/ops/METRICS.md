@@ -94,8 +94,8 @@ From a DB audit (April 2026), schedule data (`regular_schedules` rows) is only p
 ### 2.5 Eligibility Fit Rate
 **Definition:** % of returned services that match all stated user criteria (service type, age restrictions, gender restrictions, location).  
 **Target:** ≥ 95% — the template query design should make mismatches rare; any miss is a template bug.  
-**Measurement:** Canary tests (scripted dialogs with known-correct results) run before each deploy. Spot-check by data stewards during pilot.  
-**Phase:** Pilot.
+**Measurement:** Canary tests (scripted dialogs with known-correct results) run before each deploy, plus spot-checks by data stewards. ❌ Canary suite not yet implemented; the closest live signal is the LLM-as-Judge eval's `slot_extraction` dimension, but it is not the same metric.  
+**Phase:** Post-pilot — moves back to Pilot once a canary suite exists.
 
 ### 2.6 User Feedback Score
 **Definition:** % of post-result feedback that is positive (thumbs up or equivalent).  
@@ -119,8 +119,8 @@ These metrics assess how the system handles crisis situations and sensitive cont
 **Definition:** % of sessions where crisis detection fires incorrectly on non-crisis content.  
 **Why it matters:** False positives disrupt the flow for non-crisis users and erode trust.  
 **Target:** ≤ 5%.  
-**Measurement:** Manual review of a random sample of `crisis_detected` sessions by data steward.  
-**Phase:** Pilot.
+**Measurement:** Manual review of a random sample of `crisis_detected` sessions by data steward. ❌ No sampling and review workflow has been operationalized.  
+**Phase:** Post-pilot — moves back to Pilot once a review process exists.
 
 ### 3.3 Escalation Rate
 **Definition:** % of sessions where the user requests a human peer navigator.  
@@ -132,13 +132,13 @@ These metrics assess how the system handles crisis situations and sensitive cont
 ### 3.4 PII Leakage Rate
 **Definition:** % of stored conversation transcripts that contain detectable PII after redaction (names, phone numbers, SSNs, email addresses, street addresses).  
 **Target:** 0% detectable PII in stored transcripts.  
-**Measurement:** Automated PII scanner (regex-based) run on transcript sample weekly during pilot. Manual spot-check monthly. Microsoft Presidio (NER-based) identified as upgrade path for improved detection.  
-**Phase:** Pilot.
+**Measurement:** Automated PII scanner (regex-based) run on transcript sample weekly during pilot. Manual spot-check monthly. Microsoft Presidio (NER-based) identified as upgrade path for improved detection. ❌ Post-redaction scanner not yet built.  
+**Phase:** Post-pilot — moves back to Pilot once a scanner runs on a transcript sample on a regular cadence.
 
 ### 3.5 Hallucination Rate
 **Definition:** % of bot responses that contain fabricated service information (names, addresses, hours, phone numbers, eligibility rules not sourced from the database).  
-**Target:** < 1%. The Safer Limited RAG architecture makes this structurally near-impossible (all service data is DB-sourced, the LLM never generates service facts), but canary tests and human review confirm it.  
-**Measurement:** Canary test suite (scripted dialogs verified against known DB output) run on every deploy. Manual review of a random sample of `query_execution` sessions during pilot.  
+**Target:** < 1%. The Safer Limited RAG architecture makes this structurally near-impossible (all service data is DB-sourced, the LLM never generates service facts).  
+**Measurement:** Structural guarantee from the Safer Limited RAG architecture is the primary basis. The LLM-as-Judge `hallucination_resistance` dimension provides ongoing live confirmation (R32 = 4.95 / 5.0). A canary suite is specced as an additional check but not yet built — see §2.5 and the infrastructure table.  
 **Phase:** Pilot.
 
 ---
@@ -396,7 +396,7 @@ These metrics answer the ultimate question: did the referral work? They require 
 |---|---|---|
 | Audit log (in-memory) | All session events, slots, query results, crisis flags, LLM call metrics | ✅ Yes |
 | Admin console | Aggregated stats, conversation transcripts, query log, eval results | ✅ Yes |
-| Canary test suite | Eligibility fit, hallucination, template correctness | ✅ Yes (run manually or on deploy) |
+| Canary test suite | Eligibility fit, hallucination, template correctness | ❌ Not implemented (specced only — see §2.5) |
 | LLM-as-Judge eval | 11-dimension weighted automated quality scoring (171 scenarios, 20 categories, Opus judge) | ✅ Yes (admin console or CLI) |
 | PII scanner | Automated redaction verification | ⚠️ Partial (regex-based; Microsoft Presidio NER identified as upgrade path) |
 | SMS follow-up | Referral success, post-visit accuracy | ❌ Not implemented |
@@ -407,7 +407,7 @@ These metrics answer the ultimate question: did the referral work? They require 
 
 ## Pilot Review Cadence
 
-- **Weekly:** Data steward reviews admin console — no-result rate, crisis events, task completion rate, any PII scanner alerts.
+- **Weekly:** Data steward reviews admin console — no-result rate, crisis events, task completion rate.
 - **Per deploy:** Run full LLM-as-Judge eval (171 scenarios, 11 dimensions); confirm 0 critical failures and overall ≥ 4.0 before promoting to production.
 - **Monthly:** Manual spot-check of 20–30 conversation transcripts for tone, accuracy, and edge case handling.
 - **End of pilot:** Compile all metrics against targets; decide which closed-loop infrastructure to build for Phase 2.

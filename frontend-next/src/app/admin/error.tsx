@@ -42,7 +42,7 @@ export default function AdminError({
             Retry
           </button>
           <a
-            href="/admin"
+            href="/admin/overview"
             className="px-4 py-2 text-sm font-medium text-neutral-700 bg-neutral-100 rounded-lg hover:bg-neutral-200 transition-colors inline-block"
           >
             Back to overview

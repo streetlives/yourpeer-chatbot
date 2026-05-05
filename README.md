@@ -9,7 +9,7 @@
 
 A conversational interface that helps people experiencing homelessness find free services in New York City — food, shelter, clothing, showers, health care, legal help, and more.
 
-Built by [Streetlives](https://www.streetlives.nyc/) x Cornell Tech (PiTech prgram) as a front-end to the [YourPeer](https://yourpeer.nyc/) service directory.
+Built by [Streetlives](https://www.streetlives.nyc/) x Cornell Tech (PiTech program) as a front-end to the [YourPeer](https://yourpeer.nyc/) service directory.
 
 ## How It Works
 

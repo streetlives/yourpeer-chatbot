@@ -6,7 +6,8 @@
 
 "use client";
 
-import { useState } from "react";
+import { useReducer, useState } from "react";
+import { RotateCcw } from "lucide-react";
 import { ModelBadge } from "./model-card";
 import { CONFIGS, fmt, taskCost, type ConfigId } from "./model-data";
 
@@ -83,28 +84,82 @@ function ToggleField({
 // CostCalculator
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Calculator inputs — reducer + initial state
+// ---------------------------------------------------------------------------
+//
+// Slider values and toggle states are managed via useReducer so the user
+// can reset all of them in one click. activeConfig stays in useState
+// because resetting to "recommended" implicitly on a slider reset would
+// lose a deliberate config-comparison choice.
+
+interface CalculatorState {
+  monthlyUsers: number;
+  turnsPerSession: number;
+  llmSlotPct: number;
+  crisisLlmPct: number;
+  conversationalPct: number;
+  classificationPct: number;
+  emotionalPct: number;
+  botQuestionPct: number;
+  includeJury: boolean;
+  includeMultilang: boolean;
+}
+
+const INITIAL_STATE: CalculatorState = {
+  monthlyUsers: 2000,
+  turnsPerSession: 5,
+  llmSlotPct: 30,
+  crisisLlmPct: 5,
+  conversationalPct: 20,
+  classificationPct: 25,
+  emotionalPct: 5,
+  botQuestionPct: 2,
+  includeJury: false,
+  includeMultilang: false,
+};
+
+type CalculatorAction =
+  | { type: "set"; field: keyof CalculatorState; value: number | boolean }
+  | { type: "reset" };
+
+function calculatorReducer(
+  state: CalculatorState,
+  action: CalculatorAction,
+): CalculatorState {
+  switch (action.type) {
+    case "set":
+      return { ...state, [action.field]: action.value };
+    case "reset":
+      return INITIAL_STATE;
+    default:
+      return state;
+  }
+}
+
 export function CostCalculator() {
-  const [monthlyUsers, setMonthlyUsers] = useState(2000);
-  const [turnsPerSession, setTurnsPerSession] = useState(5);
-  const [llmSlotPct, setLlmSlotPct] = useState(30);
-  const [crisisLlmPct, setCrisisLlmPct] = useState(5);
-  const [conversationalPct, setConversationalPct] = useState(20);
-  const [classificationPct, setClassificationPct] = useState(25);
-  const [emotionalPct, setEmotionalPct] = useState(5);
-  const [botQuestionPct, setBotQuestionPct] = useState(2);
-  const [includeJury, setIncludeJury] = useState(false);
-  const [includeMultilang, setIncludeMultilang] = useState(false);
+  const [s, dispatch] = useReducer(calculatorReducer, INITIAL_STATE);
   const [activeConfig, setActiveConfig] = useState<ConfigId>("recommended");
 
-  const totalTurns = monthlyUsers * turnsPerSession;
-  const conversationalTurns = Math.round(totalTurns * (conversationalPct / 100));
-  const slotTurns = Math.round(totalTurns * (llmSlotPct / 100));
-  const crisisTurns = Math.round(totalTurns * (crisisLlmPct / 100));
-  const classificationTurns = Math.round(totalTurns * (classificationPct / 100));
-  const emotionalTurns = Math.round(totalTurns * (emotionalPct / 100));
-  const botQuestionTurns = Math.round(totalTurns * (botQuestionPct / 100));
-  const juryTurns = includeJury ? 1660 : 0;
-  const multilangTurns = includeMultilang ? conversationalTurns : 0;
+  // Helpers — keep call sites concise and type-safe.
+  const setNum = (field: keyof CalculatorState) => (value: number) =>
+    dispatch({ type: "set", field, value });
+  const setBool = (field: keyof CalculatorState) => (value: boolean) =>
+    dispatch({ type: "set", field, value });
+
+  const isDirty = (Object.keys(INITIAL_STATE) as Array<keyof CalculatorState>).some(
+    (k) => s[k] !== INITIAL_STATE[k],
+  );
+
+  const totalTurns = s.monthlyUsers * s.turnsPerSession;
+  const conversationalTurns = Math.round(totalTurns * (s.conversationalPct / 100));
+  const slotTurns = Math.round(totalTurns * (s.llmSlotPct / 100));
+  const crisisTurns = Math.round(totalTurns * (s.crisisLlmPct / 100));
+  const classificationTurns = Math.round(totalTurns * (s.classificationPct / 100));
+  const emotionalTurns = Math.round(totalTurns * (s.emotionalPct / 100));
+  const botQuestionTurns = Math.round(totalTurns * (s.botQuestionPct / 100));
+  const juryTurns = s.includeJury ? 1660 : 0;
+  const multilangTurns = s.includeMultilang ? conversationalTurns : 0;
 
   const configsWithCost = CONFIGS.map((c) => {
     const bd = {
@@ -114,8 +169,8 @@ export function CostCalculator() {
       crisis: taskCost(c.models.crisis, "crisisDetection", crisisTurns),
       emotionalAck: taskCost(c.models.emotionalAck, "emotionalAck", emotionalTurns),
       botQuestion: taskCost(c.models.botQuestion, "botQuestion", botQuestionTurns),
-      jury: includeJury ? taskCost(c.models.jury, "jury", juryTurns) : 0,
-      futureMultilang: includeMultilang ? taskCost(c.models.futureMultilang, "futureMultilang", multilangTurns) : 0,
+      jury: s.includeJury ? taskCost(c.models.jury, "jury", juryTurns) : 0,
+      futureMultilang: s.includeMultilang ? taskCost(c.models.futureMultilang, "futureMultilang", multilangTurns) : 0,
     };
     return { ...c, breakdown: bd, total: Object.values(bd).reduce((a, b) => a + b, 0) };
   });
@@ -130,10 +185,10 @@ export function CostCalculator() {
     { key: "emotionalAck", label: "Emotional ack.", model: config.models.emotionalAck, cost: config.breakdown.emotionalAck, count: emotionalTurns },
     { key: "botQuestion", label: "Bot questions", model: config.models.botQuestion, cost: config.breakdown.botQuestion, count: botQuestionTurns },
   ];
-  if (includeJury) {
+  if (s.includeJury) {
     activeTasks.push({ key: "jury", label: "Jury evaluation", model: config.models.jury, cost: config.breakdown.jury, count: juryTurns });
   }
-  if (includeMultilang) {
+  if (s.includeMultilang) {
     activeTasks.push({ key: "futureMultilang", label: "Multi-language", model: config.models.futureMultilang, cost: config.breakdown.futureMultilang, count: multilangTurns });
   }
 
@@ -141,20 +196,35 @@ export function CostCalculator() {
     <>
       {/* Sliders */}
       <div className="bg-white border border-neutral-200 rounded-lg px-4 py-4 mb-4">
+        <div className="flex items-center justify-between mb-3">
+          <span className="text-xs font-bold uppercase tracking-wider text-neutral-400">
+            Inputs
+          </span>
+          <button
+            type="button"
+            onClick={() => dispatch({ type: "reset" })}
+            disabled={!isDirty}
+            aria-label="Reset all calculator inputs to defaults"
+            className="flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-medium text-neutral-500 hover:text-neutral-700 hover:bg-neutral-50 transition disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent"
+          >
+            <RotateCcw size={12} />
+            Reset
+          </button>
+        </div>
         <div className="grid grid-cols-2 gap-x-6 gap-y-3">
-          <SliderField label="Monthly users" value={monthlyUsers} onChange={setMonthlyUsers} min={100} max={50000} step={100} format={(v) => v.toLocaleString()} />
-          <SliderField label="Turns per session" value={turnsPerSession} onChange={setTurnsPerSession} min={1} max={20} step={1} />
-          <SliderField label="% needing LLM slots" value={llmSlotPct} onChange={setLlmSlotPct} min={0} max={100} step={5} format={(v) => v + "%"} />
-          <SliderField label="% hitting LLM crisis" value={crisisLlmPct} onChange={setCrisisLlmPct} min={0} max={30} step={1} format={(v) => v + "%"} />
-          <SliderField label="% conversational LLM" value={conversationalPct} onChange={setConversationalPct} min={0} max={60} step={5} format={(v) => v + "%"} />
-          <SliderField label="% unified gate (regex miss rate)" value={classificationPct} onChange={setClassificationPct} min={0} max={50} step={5} format={(v) => v + "%"} />
-          <SliderField label="% emotional responses" value={emotionalPct} onChange={setEmotionalPct} min={0} max={20} step={1} format={(v) => v + "%"} />
-          <SliderField label="% bot questions" value={botQuestionPct} onChange={setBotQuestionPct} min={0} max={10} step={1} format={(v) => v + "%"} />
+          <SliderField label="Monthly users" value={s.monthlyUsers} onChange={setNum("monthlyUsers")} min={100} max={50000} step={100} format={(v) => v.toLocaleString()} />
+          <SliderField label="Turns per session" value={s.turnsPerSession} onChange={setNum("turnsPerSession")} min={1} max={20} step={1} />
+          <SliderField label="% needing LLM slots" value={s.llmSlotPct} onChange={setNum("llmSlotPct")} min={0} max={100} step={5} format={(v) => v + "%"} />
+          <SliderField label="% hitting LLM crisis" value={s.crisisLlmPct} onChange={setNum("crisisLlmPct")} min={0} max={30} step={1} format={(v) => v + "%"} />
+          <SliderField label="% conversational LLM" value={s.conversationalPct} onChange={setNum("conversationalPct")} min={0} max={60} step={5} format={(v) => v + "%"} />
+          <SliderField label="% unified gate (regex miss rate)" value={s.classificationPct} onChange={setNum("classificationPct")} min={0} max={50} step={5} format={(v) => v + "%"} />
+          <SliderField label="% emotional responses" value={s.emotionalPct} onChange={setNum("emotionalPct")} min={0} max={20} step={1} format={(v) => v + "%"} />
+          <SliderField label="% bot questions" value={s.botQuestionPct} onChange={setNum("botQuestionPct")} min={0} max={10} step={1} format={(v) => v + "%"} />
         </div>
 
         <div className="flex gap-4 mt-4 pt-3 border-t border-neutral-100">
-          <ToggleField label="LLM-as-a-jury evaluation" checked={includeJury} onChange={setIncludeJury} detail="~$45-55 per monthly run" />
-          <ToggleField label="Future: multi-language" checked={includeMultilang} onChange={setIncludeMultilang} detail="Sonnet for non-English" />
+          <ToggleField label="LLM-as-a-jury evaluation" checked={s.includeJury} onChange={setBool("includeJury")} detail="~$45-55 per monthly run" />
+          <ToggleField label="Future: multi-language" checked={s.includeMultilang} onChange={setBool("includeMultilang")} detail="Sonnet for non-English" />
         </div>
 
         <div className="text-xs text-neutral-400 mt-3">
@@ -165,8 +235,8 @@ export function CostCalculator() {
           {crisisTurns.toLocaleString()} crisis &middot;{" "}
           {emotionalTurns.toLocaleString()} emotional &middot;{" "}
           {botQuestionTurns.toLocaleString()} bot Q
-          {includeJury && <> &middot; {juryTurns.toLocaleString()} jury</>}
-          {includeMultilang && <> &middot; {multilangTurns.toLocaleString()} multilang</>}
+          {s.includeJury && <> &middot; {juryTurns.toLocaleString()} jury</>}
+          {s.includeMultilang && <> &middot; {multilangTurns.toLocaleString()} multilang</>}
         </div>
       </div>
 
@@ -238,22 +308,22 @@ export function CostCalculator() {
         </div>
         <div className="grid grid-cols-4 gap-2">
           {[2000, 10000, 36000, 50000].map((users) => {
-            const turns = users * turnsPerSession;
+            const turns = users * s.turnsPerSession;
             let t =
               ((200 / 1e6) * 1 + (80 / 1e6) * 5) *
-                Math.round(turns * (conversationalPct / 100)) +
+                Math.round(turns * (s.conversationalPct / 100)) +
               ((450 / 1e6) * 1 + (60 / 1e6) * 5) *
-                Math.round(turns * (llmSlotPct / 100)) +
+                Math.round(turns * (s.llmSlotPct / 100)) +
               ((300 / 1e6) * 1 + (10 / 1e6) * 5) *
-                Math.round(turns * (classificationPct / 100)) +
+                Math.round(turns * (s.classificationPct / 100)) +
               ((350 / 1e6) * 3 + (20 / 1e6) * 15) *
-                Math.round(turns * (crisisLlmPct / 100)) +
+                Math.round(turns * (s.crisisLlmPct / 100)) +
               ((280 / 1e6) * 1 + (70 / 1e6) * 5) *
-                Math.round(turns * (emotionalPct / 100)) +
+                Math.round(turns * (s.emotionalPct / 100)) +
               ((350 / 1e6) * 1 + (60 / 1e6) * 5) *
-                Math.round(turns * (botQuestionPct / 100));
-            if (includeJury) t += ((800 / 1e6) * 3 + (400 / 1e6) * 15) * juryTurns;
-            if (includeMultilang) t += ((250 / 1e6) * 3 + (100 / 1e6) * 15) * Math.round(turns * (conversationalPct / 100));
+                Math.round(turns * (s.botQuestionPct / 100));
+            if (s.includeJury) t += ((800 / 1e6) * 3 + (400 / 1e6) * 15) * juryTurns;
+            if (s.includeMultilang) t += ((250 / 1e6) * 3 + (100 / 1e6) * 15) * Math.round(turns * (s.conversationalPct / 100));
             return (
               <div key={users} className="text-center py-1.5">
                 <div className="text-xs text-neutral-500">

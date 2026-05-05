@@ -262,8 +262,8 @@ export const METRIC_DEFINITIONS: Record<string, MetricDefinition> = {
     formula: "Verified via canary tests — scripted dialogs with known-correct results",
     target: "≥ 95%",
     rationale: "The template query design should make mismatches rare. Any miss is a template bug — the SQL WHERE clause is wrong or the taxonomy mapping is incomplete.",
-    phase: "Pilot",
-    statusNote: "Status is 'no-data' because this metric is validated through canary tests (scripted dialogs with known-correct results), not computed from live traffic.",
+    phase: "Post-pilot",
+    statusNote: "Marked Post-pilot because the canary test suite specced as the measurement source has not yet been built. The closest live signal today is the LLM-as-Judge eval's slot_extraction dimension, but that is not the same metric. Will move back to Pilot phase once a real canary suite exists.",
   },
   "Crisis False Positive Rate": {
     name: "Crisis False Positive Rate",
@@ -272,8 +272,8 @@ export const METRIC_DEFINITIONS: Record<string, MetricDefinition> = {
     formula: "Manual review of a random sample of crisis_detected sessions by data steward",
     target: "≤ 5%",
     rationale: "False positives disrupt the flow for non-crisis users and erode trust. The emotional phrase guard was added specifically to reduce false positives on expressions like 'I'm feeling scared' that are emotional but not crisis.",
-    phase: "Pilot",
-    statusNote: "Status is 'no-data' because this requires manual review of flagged sessions by a data steward. Automated detection of false positives is not yet implemented.",
+    phase: "Post-pilot",
+    statusNote: "Marked Post-pilot because there is no review workflow that produces this number. Manual data-steward review of flagged sessions is the specced measurement source but has not been operationalized. Will move back to Pilot phase once a sampling and review process exists.",
   },
   "PII Leakage Rate": {
     name: "PII Leakage Rate",
@@ -282,8 +282,8 @@ export const METRIC_DEFINITIONS: Record<string, MetricDefinition> = {
     formula: "Automated PII scanner run on transcript sample weekly during pilot",
     target: "0%",
     rationale: "PII in stored transcripts is a privacy violation. The redactor runs on every message before storage. Any leak indicates a regex gap or a new PII pattern not covered.",
-    phase: "Pilot",
-    statusNote: "Status is 'no-data' because this requires a periodic automated PII scanner run against stored transcripts. The scanner infrastructure is not yet built for the pilot.",
+    phase: "Post-pilot",
+    statusNote: "Marked Post-pilot because the post-redaction PII scanner has not been built. Microsoft Presidio (NER-based) is the identified upgrade path. Will move back to Pilot phase once a scanner runs on a transcript sample on a regular cadence.",
   },
   "Hallucination Rate": {
     name: "Hallucination Rate",

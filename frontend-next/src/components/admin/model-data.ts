@@ -16,6 +16,40 @@ import {
 } from "lucide-react";
 
 // ---------------------------------------------------------------------------
+// MODEL VERSIONS — single source of truth within the frontend
+// ---------------------------------------------------------------------------
+//
+// These IDs and display names must stay in sync with the backend's
+// `claude_client.py` (chatbot models) and `tests/eval/eval_llm_judge.py`
+// (judge model). At present, drift between this file and those Python
+// files is unguarded — updating one without the others silently desyncs
+// the dashboard from production.
+//
+// TODO(eval-plan Foundation 4): The eval engineering plan v2 calls for
+// (a) recording every model version in the eval report at run time, and
+// (b) the dashboard reading model versions from the backend's /api/health
+// endpoint rather than hardcoding them here. Once that backend exposure
+// lands, replace this constant block with a hook that fetches versions
+// at runtime, and have `model-data.ts` consume the runtime values.
+// See docs/ops/EVAL_QUALITY_ENGINEERING_PLAN.md §"Foundation 4" for the
+// full discussion of why pinning + recording is the right durable fix.
+
+export const MODEL_VERSIONS = {
+  haiku: {
+    id: "claude-haiku-4-5-20251001",
+    name: "Haiku 4.5",
+  },
+  sonnet: {
+    id: "claude-sonnet-4-6",
+    name: "Sonnet 4.6",
+  },
+  opus: {
+    id: "claude-opus-4-6",
+    name: "Opus 4.6",
+  },
+} as const;
+
+// ---------------------------------------------------------------------------
 // TYPES
 // ---------------------------------------------------------------------------
 
@@ -81,8 +115,8 @@ export interface SourceDef {
 
 export const MODELS: Record<string, ModelInfo> = {
   haiku: {
-    id: "claude-haiku-4-5-20251001",
-    name: "Haiku 4.5",
+    id: MODEL_VERSIONS.haiku.id,
+    name: MODEL_VERSIONS.haiku.name,
     input: 1.0,
     output: 5.0,
     speed: "4-5x faster than Sonnet [1]",
@@ -103,8 +137,8 @@ export const MODELS: Record<string, ModelInfo> = {
     ],
   },
   sonnet: {
-    id: "claude-sonnet-4-6",
-    name: "Sonnet 4.6",
+    id: MODEL_VERSIONS.sonnet.id,
+    name: MODEL_VERSIONS.sonnet.name,
     input: 3.0,
     output: 15.0,
     speed: "Moderate",
@@ -126,8 +160,8 @@ export const MODELS: Record<string, ModelInfo> = {
     ],
   },
   opus: {
-    id: "claude-opus-4-6",
-    name: "Opus 4.6",
+    id: MODEL_VERSIONS.opus.id,
+    name: MODEL_VERSIONS.opus.name,
     input: 5.0,
     output: 25.0,
     speed: "Slowest (deepest reasoning)",

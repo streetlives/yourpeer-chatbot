@@ -30,21 +30,48 @@ function utcHourToET(utcHour: number): string {
   });
 }
 
+// ---------------------------------------------------------------------------
+// STATISTICAL HELPERS
+// Bimodal distributions are the norm in this dataset (short triage sessions vs.
+// long advisory sessions). Mean is misleading; median + low-n awareness are
+// the right primitives for the dashboard.
+// ---------------------------------------------------------------------------
+
+/** Compute median of a number array. Returns null for empty input. */
+function median(nums: number[]): number | null {
+  if (nums.length === 0) return null;
+  const sorted = [...nums].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 0
+    ? (sorted[mid - 1] + sorted[mid]) / 2
+    : sorted[mid];
+}
+
+/** Sample size below which percentages and ratios should be treated as
+ *  unreliable (n=1 sessions producing 100% rates, etc.) */
+const LOW_N_THRESHOLD = 5;
+function isLowN(n: number | null | undefined): boolean {
+  return n != null && n < LOW_N_THRESHOLD;
+}
+
 export default function MetricsPage() {
   const {
     stats: statsSlice,
     conversations: convosSlice,
     queries: queriesSlice,
+    evalResults: evalSlice,
     fetchStats,
     fetchConversations,
     fetchQueries,
+    fetchEvalResults,
   } = useAdminStore();
 
   useEffect(() => {
     fetchStats();
     fetchConversations();
     fetchQueries();
-  }, [fetchStats, fetchConversations, fetchQueries]);
+    fetchEvalResults();
+  }, [fetchStats, fetchConversations, fetchQueries, fetchEvalResults]);
 
   const [selectedMetric, setSelectedMetric] = useState<MetricDefinition | null>(null);
 
@@ -90,10 +117,12 @@ export default function MetricsPage() {
   const abandonRate = totalSessions > 0 ? abandonedSessions / totalSessions : null;
 
   const completedConvos = convos.filter((c) => c.services_delivered > 0);
+  const completedTurnCounts = completedConvos.map((c) => c.turn_count);
   const avgTurns =
-    completedConvos.length > 0
-      ? completedConvos.reduce((s, c) => s + c.turn_count, 0) / completedConvos.length
+    completedTurnCounts.length > 0
+      ? completedTurnCounts.reduce((s, n) => s + n, 0) / completedTurnCounts.length
       : null;
+  const medianTurns = median(completedTurnCounts);
 
   const fbTotal = (stats.feedback_up || 0) + (stats.feedback_down || 0);
   const fbDisplay = fbTotal > 0 ? fmtMetric(stats.feedback_score, true) : null;
@@ -127,6 +156,26 @@ export default function MetricsPage() {
   const sessionDur = stats.session_duration;
   const repRate = stats.repetition_rate;
   const llmMetrics = stats.llm_metrics;
+
+  // Sample size for the Emotional → cascading metrics. With n < 5, the
+  // 100%/0% rates that fall out are statistically meaningless.
+  const emotionalN = stats.conversation_quality?.emotional_sessions || 0;
+
+  // Tone classifier coverage. When most turns have no tone detected, the
+  // derived tone metrics in Section 4 are unreliable — surface that.
+  const totalToneClassified = (toneDist?.total_with_tone || 0) + (toneDist?.turns_without_tone || 0);
+  const toneClassifierCoverage = totalToneClassified > 0
+    ? (toneDist?.total_with_tone || 0) / totalToneClassified
+    : null;
+  const toneClassifierDegenerate = totalToneClassified >= 50 && toneClassifierCoverage != null && toneClassifierCoverage < 0.05;
+
+  // Crisis-detection callout in Section 3 — pulls forward what's already in
+  // Section 6's by_task breakdown so the safety story includes the cost
+  // and latency story.
+  const crisisTask = llmMetrics?.by_task?.crisis_detection;
+  const crisisShareOfCalls = crisisTask && llmMetrics?.total_calls
+    ? crisisTask.calls / llmMetrics.total_calls
+    : null;
 
   return (
     <>
@@ -178,7 +227,8 @@ export default function MetricsPage() {
           subtitle={`% of post-result feedback that is positive (${fbTotal} response${fbTotal !== 1 ? "s" : ""} so far)`}
           target="≥ 70% positive"
           value={fbDisplay}
-          status={statusClass(stats.feedback_score, 0.7, "gte", 0.5)}
+          status={isLowN(fbTotal) ? "no-data" : statusClass(stats.feedback_score, 0.7, "gte", 0.5)}
+          statusOverride={isLowN(fbTotal) && fbTotal > 0 ? `n=${fbTotal} (low confidence)` : undefined}
         />
         <MetricRow onClick={onMetricClick}
           name="Escalation Rate"
@@ -191,11 +241,15 @@ export default function MetricsPage() {
           status={totalSessions > 0 ? "tracking" : "no-data"}
         />
         <MetricRow onClick={onMetricClick}
-          name="Avg Turns to Query"
-          subtitle="Average turns from session start to first query (completed sessions)"
+          name="Median Turns to Query"
+          subtitle={
+            avgTurns != null
+              ? `Median across ${completedTurnCounts.length} completed session${completedTurnCounts.length !== 1 ? "s" : ""} · mean ${avgTurns.toFixed(1)}`
+              : "Needs at least one completed session"
+          }
           target="≤ 5 turns (free-text)"
-          value={fmtMetric(avgTurns, false, 1)}
-          status={statusClass(avgTurns, 5, "lte", 7)}
+          value={fmtMetric(medianTurns, false, 1)}
+          status={statusClass(medianTurns, 5, "lte", 7)}
         />
       </MetricsSection>
 
@@ -232,7 +286,7 @@ export default function MetricsPage() {
           value={fmtMetric(stats.data_freshness_rate, true)}
           status={statusClass(stats.data_freshness_rate, 0.8, "gte", 0.6)}
         />
-        <MetricRow onClick={onMetricClick} name="Eligibility Fit Rate" subtitle="% of results matching all stated user criteria" target="≥ 95%" value="By design (canary)" status="no-data" />
+        <MetricRow onClick={onMetricClick} name="Eligibility Fit Rate" subtitle="% of results matching all stated user criteria" target="≥ 95%" value="By design (canary)" status="no-data" phase="Post-pilot" />
         <MetricRow onClick={onMetricClick}
           name="Queue Offers"
           subtitle="Times the bot offered a second service after delivering results"
@@ -265,8 +319,17 @@ export default function MetricsPage() {
           value={String(stats.total_crises)}
           status={stats.total_crises > 0 ? "on-target" : "no-data"}
         />
-        <MetricRow onClick={onMetricClick} name="Crisis False Positive Rate" subtitle="% of crisis-flagged sessions that were not genuine crises" target="≤ 5%" value={null} status="no-data" />
-        <MetricRow onClick={onMetricClick} name="PII Leakage Rate" subtitle="% of stored transcripts with detectable PII after redaction" target="0%" value={null} status="no-data" />
+        {crisisTask && (
+          <MetricRow onClick={onMetricClick}
+            name="Crisis Detection Workload"
+            subtitle={`${crisisTask.calls.toLocaleString()} LLM call${crisisTask.calls !== 1 ? "s" : ""} on Sonnet · ${crisisTask.avg_latency_ms}ms avg latency · drives most LLM cost and tail latency`}
+            target="Watch for cost / latency impact"
+            value={crisisShareOfCalls != null ? `${Math.round(crisisShareOfCalls * 100)}% of calls` : null}
+            status={crisisShareOfCalls != null && crisisShareOfCalls > 0.5 ? "warning" : "tracking"}
+          />
+        )}
+        <MetricRow onClick={onMetricClick} name="Crisis False Positive Rate" subtitle="% of crisis-flagged sessions that were not genuine crises" target="≤ 5%" value={null} status="no-data" phase="Post-pilot" />
+        <MetricRow onClick={onMetricClick} name="PII Leakage Rate" subtitle="% of stored transcripts with detectable PII after redaction" target="0%" value={null} status="no-data" phase="Post-pilot" />
         <MetricRow onClick={onMetricClick} name="Hallucination Rate" subtitle="% of bot responses containing fabricated service data" target="< 1% (structural guarantee)" value="~0% by design" status="on-target" />
       </MetricsSection>
 
@@ -277,6 +340,11 @@ export default function MetricsPage() {
         title="4 · How Does It Feel?"
         description="Emotional awareness, tone, frustration handling, and repetition. For this population, even routine interactions carry emotional weight — purely transactional tone is a gap."
       >
+        {toneClassifierDegenerate && (
+          <div className="bg-amber-50 border border-amber-200 rounded-lg px-3.5 py-2.5 text-sm text-amber-800 mb-3">
+            <strong>Tone classifier rarely firing</strong> — only {Math.round((toneClassifierCoverage ?? 0) * 100)}% of {totalToneClassified} classified turns have a tone detected. The derived emotional and tone metrics below may be unreliable until classifier coverage improves. Investigate the split classifier&apos;s tone detection logic before drawing conclusions from this section.
+          </div>
+        )}
         <MetricRow onClick={onMetricClick}
           name="Emotional Detection Rate"
           subtitle={`% of sessions with an emotional turn (${stats.conversation_quality?.emotional_sessions || 0} sessions)`}
@@ -289,14 +357,16 @@ export default function MetricsPage() {
           subtitle="% of emotional sessions where user subsequently asked for a peer navigator"
           target="Baseline tracking"
           value={fmtMetric(stats.conversation_quality?.emotional_to_escalation ?? null, true)}
-          status="tracking"
+          status={isLowN(emotionalN) ? "no-data" : "tracking"}
+          statusOverride={isLowN(emotionalN) && emotionalN > 0 ? `n=${emotionalN} (low confidence)` : undefined}
         />
         <MetricRow onClick={onMetricClick}
           name="Emotional → Service Rate"
           subtitle="% of emotional sessions where user eventually reached a service search"
           target="Baseline tracking"
           value={fmtMetric(stats.conversation_quality?.emotional_to_service ?? null, true)}
-          status="tracking"
+          status={isLowN(emotionalN) ? "no-data" : "tracking"}
+          statusOverride={isLowN(emotionalN) && emotionalN > 0 ? `n=${emotionalN} (low confidence)` : undefined}
         />
         <MetricRow onClick={onMetricClick}
           name="Frustration Tier Distribution"
@@ -314,23 +384,34 @@ export default function MetricsPage() {
           status={statusClass(repRate?.repetition_rate ?? null, 0.05, "lte", 0.15)}
         />
         {toneEntries.length > 0 ? (
-          toneEntries.map(([tone, count]) => {
-            const pct = totalTurnsForToneRate > 0 ? Math.round((count / totalTurnsForToneRate) * 100) : null;
-            return (
+          <>
+            {toneEntries.slice(0, 6).map(([tone, count]) => {
+              const pct = totalTurnsForToneRate > 0 ? Math.round((count / totalTurnsForToneRate) * 100) : null;
+              return (
+                <MetricRow onClick={onMetricClick}
+                  key={tone}
+                  name={`Tone: ${tone.charAt(0).toUpperCase() + tone.slice(1)}`}
+                  subtitle={`${count} turn${count !== 1 ? "s" : ""} detected`}
+                  target="Baseline tracking"
+                  value={fmtMetric(
+                    totalTurnsForToneRate > 0 ? count / totalTurnsForToneRate : null,
+                    true,
+                  )}
+                  status={pct !== null ? "tracking" : "no-data"}
+                  statusOverride={pct !== null ? `${pct}%` : undefined}
+                />
+              );
+            })}
+            {toneEntries.length > 6 && (
               <MetricRow onClick={onMetricClick}
-                key={tone}
-                name={`Tone: ${tone.charAt(0).toUpperCase() + tone.slice(1)}`}
-                subtitle={`${count} turn${count !== 1 ? "s" : ""} detected`}
-                target="Baseline tracking"
-                value={fmtMetric(
-                  totalTurnsForToneRate > 0 ? count / totalTurnsForToneRate : null,
-                  true,
-                )}
-                status={pct !== null ? "tracking" : "no-data"}
-                statusOverride={pct !== null ? `${pct}%` : undefined}
+                name={`+ ${toneEntries.length - 6} more tone${toneEntries.length - 6 !== 1 ? "s" : ""}`}
+                subtitle={toneEntries.slice(6).map(([t, c]) => `${t}: ${c}`).join(" · ")}
+                target="—"
+                value={`${toneEntries.slice(6).reduce((s, [, c]) => s + c, 0)} turns`}
+                status="tracking"
               />
-            );
-          })
+            )}
+          </>
         ) : (
           <MetricRow
             name="No tones detected yet"
@@ -472,11 +553,11 @@ export default function MetricsPage() {
           </>
         )}
         <MetricRow onClick={onMetricClick} name="Bounce Rate" subtitle={`% of sessions with exactly 1 turn (${sessionMetrics?.bounce_count || 0} bounces)`} target="≤ 25%" value={fmtMetric(sessionMetrics?.bounce_rate ?? null, true)} status={statusClass(sessionMetrics?.bounce_rate ?? null, 0.25, "lte", 0.4)} />
-        <MetricRow onClick={onMetricClick} name="Avg Turns per Session" subtitle={`Median: ${sessionMetrics?.median_turns_per_session ?? "n/a"} · ${sessionMetrics?.total_sessions || 0} sessions`} target="3-6 for triage" value={sessionMetrics?.avg_turns_per_session != null ? String(sessionMetrics.avg_turns_per_session) : null} status={sessionMetrics?.avg_turns_per_session != null ? "tracking" : "no-data"} />
+        <MetricRow onClick={onMetricClick} name="Median Turns per Session" subtitle={sessionMetrics?.median_turns_per_session != null ? `Mean: ${sessionMetrics.avg_turns_per_session ?? "n/a"} · ${sessionMetrics.total_sessions || 0} sessions` : `${sessionMetrics?.total_sessions || 0} sessions`} target="3-6 for triage" value={sessionMetrics?.median_turns_per_session != null ? String(sessionMetrics.median_turns_per_session) : null} status={sessionMetrics?.median_turns_per_session != null ? "tracking" : "no-data"} />
         {sessionMetrics?.distribution && (
           <MetricRow onClick={onMetricClick} name="Turn Distribution" subtitle={Object.entries(sessionMetrics.distribution as Record<string, number>).map(([bucket, count]) => `${bucket.replace(/_/g, " ")}: ${count}`).join(" · ")} target="—" value={`${sessionMetrics.total_sessions} sessions`} status="tracking" />
         )}
-        <MetricRow onClick={onMetricClick} name="Avg Session Duration" subtitle={sessionDur?.median_duration_sec != null ? `Median: ${Math.round(sessionDur.median_duration_sec)}s · p95: ${sessionDur.p95_duration_sec ?? "n/a"}s` : "Needs multi-turn sessions"} target="3-7 min for navigator" value={sessionDur?.avg_duration_sec != null ? `${Math.round(sessionDur.avg_duration_sec)}s` : null} status={sessionDur?.avg_duration_sec != null ? "tracking" : "no-data"} />
+        <MetricRow onClick={onMetricClick} name="Median Session Duration" subtitle={sessionDur?.median_duration_sec != null ? `Mean: ${sessionDur.avg_duration_sec != null ? `${Math.round(sessionDur.avg_duration_sec)}s` : "n/a"} · p95: ${sessionDur.p95_duration_sec ?? "n/a"}s` : "Needs multi-turn sessions"} target="3-7 min for navigator" value={sessionDur?.median_duration_sec != null ? `${Math.round(sessionDur.median_duration_sec)}s` : null} status={sessionDur?.median_duration_sec != null ? "tracking" : "no-data"} />
         {sessionDur?.buckets && sessionDur.total_multi_turn_sessions > 0 && (
           <MetricRow onClick={onMetricClick} name="Duration Buckets" subtitle={Object.entries(sessionDur.buckets as Record<string, number>).map(([bucket, count]) => `${bucket.replace(/_/g, " ")}: ${count}`).join(" · ")} target="—" value={`${sessionDur.total_multi_turn_sessions} sessions`} status="tracking" />
         )}
@@ -488,23 +569,100 @@ export default function MetricsPage() {
       {/* ================================================================= */}
       <MetricsSection
         title="8 · Eval Targets — LLM-as-Judge"
-        description="Run the eval suite from the Eval Results tab to populate scores. Critical failures on Safety or Hallucination Resistance are deploy blockers."
+        description="Run or upload an eval report from the Evals tab to populate these scores. Critical failures on Safety or Hallucination Resistance are deploy blockers. Note: Response Tone and Dignity & Anti-Stigma are intentionally scored strictly per the SAMHSA rubric — for the population this serves, transactional tone is a gap, so sub-4.0 scores reflect real warmth gaps, not measurement noise."
+        defaultOpen={false}
       >
-        {[
-          { key: "slot_extraction", label: "Slot Extraction Accuracy", target: "≥ 4.0 / 5.0" },
-          { key: "dialog_efficiency", label: "Dialog Efficiency", target: "≥ 3.5 / 5.0" },
-          { key: "response_tone", label: "Response Tone", target: "≥ 4.0 / 5.0" },
-          { key: "safety_crisis", label: "Safety & Crisis Handling", target: "≥ 4.5 / 5.0 ⚠ blocker" },
-          { key: "confirmation_ux", label: "Confirmation UX", target: "≥ 3.5 / 5.0" },
-          { key: "privacy", label: "Privacy", target: "≥ 4.5 / 5.0" },
-          { key: "hallucination_resistance", label: "Hallucination Resistance", target: "≥ 4.5 / 5.0 ⚠ blocker" },
-          { key: "error_recovery", label: "Error Recovery", target: "≥ 3.5 / 5.0" },
-          { key: "dignity_anti_stigma", label: "Dignity & Anti-Stigma", target: "≥ 4.0 / 5.0" },
-          { key: "cultural_responsiveness", label: "Cultural Responsiveness", target: "≥ 4.0 / 5.0" },
-          { key: "equity_of_access", label: "Equity of Access", target: "≥ 4.0 / 5.0" },
-        ].map((d) => (
-          <MetricRow onClick={onMetricClick} key={d.key} name={d.label} subtitle="LLM-as-judge score (1–5)" target={d.target} value={null} status="no-data" />
-        ))}
+        {(() => {
+          const evalReport = evalSlice.data;
+          const dims = evalReport?.summary?.dimension_averages ?? null;
+          const scenarios = evalReport?.scenarios ?? null;
+
+          // Headline summary rows — passing rate + critical failures from
+          // whichever report is currently loaded.
+          let summaryRows: React.ReactNode = null;
+          if (evalReport?.summary) {
+            const total = evalReport.summary.scenarios_evaluated;
+            const cfs = evalReport.summary.critical_failure_count;
+            const passing = scenarios
+              ? scenarios.filter((s) => s.average_score >= 4.0 && !s.error).length
+              : null;
+            const passingRate = passing !== null && total > 0 ? passing / total : null;
+            const overall = evalReport.summary.overall_average;
+
+            summaryRows = (
+              <>
+                <MetricRow
+                  onClick={onMetricClick}
+                  name="Overall Average"
+                  subtitle={`${total} scenarios evaluated${evalReport.summary.scenarios_with_errors ? ` · ${evalReport.summary.scenarios_with_errors} eval errors` : ""}`}
+                  target="≥ 4.0 / 5.0"
+                  value={fmtMetric(overall, false, 2)}
+                  status={statusClass(overall, 4.0, "gte", 3.5)}
+                />
+                {passingRate !== null && (
+                  <MetricRow
+                    onClick={onMetricClick}
+                    name="Passing Rate"
+                    subtitle={`Scenarios with score ≥ 4.0 (${passing}/${total})`}
+                    target="≥ 95%"
+                    value={fmtMetric(passingRate, true, 1)}
+                    status={statusClass(passingRate, 0.95, "gte", 0.85)}
+                  />
+                )}
+                <MetricRow
+                  onClick={onMetricClick}
+                  name="Critical Failures"
+                  subtitle="Concrete failures flagged by the judge — deploy-blocking when on Safety or Hallucination dims"
+                  target="0"
+                  value={String(cfs)}
+                  status={cfs === 0 ? "on-target" : cfs <= 5 ? "warning" : "off-target"}
+                />
+              </>
+            );
+          }
+
+          // Per-dimension rows — populated from dimension_averages when present,
+          // fall back to no-data when no report has been loaded.
+          const dimDefs: Array<{
+            key: string;
+            label: string;
+            target: number;
+            blocker?: boolean;
+          }> = [
+            { key: "slot_extraction", label: "Slot Extraction Accuracy", target: 4.0 },
+            { key: "dialog_efficiency", label: "Dialog Efficiency", target: 3.5 },
+            { key: "response_tone", label: "Response Tone", target: 4.0 },
+            { key: "safety_crisis", label: "Safety & Crisis Handling", target: 4.5, blocker: true },
+            { key: "confirmation_ux", label: "Confirmation UX", target: 4.5 },
+            { key: "privacy", label: "Privacy", target: 4.5 },
+            { key: "hallucination_resistance", label: "Hallucination Resistance", target: 4.5, blocker: true },
+            { key: "error_recovery", label: "Error Recovery", target: 4.5 },
+            { key: "dignity_anti_stigma", label: "Dignity & Anti-Stigma", target: 4.0 },
+            { key: "cultural_responsiveness", label: "Cultural Responsiveness", target: 4.0 },
+            { key: "equity_of_access", label: "Equity of Access", target: 4.0 },
+          ];
+
+          return (
+            <>
+              {summaryRows}
+              {dimDefs.map((d) => {
+                const score = dims?.[d.key]?.average ?? null;
+                const targetLabel = `≥ ${d.target.toFixed(1)} / 5.0${d.blocker ? " ⚠ blocker" : ""}`;
+                return (
+                  <MetricRow
+                    onClick={onMetricClick}
+                    key={d.key}
+                    name={d.label}
+                    subtitle="LLM-as-judge score (1–5)"
+                    target={targetLabel}
+                    value={fmtMetric(score, false, 2)}
+                    status={statusClass(score, d.target, "gte", d.target - 0.5)}
+                  />
+                );
+              })}
+            </>
+          );
+        })()}
       </MetricsSection>
 
       {/* ================================================================= */}
@@ -513,6 +671,7 @@ export default function MetricsPage() {
       <MetricsSection
         title="9 · Closed-Loop Outcomes — Post-Pilot"
         description="These metrics require SMS follow-up infrastructure and privacy review. Not implemented in the pilot."
+        defaultOpen={false}
       >
         <MetricRow onClick={onMetricClick} name="Referral Success Rate" subtitle="% of users who confirm visiting the referred service" target="≥ 75% of opt-in users" value={null} status="no-data" phase="Post-pilot" />
         <MetricRow onClick={onMetricClick} name="Service Accuracy Rate" subtitle="% of post-visit feedback where details matched reality" target="≥ 85%" value={null} status="no-data" phase="Post-pilot" />
