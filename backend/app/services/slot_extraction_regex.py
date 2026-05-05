@@ -136,15 +136,29 @@ SERVICE_KEYWORDS = {
         # Chronic conditions / medications (Run 24 eval gaps)
         "insulin", "diabetic", "diabetes", "inhaler", "asthma",
         "dialysis", "blood sugar", "epipen",
+        # Substance use / addiction / detox (May 5 routing fix).
+        # All "Substance Use Treatment" rows in the Streetlives DB are
+        # classified as bot_service_type='medical' (confirmed by R42
+        # peer_detox_manhattan: fixture has 0 substance-use rows under
+        # mental_health). The medical query template includes
+        # "substance use treatment" in its taxonomy_names list, so
+        # routing to medical surfaces the right rows AND produces a
+        # better confirmation message ("I'll search for medical care"
+        # vs. the previous "mental health" framing, which felt off
+        # for someone seeking detox). Mental-health-only queries
+        # (counseling, depression, therapy) still route to mental_health.
+        "substance abuse", "addiction", "rehab", "recovery",
+        "detox", "detoxification",
+        "aa meeting", "na meeting", "narcotics anonymous", "alcoholics anonymous",
+        "substance use treatment", "treatment program", "treatment center",
+        "inpatient", "outpatient", "sober living", "sober house",
+        "halfway house", "residential treatment",
     ],
 
     # --- Mental Health (taxonomy: Mental Health) ---
     "mental_health": [
         "mental health", "counseling", "counselor", "therapist", "therapy",
         "depression", "anxiety", "trauma", "ptsd",
-        "substance abuse", "addiction", "rehab", "recovery",
-        "detox", "detoxification",
-        "aa meeting", "na meeting", "narcotics anonymous", "alcoholics anonymous",
         "support group", "emotional support", "psychiatric",
         "psychiatrist", "crisis counseling",
         "grief", "grieving",
@@ -152,11 +166,9 @@ SERVICE_KEYWORDS = {
         # and "peer support" removed — they are emotional expressions or
         # escalation signals, not mental health service requests. Keeping
         # them here caused "I'm struggling and need shelter" to misclassify.
-        # Substance use (Phase 1 audit — "substance use treatment" is exact
-        # taxonomy name in DB, 6 services. These terms had 0% regex coverage)
-        "substance use treatment", "treatment program", "treatment center",
-        "inpatient", "outpatient", "sober living", "sober house",
-        "halfway house", "residential treatment",
+        # Substance use keywords moved to "medical" on May 5 — see the
+        # comment block in the medical section above. Don't add detox /
+        # addiction / rehab / substance-use terms here.
         # Anger management (Phase 1 audit — 11 services)
         "anger management",
     ],

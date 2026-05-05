@@ -100,18 +100,51 @@ def test_medical_keywords():
 
 
 def test_mental_health_keywords():
-    """Mental health phrases should extract service_type=mental_health."""
+    """Mental-health-only phrases should extract service_type=mental_health.
+
+    Substance-use phrases (addiction, substance abuse, detox, rehab,
+    AA/NA, treatment programs) route to 'medical' instead — see
+    test_substance_use_routes_to_medical below.
+    """
     phrases = [
         "I need mental health help",
         "I'm looking for counseling",
         "I need a therapist",
         "Where can I find a support group?",
-        "I'm dealing with addiction",
-        "I need help with substance abuse",
     ]
     for phrase in phrases:
         slots = extract_slots(phrase)
         assert slots["service_type"] == "mental_health", f"Failed on: {phrase} → {slots['service_type']}"
+
+
+def test_substance_use_routes_to_medical():
+    """Substance-use intent routes to medical, not mental_health.
+
+    May 5 routing fix: all 'Substance Use Treatment' rows in the
+    Streetlives DB are classified as bot_service_type='medical'. The
+    medical query template includes 'substance use treatment' in its
+    taxonomy_names list. Routing detox/addiction/rehab to medical
+    surfaces the right rows AND produces a more dignifying confirmation
+    ('medical care' vs. 'mental health' for someone seeking detox).
+    """
+    phrases = [
+        "I'm dealing with addiction",
+        "I need help with substance abuse",
+        "I need to detox",
+        "I need rehab",
+        "I need recovery services",
+        "I need an AA meeting",
+        "I need an NA meeting",
+        "I need substance use treatment",
+        "I need inpatient treatment",
+        "I need outpatient treatment",
+        "I need sober living",
+        "I'm looking for a halfway house",
+    ]
+    for phrase in phrases:
+        slots = extract_slots(phrase)
+        assert slots["service_type"] == "medical", \
+            f"Failed on: {phrase!r} → {slots['service_type']!r}"
 
 
 def test_legal_keywords():
@@ -184,7 +217,8 @@ def test_service_detail_specific_keywords():
         ("Where can I do laundry", "personal_care", "laundry"),
         ("I need a haircut", "personal_care", "haircuts"),
         ("I need counseling", "mental_health", "counseling"),
-        ("I need rehab", "mental_health", "rehab services"),
+        # Substance-use intent routes to medical (May 5 routing fix).
+        ("I need rehab", "medical", "rehab services"),
         ("I'm looking for a soup kitchen", "food", "soup kitchens"),
         ("Where's the nearest food pantry", "food", "food pantries"),
     ]
@@ -987,9 +1021,13 @@ def test_service_detail_none_for_generic():
 
 
 def test_service_detail_aa_meeting():
-    """'AA meeting' should extract mental_health with detail='AA meetings'."""
+    """'AA meeting' should extract medical with detail='AA meetings'.
+
+    Substance-use intent (including AA/NA) routes to medical, not
+    mental_health (May 5 routing fix).
+    """
     slots = extract_slots("where can I find an AA meeting")
-    assert slots["service_type"] == "mental_health"
+    assert slots["service_type"] == "medical"
     assert slots["service_detail"] == "AA meetings"
 
 
