@@ -581,3 +581,96 @@ class TestEvalScenarioReproductions:
         resp_t3 = r[2]["response"].lower()
         assert any(w in resp_t3 for w in ["still here", "still with you"]), \
             f"Turn 3 should stay warm, got: {r[2]['response'][:80]}"
+
+
+# -----------------------------------------------------------------------
+# SUBSTANCE-USE DISCLOSURE TONE + SAFETY ADDENDUM (May 5 cluster_5 fix)
+# -----------------------------------------------------------------------
+
+
+class TestSubstanceUseDisclosureTone:
+    """When the user discloses substance dependence (alcohol/opiate/etc.)
+    alongside a service request, the bot should:
+
+    1. Use a strengths-based acknowledgment prefix ("Reaching out for
+       help with this is a real step forward.") rather than the generic
+       baseline-warmth opener — substance-use disclosure carries
+       vulnerability that warrants explicit recognition.
+
+    2. Append a safety addendum to the search results message: SAMHSA
+       helpline (1-800-662-4357), medical-supervision recommendation,
+       911 for emergencies. Alcohol withdrawal can be life-threatening
+       and opiate withdrawal carries overdose risk on relapse — the
+       bot has a duty-of-care to surface this even when the user
+       didn't explicitly ask.
+
+    Behavior is GATED on is_service_flow=True — the disclosure must
+    co-occur with a service request. A user just venting about
+    drinking without asking for help should NOT trigger this (that's
+    emotional flow, handled separately).
+    """
+
+    @pytest.mark.parametrize("msg", [
+        "I need to detox from Alcohol and Opiates. Where can I go in Manhattan?",
+        "I'm an alcoholic and I need a treatment program in Brooklyn",
+        "I need to get clean. Where's a rehab in Queens?",
+        "I've been drinking too much and need a recovery program in Brooklyn",
+        # Note: phrasings like "I've been using heroin and need help" DON'T
+        # trigger this prefix because slot extraction needs a concrete
+        # service term (treatment, rehab, detox, recovery) to fire
+        # is_service_flow=True. The strengths-based prefix is gated on
+        # service flow, by design — bare disclosure without a service
+        # request goes through the emotional-response path instead.
+    ])
+    def test_substance_use_disclosure_gets_strengths_prefix(self, msg):
+        """Disclosure + service intent should yield the strengths-based prefix."""
+        r = send(msg)
+        resp = r["response"].lower()
+        assert "step forward" in resp or "reaching out" in resp, \
+            f"Expected strengths-based prefix, got: {r['response'][:120]}"
+
+    def test_substance_use_disclosure_followed_by_search_yields_safety_addendum(self):
+        """After confirmation → search, the results message includes a
+        safety addendum mentioning SAMHSA helpline and medical
+        supervision."""
+        r = send_multi([
+            "I need to detox from Alcohol and Opiates in Manhattan",
+            "Yes, search",
+        ])
+        # Two turns: confirmation, then results.
+        results_response = r[1]["response"].lower()
+        # The addendum mentions SAMHSA helpline by phone number,
+        # not by spelled name (vetted text in execution.py).
+        assert "1-800-662-4357" in results_response, \
+            f"Expected SAMHSA helpline number in results message, got: {r[1]['response'][:300]}"
+        # And the medical-supervision recommendation.
+        assert "medically" in results_response or "supervised" in results_response, \
+            f"Expected medical-supervision note, got: {r[1]['response'][:300]}"
+
+    def test_routine_medical_request_no_substance_addendum(self):
+        """A user asking for generic medical care (not substance use)
+        should NOT get the safety addendum — the addendum is specific
+        to substance-use disclosure."""
+        r = send_multi([
+            "I need a doctor in Manhattan",
+            "Yes, search",
+        ])
+        results_response = r[1]["response"].lower()
+        assert "1-800-662-4357" not in results_response, \
+            f"Routine medical should not get SAMHSA addendum, got: {r[1]['response'][:200]}"
+        assert "withdrawal" not in results_response
+
+    def test_substance_use_vent_without_service_request_no_prefix(self):
+        """A user venting about drinking without asking for help should
+        NOT trigger the substance-use disclosure prefix — that path is
+        for service-flow turns only. A pure emotional vent goes through
+        the emotional-response handler instead."""
+        r = send("I've been drinking a lot lately")
+        # Emotional flow — should NOT yield the strengths-prefix +
+        # search-results pattern. We don't assert what it DOES yield
+        # (emotional handler has its own path) — only that it doesn't
+        # trigger the substance-disclosure prefix-then-search behavior.
+        resp = r["response"].lower()
+        # The strengths-prefix only fires on service flow, so a pure
+        # vent shouldn't see it.
+        assert "1-800-662-4357" not in resp

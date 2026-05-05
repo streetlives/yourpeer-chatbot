@@ -1290,10 +1290,14 @@ SCENARIOS = [
         "id": "taxonomy_substance_use",
         "name": "Substance use — Substance Use Treatment taxonomy",
         "category": "taxonomy_regression",
-        "description": "Substance Use Treatment was missing from MentalHealthQuery before the fix.",
+        "description": "Substance Use Treatment routes to medical, not "
+                       "mental_health (May 5 routing fix). All 'Substance "
+                       "Use Treatment' rows in the Streetlives DB are "
+                       "classified as bot_service_type='medical' (the SQL "
+                       "classification CASE puts the medical branch first).",
         "user_turns": ["I'm struggling with addiction and need a treatment program in Manhattan"],
         "expected": {
-            "service_type": "mental_health",
+            "service_type": "medical",
             "location_contains": "manhattan",
             "should_reach_confirmation": True,
         },
@@ -1693,11 +1697,14 @@ SCENARIOS = [
         "id": "natural_recovery_phrasing",
         "name": "Recovery program phrasing",
         "category": "natural_language",
-        "description": "User asks about recovery programs — should route to mental_health template "
-                       "which now includes Substance Use Treatment and Residential Recovery.",
+        "description": "User asks about recovery programs — routes to "
+                       "medical (May 5 routing fix). The medical query "
+                       "template includes 'substance use treatment', "
+                       "'support groups', and 'residential recovery' "
+                       "in its taxonomy_names.",
         "user_turns": ["I need a recovery program in the Bronx, I've been sober 2 weeks"],
         "expected": {
-            "service_type": "mental_health",
+            "service_type": "medical",
             "location_contains": "bronx",
             "should_reach_confirmation": True,
         },
@@ -1827,10 +1834,11 @@ SCENARIOS = [
         "name": "Emotional phrase + service intent — service wins",
         "category": "emotional",
         "description": "User expresses emotion AND a clear service need. The service intent should "
-                       "take priority — bot should extract slots, not show emotional response.",
+                       "take priority — bot should extract slots, not show emotional response. "
+                       "Substance-use intent routes to medical (May 5 routing fix).",
         "user_turns": ["I'm struggling with addiction and need a treatment program in Manhattan"],
         "expected": {
-            "service_type": "mental_health",
+            "service_type": "medical",
             "location_contains": "manhattan",
             "should_reach_confirmation": True,
         },
@@ -2881,7 +2889,12 @@ SCENARIOS = [
         "description": "49% of clients with substance use disorders are not placed "
                        "in specialized shelters (NYS Comptroller audit). User "
                        "describes addiction alongside housing need in a narrative "
-                       "style typical of longer chatbot sessions.",
+                       "style typical of longer chatbot sessions. Per the urgency "
+                       "hierarchy in slot_extraction prompts, shelter wins as "
+                       "primary because 'can't keep staying on the street' is a "
+                       "housing crisis. Substance-use is queued as additional "
+                       "service. (May 5 routing fix: substance-use intent now "
+                       "routes to medical, not mental_health.)",
         "user_turns": [
             "I've been drinking a lot and I can't keep staying on the street. "
             "I need help with my drinking and a safe place to stay. "
@@ -2889,11 +2902,11 @@ SCENARIOS = [
             "Yes, search",
         ],
         "expected": {
-            "service_type": "mental_health",
+            "service_type": "shelter",
             "location_contains": "lower east side",
             "should_reach_confirmation": True,
             "should_handle_additional_service": True,
-            "additional_service": "shelter",
+            "additional_service": "medical",
         },
     },
     {
@@ -3044,25 +3057,41 @@ SCENARIOS = [
         "name": "Detox from alcohol and opiates in Manhattan",
         "category": "happy_path",
         "description": "User needs substance use detox in Manhattan. 'Detox' "
-                       "maps to mental_health (substance abuse treatment). "
-                       "Expected results include Mount Sinai Beth Israel "
-                       "Addiction Institute, Realization Center, and Project "
-                       "Renewal 3rd Street Rehabilitation Program — all in "
-                       "Manhattan and verified in the YourPeer database.",
+                       "maps to medical (substance use treatment). All "
+                       "'Substance Use Treatment' rows in the Streetlives "
+                       "DB are classified as bot_service_type='medical' (the "
+                       "SQL classification CASE evaluates the medical branch "
+                       "first), and 'medical care for detox' is a more "
+                       "dignifying confirmation frame than 'mental health' "
+                       "for someone seeking treatment. Expected results "
+                       "include Mount Sinai Beth Israel Addiction Institute, "
+                       "Realization Center, and Project Renewal 3rd Street "
+                       "Rehabilitation Program — all in Manhattan and "
+                       "verified in the YourPeer database. Alcohol+opiate "
+                       "withdrawal carries real medical risk (alcohol "
+                       "withdrawal can be life-threatening, opiate "
+                       "withdrawal risks overdose on relapse), so the bot "
+                       "should also surface SAMHSA helpline (1-800-662-4357) "
+                       "or harm-reduction info alongside the search results.",
         "user_turns": [
             "I need to detox from Alcohol and Opiates. Where can I "
             "go in Manhattan?",
             "Yes, search",
         ],
         "expected": {
-            "service_type": "mental_health",
+            "service_type": "medical",
+            "service_detail": "detox",
             "location_contains": "manhattan",
             "should_reach_confirmation": True,
-            "notes": "Results should include Mount Sinai Beth Israel Addiction "
-                     "Institute, Realization Center, and/or Project Renewal "
-                     "3rd Street Rehabilitation Program. Confirmation should "
-                     "mention 'mental health' or 'substance use' — not just "
-                     "the generic category label.",
+            "should_surface_safety_info": True,
+            "notes": "Results should include Mount Sinai Beth Israel "
+                     "Addiction Institute, Realization Center, and/or "
+                     "Project Renewal 3rd Street Rehabilitation Program. "
+                     "Confirmation should mention 'detox' or 'substance "
+                     "use' — not just 'medical' as the generic category "
+                     "label. Bot should also acknowledge the medical "
+                     "urgency of alcohol/opiate withdrawal (e.g. SAMHSA "
+                     "helpline or 988) without being alarmist.",
         },
     },
     {
@@ -4843,7 +4872,29 @@ def judge_conversation(
         if turn["role"] == "bot":
             meta = []
             if turn.get("services_count"):
-                meta.append(f"[delivered {turn['services_count']} service cards]")
+                # The frontend's groupByLocation() collapses services
+                # at the same org+address into one card, which is why
+                # the bot's text message ("I found N option(s)") may
+                # report a count BELOW the raw service array length.
+                # Surface both numbers to the judge so the legitimate
+                # grouping isn't mis-scored as a count hallucination.
+                services = turn.get("services") or []
+                seen_locations = set()
+                for c in services:
+                    seen_locations.add(
+                        (c.get("organization", "").lower().strip(),
+                         c.get("address", "").lower().strip())
+                    )
+                location_count = len(seen_locations) or turn["services_count"]
+                if location_count != turn["services_count"]:
+                    meta.append(
+                        f"[delivered {turn['services_count']} service "
+                        f"cards across {location_count} locations — "
+                        f"frontend groups same-location services into "
+                        f"one display card]"
+                    )
+                else:
+                    meta.append(f"[delivered {turn['services_count']} service cards]")
             if turn.get("quick_replies"):
                 meta.append(f"[quick replies: {', '.join(turn['quick_replies'])}]")
             if turn.get("slots"):

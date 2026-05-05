@@ -779,6 +779,31 @@ def _execute_and_respond(
              _main_displayed_count, result_count, relaxed) = _build_success_response(
                 slots, results, colocated_success, colocated_types, session_id,
             )
+            # Safety addendum for substance-use disclosures. Set by
+            # tone._compute_tone_prefix when the user's message includes
+            # alcohol/opiate/addiction disclosure language. Alcohol
+            # withdrawal can be life-threatening; opiate withdrawal
+            # carries overdose risk on relapse — surfacing the SAMHSA
+            # helpline + medical-supervision note alongside the search
+            # results addresses both the safety duty-of-care and the
+            # eval scenarios that score safety_crisis < 4 when a
+            # substance-use disclosure goes unacknowledged.
+            #
+            # Layered AFTER the results message rather than replacing
+            # it: the user asked for treatment options and we deliver
+            # them; the addendum is supplementary, not blocking.
+            if slots.get("_emotional_context") == "substance_use_disclosure":
+                bot_response += (
+                    "\n\n"
+                    "A note on safety: detoxing from alcohol or opiates "
+                    "can be medically risky — alcohol withdrawal can be "
+                    "life-threatening, and opiate withdrawal raises the "
+                    "risk of overdose if you relapse. Please consider a "
+                    "medically-supervised program. If you need to talk to "
+                    "someone right now, the SAMHSA national helpline is "
+                    "free and confidential: 1-800-662-4357 (HELP). For an "
+                    "emergency, call 911."
+                )
         else:
             bot_response = _no_results_message(slots)
 

@@ -53,6 +53,30 @@ _SENSITIVE_CONTEXT_RE = re.compile(
     r"just got out of jail|just got out of prison|domestic violence)\b", re.I,
 )
 
+# Substance-use disclosure: phrases users use to disclose alcohol or
+# drug dependence. Triggers a warm acknowledgment + safety addendum
+# when paired with a service-flow turn (the user is asking for detox /
+# rehab / treatment, not in immediate crisis). The cluster_5 routing
+# fix ensures these queries reach the substance-use treatment results;
+# this layer adds the dignifying acknowledgment + medical-urgency note
+# (alcohol withdrawal can be life-threatening; opiate withdrawal carries
+# overdose risk on relapse — SAMHSA helpline 1-800-662-4357).
+_SUBSTANCE_USE_DISCLOSURE_PHRASES = (
+    "detox", "detoxification",
+    "addiction", "addicted",
+    "alcoholic", "alcoholism",
+    "drinking too much", "drinking a lot", "been drinking",
+    "struggle with drinking", "struggling with drinking",
+    "using drugs", "use drugs", "using again",
+    "opiate", "opiates", "opioid", "opioids",
+    "heroin", "fentanyl",
+    "dependent on", "depend on alcohol", "depend on drugs",
+    "withdrawal",
+    "get clean", "stay clean", "sober",
+    "rehab", "recovery program",
+    "substance abuse", "substance use",
+)
+
 
 def _compute_tone_prefix(
     message: str,
@@ -94,6 +118,10 @@ def _compute_tone_prefix(
         and any(s in msg_lower for s in _MEDICATION_DEPLETION)
         and any(s in msg_lower for s in _MEDICATION_WORDS)
     )
+    is_substance_use_disclosure = (
+        is_service_flow
+        and any(s in msg_lower for s in _SUBSTANCE_USE_DISCLOSURE_PHRASES)
+    )
 
     prefix = ""
     emotional_context: str | None = None
@@ -104,6 +132,16 @@ def _compute_tone_prefix(
             "these services, and there's no shame in it. "
         )
         emotional_context = "shame"
+    elif is_substance_use_disclosure:
+        # Strengths-based acknowledgment for substance-use disclosure.
+        # The downstream caller adds a safety addendum to the results
+        # message (SAMHSA helpline + medical-supervision note) when
+        # emotional_context == "substance_use_disclosure".
+        prefix = (
+            "Reaching out for help with this is a real step forward. "
+            "Let me find what's available. "
+        )
+        emotional_context = "substance_use_disclosure"
     elif is_medical_urgent:
         prefix = "That sounds urgent — let me help you find care right away. "
         emotional_context = "medical_urgent"
