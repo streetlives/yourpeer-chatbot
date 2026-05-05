@@ -85,9 +85,47 @@ export default function MetricsPage() {
     || (convosSlice.data.length === 0 && convosSlice.loading)
     || (queriesSlice.data.length === 0 && queriesSlice.loading);
 
+  // Terminal error: stats never loaded successfully and the latest fetch
+  // failed. The page can't render anything useful without stats, so show
+  // a full error UI with retry. (Other slices have safer defaults — empty
+  // arrays render fine — so they don't need to gate rendering this way.)
+  if (!statsSlice.data && statsSlice.error) {
+    return (
+      <div className="text-center py-16" role="alert">
+        <div className="text-3xl mb-3">⚠️</div>
+        <p className="text-neutral-500 mb-4">
+          Could not load metrics. The server may be unavailable.
+        </p>
+        <button
+          onClick={() => {
+            fetchStats();
+            fetchConversations();
+            fetchQueries();
+            fetchEvalResults();
+          }}
+          className="px-3.5 py-1.5 rounded-lg text-sm font-medium border border-neutral-200 bg-white text-neutral-700 hover:bg-neutral-50 transition"
+        >
+          Retry
+        </button>
+      </div>
+    );
+  }
+
   if (loading || !statsSlice.data) {
     return <MetricsSkeleton />;
   }
+
+  // Non-terminal error: at least stats loaded successfully, but a later
+  // refresh failed on one or more slices. Surface a banner so users know
+  // some sections may show stale data, but render the page so they can
+  // see what's available. Uses the same soft-amber styling as
+  // DataPanel's StaleDataBanner.
+  const erroredSlices: string[] = [];
+  if (statsSlice.error) erroredSlices.push("stats");
+  if (convosSlice.error) erroredSlices.push("conversations");
+  if (queriesSlice.error) erroredSlices.push("queries");
+  if (evalSlice.error) erroredSlices.push("eval results");
+  const hasError = erroredSlices.length > 0;
 
   const stats = statsSlice.data;
   const convos = convosSlice.data;
@@ -180,6 +218,29 @@ export default function MetricsPage() {
 
   return (
     <>
+      {hasError && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="bg-amber-50 border border-amber-200 rounded-lg px-3.5 py-2 mb-3 text-sm text-amber-800 flex items-center justify-between gap-3"
+        >
+          <span>
+            Latest refresh failed for {erroredSlices.join(", ")} — some
+            sections may show stale data.
+          </span>
+          <button
+            onClick={() => {
+              if (statsSlice.error) fetchStats();
+              if (convosSlice.error) fetchConversations();
+              if (queriesSlice.error) fetchQueries();
+              if (evalSlice.error) fetchEvalResults();
+            }}
+            className="flex-shrink-0 px-2.5 py-0.5 rounded-md text-xs font-semibold bg-amber-100 text-amber-700 hover:bg-amber-200 transition"
+          >
+            Retry
+          </button>
+        </div>
+      )}
       <div className="bg-neutral-50 border border-neutral-200 rounded-lg px-3.5 py-2.5 text-sm text-neutral-500 mb-6">
         Metrics are computed from the audit log. When PILOT_DB_PATH is set, data
         persists across server restarts. <strong>n/a</strong> = not yet measurable.{" "}
@@ -188,6 +249,7 @@ export default function MetricsPage() {
         <a
           href="https://github.com/ianlau20/yourpeer-chatbot/blob/main/docs/ops/METRICS.md"
           target="_blank"
+          rel="noopener noreferrer"
           className="text-amber-600 hover:underline"
         >
           METRICS.md
@@ -242,15 +304,15 @@ export default function MetricsPage() {
           status={totalSessions > 0 ? "tracking" : "no-data"}
         />
         <MetricRow onClick={onMetricClick}
-          name="Median Turns to Query"
+          name="Median Turns (Completed Sessions)"
           subtitle={
             avgTurns != null
               ? `Median across ${completedTurnCounts.length} completed session${completedTurnCounts.length !== 1 ? "s" : ""} · mean ${avgTurns.toFixed(1)}`
               : "Needs at least one completed session"
           }
-          target="≤ 5 turns (free-text)"
+          target="≤ 7 turns end-to-end"
           value={fmtMetric(medianTurns, false, 1)}
-          status={statusClass(medianTurns, 5, "lte", 7)}
+          status={statusClass(medianTurns, 7, "lte", 10)}
         />
       </MetricsSection>
 
@@ -315,10 +377,21 @@ export default function MetricsPage() {
       >
         <MetricRow onClick={onMetricClick}
           name="Crisis Detection Count"
-          subtitle="Total sessions where crisis language was detected and resources shown"
-          target="Target: 100% of crisis messages"
+          subtitle={
+            stats.total_crises > 0
+              ? `${stats.total_crises} session${stats.total_crises !== 1 ? "s" : ""} where crisis language was detected and resources shown`
+              : "No crises detected this period — confirm via test message that detection is firing"
+          }
+          target="Target: 100% recall (no missed crises)"
           value={String(stats.total_crises)}
-          status={stats.total_crises > 0 ? "on-target" : "no-data"}
+          // Always "tracking" rather than "on-target" / "no-data". A
+          // non-zero count doesn't validate 100% recall (it just means
+          // detection fired at least once), and zero is ambiguous —
+          // could mean no users in crisis (good) or detection broken
+          // (bad). The dashboard can't distinguish these without an
+          // out-of-band health signal, so calling either branch a "pass"
+          // would be misleading. See audit finding #22.
+          status="tracking"
         />
         {crisisTask && (
           <MetricRow onClick={onMetricClick}
@@ -404,7 +477,12 @@ export default function MetricsPage() {
               );
             })}
             {toneEntries.length > 6 && (
-              <MetricRow onClick={onMetricClick}
+              // No onClick here: the dynamic name "+ N more tones" doesn't
+              // match any METRIC_DEFINITIONS entry, so a click would be a
+              // silent no-op. The row is informational; tone definitions
+              // live on the individual "Tone: X" rows above which DO have
+              // a dynamic-fallback definition in findMetricDefinition().
+              <MetricRow
                 name={`+ ${toneEntries.length - 6} more tone${toneEntries.length - 6 !== 1 ? "s" : ""}`}
                 subtitle={toneEntries.slice(6).map(([t, c]) => `${t}: ${c}`).join(" · ")}
                 target="—"
@@ -603,9 +681,9 @@ export default function MetricsPage() {
                 {passingRate !== null && (
                   <MetricRow
                     onClick={onMetricClick}
-                    name="Passing Rate"
-                    subtitle={`Scenarios with score ≥ 4.0 (${passing}/${total})`}
-                    target="≥ 95%"
+                    name="Mean Passing Rate"
+                    subtitle={`Aggregate signal — scenarios with mean score ≥ 4.0 across all dimensions (${passing}/${total}). Per-dimension targets tracked below.`}
+                    target="≥ 95% (aspirational)"
                     value={fmtMetric(passingRate, true, 1)}
                     status={statusClass(passingRate, 0.95, "gte", 0.85)}
                   />

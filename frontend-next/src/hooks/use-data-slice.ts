@@ -55,6 +55,13 @@ export interface UseDataSliceResult<T> {
   isInitial: boolean;
   /** True when the slice has data — useful for "show stale data while reloading" patterns. */
   hasData: boolean;
+  /**
+   * Epoch milliseconds of the last *successful* fetch. Zero before any
+   * successful load. Exposed (rather than only summarized into `hasData`)
+   * so consumers can render "data from 5m ago" affordances when a refresh
+   * has failed but cached data is still on screen.
+   */
+  lastFetchedAt: number;
   /** Force a re-fetch. */
   refresh: () => void;
 }
@@ -85,6 +92,7 @@ export function useDataSlice<K extends SliceKey>(
     error: slice.error,
     isInitial,
     hasData,
+    lastFetchedAt: slice.lastFetchedAt,
     refresh: () => {
       invalidate(key);
       fetcher();

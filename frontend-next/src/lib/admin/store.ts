@@ -157,14 +157,24 @@ export const useAdminStore = create<AdminStore>((set, get) => ({
   fetchEvalResults: createFetcher("evalResults", apiEvalResults, set, get),
 
   invalidateAll: () => {
-    const reset = { lastFetchedAt: 0 };
-    set((s) => ({
-      stats: { ...s.stats, ...reset },
-      conversations: { ...s.conversations, ...reset },
-      queries: { ...s.queries, ...reset },
-      events: { ...s.events, ...reset },
-      evalResults: { ...s.evalResults, ...reset },
-    }));
+    // Iterate the canonical slice list so adding a new slice only
+    // requires updating SLICE_NAMES (not this body too). Calling
+    // invalidate(key) per slice would re-enter set() five times — the
+    // single set() with a spread keeps the update atomic.
+    set((s) => {
+      const next: Partial<AdminStore> = {};
+      for (const key of SLICE_NAMES) {
+        // The cast is needed because TS doesn't narrow `next[key]` to
+        // the matching DataSlice type via `[key in SliceName]`. The
+        // runtime structure is sound: each key gets a DataSlice with
+        // lastFetchedAt zeroed.
+        (next as Record<SliceName, unknown>)[key] = {
+          ...s[key],
+          lastFetchedAt: 0,
+        };
+      }
+      return next;
+    });
   },
 
   invalidate: (key) => {
@@ -192,3 +202,14 @@ export const useAdminStore = create<AdminStore>((set, get) => ({
     set({ [key]: initial[key] } as Partial<AdminStore>);
   },
 }));
+
+// Canonical list of slice names. Used by invalidateAll. Adding a new slice
+// means appending here; the type system catches missed updates because
+// SliceName is a literal-union that has to stay in sync with the keys above.
+const SLICE_NAMES: readonly SliceName[] = [
+  "stats",
+  "conversations",
+  "queries",
+  "events",
+  "evalResults",
+] as const;

@@ -221,6 +221,14 @@ export function ConversationTable({ conversations }: ConversationTableProps) {
                       {slots}
                     </td>
                     <td className="px-4 py-2.5 font-mono text-xs text-neutral-400 border-b border-neutral-100">
+                      {/* Absolute timestamp here, unlike event-feed and
+                          query-log which use formatRelativeTime. The
+                          inconsistency is deliberate: conversation rows
+                          span days more than minutes, and "Apr 28 9:21 AM"
+                          is more useful for triage than "18h ago" for
+                          rows that age out over a week. The hover
+                          tooltip on the relative-time helpers would
+                          duplicate this info anyway. */}
                       {new Date(c.last_seen).toLocaleString("en-US", { timeZone: "America/New_York" })}
                     </td>
                   </tr>

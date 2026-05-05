@@ -50,14 +50,9 @@ export function EventFeed({ events }: EventFeedProps) {
     "desc",
   );
 
-  if (events.length === 0) {
-    return (
-      <div className="text-center py-16 text-neutral-400">
-        <div className="text-3xl mb-3">💬</div>
-        <p>No events yet.</p>
-      </div>
-    );
-  }
+  // Note: the empty state is owned by the page-level <DataPanel> wrapper
+  // in overview/page.tsx — same pattern as ConversationTable and
+  // QueryLogTable. This component assumes it has rows to render.
 
   return (
     <div className="bg-white border border-neutral-200 rounded-lg overflow-x-auto">

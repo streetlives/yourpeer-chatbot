@@ -9,6 +9,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { triggerEvalRun, fetchEvalStatus, uploadEvalReport } from "@/lib/chat/api";
+import { SCENARIO_COUNT_APPROX } from "@/lib/admin/eval-dimensions";
 
 /**
  * EvalRunner — controller for the Run Evals + Upload Report flow.
@@ -120,7 +121,7 @@ export function EvalRunner({ onComplete }: EvalRunnerProps) {
 
   const scenarioLabel = scenarioCount
     ? `${scenarioCount} scenarios`
-    : "all scenarios (~150+)";
+    : `all scenarios (${SCENARIO_COUNT_APPROX})`;
 
   async function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -146,7 +147,7 @@ export function EvalRunner({ onComplete }: EvalRunnerProps) {
       <Dialog.Root open={confirmOpen} onOpenChange={setConfirmOpen}>
         <Dialog.Trigger asChild>
           <button
-            disabled={running}
+            disabled={running || uploading}
             aria-label={running ? "Evaluation running" : "Run evaluation suite"}
             className="px-4 py-2 rounded-lg bg-amber-300 text-neutral-900 font-semibold text-sm transition hover:bg-amber-400 disabled:opacity-50 disabled:cursor-not-allowed"
           >
@@ -172,7 +173,7 @@ export function EvalRunner({ onComplete }: EvalRunnerProps) {
               <strong>Cost warning:</strong> Each scenario makes multiple
               Anthropic API calls (Haiku for conversation, Sonnet for user
               simulation, Opus for judging across 11 dimensions).
-              A full run (currently around 175 scenarios) typically costs <strong>$15–25</strong> in
+              A full run (currently {SCENARIO_COUNT_APPROX} scenarios) typically costs <strong>$15–25</strong> in
               API credits and takes 30–60 minutes. The backend will be under
               heavier load during the run.
             </div>

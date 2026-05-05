@@ -9,7 +9,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { LoginForm } from "./login-form";
 
-type AuthState = "loading" | "authenticated" | "unauthenticated";
+type AuthState = "loading" | "authenticated" | "unauthenticated" | "infra-error";
 
 export function AdminAuthGuard({ children }: { children: React.ReactNode }) {
   const [authState, setAuthState] = useState<AuthState>("loading");
@@ -17,10 +17,25 @@ export function AdminAuthGuard({ children }: { children: React.ReactNode }) {
   const checkAuth = useCallback(async () => {
     try {
       const res = await fetch("/api/admin/auth");
+      // A non-OK response (typically 5xx) is an infrastructure problem,
+      // not an auth signal. Rendering the login form in that case would
+      // be misleading — the user thinks "I'm not signed in" when actually
+      // the backend can't tell us either way. The "infra-error" state
+      // surfaces a retry prompt instead.
+      //
+      // 401 is conventionally "you're not authenticated, log in" — fetch
+      // treats it as `res.ok === false`, but the auth API returns 200
+      // with `{authenticated: false}` for that case (the existing
+      // contract). So we only fall into the infra-error branch on 5xx
+      // and other transport-level failures.
+      if (!res.ok) {
+        setAuthState("infra-error");
+        return;
+      }
       const data = await res.json();
       setAuthState(data.authenticated ? "authenticated" : "unauthenticated");
     } catch {
-      setAuthState("unauthenticated");
+      setAuthState("infra-error");
     }
   }, []);
 
@@ -33,6 +48,32 @@ export function AdminAuthGuard({ children }: { children: React.ReactNode }) {
     return (
       <div className="min-h-dvh bg-neutral-100 flex items-center justify-center">
         <p className="text-neutral-400 text-sm">Checking access…</p>
+      </div>
+    );
+  }
+
+  if (authState === "infra-error") {
+    return (
+      <div className="min-h-dvh bg-neutral-100 flex items-center justify-center px-4">
+        <div className="w-full max-w-sm text-center" role="alert">
+          <div className="text-3xl mb-3">⚠️</div>
+          <h2 className="text-base font-semibold text-neutral-900 mb-1">
+            Backend unreachable
+          </h2>
+          <p className="text-sm text-neutral-500 mb-5">
+            We can&apos;t verify your sign-in right now. The server may be down
+            or restarting.
+          </p>
+          <button
+            onClick={() => {
+              setAuthState("loading");
+              checkAuth();
+            }}
+            className="px-4 py-2 rounded-lg text-sm font-medium border border-neutral-200 bg-white text-neutral-700 hover:bg-neutral-50 transition"
+          >
+            Retry
+          </button>
+        </div>
       </div>
     );
   }

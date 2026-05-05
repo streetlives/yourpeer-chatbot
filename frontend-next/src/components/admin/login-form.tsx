@@ -77,7 +77,7 @@ export function LoginForm({ onSuccess }: LoginFormProps) {
             />
 
             {error && (
-              <p className="text-red-600 text-sm mt-2">{error}</p>
+              <p className="text-red-600 text-sm mt-2" role="alert">{error}</p>
             )}
 
             <button

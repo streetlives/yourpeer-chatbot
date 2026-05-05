@@ -75,6 +75,20 @@ export const BLOCKER_KEYS: ReadonlySet<string> = new Set(
 );
 
 /**
+ * Approximate scenario count in the eval suite, used in user-visible
+ * cost warnings and run-confirmation prose. Kept as a single constant so
+ * the eval-runner cost dialog, the eval-runner scenarioLabel default,
+ * and model-data's jury task description don't drift apart.
+ *
+ * The actual scenario count grows over time (R39-era runs: 167; current:
+ * ~175). The label is intentionally fuzzy ("around 175") rather than an
+ * exact number so it doesn't need to update on every scenario addition.
+ * If you need the exact count for a specific run, read it from the
+ * EvalReport's `summary.scenarios_evaluated` field.
+ */
+export const SCENARIO_COUNT_APPROX = "around 175";
+
+/**
  * Return the dimension definition for a given key, or undefined if unknown.
  * Useful for scenario-detail rendering where the report may include legacy
  * keys that no longer exist in the current dimension list.

@@ -16,8 +16,21 @@ interface QueryLogTableProps {
 
 export function QueryLogTable({ queries }: QueryLogTableProps) {
   const [selected, setSelected] = useState<QueryLogEntry | null>(null);
+
+  // Decorate each row with a synthetic `has_issue` boolean for sorting.
+  // The Issues column shows two badges (proximity timeout + relaxed
+  // fallback), and previously the sortable header sorted only on
+  // `relaxed`, missing rows that had a proximity timeout but no relax.
+  // Adding a combined field lets the column sort on "any issue."
+  // The original entries are preserved on each row so the JSX below
+  // can still render the per-flag badges separately.
+  const queriesWithDerived = queries.map((q) => ({
+    ...q,
+    has_issue: q.proximity_timeout || q.relaxed ? 1 : 0,
+  }));
+
   const { sorted, sortKey, sortDir, onSort } = useSortableTable(
-    queries as unknown as Record<string, unknown>[],
+    queriesWithDerived as unknown as Record<string, unknown>[],
     "timestamp",
     "desc",
   );
@@ -38,7 +51,7 @@ export function QueryLogTable({ queries }: QueryLogTableProps) {
               </th>
               <SortableHeader label="Results" field="result_count" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
               <SortableHeader label="Duration" field="execution_ms" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
-              <SortableHeader label="Relaxed" field="relaxed" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
+              <SortableHeader label="Issues" field="has_issue" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
             </tr>
           </thead>
           <tbody>

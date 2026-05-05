@@ -134,11 +134,12 @@ export const METRIC_DEFINITIONS: Record<string, MetricDefinition> = {
   "Crisis Detection Count": {
     name: "Crisis Detection Count",
     section: "3.1",
-    definition: "Total number of sessions where crisis detection triggered. Should be 100% of sessions containing crisis language.",
+    definition: "Total number of sessions where crisis detection triggered. The metric is observable from the audit log; whether detection caught 100% of crisis messages is not — that requires sampling against ground truth.",
     formula: "crisis_detected events in audit log",
-    target: "100% of crisis messages caught",
+    target: "100% recall (no missed crises) — verified via sampling, not visible here",
     rationale: "This is a safety-critical metric. The two-stage detection (regex + LLM) is designed to catch both explicit and indirect crisis language. Any miss could leave a vulnerable person without resources.",
     phase: "Pilot",
+    statusNote: "Status is always 'tracking' rather than 'on-target' or 'no-data'. A non-zero count just means detection fired at least once, not that it caught 100% of cases; zero could mean no users in crisis this period (good) or that detection is broken (bad). The dashboard can't distinguish these without an out-of-band health signal — confirm detection is live by sending a test crisis message periodically.",
   },
   "Escalation Rate": {
     name: "Escalation Rate",
@@ -228,15 +229,15 @@ export const METRIC_DEFINITIONS: Record<string, MetricDefinition> = {
     phase: "Pilot",
   },
   // --- Additional metrics ---
-  "Median Turns to Query": {
-    name: "Median Turns to Query",
+  "Median Turns (Completed Sessions)": {
+    name: "Median Turns (Completed Sessions)",
     section: "1.5",
-    definition: "Median number of conversation turns from session start to the first confirmed query execution, across completed sessions.",
+    definition: "Median total turns across sessions that ended with at least one service delivered. Counts every turn in the session — intake, confirmation, query, and any post-result follow-up.",
     formula: "median(turn_count) across sessions where services_delivered > 0",
-    target: "≤ 5 turns",
+    target: "≤ 7 turns end-to-end",
     rationale: "Median rather than mean because the distribution is bimodal — short triage sessions cluster around 2–3 turns, with a long tail of multi-intent and exploratory sessions. The mean is dragged up by the tail and doesn't reflect typical user experience. The mean is still surfaced in the row subtitle for context.",
     phase: "Pilot",
-    statusNote: "Status is evaluated against the median. The mean is shown alongside in the row subtitle for context — large gaps between median and mean indicate a heavy long-tail bucket worth investigating in the Conversations tab.",
+    statusNote: "This metric used to be labeled 'Median Turns to Query' with a target of ≤ 5 turns, but the available `turn_count` field counts every turn in the session — not just the turns up to the first confirmed query. Renaming captures what's actually measured. A true 'turns-to-first-query' metric would require the backend to expose `turns_to_first_query` per session; tracked in the metrics backlog. Until then, this row tracks the broader 'how long does a successful session take' question, with a looser target reflecting that completed sessions often include post-query interaction.",
   },
   "Median Turns per Session": {
     name: "Median Turns per Session",
@@ -677,6 +678,36 @@ export const METRIC_DEFINITIONS: Record<string, MetricDefinition> = {
     phase: "Pilot",
   },
   // --- 8 · Eval Dimensions ---
+  "Overall Average": {
+    name: "Overall Average",
+    section: "8.0",
+    definition: "Average of per-scenario averages, where each scenario's score is the mean of its 11 dimension scores. The headline number for an eval run.",
+    formula: "mean(scenario.average_score) across all evaluated scenarios",
+    target: "≥ 4.0 / 5.0",
+    rationale: "A single summary number for executive reporting and run-over-run trend tracking. Hides per-dimension and per-scenario variance — use this for headline movement, the rows below for diagnosis.",
+    phase: "Pilot",
+    statusNote: "On-target at ≥ 4.0, warning at ≥ 3.5, off-target below. A high overall average can still hide failures on individual dimensions or scenarios; check the per-dimension rows and Critical Failures for the full picture.",
+  },
+  "Mean Passing Rate": {
+    name: "Mean Passing Rate",
+    section: "8.0b",
+    definition: "Percentage of scenarios whose average score across all 11 dimensions is ≥ 4.0. An aggregate signal — a scenario can pass this threshold while still failing individual dimension targets (e.g., averaging 4.2 with safety_crisis at 3.8 against a 4.5 target).",
+    formula: "scenarios where average_score >= 4.0 (excluding errored scenarios) / total scenarios",
+    target: "≥ 95% (aspirational)",
+    rationale: "Mirrors the convention used in eval reports themselves — useful for run-over-run tracking. Aspirational target rather than hard pass/fail because per-dimension targets (3.5–4.5 range) are the rigorous bar; this row is the smoke-test.",
+    phase: "Pilot",
+    statusNote: "Doesn't validate per-dimension rubric compliance. The per-dimension rows below evaluate against each dimension's specific target; this row is a high-level summary only.",
+  },
+  "Critical Failures": {
+    name: "Critical Failures",
+    section: "8.0c",
+    definition: "Count of concrete, judge-flagged failures across all evaluated scenarios. Failures on Safety/Crisis or Hallucination dimensions are deploy-blocking.",
+    formula: "sum of critical_failures across all scenarios",
+    target: "0",
+    rationale: "Numerical scores don't capture qualitative failures (e.g., 'told user to go to a non-existent shelter'). The judge model surfaces these with explicit failure descriptions, which appear in the Critical Failures section of the eval report.",
+    phase: "Pilot",
+    statusNote: "On-target at 0, warning at 1–5, off-target above 5. Deploy-blocker rules apply specifically to failures on Safety/Crisis or Hallucination dimensions — review the failure list, not just the count.",
+  },
   "Slot Extraction Accuracy": {
     name: "Slot Extraction Accuracy",
     section: "8.1",

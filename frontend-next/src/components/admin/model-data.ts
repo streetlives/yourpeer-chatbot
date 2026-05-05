@@ -14,6 +14,7 @@ import {
   Heart,
   HelpCircle,
 } from "lucide-react";
+import { SCENARIO_COUNT_APPROX } from "@/lib/admin/eval-dimensions";
 
 // ---------------------------------------------------------------------------
 // MODEL VERSIONS — single source of truth within the frontend
@@ -305,7 +306,7 @@ export const TASKS: TaskDef[] = [
     id: "jury",
     name: "LLM-as-Judge evaluation",
     icon: Scale,
-    desc: "Run the existing eval suite (167 scenarios across 20 categories) with both Haiku and Sonnet performing each LLM task, then have Opus score both. Produces empirical model-selection data to validate or override the recommendations above.",
+    desc: `Run the existing eval suite (${SCENARIO_COUNT_APPROX} scenarios across 20 categories) with both Haiku and Sonnet performing each LLM task, then have Opus score both. Produces empirical model-selection data to validate or override the recommendations above.`,
     inputTokens: 3000,
     outputTokens: 1500,
     requirements: [
@@ -328,7 +329,7 @@ export const TASKS: TaskDef[] = [
       {
         name: "Run paired evaluations",
         detail:
-          "Execute the full 167-scenario suite under two configs: (A) All-Haiku and (B) Recommended mix. Each run produces per-scenario scores across 11 dimensions.",
+          `Execute the full scenario suite (${SCENARIO_COUNT_APPROX}) under two configs: (A) All-Haiku and (B) Recommended mix. Each run produces per-scenario scores across 11 dimensions.`,
       },
       {
         name: "Head-to-head judging",
@@ -346,10 +347,15 @@ export const TASKS: TaskDef[] = [
           "Output: task \u00d7 scenario-category \u2192 Haiku win / Sonnet win / tie. If Haiku matches Sonnet on \u226590% of non-crisis scenarios, the mixed config is validated.",
       },
     ],
+    // The "$15-25 per run" estimate predates the current scenario count
+    // and per-call token measurements. The cost calculator's projection
+    // (juryTurns × per-call tokens × Opus pricing) comes out 3-4× higher.
+    // Tracked as audit finding #24 — investigate against actual run logs
+    // to reconcile. Until then, the range here is a lower bound.
     juryCost:
-      "~$15\u201325 per single eval run (167 scenarios \u00d7 Opus judge calls at $5/$25 per MTok [8]). A full paired comparison (two configs + head-to-head judging) \u2248 $50\u201375 total.",
+      `~$15\u201325 per single eval run (${SCENARIO_COUNT_APPROX} scenarios \u00d7 Opus judge calls at $5/$25 per MTok [8]). A full paired comparison (two configs + head-to-head judging) \u2248 $50\u201375 total.`,
     juryInfra:
-      "eval_llm_judge.py already has the scenario bank (167 cases across 20 categories), conversation simulator, 11-dimension rubric (8 core + 3 domain-specific), weighted scoring, and Opus judge prompt. Main change: parameterize which model handles each LLM call.",
+      `eval_llm_judge.py already has the scenario bank (${SCENARIO_COUNT_APPROX} scenarios across 20 categories), conversation simulator, 11-dimension rubric (8 core + 3 domain-specific), weighted scoring, and Opus judge prompt. Main change: parameterize which model handles each LLM call.`,
   },
   {
     id: "futureMultilang",

@@ -137,6 +137,25 @@ function calculatorReducer(
   }
 }
 
+/**
+ * Number of LLM calls in a single jury (eval) run, used as the `count`
+ * passed to `taskCost("jury", ...)`. Independent of monthly user volume —
+ * a jury run is the eval suite, not a per-user cost.
+ *
+ * Derivation: ~175 scenarios × ~9.5 judge calls per scenario (one per
+ * scored dimension plus a small allowance for retries on initial parse
+ * failures). Based on R39-era jury runs.
+ *
+ * Known discrepancy: the per-jury-run cost projected by this calculator
+ * (juryTurns × per-call tokens × Opus pricing) comes out higher than the
+ * `juryCost` note in `model-data.ts` ("$15–25 per single eval run"). The
+ * mismatch most likely reflects inflated per-call input token estimates
+ * in the jury TaskDef rather than a wrong scenario count here. Tracked
+ * as finding #24 in `POST_REFACTOR_AUDIT.md` — needs investigation
+ * against actual eval run logs.
+ */
+const JURY_TURNS_PER_RUN = 1660;
+
 export function CostCalculator() {
   const [s, dispatch] = useReducer(calculatorReducer, INITIAL_STATE);
   const [activeConfig, setActiveConfig] = useState<ConfigId>("recommended");
@@ -158,7 +177,7 @@ export function CostCalculator() {
   const classificationTurns = Math.round(totalTurns * (s.classificationPct / 100));
   const emotionalTurns = Math.round(totalTurns * (s.emotionalPct / 100));
   const botQuestionTurns = Math.round(totalTurns * (s.botQuestionPct / 100));
-  const juryTurns = s.includeJury ? 1660 : 0;
+  const juryTurns = s.includeJury ? JURY_TURNS_PER_RUN : 0;
   const multilangTurns = s.includeMultilang ? conversationalTurns : 0;
 
   const configsWithCost = CONFIGS.map((c) => {

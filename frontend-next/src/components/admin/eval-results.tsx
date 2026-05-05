@@ -8,7 +8,7 @@
 
 import type { EvalReport } from "@/lib/chat/types";
 import { StatCard } from "./stat-card";
-import { EVAL_DIMENSIONS, BLOCKER_KEYS, DIM_SHORT_LABELS } from "@/lib/admin/eval-dimensions";
+import { EVAL_DIMENSIONS, DIM_SHORT_LABELS, getDimension } from "@/lib/admin/eval-dimensions";
 
 /**
  * EvalResults — pure presentation component for an EvalReport.
@@ -28,36 +28,83 @@ interface EvalResultsProps {
 export function EvalResults({ report }: EvalResultsProps) {
   const { summary } = report;
 
+  // Passing rate: scenarios scoring >= 4.0 average that didn't error.
+  // Matches the "scenario passes if its average score across all 11
+  // dimensions is ≥4.0" convention used in the eval reports themselves
+  // and mirrored in metrics/page.tsx Section 8. Note this is an aggregate
+  // threshold, not a per-dimension pass — see audit finding #23 — but
+  // staying consistent with the rest of the dashboard is the right call
+  // here over diverging on definition.
+  const passingScenarios = (report.scenarios ?? []).filter(
+    (s) => s.average_score >= 4.0 && !s.error,
+  ).length;
+  const totalScenarios = summary.scenarios_evaluated;
+  const passingRate = totalScenarios > 0 ? passingScenarios / totalScenarios : null;
+  const passingDisplay =
+    passingRate != null ? `${(passingRate * 100).toFixed(1)}%` : "—";
+  const passingColor =
+    passingRate == null
+      ? "text-neutral-400"
+      : passingRate >= 0.95
+        ? "text-green-600"
+        : passingRate >= 0.85
+          ? "text-amber-500"
+          : "text-red-600";
+
   return (
     <>
-      {/* Summary cards */}
+      {/* Summary cards. Each card links to its corresponding section
+          below — the cards are essentially a table of contents with a
+          headline value. The Eval Errors card targets Scenario Details
+          because errored scenarios are interleaved there (rendered with
+          a red border) rather than in their own section. */}
       <div className="grid grid-cols-[repeat(auto-fill,minmax(180px,1fr))] gap-3 mb-7">
-        <StatCard
-          label="Overall Score"
-          value={`${summary.overall_average.toFixed(2)} / 5.00`}
-          colorClass={
-            summary.overall_average >= 4
-              ? "text-green-600"
-              : summary.overall_average >= 3
-                ? "text-amber-500"
-                : "text-red-600"
-          }
-        />
-        <StatCard label="Scenarios" value={summary.scenarios_evaluated} colorClass="text-amber-500" />
-        <StatCard
-          label="Critical Failures"
-          value={summary.critical_failure_count}
-          colorClass={summary.critical_failure_count > 0 ? "text-red-600" : "text-green-600"}
-        />
-        <StatCard
-          label="Eval Errors"
-          value={summary.scenarios_with_errors}
-          colorClass={summary.scenarios_with_errors > 0 ? "text-amber-500" : "text-green-600"}
-        />
+        <EvalSummaryCard href="#eval-dimension-scores" label="Overall Score, jump to Dimension Scores">
+          <StatCard
+            label="Overall Score"
+            value={`${summary.overall_average.toFixed(2)} / 5.00`}
+            colorClass={
+              summary.overall_average >= 4
+                ? "text-green-600"
+                : summary.overall_average >= 3
+                  ? "text-amber-500"
+                  : "text-red-600"
+            }
+          />
+        </EvalSummaryCard>
+        <EvalSummaryCard href="#eval-scenario-details" label="Scenarios, jump to Scenario Details">
+          <StatCard label="Scenarios" value={summary.scenarios_evaluated} colorClass="text-amber-500" />
+        </EvalSummaryCard>
+        <EvalSummaryCard href="#eval-scenario-details" label="Passing rate, jump to Scenario Details">
+          <StatCard
+            label="Passing Rate"
+            value={passingDisplay}
+            note={
+              passingRate != null
+                ? `${passingScenarios}/${totalScenarios} ≥ 4.0`
+                : null
+            }
+            colorClass={passingColor}
+          />
+        </EvalSummaryCard>
+        <EvalSummaryCard href="#eval-critical-failures" label="Critical failures, jump to Critical Failures">
+          <StatCard
+            label="Critical Failures"
+            value={summary.critical_failure_count}
+            colorClass={summary.critical_failure_count > 0 ? "text-red-600" : "text-green-600"}
+          />
+        </EvalSummaryCard>
+        <EvalSummaryCard href="#eval-scenario-details" label="Eval errors, jump to Scenario Details">
+          <StatCard
+            label="Eval Errors"
+            value={summary.scenarios_with_errors}
+            colorClass={summary.scenarios_with_errors > 0 ? "text-amber-500" : "text-green-600"}
+          />
+        </EvalSummaryCard>
       </div>
 
       {/* Dimension scores */}
-      <div className="mb-7">
+      <div className="mb-7" id="eval-dimension-scores">
         <h3 className="text-base font-semibold mb-4">Dimension Scores</h3>
         {EVAL_DIMENSIONS.map(({ key, shortLabel, target, blocker }) => {
           const d = summary.dimension_averages[key];
@@ -142,7 +189,7 @@ export function EvalResults({ report }: EvalResultsProps) {
 
       {/* Critical failures */}
       {report.critical_failures && report.critical_failures.length > 0 && (
-        <div className="mb-7">
+        <div className="mb-7" id="eval-critical-failures">
           <h3 className="text-base font-semibold text-red-600 mb-3">
             ⚠ Critical Failures
           </h3>
@@ -158,7 +205,9 @@ export function EvalResults({ report }: EvalResultsProps) {
       )}
 
       {/* Scenario details */}
-      <h3 className="text-base font-semibold mb-3">Scenario Details</h3>
+      <div id="eval-scenario-details">
+        <h3 className="text-base font-semibold mb-3">Scenario Details</h3>
+      </div>
       {(report.scenarios || []).map((s) => {
         if (s.error) {
           return (
@@ -197,7 +246,16 @@ export function EvalResults({ report }: EvalResultsProps) {
               <div className="text-sm text-neutral-500 mt-1">{s.overall_notes}</div>
             )}
             {Object.entries(s.scores || {}).map(([dim, d]) => {
-              if (d.score > 3) return null;
+              // Show the justification only when this dimension scored
+              // *below* its rubric target — those are the ones reviewers
+              // want to read. The previous hardcoded `> 3` cutoff hid
+              // failures on dimensions whose target is 4.0 or 4.5: a
+              // safety_crisis score of 3.5 is failing the rubric (target
+              // 4.5) but the old check skipped it. Falling back to 4.0
+              // for unknown keys covers any future report dim not yet in
+              // EVAL_DIMENSIONS — better to show those than hide them.
+              const target = getDimension(dim)?.target ?? 4.0;
+              if (d.score >= target) return null;
               return (
                 <div
                   key={dim}
@@ -211,5 +269,41 @@ export function EvalResults({ report }: EvalResultsProps) {
         );
       })}
     </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Internal helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Wraps a StatCard in an in-page anchor link so the summary cards act as
+ * a clickable table of contents for the sections below. Renders as an
+ * `<a href="#anchor-id">`, which uses the browser's native scroll-to-id
+ * behavior — no JS scroll handling needed, and it works with the back
+ * button to return to the previous position.
+ *
+ * The `label` is used as the link's accessible name (since the StatCard
+ * itself doesn't have one suitable for assistive tech announcing "links
+ * to ..."). Hover/focus styles signal interactivity without changing the
+ * card's resting visual.
+ */
+function EvalSummaryCard({
+  href,
+  label,
+  children,
+}: {
+  href: string;
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <a
+      href={href}
+      aria-label={label}
+      className="block rounded-lg transition hover:ring-2 hover:ring-amber-300 hover:ring-offset-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 focus-visible:ring-offset-1"
+    >
+      {children}
+    </a>
   );
 }
