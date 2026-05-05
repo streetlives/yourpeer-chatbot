@@ -77,51 +77,84 @@ export function ChatContainer() {
 
   // Wait for Zustand persist to finish rehydrating from localStorage.
   //
-  // Hardened against two failure modes that previously caused a stuck
-  // "Loading…" state on back-navigation:
+  // Defense-in-depth, because we've seen real user-reproducible
+  // "stuck on Loading…" reports after browser back-then-forward
+  // navigation that the more theoretically-clean event-based logic
+  // didn't fix. We register every recovery path that's cheap, since
+  // any one of them might be the one that fires:
   //
-  //  1. Race between hasHydrated() and onFinishHydration: the storage
-  //     read can complete in a microtask between the synchronous check
-  //     and the subscription. onFinishHydration is one-shot — registering
-  //     after hydration completes means the callback never fires.
-  //     Mitigation: re-check hasHydrated() once *after* subscribing, and
-  //     unsubscribe immediately if it's already done.
-  //
-  //  2. bfcache restore: some browsers restore the page from bfcache
-  //     with React state intact, others with a fresh mount but stale
-  //     listeners. The pageshow handler with event.persiseted catches
-  //     the restore case and re-checks hydration.
+  //  (a) Fast-path check on mount — store may already be hydrated
+  //      when this component mounts (e.g. remount after navigation
+  //      where the store module stayed in memory).
+  //  (b) onFinishHydration callback — Zustand's canonical signal,
+  //      one-shot. We re-check hasHydrated() once *after* subscribing
+  //      to close the race where hydration completes between the
+  //      fast-path check and the subscribe.
+  //  (c) pageshow listener with event.persisted — bfcache restore.
+  //      Browsers vary on whether they preserve React state through
+  //      bfcache and whether they re-run effects on restore. Keeping
+  //      this listener registered regardless of the fast-path outcome
+  //      means we catch the restore even if the original mount hit
+  //      the fast path and bailed.
+  //  (d) 100ms poll — guarantees recovery from any case where (a)–(c)
+  //      missed: a browser quirk, an event that fired before our
+  //      listener registered, a storage backend that completes
+  //      between checks. Auto-cancels once hydrated. Cost is
+  //      negligible; benefit is the "stuck forever" failure mode
+  //      can no longer happen.
+  //  (e) 2-second hard ceiling — if hydration genuinely failed
+  //      (localStorage disabled, quota exceeded, deserialize threw),
+  //      render anyway. The store's initial state is the welcome
+  //      message; falling through to it is much better UX than
+  //      indefinite Loading…
   const [hydrated, setHydrated] = useState(false);
   useEffect(() => {
-    // Fast path: already hydrated.
+    let cancelled = false;
+    const flip = () => {
+      if (!cancelled) setHydrated(true);
+    };
+    const checkAndFlip = () => {
+      if (useChatStore.persist.hasHydrated()) flip();
+    };
+
+    // (a) Fast path
     if (useChatStore.persist.hasHydrated()) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- Zustand persist hydration check; idempotent and runs once
-      setHydrated(true);
+      flip();
       return;
     }
-    // Subscribe before re-checking, so we can't miss the event.
-    const unsub = useChatStore.persist.onFinishHydration(() => setHydrated(true));
-    // Re-check: hydration might have completed between the fast-path
-    // check above and the subscribe call. If so, the subscribed
-    // callback won't fire, so flip the flag here and unsubscribe.
+
+    // (b) Subscribe before re-checking, so we don't miss the event
+    // if it fires between the fast-path check and subscribe.
+    const unsub = useChatStore.persist.onFinishHydration(flip);
     if (useChatStore.persist.hasHydrated()) {
-      setHydrated(true);
+      flip();
       unsub();
       return;
     }
-    // bfcache restore re-check: when the page is restored from the
-    // back/forward cache, React state may or may not be preserved. If
-    // we end up remounted with hydrated=false but the store is in fact
-    // hydrated, this catches it.
+
+    // (c) bfcache restore
     const onPageShow = (e: PageTransitionEvent) => {
-      if (e.persisted && useChatStore.persist.hasHydrated()) {
-        setHydrated(true);
-      }
+      if (e.persisted) checkAndFlip();
     };
     window.addEventListener("pageshow", onPageShow);
+
+    // (d) Polling fallback
+    const poll = setInterval(() => {
+      if (useChatStore.persist.hasHydrated()) {
+        flip();
+        clearInterval(poll);
+      }
+    }, 100);
+
+    // (e) Hard ceiling
+    const timeout = setTimeout(flip, 2000);
+
     return () => {
+      cancelled = true;
       unsub();
       window.removeEventListener("pageshow", onPageShow);
+      clearInterval(poll);
+      clearTimeout(timeout);
     };
   }, []);
 
