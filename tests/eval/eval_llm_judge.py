@@ -4032,6 +4032,220 @@ def _filter_rows_by_service_detail(
     return matched if matched else rows
 
 
+# ---------------------------------------------------------------------------
+# Eligibility filter — gender / family_status / age
+# ---------------------------------------------------------------------------
+# Production's shelter template applies three eligibility-shaping mechanisms:
+#
+#   1. ``family_status`` → narrows the taxonomy_names list to a subset
+#      ("families" + "shelter" parent for with_children/with_family,
+#      "single adult" + "shelter" for alone). See rag/__init__.py:208-274.
+#
+#   2. ``gender`` → SQL filter (FILTER_BY_GENDER_ELIGIBILITY) that excludes
+#      services whose ``eligibility.gender`` is set to a different value.
+#      Skipped when gender is lgbtq/transgender/nonbinary; replaced by
+#      lgbtq_boost ranking. See rag/__init__.py:147-162.
+#
+#   3. ``age`` (with population/gender) adds safety_extras to the taxonomy
+#      list — youth/senior/veterans/lgbtq specific shelters.
+#
+# The eval mock can't fully replicate (2) because the fixture doesn't carry
+# per-row eligibility data. It approximates via service_name pattern match
+# (services explicitly named "Men ..." or "Women ..." are gender-explicit).
+# The fixture's coverage of gender-explicit services is also thin (mostly
+# men-only homeless beds), so this filter mostly serves to *exclude* clearly
+# inappropriate matches rather than to *include* on-target ones.
+#
+# (1) and (3) work via taxonomy filtering on the ``service_taxonomies``
+# field, which IS in the fixture.
+#
+# Known eval-coverage limit: the fixture has ~25 shelter rows, of which
+# zero are tagged "Families" and only 3 are tagged with the parent
+# "Shelter" alone. When family_status=with_children fires the narrowing,
+# we may return just the 3 parent-tagged rows or fewer per borough.
+# Tracked as Foundation 8 — the next fixture refresh should ensure
+# Families/families-affirming services are represented per borough.
+
+# Taxonomy lists for the shelter narrowing logic. Mirrors
+# rag/__init__.py:218-228 narrowing rules.
+_FAMILY_STATUS_TAXONOMIES = {
+    # with_children / with_family → families + shelter parent
+    "with_children": {"families", "shelter"},
+    "with_family":   {"families", "shelter"},
+    # alone → single-adult + shelter parent
+    "alone":         {"single adult", "shelter"},
+}
+
+# Service-name patterns that signal gender-explicit eligibility. Used by
+# the gender exclusion logic. Patterns are matched case-insensitively as
+# whole words to avoid false positives ("women" should not match
+# "womenswear" — though the fixture doesn't have such cases, defensive).
+import re as _re_elig
+_MEN_ONLY_NAME_RE = _re_elig.compile(r"\b(men's|men|male)\b", _re_elig.IGNORECASE)
+_WOMEN_ONLY_NAME_RE = _re_elig.compile(r"\b(women's|women|female)\b", _re_elig.IGNORECASE)
+
+
+def _is_gender_explicit_men_only(row: dict) -> bool:
+    """True iff the row's service_name plainly indicates men-only.
+
+    Conservative match: 'Overnight Men Sign-Up', 'Men's Shelter',
+    'Male Veterans Housing'. Not triggered by 'mental health' or
+    'amendment'. The fixture's homeless-beds population skews heavily
+    toward men-only services (the gender disparity in the underlying
+    DB), so we lean conservative here to avoid filtering everything.
+    """
+    name = row.get("service_name") or ""
+    if not _MEN_ONLY_NAME_RE.search(name):
+        return False
+    # Exclude if "women" also appears (mixed-gender services don't
+    # exist in this DB, but a row like "Men and Women Shelter" should
+    # not be filtered out).
+    if _WOMEN_ONLY_NAME_RE.search(name):
+        return False
+    return True
+
+
+def _is_gender_explicit_women_only(row: dict) -> bool:
+    """True iff the row's service_name plainly indicates women-only."""
+    name = row.get("service_name") or ""
+    if not _WOMEN_ONLY_NAME_RE.search(name):
+        return False
+    if _MEN_ONLY_NAME_RE.search(name):
+        return False
+    return True
+
+
+def _filter_rows_by_eligibility(
+    rows: list[dict],
+    service_type: str | None,
+    family_status: str | None,
+    gender: str | None,
+    age: int | None,
+    populations: list | None,
+) -> list[dict]:
+    """Apply production's eligibility-shaping logic to the row set.
+
+    Three sub-filters compose:
+
+    1. ``family_status`` taxonomy narrowing (shelter only, mirroring
+       rag/__init__.py:218-228). For ``with_children``/``with_family``,
+       restrict to rows tagged "Families" or "Shelter" (parent). For
+       ``alone``, restrict to "Single Adult" or "Shelter".
+
+    2. ``gender`` exclusion via service_name pattern. When the user's
+       gender doesn't match a row's name-encoded eligibility, filter
+       it out. LGBTQ/trans/nonbinary users see services named "Men..."
+       or "Women..." filtered out (misgendering risk).
+
+    3. Age-based safety enrichment (additive). Production adds
+       'youth' for ages 16-24 and 'senior' for age >=62 to the
+       taxonomy list. We can't add rows to the result set (the mock
+       only filters), but we can ensure age-specific rows aren't
+       *excluded* by the family_status narrowing — by widening the
+       allowed taxonomy set to include age-appropriate ones.
+
+    Returns the filtered row list. Permissive on empty: if every row
+    is filtered out, returns the original ``rows`` instead. This
+    matches production's relaxed-search behavior and avoids the
+    "0 results because every row was gender-tagged wrong" trap.
+    """
+    if not rows:
+        return rows
+
+    # ---------------- Step 1: family_status taxonomy narrowing ----------------
+    # Only fires for shelter (production's narrowing is shelter-only).
+    if service_type == "shelter" and family_status in _FAMILY_STATUS_TAXONOMIES:
+        allowed = set(_FAMILY_STATUS_TAXONOMIES[family_status])
+
+        # Production's safety_extras: widen the allowed set so age- /
+        # population-specific shelters remain visible despite narrowing.
+        if age is not None and 16 <= age <= 24:
+            allowed.add("youth")
+            # YourPeer also includes "lgbtq young adult" for youth-LGBTQ
+            allowed.add("lgbtq young adult")
+        if age is not None and age >= 62:
+            allowed.add("senior")
+        if populations and "veteran" in populations:
+            allowed.add("veterans")
+            allowed.add("veterans short-term housing")
+        # LGBTQ enrichment — drop-in center + crisis + lgbtq young adult
+        if (
+            gender in ("lgbtq", "transgender", "nonbinary")
+            or (populations and "lgbtq" in populations)
+        ):
+            allowed.update({"drop-in center", "crisis", "lgbtq young adult"})
+        # DV survivor enrichment — drop-in center + crisis
+        if populations and "dv_survivor" in populations:
+            allowed.update({"drop-in center", "crisis"})
+
+        narrowed = [
+            r for r in rows
+            if {str(t).lower() for t in (r.get("service_taxonomies") or [])}
+            & allowed
+        ]
+        # Permissive: if narrowing removes everything, fall back. Without
+        # this, the fixture's thin coverage of family-tagged rows would
+        # produce empty results for many family-status searches.
+        if narrowed:
+            rows = narrowed
+
+    # ---------------- Step 2: gender exclusion via service_name ----------------
+    # Production's SQL filter excludes services whose
+    # eligibility.gender disagrees with the user's. The fixture
+    # doesn't carry eligibility data, so we approximate via
+    # service_name pattern.
+    if gender == "male":
+        # User is male: filter out women-only services.
+        rows = [r for r in rows if not _is_gender_explicit_women_only(r)]
+    elif gender == "female":
+        # User is female: filter out men-only services.
+        rows = [r for r in rows if not _is_gender_explicit_men_only(r)]
+    elif gender in ("lgbtq", "transgender", "nonbinary"):
+        # LGBTQ/trans/nonbinary: filter out services with strict
+        # gender-explicit names. Misgendering risk on these.
+        rows = [
+            r for r in rows
+            if not (
+                _is_gender_explicit_men_only(r)
+                or _is_gender_explicit_women_only(r)
+            )
+        ]
+    elif (
+        service_type == "shelter"
+        and family_status in ("with_children", "with_family")
+    ):
+        # Defense-in-depth: when the user has children but didn't
+        # explicitly state gender (common — e.g. "19yo mom with a
+        # baby" matches family_status but not always gender, since
+        # the gender regex requires a self-reference window the LLM
+        # may not produce), still exclude gender-explicit services.
+        # A family shelter request should never return a men-only
+        # or women-only single-adult facility — it's actively harmful
+        # for someone showing up with kids.
+        #
+        # Production's SQL gender filter would catch this server-side
+        # if the eligibility data carried gender properly. Doing it
+        # here in the mock approximates that defense.
+        rows = [
+            r for r in rows
+            if not (
+                _is_gender_explicit_men_only(r)
+                or _is_gender_explicit_women_only(r)
+            )
+        ]
+
+    # ---------------- Step 3: family_status (no explicit gender) ----------------
+    # When the user has family_status=with_children/with_family but no
+    # explicit gender, production's narrowing already excludes Single
+    # Adult shelters via Step 1. But if the fixture row is tagged
+    # "Single Adult" AND has a gender-explicit name (e.g., "Overnight
+    # Men Sign-Up" tagged Single Adult), Step 1 already removed it.
+    # No additional filter needed here; this comment exists to document
+    # the case explicitly.
+
+    return rows
+
+
 def _mock_query_services(*args, **kwargs) -> dict:
     """Fixture-based mock for ``query_services``.
 
@@ -4057,6 +4271,24 @@ def _mock_query_services(*args, **kwargs) -> dict:
           rather than returning empty. Production's narrowing is
           stricter (hand-curated taxonomy swap) but this approximation
           covers the common case for eval purposes.
+        - family_status: str - shelter-only narrowing. ``with_children``
+          / ``with_family`` restricts to "Families"/"Shelter" tagged
+          rows; ``alone`` restricts to "Single Adult"/"Shelter".
+          Permissive: falls back to unfiltered if narrowing empties
+          the row set (the fixture has thin Families coverage).
+        - gender: str - exclusion via service_name pattern. Filters
+          out gender-explicit services that don't match the user's
+          gender. LGBTQ/trans/nonbinary users see all gender-explicit
+          services filtered (misgendering risk). Approximates
+          production's SQL eligibility filter; the fixture doesn't
+          carry per-row eligibility data.
+        - age: int - additive enrichment. When family_status narrows
+          the taxonomy set, age 16-24 widens it to include "Youth";
+          age >=62 widens to include "Senior". Mirrors
+          rag/__init__.py:235-258 safety_extras logic.
+        - populations: list[str] - additive enrichment. ``veteran``,
+          ``lgbtq``, ``dv_survivor`` widen the taxonomy set under
+          family_status narrowing.
         - taxonomy_override: list[str] - when present, restricts to
           rows whose ``service_taxonomies`` overlap (case-insensitive)
           with the override list. Used by production's
@@ -4064,7 +4296,7 @@ def _mock_query_services(*args, **kwargs) -> dict:
           to find youth-specific shelters).
         - max_results: int - caps the result count. Used by
           population-fallback (``_POPULATION_FALLBACK_MAX = 3``).
-        - all other kwargs (age, gender, urgency, etc.) accepted but
+        - all other kwargs (urgency, weekday, etc.) accepted but
           IGNORED - production filters by them but the eval fixture
           doesn't carry the data needed to honor them. Tracked as
           Foundation 8 of the eval-quality plan.
@@ -4080,6 +4312,14 @@ def _mock_query_services(*args, **kwargs) -> dict:
     service_detail = kwargs.get("service_detail")
     taxonomy_override = kwargs.get("taxonomy_override")
     max_results = kwargs.get("max_results")
+    # Eligibility-shaping kwargs. Production filters on these via SQL
+    # eligibility joins and family_status taxonomy narrowing; the mock
+    # approximates via _filter_rows_by_eligibility (taxonomy + service_name
+    # patterns).
+    family_status = kwargs.get("family_status")
+    gender = kwargs.get("gender")
+    age = kwargs.get("age")
+    populations = kwargs.get("populations")
 
     # Sentinels for empty-result scenarios.
     if service_type == "__error__" or location == "__nowhere__":
@@ -4114,10 +4354,24 @@ def _mock_query_services(*args, **kwargs) -> dict:
             # Strict colocated filter returned something - use it.
             rows = filtered_rows
 
-    # Step 3: honor service_detail (sub-category narrowing).
+    # Step 3: apply eligibility shaping (family_status / gender / age).
+    # Production composes these via taxonomy narrowing + SQL gender
+    # filter; the mock approximates via taxonomy filtering on
+    # service_taxonomies and service_name pattern match. See
+    # _filter_rows_by_eligibility for the full mapping.
+    rows = _filter_rows_by_eligibility(
+        rows,
+        service_type=service_type,
+        family_status=family_status,
+        gender=gender,
+        age=age,
+        populations=populations,
+    )
+
+    # Step 4: honor service_detail (sub-category narrowing).
     rows = _filter_rows_by_service_detail(rows, service_detail)
 
-    # Step 4: honor taxonomy_override (population-fallback flow).
+    # Step 5: honor taxonomy_override (population-fallback flow).
     # Production's population-fallback passes a list like ["youth"] or
     # ["lgbtq young adult"] to filter to population-specific services.
     # Match case-insensitive against the row's service_taxonomies.
@@ -4129,7 +4383,7 @@ def _mock_query_services(*args, **kwargs) -> dict:
             & override_lower
         ]
 
-    # Step 5: honor max_results. Production's population-fallback caps
+    # Step 6: honor max_results. Production's population-fallback caps
     # results at _POPULATION_FALLBACK_MAX (= 3) to keep the fallback
     # section short. Other call sites also use this for pagination.
     if max_results is not None and isinstance(max_results, int):
@@ -4148,6 +4402,18 @@ def _mock_query_services(*args, **kwargs) -> dict:
         params["colocated_service_types"] = list(colocated_service_types)
     if service_detail:
         params["service_detail"] = service_detail
+    # Eligibility shaping — surfaced for log/diagnostic clarity. Even
+    # when they don't change the row set (e.g. age=19 with no shelter
+    # narrowing), recording them here lets a debugging session see what
+    # the bot sent without re-running the conversation.
+    if family_status:
+        params["family_status"] = family_status
+    if gender:
+        params["gender"] = gender
+    if age is not None:
+        params["age"] = age
+    if populations:
+        params["populations"] = list(populations)
 
     response = {
         "services": cards,
