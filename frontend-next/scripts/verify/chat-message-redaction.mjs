@@ -7,8 +7,9 @@
 /**
  * Standalone verification for src/lib/chat/chat-message-redaction.ts.
  *
- * Run with: `node verify-chat-message-redaction.mjs` from this file's
- * directory (Node 22+ required for built-in TS stripping).
+ * Run with: `npm run verify:redaction` from frontend-next/, or
+ * `node scripts/verify/chat-message-redaction.mjs` directly (Node 22+
+ * required for built-in TS stripping).
  *
  * Why this script exists: the persist-boundary redaction is the ONLY
  * thing standing between user-typed PII (phone numbers, addresses,
@@ -33,7 +34,7 @@ import assert from "node:assert/strict";
 import {
   redactMessage,
   redactStoredMessage,
-} from "./src/lib/chat/chat-message-redaction.ts";
+} from "../../src/lib/chat/chat-message-redaction.ts";
 
 let passed = 0;
 let failed = 0;

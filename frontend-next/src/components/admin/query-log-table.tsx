@@ -8,6 +8,7 @@ import type { QueryLogEntry } from "@/lib/chat/types";
 import { useSortableTable } from "@/hooks/use-sortable-table";
 import { SortableHeader } from "./sortable-header";
 import { QueryDetailDrawer } from "./query-detail-drawer";
+import { formatRelativeTime, formatAbsoluteTooltip } from "@/lib/admin/format-time";
 
 interface QueryLogTableProps {
   queries: QueryLogEntry[];
@@ -15,20 +16,27 @@ interface QueryLogTableProps {
 
 export function QueryLogTable({ queries }: QueryLogTableProps) {
   const [selected, setSelected] = useState<QueryLogEntry | null>(null);
+
+  // Decorate each row with a synthetic `has_issue` boolean for sorting.
+  // The Issues column shows two badges (proximity timeout + relaxed
+  // fallback), and previously the sortable header sorted only on
+  // `relaxed`, missing rows that had a proximity timeout but no relax.
+  // Adding a combined field lets the column sort on "any issue."
+  // The original entries are preserved on each row so the JSX below
+  // can still render the per-flag badges separately.
+  const queriesWithDerived = queries.map((q) => ({
+    ...q,
+    has_issue: q.proximity_timeout || q.relaxed ? 1 : 0,
+  }));
+
   const { sorted, sortKey, sortDir, onSort } = useSortableTable(
-    queries as unknown as Record<string, unknown>[],
+    queriesWithDerived as unknown as Record<string, unknown>[],
     "timestamp",
     "desc",
   );
 
-  if (queries.length === 0) {
-    return (
-      <div className="text-center py-16 text-neutral-400">
-        <div className="text-3xl mb-3">🔍</div>
-        <p>No queries executed yet.</p>
-      </div>
-    );
-  }
+  // Note: the empty state is handled by the page-level <DataPanel>
+  // wrapper; this component assumes it has rows to render.
 
   return (
     <>
@@ -43,17 +51,20 @@ export function QueryLogTable({ queries }: QueryLogTableProps) {
               </th>
               <SortableHeader label="Results" field="result_count" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
               <SortableHeader label="Duration" field="execution_ms" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
-              <SortableHeader label="Relaxed" field="relaxed" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
+              <SortableHeader label="Issues" field="has_issue" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
             </tr>
           </thead>
           <tbody>
-            {(sorted as unknown as QueryLogEntry[]).map((q, i) => {
+            {(sorted as unknown as QueryLogEntry[]).map((q) => {
               const params = Object.entries(q.params || {})
                 .map(([k, v]) => `${k}=${JSON.stringify(v)}`)
                 .join(", ");
+              // Composite key — same reasoning as event-feed: a single
+              // session can fire multiple queries at the same timestamp.
+              const rowKey = `${q.timestamp}|${q.template_name}|${q.session_id ?? ""}`;
               return (
                 <tr
-                  key={i}
+                  key={rowKey}
                   onClick={() => setSelected(q)}
                   onKeyDown={(e) => {
                     if (e.key === "Enter" || e.key === " ") {
@@ -66,8 +77,11 @@ export function QueryLogTable({ queries }: QueryLogTableProps) {
                   aria-label={`View details for ${q.template_name} query`}
                   className="cursor-pointer hover:bg-amber-50/50 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 focus-visible:ring-offset-1"
                 >
-                  <td className="px-4 py-2.5 font-mono text-xs border-b border-neutral-100">
-                    {new Date(q.timestamp).toLocaleTimeString("en-US", { timeZone: "America/New_York" })}
+                  <td
+                    className="px-4 py-2.5 font-mono text-xs border-b border-neutral-100"
+                    title={formatAbsoluteTooltip(q.timestamp)}
+                  >
+                    {formatRelativeTime(q.timestamp)}
                   </td>
                   <td className="px-4 py-2.5 font-semibold border-b border-neutral-100">
                     {q.template_name}

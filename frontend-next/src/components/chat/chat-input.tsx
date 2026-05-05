@@ -103,7 +103,7 @@ export function ChatInput({ onSend, disabled }: ChatInputProps) {
       </form>
 
       {voiceError && (
-        <p role="alert" className="text-xs text-red-600 px-1">
+        <p role="alert" className="text-xs text-red-600 px-1 dark:text-red-400">
           {voiceError}
         </p>
       )}

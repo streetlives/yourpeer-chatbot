@@ -5,6 +5,7 @@
 
 import { useState } from "react";
 import { ChevronDown } from "lucide-react";
+import { METRIC_GRID_COLS } from "./metric-row-grid";
 
 interface MetricsSectionProps {
   title: string;
@@ -36,8 +37,9 @@ export function MetricsSection({
           {description && (
             <p className="text-sm text-neutral-500 mb-4">{description}</p>
           )}
-          {/* Header row */}
-          <div className="grid grid-cols-[240px_1fr_130px_110px_90px] gap-3.5 pb-2 text-[0.7rem] uppercase tracking-wider text-neutral-400 font-semibold">
+          {/* Header row — uses the same grid template as MetricRow so the
+              header columns align with the data rows below. */}
+          <div className={`grid ${METRIC_GRID_COLS} gap-3.5 pb-2 text-[0.7rem] uppercase tracking-wider text-neutral-400 font-semibold`}>
             <span>Metric</span>
             <span>Target</span>
             <span className="text-right">Current</span>

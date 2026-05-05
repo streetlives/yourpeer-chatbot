@@ -7,14 +7,23 @@
 /**
  * Service worker registration.
  *
- * Mounted once from RootLayout as a hidden client component. Registers
- * /sw.js at the root scope on first paint. Failures are logged but
- * never surface to the user — if SW registration fails, the app just
- * works without offline support.
+ * Mounted once from RootLayout as a hidden client component.
  *
- * Registration is skipped in development to avoid caching stale code
- * during iteration. Flip the guard if you need to test SW behavior
- * in dev (or just build + serve via `npm run start`).
+ * Behavior splits on NODE_ENV:
+ *   - production: registers /sw.js at the root scope on first paint,
+ *     polls for updates hourly. Failures are logged but never surface
+ *     to the user — if SW registration fails, the app just works
+ *     without offline support.
+ *   - development: skips registration AND actively unregisters any
+ *     SW that was installed by a previous production build (or a
+ *     dev session with NEXT_PUBLIC_ENABLE_SW=1). Without the
+ *     unregister, a previously-installed SW keeps intercepting
+ *     requests across dev sessions and serves stale cached JS chunks,
+ *     causing hydration mismatches that look like cache bugs.
+ *
+ * Override knob: setting NEXT_PUBLIC_ENABLE_SW=1 forces production
+ * behavior in dev (registers, doesn't unregister). Use this when
+ * actively testing PWA / offline behavior. Otherwise leave it off.
  */
 
 "use client";
@@ -26,11 +35,45 @@ export function PWARegister() {
     if (typeof window === "undefined") return;
     if (!("serviceWorker" in navigator)) return;
 
-    // Skip SW registration in dev — webpack HMR and service workers
-    // don't mix. To test SW in dev, set NEXT_PUBLIC_ENABLE_SW=1.
     const devMode = process.env.NODE_ENV === "development";
     const forceEnable = process.env.NEXT_PUBLIC_ENABLE_SW === "1";
-    if (devMode && !forceEnable) return;
+
+    // Dev mode without the override: actively clear any SW left over
+    // from a previous production build or a NEXT_PUBLIC_ENABLE_SW=1
+    // session. This prevents the "cold load fails, hard refresh
+    // fixes it" hydration-mismatch pattern, which happens when a
+    // stale SW intercepts /_next/static/ requests and serves cached
+    // chunks while the dev server is producing fresh ones.
+    //
+    // We also drain caches.delete(...) for the same reason — even
+    // after unregister, an SW's Cache Storage entries persist until
+    // explicitly cleared, and a re-installed SW could pick them
+    // back up.
+    if (devMode && !forceEnable) {
+      navigator.serviceWorker
+        .getRegistrations()
+        .then((regs) => {
+          if (regs.length === 0) return;
+          console.info(
+            `[pwa] Dev mode: unregistering ${regs.length} existing service worker(s).`,
+          );
+          return Promise.all(regs.map((r) => r.unregister()));
+        })
+        .then(() => {
+          if (typeof caches === "undefined") return;
+          return caches.keys().then((keys) => {
+            if (keys.length === 0) return;
+            console.info(
+              `[pwa] Dev mode: clearing ${keys.length} Cache Storage entries.`,
+            );
+            return Promise.all(keys.map((k) => caches.delete(k)));
+          });
+        })
+        .catch((err) => {
+          console.warn("[pwa] Dev mode SW cleanup failed:", err);
+        });
+      return;
+    }
 
     // Register on load so we don't compete with initial page resources
     // for network. The SW itself is tiny, but its install step

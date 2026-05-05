@@ -9,8 +9,9 @@
  * specifically the pure `classifyPending` function that decides which
  * pending entries to deliver, drop, or keep.
  *
- * Run with: `node verify-pending-responses.mjs` from this file's
- * directory (Node 22+ required for built-in TS stripping).
+ * Run with: `npm run verify:pending` from frontend-next/, or
+ * `node scripts/verify/pending-responses.mjs` directly (Node 22+
+ * required for built-in TS stripping).
  *
  * Why this script exists: classifyPending closes a real race between
  * the service worker's Background Sync drain and a client-side
@@ -21,7 +22,7 @@
  */
 
 import assert from "node:assert/strict";
-import { classifyPending } from "./src/lib/chat/pending-responses.ts";
+import { classifyPending } from "../../src/lib/chat/pending-responses.ts";
 
 let passed = 0;
 let failed = 0;

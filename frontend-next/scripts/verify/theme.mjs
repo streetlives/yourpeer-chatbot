@@ -7,11 +7,12 @@
 /**
  * Standalone verification for src/lib/theme.ts.
  *
- * Run with: `node verify-theme.mjs` from this file's directory. No
- * jest/vitest dependency — the codebase philosophy is minimal deps,
- * and the theme helpers are pure enough that stubbing `window`,
- * `document`, and `localStorage` in 30 lines is cleaner than pulling
- * in a full test harness just for 6 functions.
+ * Run with: `npm run verify:theme` from frontend-next/, or
+ * `node scripts/verify/theme.mjs` directly. No jest/vitest dependency
+ * — the codebase philosophy is minimal deps, and the theme helpers
+ * are pure enough that stubbing `window`, `document`, and
+ * `localStorage` in 30 lines is cleaner than pulling in a full test
+ * harness just for 6 functions.
  *
  * If/when a frontend test runner is added to the repo, the assertions
  * below can be lifted verbatim into a proper `theme.test.ts`. For now,
@@ -34,7 +35,7 @@ import { join } from "node:path";
 // ---------------------------------------------------------------------------
 
 const themeSrc = readFileSync(
-  new URL("./src/lib/theme.ts", import.meta.url),
+  new URL("../../src/lib/theme.ts", import.meta.url),
   "utf8",
 );
 
@@ -292,6 +293,7 @@ test("end-to-end: system-user toggles to light", () => {
 
 test("end-to-end: choice persists across 'reload'", () => {
   const { store } = installStubs();
+  console.log('store', store)
   writeStoredChoice("dark");
   // Simulate reload: same store, re-read
   const reloaded = readStoredChoice();
@@ -318,7 +320,7 @@ test("end-to-end: choice persists across 'reload'", () => {
 
 test("FOUC inline script references THEME_STORAGE_KEY, DARK_CLASS, TRANSITIONS_OFF_CLASS", () => {
   const layoutSrc = readFileSync(
-    new URL("./src/app/layout.tsx", import.meta.url),
+    new URL("../../src/app/layout.tsx", import.meta.url),
     "utf8",
   );
   // The script is constructed via template literal that interpolates
@@ -368,7 +370,7 @@ test("FOUC inline script references THEME_STORAGE_KEY, DARK_CLASS, TRANSITIONS_O
 
 test("FOUC: globals.css references TRANSITIONS_OFF_CLASS via the same selector", () => {
   const cssSrc = readFileSync(
-    new URL("./src/app/globals.css", import.meta.url),
+    new URL("../../src/app/globals.css", import.meta.url),
     "utf8",
   );
   assert.match(

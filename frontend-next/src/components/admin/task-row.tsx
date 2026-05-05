@@ -9,7 +9,7 @@
 import { useState } from "react";
 import { ChevronDown } from "lucide-react";
 import { ModelBadge } from "./model-card";
-import { MODELS, fmt, type TaskDef } from "./model-data";
+import { MODELS, fmt, taskCost, type TaskDef } from "./model-data";
 
 export function TaskRow({ task }: { task: TaskDef }) {
   const [open, setOpen] = useState(false);
@@ -123,11 +123,7 @@ export function TaskRow({ task }: { task: TaskDef }) {
               <span>~{task.outputTokens} output tok/call</span>
               <span>
                 Cost/call:{" "}
-                {fmt(
-                  (task.inputTokens / 1e6) * MODELS[task.recommendation].input +
-                    (task.outputTokens / 1e6) *
-                      MODELS[task.recommendation].output,
-                )}
+                {fmt(taskCost(task.recommendation, task.id, 1))}
               </span>
             </div>
           )}

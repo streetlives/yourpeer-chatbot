@@ -16,10 +16,10 @@ import { ChatMessage } from "./chat-message";
 import { ChatMessageBoundary } from "./chat-message-boundary";
 import { ChatInput } from "./chat-input";
 import { ChatStatus } from "./chat-status";
-import { FeedbackRow } from "./feedback-row";
 import { OfflineBanner } from "./offline-banner";
 import { EarlierResultsLink } from "./earlier-results-link";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { QuickExit } from "./quick-exit";
 
 export function ChatContainer() {
   const { messages, isLoading, error, send, retry, submitFeedback, cancelQueued } = useChat();
@@ -76,15 +76,86 @@ export function ChatContainer() {
   }[connectionState];
 
   // Wait for Zustand persist to finish rehydrating from localStorage.
+  //
+  // Defense-in-depth, because we've seen real user-reproducible
+  // "stuck on Loading…" reports after browser back-then-forward
+  // navigation that the more theoretically-clean event-based logic
+  // didn't fix. We register every recovery path that's cheap, since
+  // any one of them might be the one that fires:
+  //
+  //  (a) Fast-path check on mount — store may already be hydrated
+  //      when this component mounts (e.g. remount after navigation
+  //      where the store module stayed in memory).
+  //  (b) onFinishHydration callback — Zustand's canonical signal,
+  //      one-shot. We re-check hasHydrated() once *after* subscribing
+  //      to close the race where hydration completes between the
+  //      fast-path check and the subscribe.
+  //  (c) pageshow listener with event.persisted — bfcache restore.
+  //      Browsers vary on whether they preserve React state through
+  //      bfcache and whether they re-run effects on restore. Keeping
+  //      this listener registered regardless of the fast-path outcome
+  //      means we catch the restore even if the original mount hit
+  //      the fast path and bailed.
+  //  (d) 100ms poll — guarantees recovery from any case where (a)–(c)
+  //      missed: a browser quirk, an event that fired before our
+  //      listener registered, a storage backend that completes
+  //      between checks. Auto-cancels once hydrated. Cost is
+  //      negligible; benefit is the "stuck forever" failure mode
+  //      can no longer happen.
+  //  (e) 2-second hard ceiling — if hydration genuinely failed
+  //      (localStorage disabled, quota exceeded, deserialize threw),
+  //      render anyway. The store's initial state is the welcome
+  //      message; falling through to it is much better UX than
+  //      indefinite Loading…
   const [hydrated, setHydrated] = useState(false);
   useEffect(() => {
+    let cancelled = false;
+    const flip = () => {
+      if (!cancelled) setHydrated(true);
+    };
+    const checkAndFlip = () => {
+      if (useChatStore.persist.hasHydrated()) flip();
+    };
+
+    // (a) Fast path
     if (useChatStore.persist.hasHydrated()) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- Zustand persist hydration check; idempotent and runs once
-      setHydrated(true);
+      flip();
       return;
     }
-    const unsub = useChatStore.persist.onFinishHydration(() => setHydrated(true));
-    return unsub;
+
+    // (b) Subscribe before re-checking, so we don't miss the event
+    // if it fires between the fast-path check and subscribe.
+    const unsub = useChatStore.persist.onFinishHydration(flip);
+    if (useChatStore.persist.hasHydrated()) {
+      flip();
+      unsub();
+      return;
+    }
+
+    // (c) bfcache restore
+    const onPageShow = (e: PageTransitionEvent) => {
+      if (e.persisted) checkAndFlip();
+    };
+    window.addEventListener("pageshow", onPageShow);
+
+    // (d) Polling fallback
+    const poll = setInterval(() => {
+      if (useChatStore.persist.hasHydrated()) {
+        flip();
+        clearInterval(poll);
+      }
+    }, 100);
+
+    // (e) Hard ceiling
+    const timeout = setTimeout(flip, 2000);
+
+    return () => {
+      cancelled = true;
+      unsub();
+      window.removeEventListener("pageshow", onPageShow);
+      clearInterval(poll);
+      clearTimeout(timeout);
+    };
   }, []);
 
   // PWA shortcut / deep-link prefill. Home-screen shortcuts (manifest
@@ -143,14 +214,15 @@ export function ChatContainer() {
         <span className="text-sm text-neutral-400 dark:text-neutral-500">
           Find services near you
         </span>
-        {/* Push the toggle to the right end of the header row. items-
-            baseline on the parent keeps the h1 + status aligned to
-            text baseline; the toggle's ml-auto shoves it to the far
-            right without changing that baseline. self-center keeps
-            the button vertically centered in the header rather than
-            inheriting the text baseline (which would half-cut it). */}
-        <div className="ml-auto self-center">
+        {/* Header right cluster: ThemeToggle + QuickExit, pushed to
+            the right edge by ml-auto. items-baseline on the parent
+            keeps the h1 + status aligned; self-center keeps the
+            buttons vertically centered to the header row rather
+            than inheriting the text baseline. The gap matches the
+            inter-element spacing of the rest of the header. */}
+        <div className="ml-auto self-center flex items-center gap-2">
           <ThemeToggle />
+          <QuickExit />
         </div>
       </div>
 
@@ -200,7 +272,11 @@ export function ChatContainer() {
         />
       )}
 
-      {/* Chat area wrapper — relative for floating feedback positioning */}
+      {/* Chat area wrapper. The relative positioning here was
+          previously needed to anchor a floating bottom-right
+          feedback row; the feedback row now renders inline inside
+          the latest bot message instead, but the wrapper stays for
+          layout consistency. */}
       <div className="relative flex-1">
         <div
           ref={chatRef}
@@ -209,51 +285,48 @@ export function ChatContainer() {
           aria-live="polite"
           aria-relevant="additions"
           tabIndex={0}
-          className="bg-white border border-neutral-200 rounded-2xl min-h-[400px] max-h-[75vh] overflow-y-auto p-5 flex flex-col gap-2.5 shadow-sm focus:outline-none focus:ring-2 focus:ring-amber-300/30"
+          className="bg-white border border-neutral-200 rounded-2xl min-h-[400px] max-h-[75vh] overflow-y-auto p-5 flex flex-col gap-2.5 shadow-sm focus:outline-none focus:ring-2 focus:ring-amber-300/30 dark:bg-neutral-900 dark:border-neutral-800"
         >
           {!hydrated ? (
             <p className="text-neutral-400 text-sm">Loading…</p>
-          ) : (
-            messages.map((msg) => (
+          ) : (() => {
+            // Find the id of the last bot message in the log. Used to
+            // mark stateful quick replies (pagination) as live only on
+            // that message. Computed once per render rather than per
+            // mapped message.
+            let latestBotId: string | undefined;
+            for (let i = messages.length - 1; i >= 0; i--) {
+              if (messages[i].role === "bot") {
+                latestBotId = messages[i].id;
+                break;
+              }
+            }
+            return messages.map((msg) => (
               <ChatMessageBoundary key={msg.id}>
                 <ChatMessage
                   message={msg}
                   onQuickReply={send}
                   onRetry={retry}
                   onCancel={cancelQueued}
+                  isLatestBot={msg.id === latestBotId}
+                  onFeedback={submitFeedback}
                 />
               </ChatMessageBoundary>
-            ))
-          )}
+            ));
+          })()}
         </div>
-
-        {/* Floating feedback — bottom-right of the chat area.
-            Keyed to the latest results message ID so it remounts
-            (resetting hidden/submitted state) when new results arrive. */}
-        {(() => {
-          const lastFeedbackMsg = [...messages].reverse().find((m) => m.showFeedback);
-          if (!lastFeedbackMsg) return null;
-          // Only show if the last results message is also the last bot message
-          const lastBot = [...messages].reverse().find((m) => m.role === "bot");
-          if (lastBot?.id !== lastFeedbackMsg.id) return null;
-          return (
-            <div className="absolute bottom-3 right-3 z-10">
-              <FeedbackRow key={lastFeedbackMsg.id} onFeedback={submitFeedback} />
-            </div>
-          );
-        })()}
       </div>
 
       {connectionState === "degraded" && (
         <div
           role="status"
-          className="mx-1 my-2 px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-700"
+          className="mx-1 my-2 px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-700 dark:bg-amber-950/40 dark:border-amber-800 dark:text-amber-300"
         >
           Running in basic mode — try simple phrases like &ldquo;food in Brooklyn&rdquo; for best results.
         </div>
       )}
 
-      <ChatStatus isLoading={isLoading} error={error} />
+      <ChatStatus error={error} />
 
       {/* ChatInput: stay enabled when offline so messages can queue.
           Only disable during active send (isLoading) to prevent

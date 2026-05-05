@@ -4,11 +4,11 @@
 
 | Tool | Minimum version | Check with |
 |------|----------------|------------|
-| **Node.js** | 18.18+ (recommended: 24.x) | `node --version` |
-| **npm** | 9+ (ships with Node 18+) | `npm --version` |
+| **Node.js** | 20.9+ (recommended: 24.x) | `node --version` |
+| **npm** | 10+ (ships with Node 20+) | `npm --version` |
 | **Python** | 3.10+ | `python3 --version` |
 
-Next.js 15 requires Node 18.18 or later. The production yourpeer.nyc app uses Node 24.x.
+Next.js 16 requires Node 20.9 or later. The production yourpeer.nyc app uses Node 24.x.
 
 **If your Node version is too old**, install or update via [nvm](https://github.com/nvm-sh/nvm):
 
@@ -106,7 +106,7 @@ Verify it's running: `curl http://localhost:8000/api/health` should return a JSO
 node --version
 ```
 
-Must be 18.18 or later. If not, see [Prerequisites](#prerequisites) above.
+Must be 20.9 or later. If not, see [Prerequisites](#prerequisites) above.
 
 ### Install dependencies
 
@@ -121,6 +121,24 @@ Create a `.env.local` in the `frontend-next/` directory:
 
 ```
 CHAT_BACKEND_URL=http://localhost:8000
+```
+
+Optional flags:
+
+```
+# Force the service worker to register in dev mode.
+# Default (unset): in dev, no SW is registered, and any SW left over
+# from a previous production build or earlier opt-in dev session is
+# automatically unregistered on first page load (with its Cache
+# Storage entries cleared). This is the right setting for normal
+# day-to-day frontend work — it prevents stale cached chunks from
+# causing hydration mismatches.
+#
+# Set to "1" only when actively testing PWA / offline behavior in
+# dev. Note: while this is enabled, edits to client code may not
+# show up until you manually unregister the SW in DevTools (Application
+# → Service Workers → Unregister) or remove this flag and reload.
+# NEXT_PUBLIC_ENABLE_SW=1
 ```
 
 ### Run the frontend

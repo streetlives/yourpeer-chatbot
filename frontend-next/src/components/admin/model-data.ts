@@ -14,6 +14,52 @@ import {
   Heart,
   HelpCircle,
 } from "lucide-react";
+import { SCENARIO_COUNT_APPROX } from "@/lib/admin/eval-dimensions";
+
+// ---------------------------------------------------------------------------
+// MODEL VERSIONS — single source of truth within the frontend
+// ---------------------------------------------------------------------------
+//
+// These IDs and display names must stay in sync with the backend's
+// `claude_client.py` (chatbot models) and `tests/eval/eval_llm_judge.py`
+// (judge model). At present, drift between this file and those Python
+// files is unguarded — updating one without the others silently desyncs
+// the dashboard from production.
+//
+// TODO(eval-plan Foundation 4): The eval engineering plan v2 calls for
+// (a) recording every model version in the eval report at run time, and
+// (b) the dashboard reading model versions from the backend's /api/health
+// endpoint rather than hardcoding them here. Once that backend exposure
+// lands, replace this constant block with a hook that fetches versions
+// at runtime, and have `model-data.ts` consume the runtime values.
+// See docs/ops/EVAL_QUALITY_ENGINEERING_PLAN.md §"Foundation 4" for the
+// full discussion of why pinning + recording is the right durable fix.
+
+// Pricing in USD per million tokens, as published in Anthropic's docs.
+// Coupled to the version block above so a version bump that changes
+// pricing stays atomic — previously, MODELS hardcoded prices inline,
+// which meant updating `id` without updating `input`/`output` would
+// silently desync the cost calculator from the actual API charges.
+export const MODEL_VERSIONS = {
+  haiku: {
+    id: "claude-haiku-4-5-20251001",
+    name: "Haiku 4.5",
+    inputPerMTok: 1.0,
+    outputPerMTok: 5.0,
+  },
+  sonnet: {
+    id: "claude-sonnet-4-6",
+    name: "Sonnet 4.6",
+    inputPerMTok: 3.0,
+    outputPerMTok: 15.0,
+  },
+  opus: {
+    id: "claude-opus-4-6",
+    name: "Opus 4.6",
+    inputPerMTok: 5.0,
+    outputPerMTok: 25.0,
+  },
+} as const;
 
 // ---------------------------------------------------------------------------
 // TYPES
@@ -81,10 +127,10 @@ export interface SourceDef {
 
 export const MODELS: Record<string, ModelInfo> = {
   haiku: {
-    id: "claude-haiku-4-5-20251001",
-    name: "Haiku 4.5",
-    input: 1.0,
-    output: 5.0,
+    id: MODEL_VERSIONS.haiku.id,
+    name: MODEL_VERSIONS.haiku.name,
+    input: MODEL_VERSIONS.haiku.inputPerMTok,
+    output: MODEL_VERSIONS.haiku.outputPerMTok,
     speed: "4-5x faster than Sonnet [1]",
     latency: "Est. ~0.4s TTFT [3]",
     context: "200K",
@@ -103,10 +149,10 @@ export const MODELS: Record<string, ModelInfo> = {
     ],
   },
   sonnet: {
-    id: "claude-sonnet-4-6",
-    name: "Sonnet 4.6",
-    input: 3.0,
-    output: 15.0,
+    id: MODEL_VERSIONS.sonnet.id,
+    name: MODEL_VERSIONS.sonnet.name,
+    input: MODEL_VERSIONS.sonnet.inputPerMTok,
+    output: MODEL_VERSIONS.sonnet.outputPerMTok,
     speed: "Moderate",
     latency: "Est. ~0.8s TTFT [3]",
     context: "1M (beta)",
@@ -126,10 +172,10 @@ export const MODELS: Record<string, ModelInfo> = {
     ],
   },
   opus: {
-    id: "claude-opus-4-6",
-    name: "Opus 4.6",
-    input: 5.0,
-    output: 25.0,
+    id: MODEL_VERSIONS.opus.id,
+    name: MODEL_VERSIONS.opus.name,
+    input: MODEL_VERSIONS.opus.inputPerMTok,
+    output: MODEL_VERSIONS.opus.outputPerMTok,
     speed: "Slowest (deepest reasoning)",
     latency: "Est. ~1.5s TTFT [3]",
     context: "1M (beta)",
@@ -271,7 +317,7 @@ export const TASKS: TaskDef[] = [
     id: "jury",
     name: "LLM-as-Judge evaluation",
     icon: Scale,
-    desc: "Run the existing eval suite (167 scenarios across 20 categories) with both Haiku and Sonnet performing each LLM task, then have Opus score both. Produces empirical model-selection data to validate or override the recommendations above.",
+    desc: `Run the existing eval suite (${SCENARIO_COUNT_APPROX} scenarios across 20 categories) with both Haiku and Sonnet performing each LLM task, then have Opus score both. Produces empirical model-selection data to validate or override the recommendations above.`,
     inputTokens: 3000,
     outputTokens: 1500,
     requirements: [
@@ -294,7 +340,7 @@ export const TASKS: TaskDef[] = [
       {
         name: "Run paired evaluations",
         detail:
-          "Execute the full 167-scenario suite under two configs: (A) All-Haiku and (B) Recommended mix. Each run produces per-scenario scores across 11 dimensions.",
+          `Execute the full scenario suite (${SCENARIO_COUNT_APPROX}) under two configs: (A) All-Haiku and (B) Recommended mix. Each run produces per-scenario scores across 11 dimensions.`,
       },
       {
         name: "Head-to-head judging",
@@ -312,10 +358,15 @@ export const TASKS: TaskDef[] = [
           "Output: task \u00d7 scenario-category \u2192 Haiku win / Sonnet win / tie. If Haiku matches Sonnet on \u226590% of non-crisis scenarios, the mixed config is validated.",
       },
     ],
+    // The "$15-25 per run" estimate predates the current scenario count
+    // and per-call token measurements. The cost calculator's projection
+    // (juryTurns × per-call tokens × Opus pricing) comes out 3-4× higher.
+    // Tracked as audit finding #24 — investigate against actual run logs
+    // to reconcile. Until then, the range here is a lower bound.
     juryCost:
-      "~$15\u201325 per single eval run (167 scenarios \u00d7 Opus judge calls at $5/$25 per MTok [8]). A full paired comparison (two configs + head-to-head judging) \u2248 $50\u201375 total.",
+      `~$15\u201325 per single eval run (${SCENARIO_COUNT_APPROX} scenarios \u00d7 Opus judge calls at $5/$25 per MTok [8]). A full paired comparison (two configs + head-to-head judging) \u2248 $50\u201375 total.`,
     juryInfra:
-      "eval_llm_judge.py already has the scenario bank (167 cases across 20 categories), conversation simulator, 11-dimension rubric (8 core + 3 domain-specific), weighted scoring, and Opus judge prompt. Main change: parameterize which model handles each LLM call.",
+      `eval_llm_judge.py already has the scenario bank (${SCENARIO_COUNT_APPROX} scenarios across 20 categories), conversation simulator, 11-dimension rubric (8 core + 3 domain-specific), weighted scoring, and Opus judge prompt. Main change: parameterize which model handles each LLM call.`,
   },
   {
     id: "futureMultilang",

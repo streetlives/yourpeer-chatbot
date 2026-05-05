@@ -12,7 +12,7 @@ unhoused New Yorkers find services (shelter, food, clothing, showers, benefits).
 | LLM | Claude Haiku + Sonnet |
 | Semantic Routing | sentence-transformers / all-MiniLM-L6-v2 (local, CPU) |
 | Backend | FastAPI (Python) |
-| Frontend | Next.js 15 / React 19 / Zustand |
+| Frontend | Next.js 16 / React 19 / Zustand |
 | Database | Streetlives PostgreSQL (read-only) |
 
 **Architecture:** `User → Chat UI → Backend → LLM + Query Templates → Streetlives API`

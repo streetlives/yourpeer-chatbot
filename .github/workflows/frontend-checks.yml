@@ -36,8 +36,8 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v6
         with:
-          # Node 20 LTS — satisfies package.json engines ">=18.18.0" and
-          # matches what most Next.js 15 projects deploy under.
+          # Node 20 LTS — satisfies package.json engines ">=20.9.0"
+          # (Next.js 16 minimum) and matches what production deploys under.
           node-version: '20'
           cache: 'npm'
           cache-dependency-path: frontend-next/package-lock.json

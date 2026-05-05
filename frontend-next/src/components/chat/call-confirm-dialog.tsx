@@ -115,7 +115,7 @@ export function CallConfirmDialog({ phone, name, onConfirm, onCancel }: CallConf
             ref={callRef}
             href={`tel:${phone.split(/\s*ext/i)[0].replace(/\D/g, "")}`}
             onClick={onConfirm}
-            className="flex-1 py-3 rounded-lg border border-neutral-900 bg-neutral-900 text-center text-sm font-semibold text-white transition hover:bg-neutral-700 dark:border-neutral-100 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-200"
+            className="flex-1 py-3 rounded-lg border border-neutral-900 bg-neutral-900 text-center text-sm font-semibold text-white transition hover:bg-neutral-700 dark:border-neutral-400 dark:bg-neutral-400 dark:text-neutral-900 dark:hover:bg-neutral-300 dark:hover:border-neutral-300"
           >
             Call
           </a>

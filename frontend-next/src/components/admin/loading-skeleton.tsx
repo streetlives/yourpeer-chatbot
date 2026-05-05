@@ -42,8 +42,35 @@ export function StatCardSkeleton({ count = 6 }: { count?: number }) {
   );
 }
 
-/** Skeleton for table views (conversations, queries, events). */
-export function TableSkeleton({ rows = 5, cols = 4 }: { rows?: number; cols?: number }) {
+/**
+ * Skeleton for table views (conversations, queries, events).
+ *
+ * `widths` controls the per-column placeholder widths and should match
+ * the rendered table's actual column proportions to minimize visual jump
+ * on the skeleton-to-data transition. Pass an array of Tailwind width
+ * classes; the array length determines `cols` if cols is not given.
+ *
+ * Without a widths array, falls back to a generic "first column wider,
+ * rest narrow" pattern. That's fine for one-off use but produces visible
+ * flicker against tables with non-uniform real layouts.
+ */
+export function TableSkeleton({
+  rows = 5,
+  cols,
+  widths,
+}: {
+  rows?: number;
+  cols?: number;
+  widths?: string[];
+}) {
+  // Resolve effective widths and column count. If widths is given it takes
+  // precedence; otherwise we fall back to the legacy "wide first column,
+  // narrow rest" pattern.
+  const effectiveCols = widths?.length ?? cols ?? 4;
+  const colWidths =
+    widths ??
+    Array.from({ length: effectiveCols }).map((_, i) => (i === 0 ? "w-24" : "w-16"));
+
   return (
     <div
       className="bg-white border border-neutral-200 rounded-lg overflow-hidden"
@@ -52,18 +79,15 @@ export function TableSkeleton({ rows = 5, cols = 4 }: { rows?: number; cols?: nu
     >
       {/* Header */}
       <div className="flex gap-4 px-4 py-3 border-b border-neutral-200">
-        {Array.from({ length: cols }).map((_, i) => (
-          <Bone key={i} className="h-3 w-20" />
+        {colWidths.map((w, i) => (
+          <Bone key={i} className={`h-3 ${w}`} />
         ))}
       </div>
       {/* Rows */}
       {Array.from({ length: rows }).map((_, r) => (
         <div key={r} className="flex gap-4 px-4 py-3 border-b border-neutral-100">
-          {Array.from({ length: cols }).map((_, c) => (
-            <Bone
-              key={c}
-              className={`h-4 ${c === 0 ? "w-24" : "w-16"}`}
-            />
+          {colWidths.map((w, c) => (
+            <Bone key={c} className={`h-4 ${w}`} />
           ))}
         </div>
       ))}

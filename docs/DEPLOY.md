@@ -15,7 +15,7 @@ The backend is a **private service** — only reachable via Render's internal ne
 
 - All changes pushed to GitHub
 - A [Render](https://render.com) account (sign up with GitHub)
-- Node.js 18.18+ (set via `NODE_VERSION` env var in `render.yaml`)
+- Node.js 20.9+ (set via `NODE_VERSION` env var in `render.yaml`)
 - Your `ANTHROPIC_API_KEY` from [Anthropic Console](https://console.anthropic.com/)
 - Your `DATABASE_URL` in the format: `postgresql://user:password@host:port/streetlives`
 

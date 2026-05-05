@@ -6,6 +6,8 @@
 
 "use client";
 
+import { METRIC_GRID_COLS } from "./metric-row-grid";
+
 type MetricStatus = "on-target" | "warning" | "off-target" | "no-data" | "tracking";
 
 interface MetricRowProps {
@@ -81,14 +83,23 @@ export function MetricRow({
   statusOverride,
 }: MetricRowProps) {
   return (
-    <div className="grid grid-cols-[240px_1fr_130px_110px_90px] items-center gap-3.5 py-2.5 border-b border-neutral-100 text-sm last:border-b-0">
+    <div className={`grid ${METRIC_GRID_COLS} items-center gap-3.5 py-2.5 border-b border-neutral-100 text-sm last:border-b-0`}>
       <div>
         <div
           className={`font-semibold text-sm ${onClick ? "cursor-pointer hover:text-amber-600 transition-colors" : ""}`}
           onClick={onClick ? () => onClick(name) : undefined}
           role={onClick ? "button" : undefined}
           tabIndex={onClick ? 0 : undefined}
-          onKeyDown={onClick ? (e) => { if (e.key === "Enter") onClick(name); } : undefined}
+          onKeyDown={
+            onClick
+              ? (e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    onClick(name);
+                  }
+                }
+              : undefined
+          }
         >
           {name}
         </div>

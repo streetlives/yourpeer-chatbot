@@ -63,7 +63,14 @@ export function useGeolocation() {
           setState({ latitude: null, longitude: null, error: message, loading: false });
           resolve({ error: message });
         },
-        { enableHighAccuracy: false, timeout: 10_000, maximumAge: 300_000 },
+        // Timeout calibration: 7s. Long enough for a healthy
+        // first-fix via WiFi triangulation on macOS / Windows
+        // (typically 2-5s when nearby networks are recognized),
+        // short enough that the fallback (borough quick-replies)
+        // appears before the user gives up. Subsequent calls within
+        // 5 minutes hit the maximumAge cache and return instantly,
+        // so this timeout only affects cold first requests.
+        { enableHighAccuracy: false, timeout: 7_000, maximumAge: 300_000 },
       );
     });
   }, []);

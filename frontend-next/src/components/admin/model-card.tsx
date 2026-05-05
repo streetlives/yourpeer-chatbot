@@ -57,7 +57,16 @@ export function ModelCard({ modelKey }: { modelKey: "haiku" | "sonnet" | "opus" 
         <span>Context: {m.context}</span>
         <span>Latency: {m.latency}</span>
         <span>
-          ID: <code className="text-[0.65rem] bg-neutral-100 px-1 rounded">{m.id.split("-").slice(0, 3).join("-")}</code>
+          ID: <code className="text-[0.65rem] bg-neutral-100 px-1 rounded">
+            {/* Strip the date suffix (8 trailing digits prefixed with "-")
+                if present. Truncating to 3 segments via .split("-").slice(0,3)
+                used to drop the model's minor version too — `claude-haiku-4-5-20251001`
+                became `claude-haiku-4`, hiding which generation was actually
+                running. The regex preserves the version while dropping only
+                the build-date tail. Models without a date suffix
+                (`claude-sonnet-4-6`) pass through unchanged. */}
+            {m.id.replace(/-\d{8}$/, "")}
+          </code>
         </span>
       </div>
 

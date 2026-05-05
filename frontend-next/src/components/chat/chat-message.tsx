@@ -6,10 +6,11 @@
 
 "use client";
 
-import type { ChatMessage as ChatMessageType, MessageStatus } from "@/lib/chat/types";
+import type { ChatMessage as ChatMessageType, MessageStatus, FeedbackRating } from "@/lib/chat/types";
 import { ServiceCarousel } from "./service-carousel";
 import { ServiceCarouselBoundary } from "./service-carousel-boundary";
 import { QuickReplies } from "./quick-replies";
+import { FeedbackRow } from "./feedback-row";
 
 import { RotateCcw, Clock, Check, CheckCheck, AlertTriangle, X } from "lucide-react";
 
@@ -101,9 +102,20 @@ interface ChatMessageProps {
   /** Cancel a queued message before flush. Only called for messages
    *  with status="pending" — the cancel affordance is hidden otherwise. */
   onCancel?: (msgId: string) => void;
+  /** True when this is the most recent bot message. Used to suppress
+   *  stateful quick replies (specifically "Show more results") on
+   *  older messages — clicking them would be ambiguous because the
+   *  pagination cursor has moved past their context. Also gates
+   *  showing the inline feedback row, which only makes sense for
+   *  the latest results message. */
+  isLatestBot?: boolean;
+  /** Submit feedback (thumbs up/down) for the latest bot results.
+   *  Plumbed down so FeedbackRow can render inline at the end of
+   *  the message rather than floating over the chat surface. */
+  onFeedback?: (rating: FeedbackRating) => void;
 }
 
-export function ChatMessage({ message, onQuickReply, onRetry, onCancel }: ChatMessageProps) {
+export function ChatMessage({ message, onQuickReply, onRetry, onCancel, isLatestBot, onFeedback }: ChatMessageProps) {
   const isUser = message.role === "user";
   const isCancelled = message.status === "cancelled";
 
@@ -193,9 +205,47 @@ export function ChatMessage({ message, onQuickReply, onRetry, onCancel }: ChatMe
         </ServiceCarouselBoundary>
       )}
 
-      {message.quick_replies && message.quick_replies.length > 0 && (
-        <QuickReplies replies={message.quick_replies} onSelect={onQuickReply} />
-      )}
+      {/* Combined feedback + quick-replies row.
+          The Helpful? thumbs and quick-reply pills share a single
+          flex-wrap container so they fit on one line on wide
+          screens and only break to multi-line when they don't.
+          Cuts the vertical chrome roughly in half on mobile, where
+          the cards already take up most of the screen.
+          Feedback is gated on isLatestBot + showFeedback so older
+          results don't accumulate stale Helpful? prompts. */}
+      {(() => {
+        const showFeedback =
+          isLatestBot &&
+          message.role === "bot" &&
+          message.showFeedback &&
+          !!onFeedback;
+
+        // Drop "Show more results" on stale (non-latest) bot messages.
+        // The backend attaches it correctly at the time of response, but
+        // it lingers on every prior turn. Once a newer turn arrives the
+        // pagination cursor has moved past this message, so clicking it
+        // would either re-show already-shown results or do nothing
+        // useful — confusing either way.
+        const filtered = message.quick_replies
+          ? isLatestBot
+            ? message.quick_replies
+            : message.quick_replies.filter((qr) => qr.value !== "Show more results")
+          : [];
+
+        if (filtered.length === 0 && !showFeedback) return null;
+
+        const feedbackEl = showFeedback ? (
+          <FeedbackRow key={message.id} onFeedback={onFeedback!} />
+        ) : null;
+
+        return (
+          <QuickReplies
+            replies={filtered}
+            onSelect={onQuickReply}
+            leadingSlot={feedbackEl}
+          />
+        );
+      })()}
     </>
   );
 }

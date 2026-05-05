@@ -22,14 +22,20 @@ export function SortableHeader({
 
   return (
     <th
-      className={`text-left px-4 py-3 text-xs uppercase tracking-wider font-semibold border-b border-neutral-200 cursor-pointer select-none transition-colors hover:text-neutral-600 ${
-        isActive ? "text-amber-600" : "text-neutral-400"
-      } ${className}`}
-      onClick={() => onSort(field)}
+      className={`text-left px-0 py-0 border-b border-neutral-200 ${className}`}
       aria-sort={isActive ? (sortDir === "asc" ? "ascending" : "descending") : "none"}
-      role="columnheader"
+      scope="col"
     >
-      {label}{arrow}
+      <button
+        type="button"
+        onClick={() => onSort(field)}
+        className={`w-full text-left px-4 py-3 text-xs uppercase tracking-wider font-semibold cursor-pointer select-none transition-colors hover:text-neutral-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 focus-visible:ring-inset ${
+          isActive ? "text-amber-600" : "text-neutral-400"
+        }`}
+        aria-label={`Sort by ${label}${isActive ? `, currently ${sortDir === "asc" ? "ascending" : "descending"}` : ""}`}
+      >
+        {label}{arrow}
+      </button>
     </th>
   );
 }

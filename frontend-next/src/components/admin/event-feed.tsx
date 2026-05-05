@@ -6,6 +6,7 @@
 import type { AuditEvent } from "@/lib/chat/types";
 import { useSortableTable } from "@/hooks/use-sortable-table";
 import { SortableHeader } from "./sortable-header";
+import { formatRelativeTime, formatAbsoluteTooltip } from "@/lib/admin/format-time";
 
 function typeBadge(type: string) {
   const label = type.replace(/_/g, " ");
@@ -18,7 +19,9 @@ function typeBadge(type: string) {
           ? "bg-amber-50 text-amber-600"
           : type === "feedback"
             ? "bg-emerald-50 text-emerald-600"
-            : "bg-neutral-100 text-neutral-400";
+            : type === "location_feedback"
+              ? "bg-teal-50 text-teal-600"
+              : "bg-neutral-100 text-neutral-400";
   return (
     <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-semibold ${cls}`}>
       {label}
@@ -47,14 +50,9 @@ export function EventFeed({ events }: EventFeedProps) {
     "desc",
   );
 
-  if (events.length === 0) {
-    return (
-      <div className="text-center py-16 text-neutral-400">
-        <div className="text-3xl mb-3">💬</div>
-        <p>No events yet.</p>
-      </div>
-    );
-  }
+  // Note: the empty state is owned by the page-level <DataPanel> wrapper
+  // in overview/page.tsx — same pattern as ConversationTable and
+  // QueryLogTable. This component assumes it has rows to render.
 
   return (
     <div className="bg-white border border-neutral-200 rounded-lg overflow-x-auto">
@@ -70,9 +68,15 @@ export function EventFeed({ events }: EventFeedProps) {
           </tr>
         </thead>
         <tbody>
-          {sorted.map((e, i) => {
+          {sorted.map((e) => {
             const ev = e as unknown as AuditEvent;
-            const time = new Date(ev.timestamp).toLocaleTimeString("en-US", { timeZone: "America/New_York" });
+            const time = formatRelativeTime(ev.timestamp);
+            const timeTooltip = formatAbsoluteTooltip(ev.timestamp);
+            // Composite key — timestamp alone isn't unique because a single
+            // session can log multiple events at the same millisecond
+            // boundary (e.g. conversation_turn immediately followed by
+            // query_execution). Including type and session_id covers that.
+            const rowKey = `${ev.timestamp}|${ev.type}|${ev.session_id ?? ""}`;
             let detail: React.ReactNode = "";
 
             if (ev.type === "conversation_turn") {
@@ -126,11 +130,41 @@ export function EventFeed({ events }: EventFeedProps) {
                   )}
                 </span>
               );
+            } else if (ev.type === "location_feedback") {
+              // Location-specific feedback events carry per-location details
+              // (location_id, location_name, criteria flags) that aren't on
+              // AuditEvent today — only rating + comment + context are typed.
+              // Render the typed fields; if the backend extends AuditEvent
+              // later, this branch can show structured criteria.
+              detail = (
+                <span className="flex flex-col gap-1">
+                  <span className="flex items-center gap-2">
+                    {feedbackBadge(ev.rating)}
+                    <span className="text-[0.65rem] text-neutral-400 italic">
+                      location feedback
+                    </span>
+                    {ev.comment && (
+                      <span className="text-neutral-500 max-w-[200px] truncate block">
+                        &quot;{ev.comment}&quot;
+                      </span>
+                    )}
+                  </span>
+                  {ev.context?.bot_response && (
+                    <span className="text-[0.65rem] text-neutral-400 truncate max-w-[280px] block">
+                      {ev.context.bot_response.slice(0, 80)}
+                      {ev.context.bot_response.length > 80 ? "…" : ""}
+                    </span>
+                  )}
+                </span>
+              );
             }
 
             return (
-              <tr key={i} className="hover:bg-neutral-50/50">
-                <td className="px-4 py-2.5 font-mono text-xs border-b border-neutral-100">
+              <tr key={rowKey} className="hover:bg-neutral-50/50">
+                <td
+                  className="px-4 py-2.5 font-mono text-xs border-b border-neutral-100"
+                  title={timeTooltip}
+                >
                   {time}
                 </td>
                 <td className="px-4 py-2.5 border-b border-neutral-100">

@@ -31,7 +31,7 @@ If you remember one thing from this guide, make it this. When you see code that 
 
 The system is two applications talking to each other, plus an external database they both ultimately serve.
 
-**Frontend** — a Next.js 15 Progressive Web App (React 19, TypeScript, Tailwind CSS). Serves the chat interface at `/chat` and a staff review console at `/admin`. Deployed as its own service on Render. The PWA features (service worker, offline cache, send queue) mean the app can be installed on a phone's home screen and continues working when the internet drops — critical for users on library Wi-Fi or limited data plans.
+**Frontend** — a Next.js 16 Progressive Web App (React 19, TypeScript, Tailwind CSS). Serves the chat interface at `/chat` and a staff review console at `/admin`. Deployed as its own service on Render. The PWA features (service worker, offline cache, send queue) mean the app can be installed on a phone's home screen and continues working when the internet drops — critical for users on library Wi-Fi or limited data plans.
 
 **Backend** — a Python FastAPI server. Handles all the intelligence: understanding the user's message, querying the database, formatting results. Also serves the admin API. Deployed as a separate service on Render.
 
@@ -457,7 +457,7 @@ Small, package-spanning utilities. Currently minimal — `__init__.py` and whate
 
 ## 9. The Frontend in Detail
 
-The frontend is a Next.js 15 App Router application with two main sections.
+The frontend is a Next.js 16 App Router application with two main sections.
 
 ### Chat interface (`/chat`)
 
