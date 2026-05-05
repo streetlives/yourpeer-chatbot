@@ -54,7 +54,7 @@ npm run dev
 # Open http://localhost:3000/admin  (staff review console)
 ```
 
-See [SETUP.md](docs/SETUP.md) for detailed instructions including prerequisites, IDE configuration, and Render deployment.
+See [SETUP.md](./docs/SETUP.md) for detailed instructions including prerequisites, IDE configuration, and Render deployment.
 
 ## Architecture Flow
 
@@ -174,16 +174,16 @@ These are tracked issues identified during DB audits and pilot testing, deferred
 
 ## Documentation
 
-The full directory map lives at **[docs/README.md](docs/README.md)** — it organizes all 25+ docs into "start here," `design/`, `audits/`, and `ops/`.
+The full directory map lives at **[docs/README.md](./docs/README.md)** — it organizes all 25+ docs into "start here," `design/`, `audits/`, and `ops/`.
 
 If you're just browsing the repo and want the highest-traffic entry points:
 
-- [docs/ONBOARDING.md](docs/ONBOARDING.md) — primary onboarding guide
-- [docs/SETUP.md](docs/SETUP.md) — local development setup
-- [docs/FEATURES.md](docs/FEATURES.md) — full feature reference
-- [docs/CHATBOT_BEHAVIOR.md](docs/CHATBOT_BEHAVIOR.md) — routing pipeline, guardrails, how to extend
-- [docs/TESTING.md](docs/TESTING.md) — test suite and eval framework
-- [docs/DEPLOY.md](docs/DEPLOY.md) — Render deployment notes
+- [docs/ONBOARDING.md](./docs/ONBOARDING.md) — primary onboarding guide
+- [docs/SETUP.md](./docs/SETUP.md) — local development setup
+- [docs/FEATURES.md](./docs/FEATURES.md) — full feature reference
+- [docs/CHATBOT_BEHAVIOR.md](./docs/CHATBOT_BEHAVIOR.md) — routing pipeline, guardrails, how to extend
+- [docs/TESTING.md](./docs/TESTING.md) — test suite and eval framework
+- [docs/DEPLOY.md](./docs/DEPLOY.md) — Render deployment notes
 
 ## Related Repositories
 

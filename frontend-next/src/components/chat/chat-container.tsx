@@ -326,7 +326,7 @@ export function ChatContainer() {
         </div>
       )}
 
-      <ChatStatus isLoading={isLoading} error={error} />
+      <ChatStatus error={error} />
 
       {/* ChatInput: stay enabled when offline so messages can queue.
           Only disable during active send (isLoading) to prevent
