@@ -132,8 +132,17 @@ export async function sendLocationFeedback(
 
 const ADMIN_API = "/api/admin";
 
+// Admin GET endpoints opt out of browser/Next.js fetch caching — without
+// `cache: "no-store"` the browser can serve a stale response on first
+// load (the "overview shows zeros until refresh" bug). The store's
+// STALE_AFTER_MS already dedups same-tick re-fetches, so per-request
+// caching here is unnecessary. Mirrors `/api/health` in SystemHealth.
+const ADMIN_GET_OPTS = {
+  cache: "no-store",
+} as const;
+
 export async function fetchAdminStats(): Promise<AdminStats> {
-  const res = await fetch(`${ADMIN_API}/stats`, { signal: timeoutSignal(ADMIN_TIMEOUT_MS) });
+  const res = await fetch(`${ADMIN_API}/stats`, { ...ADMIN_GET_OPTS, signal: timeoutSignal(ADMIN_TIMEOUT_MS) });
   if (!res.ok) throw new Error("Failed to load stats");
   return res.json();
 }
@@ -141,7 +150,7 @@ export async function fetchAdminStats(): Promise<AdminStats> {
 export async function fetchConversations(
   limit = CONVERSATIONS_LIMIT,
 ): Promise<ConversationSummary[]> {
-  const res = await fetch(`${ADMIN_API}/conversations?limit=${limit}`, { signal: timeoutSignal(ADMIN_TIMEOUT_MS) });
+  const res = await fetch(`${ADMIN_API}/conversations?limit=${limit}`, { ...ADMIN_GET_OPTS, signal: timeoutSignal(ADMIN_TIMEOUT_MS) });
   if (!res.ok) throw new Error("Failed to load conversations");
   return res.json();
 }
@@ -149,7 +158,7 @@ export async function fetchConversations(
 export async function fetchConversationDetail(
   sessionId: string,
 ): Promise<AuditEvent[]> {
-  const res = await fetch(`${ADMIN_API}/conversations/${sessionId}`, { signal: timeoutSignal(ADMIN_TIMEOUT_MS) });
+  const res = await fetch(`${ADMIN_API}/conversations/${sessionId}`, { ...ADMIN_GET_OPTS, signal: timeoutSignal(ADMIN_TIMEOUT_MS) });
   if (!res.ok) throw new Error("Failed to load conversation");
   return res.json();
 }
@@ -157,19 +166,19 @@ export async function fetchConversationDetail(
 export async function fetchEvents(
   limit = EVENTS_LIMIT,
 ): Promise<AuditEvent[]> {
-  const res = await fetch(`${ADMIN_API}/events?limit=${limit}`, { signal: timeoutSignal(ADMIN_TIMEOUT_MS) });
+  const res = await fetch(`${ADMIN_API}/events?limit=${limit}`, { ...ADMIN_GET_OPTS, signal: timeoutSignal(ADMIN_TIMEOUT_MS) });
   if (!res.ok) throw new Error("Failed to load events");
   return res.json();
 }
 
 export async function fetchQueries(limit = QUERIES_LIMIT): Promise<QueryLogEntry[]> {
-  const res = await fetch(`${ADMIN_API}/queries?limit=${limit}`, { signal: timeoutSignal(ADMIN_TIMEOUT_MS) });
+  const res = await fetch(`${ADMIN_API}/queries?limit=${limit}`, { ...ADMIN_GET_OPTS, signal: timeoutSignal(ADMIN_TIMEOUT_MS) });
   if (!res.ok) throw new Error("Failed to load queries");
   return res.json();
 }
 
 export async function fetchEvalResults(): Promise<EvalReport | null> {
-  const res = await fetch(`${ADMIN_API}/eval`, { signal: timeoutSignal(ADMIN_TIMEOUT_MS) });
+  const res = await fetch(`${ADMIN_API}/eval`, { ...ADMIN_GET_OPTS, signal: timeoutSignal(ADMIN_TIMEOUT_MS) });
   if (!res.ok) throw new Error("Failed to load eval results");
   const data = (await res.json()) as EvalResultsResponse;
 
@@ -227,7 +236,7 @@ export async function triggerEvalRun(
 }
 
 export async function fetchEvalStatus(): Promise<EvalRunStatus> {
-  const res = await fetch(`${ADMIN_API}/eval/status`, { signal: timeoutSignal(ADMIN_TIMEOUT_MS) });
+  const res = await fetch(`${ADMIN_API}/eval/status`, { ...ADMIN_GET_OPTS, signal: timeoutSignal(ADMIN_TIMEOUT_MS) });
   if (!res.ok) throw new Error("Failed to check eval status");
   return res.json();
 }

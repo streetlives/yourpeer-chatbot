@@ -5,7 +5,7 @@
 ```
 User (browser)
   |
-  +-- Chat UI (Next.js 15 / React 19)
+  +-- Chat UI (Next.js 16 / React 19)
   |   +-- Zustand store (localStorage persistence, 30-min TTL)
   |   +-- useBackendHealth hook (polls /api/health every 30s)
   |   +-- Three-state indicator (connected / degraded / offline)

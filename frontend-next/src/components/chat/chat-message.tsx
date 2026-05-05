@@ -101,9 +101,14 @@ interface ChatMessageProps {
   /** Cancel a queued message before flush. Only called for messages
    *  with status="pending" — the cancel affordance is hidden otherwise. */
   onCancel?: (msgId: string) => void;
+  /** True when this is the most recent bot message. Used to suppress
+   *  stateful quick replies (specifically "Show more results") on
+   *  older messages — clicking them would be ambiguous because the
+   *  pagination cursor has moved past their context. */
+  isLatestBot?: boolean;
 }
 
-export function ChatMessage({ message, onQuickReply, onRetry, onCancel }: ChatMessageProps) {
+export function ChatMessage({ message, onQuickReply, onRetry, onCancel, isLatestBot }: ChatMessageProps) {
   const isUser = message.role === "user";
   const isCancelled = message.status === "cancelled";
 
@@ -193,9 +198,19 @@ export function ChatMessage({ message, onQuickReply, onRetry, onCancel }: ChatMe
         </ServiceCarouselBoundary>
       )}
 
-      {message.quick_replies && message.quick_replies.length > 0 && (
-        <QuickReplies replies={message.quick_replies} onSelect={onQuickReply} />
-      )}
+      {message.quick_replies && message.quick_replies.length > 0 && (() => {
+        // Drop "Show more results" on stale (non-latest) bot messages.
+        // The backend attaches it correctly at the time of response, but
+        // it lingers on every prior turn. Once a newer turn arrives the
+        // pagination cursor has moved past this message, so clicking it
+        // would either re-show already-shown results or do nothing
+        // useful — confusing either way.
+        const filtered = isLatestBot
+          ? message.quick_replies
+          : message.quick_replies.filter((qr) => qr.value !== "Show more results");
+        if (filtered.length === 0) return null;
+        return <QuickReplies replies={filtered} onSelect={onQuickReply} />;
+      })()}
     </>
   );
 }

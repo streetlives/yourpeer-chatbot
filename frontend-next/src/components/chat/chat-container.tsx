@@ -76,15 +76,53 @@ export function ChatContainer() {
   }[connectionState];
 
   // Wait for Zustand persist to finish rehydrating from localStorage.
+  //
+  // Hardened against two failure modes that previously caused a stuck
+  // "Loading…" state on back-navigation:
+  //
+  //  1. Race between hasHydrated() and onFinishHydration: the storage
+  //     read can complete in a microtask between the synchronous check
+  //     and the subscription. onFinishHydration is one-shot — registering
+  //     after hydration completes means the callback never fires.
+  //     Mitigation: re-check hasHydrated() once *after* subscribing, and
+  //     unsubscribe immediately if it's already done.
+  //
+  //  2. bfcache restore: some browsers restore the page from bfcache
+  //     with React state intact, others with a fresh mount but stale
+  //     listeners. The pageshow handler with event.persiseted catches
+  //     the restore case and re-checks hydration.
   const [hydrated, setHydrated] = useState(false);
   useEffect(() => {
+    // Fast path: already hydrated.
     if (useChatStore.persist.hasHydrated()) {
       // eslint-disable-next-line react-hooks/set-state-in-effect -- Zustand persist hydration check; idempotent and runs once
       setHydrated(true);
       return;
     }
+    // Subscribe before re-checking, so we can't miss the event.
     const unsub = useChatStore.persist.onFinishHydration(() => setHydrated(true));
-    return unsub;
+    // Re-check: hydration might have completed between the fast-path
+    // check above and the subscribe call. If so, the subscribed
+    // callback won't fire, so flip the flag here and unsubscribe.
+    if (useChatStore.persist.hasHydrated()) {
+      setHydrated(true);
+      unsub();
+      return;
+    }
+    // bfcache restore re-check: when the page is restored from the
+    // back/forward cache, React state may or may not be preserved. If
+    // we end up remounted with hydrated=false but the store is in fact
+    // hydrated, this catches it.
+    const onPageShow = (e: PageTransitionEvent) => {
+      if (e.persisted && useChatStore.persist.hasHydrated()) {
+        setHydrated(true);
+      }
+    };
+    window.addEventListener("pageshow", onPageShow);
+    return () => {
+      unsub();
+      window.removeEventListener("pageshow", onPageShow);
+    };
   }, []);
 
   // PWA shortcut / deep-link prefill. Home-screen shortcuts (manifest
@@ -131,7 +169,11 @@ export function ChatContainer() {
 
   return (
     <div className="flex flex-col max-w-[820px] mx-auto px-4 pb-7 min-h-dvh">
-      <div className="flex items-baseline gap-2.5 px-1 pt-5 pb-3.5">
+      {/* pr-28 reserves horizontal space for the fixed QuickExit
+          button (top-right, ~100px wide). Without this, the
+          ThemeToggle on the right side of the header sits underneath
+          the floating safety button on narrow viewports. */}
+      <div className="flex items-baseline gap-2.5 px-1 pt-5 pb-3.5 pr-28">
         <h1 className="text-xl font-bold tracking-tight text-neutral-900 dark:text-neutral-100">
           YourPeer AI Chat
         </h1>
@@ -209,22 +251,34 @@ export function ChatContainer() {
           aria-live="polite"
           aria-relevant="additions"
           tabIndex={0}
-          className="bg-white border border-neutral-200 rounded-2xl min-h-[400px] max-h-[75vh] overflow-y-auto p-5 flex flex-col gap-2.5 shadow-sm focus:outline-none focus:ring-2 focus:ring-amber-300/30"
+          className="bg-white border border-neutral-200 rounded-2xl min-h-[400px] max-h-[75vh] overflow-y-auto p-5 flex flex-col gap-2.5 shadow-sm focus:outline-none focus:ring-2 focus:ring-amber-300/30 dark:bg-neutral-900 dark:border-neutral-800"
         >
           {!hydrated ? (
             <p className="text-neutral-400 text-sm">Loading…</p>
-          ) : (
-            messages.map((msg) => (
+          ) : (() => {
+            // Find the id of the last bot message in the log. Used to
+            // mark stateful quick replies (pagination) as live only on
+            // that message. Computed once per render rather than per
+            // mapped message.
+            let latestBotId: string | undefined;
+            for (let i = messages.length - 1; i >= 0; i--) {
+              if (messages[i].role === "bot") {
+                latestBotId = messages[i].id;
+                break;
+              }
+            }
+            return messages.map((msg) => (
               <ChatMessageBoundary key={msg.id}>
                 <ChatMessage
                   message={msg}
                   onQuickReply={send}
                   onRetry={retry}
                   onCancel={cancelQueued}
+                  isLatestBot={msg.id === latestBotId}
                 />
               </ChatMessageBoundary>
-            ))
-          )}
+            ));
+          })()}
         </div>
 
         {/* Floating feedback — bottom-right of the chat area.
@@ -247,7 +301,7 @@ export function ChatContainer() {
       {connectionState === "degraded" && (
         <div
           role="status"
-          className="mx-1 my-2 px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-700"
+          className="mx-1 my-2 px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-700 dark:bg-amber-950/40 dark:border-amber-800 dark:text-amber-300"
         >
           Running in basic mode — try simple phrases like &ldquo;food in Brooklyn&rdquo; for best results.
         </div>

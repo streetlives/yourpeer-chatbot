@@ -48,9 +48,25 @@ export function ServiceCarousel({ services }: ServiceCarouselProps) {
   );
 
   function handleScroll() {
-    if (!trackRef.current || !trackRef.current.firstElementChild) return;
-    const cardWidth = (trackRef.current.firstElementChild as HTMLElement).offsetWidth;
-    const idx = Math.round(trackRef.current.scrollLeft / (cardWidth + 12));
+    const track = trackRef.current;
+    if (!track || !track.firstElementChild) return;
+    const cardWidth = (track.firstElementChild as HTMLElement).offsetWidth;
+    const stride = cardWidth + 12;
+
+    // Snap currentIndex to the last item when fully scrolled. The
+    // leftmost-card heuristic below stalls at an intermediate index
+    // when multiple cards fit the viewport (e.g. 4 cards / 3 visible:
+    // leftmost never gets past index 1), so without this snap the
+    // pagination dots, "Location N of M" header, and the Next arrow's
+    // disabled state all misreport at the end. The maxScroll > 0 guard
+    // skips the snap when no scrolling is possible. 4px tolerance
+    // absorbs sub-pixel rounding in scrollLeft on some browsers.
+    const maxScroll = track.scrollWidth - track.clientWidth;
+    const atEnd = maxScroll > 0 && track.scrollLeft >= maxScroll - 4;
+
+    const idx = atEnd
+      ? groups.length - 1
+      : Math.round(track.scrollLeft / stride);
     const clamped = Math.min(idx, groups.length - 1);
     if (clamped !== currentIndex) setCurrentIndex(clamped);
   }

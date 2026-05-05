@@ -8,7 +8,11 @@ import { MapPin, Phone, Mail, Clock, CheckCircle, AlertTriangle, ChevronDown } f
 import type { ServiceResult } from "@/lib/chat/types";
 import { LocationFeedbackRow } from "./location-feedback-row";
 import { CallConfirmDialog } from "./call-confirm-dialog";
+import { ReviewDetailDialog } from "./review-detail-dialog";
 import { SafeHtml } from "./safe-html";
+
+const REVIEW_TRUNCATE_AT = 120;
+const REVIEW_TRUNCATE_TO = 117;
 
 interface ServiceCardProps {
   service: ServiceResult;
@@ -33,7 +37,7 @@ function StatusBadge({ status }: { status?: string }) {
     );
   }
   return (
-    <span className="inline-block text-xs font-semibold px-2.5 py-0.5 rounded-lg bg-neutral-100 text-neutral-500 dark:bg-neutral-800 dark:text-neutral-400">
+    <span className="inline-block text-xs font-semibold px-2.5 py-0.5 rounded-lg bg-neutral-100 text-neutral-500 dark:bg-neutral-700 dark:text-neutral-300">
       Call for hours
     </span>
   );
@@ -148,6 +152,7 @@ const ALSO_HERE_VISIBLE = 3;
 export function ServiceCard({ service, isActive, index, total }: ServiceCardProps) {
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [alsoExpanded, setAlsoExpanded] = useState(false);
+  const [reviewOpen, setReviewOpen] = useState(false);
 
   const name = service.service_name || "Service";
   const cardLabel =
@@ -180,7 +185,7 @@ export function ServiceCard({ service, isActive, index, total }: ServiceCardProp
       role="listitem"
       aria-label={cardLabel}
       aria-current={isActive ? "true" : undefined}
-      className="flex-shrink-0 w-[280px] snap-start bg-white border border-neutral-200 rounded-2xl p-4 flex flex-col gap-2.5 transition-all hover:border-neutral-300 hover:shadow-md dark:bg-neutral-900 dark:border-neutral-800 dark:hover:border-neutral-700"
+      className="flex-shrink-0 w-[280px] snap-start bg-white border border-neutral-200 rounded-2xl p-4 flex flex-col gap-2.5 transition-all hover:border-neutral-300 hover:shadow-md dark:bg-neutral-800 dark:border-neutral-700 dark:hover:border-neutral-600"
     >
       {/* Name */}
       <div className="text-[0.95rem] font-semibold tracking-tight text-neutral-900 dark:text-neutral-100 leading-snug">
@@ -208,14 +213,45 @@ export function ServiceCard({ service, isActive, index, total }: ServiceCardProp
         )}
       </div>
 
-      {/* Review highlight — visible by default (builds trust) */}
-      {service.review_highlight && (
-        <div className="text-xs text-neutral-500 dark:text-neutral-400 leading-relaxed bg-neutral-50 border border-neutral-100 rounded-lg px-3 py-2 italic dark:bg-neutral-800/60 dark:border-neutral-800">
-          <span aria-hidden="true">💬 </span>
-          {service.review_highlight.length > 120
-            ? service.review_highlight.slice(0, 117) + "…"
-            : service.review_highlight}
-        </div>
+      {/* Review highlight — visible by default (builds trust). When the
+          full text exceeds the inline preview length, render as a button
+          that opens the detail dialog so users can read the rest. */}
+      {service.review_highlight && (() => {
+        const truncated = service.review_highlight.length > REVIEW_TRUNCATE_AT;
+        const preview = truncated
+          ? service.review_highlight.slice(0, REVIEW_TRUNCATE_TO) + "…"
+          : service.review_highlight;
+        const baseCls = "text-xs text-neutral-500 dark:text-neutral-400 leading-relaxed bg-neutral-50 border border-neutral-100 rounded-lg px-3 py-2 italic dark:bg-neutral-700/60 dark:border-neutral-700";
+        if (!truncated) {
+          return (
+            <div className={baseCls}>
+              <span aria-hidden="true">💬 </span>
+              {preview}
+            </div>
+          );
+        }
+        return (
+          <button
+            type="button"
+            onClick={() => setReviewOpen(true)}
+            aria-label={`Read full review for ${name}`}
+            className={`${baseCls} text-left w-full transition hover:bg-neutral-100 hover:border-neutral-200 cursor-pointer dark:hover:bg-neutral-800 dark:hover:border-neutral-700`}
+          >
+            <span aria-hidden="true">💬 </span>
+            {preview}
+            <span className="ml-1 not-italic font-medium text-amber-700 dark:text-amber-400">
+              Read more
+            </span>
+          </button>
+        );
+      })()}
+
+      {reviewOpen && service.review_highlight && (
+        <ReviewDetailDialog
+          review={service.review_highlight}
+          locationName={service.organization || name}
+          onClose={() => setReviewOpen(false)}
+        />
       )}
 
       {/* Badges row — referral, eligibility, fees side by side */}
@@ -252,7 +288,7 @@ export function ServiceCard({ service, isActive, index, total }: ServiceCardProp
             {alsoVisible.map((cat) => (
               <span
                 key={cat}
-                className="inline-block text-[0.68rem] font-medium px-2 py-0.5 rounded-md bg-neutral-50 border border-neutral-200 text-neutral-600 dark:bg-neutral-800 dark:border-neutral-700 dark:text-neutral-300"
+                className="inline-block text-[0.68rem] font-medium px-2 py-0.5 rounded-md bg-neutral-50 border border-neutral-200 text-neutral-600 dark:bg-neutral-700 dark:border-neutral-600 dark:text-neutral-200"
               >
                 {ALSO_EMOJI[cat] || "\u2022"} {cat}
               </span>
@@ -261,7 +297,7 @@ export function ServiceCard({ service, isActive, index, total }: ServiceCardProp
               <button
                 type="button"
                 onClick={() => setAlsoExpanded(true)}
-                className="inline-block text-[0.68rem] font-medium px-2 py-0.5 rounded-md bg-neutral-50 border border-neutral-200 text-blue-600 hover:bg-blue-50 hover:border-blue-200 transition-colors dark:bg-neutral-800 dark:border-neutral-700 dark:text-blue-400 dark:hover:bg-blue-950/40 dark:hover:border-blue-900"
+                className="inline-block text-[0.68rem] font-medium px-2 py-0.5 rounded-md bg-neutral-50 border border-neutral-200 text-blue-600 hover:bg-blue-50 hover:border-blue-200 transition-colors dark:bg-neutral-700 dark:border-neutral-600 dark:text-blue-300 dark:hover:bg-blue-950/40 dark:hover:border-blue-900"
               >
                 +{alsoHiddenCount} more
               </button>
@@ -375,7 +411,7 @@ function ActionButtons({ service, name }: { service: ServiceResult; name: string
             type="button"
             onClick={() => setShowCallConfirm(true)}
             aria-label={`Call ${name}`}
-            className="flex-1 py-2 rounded-lg border border-neutral-900 bg-neutral-900 text-center text-xs font-semibold text-white transition hover:bg-neutral-700 dark:border-neutral-100 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-neutral-200"
+            className="flex-1 py-2 rounded-lg border border-neutral-900 bg-neutral-900 text-center text-xs font-semibold text-white transition hover:bg-neutral-700 dark:border-neutral-400 dark:bg-neutral-400 dark:text-neutral-900 dark:hover:bg-neutral-300 dark:hover:border-neutral-300"
           >
             Call
           </button>
@@ -386,7 +422,7 @@ function ActionButtons({ service, name }: { service: ServiceResult; name: string
             target="_blank"
             rel="noopener noreferrer"
             aria-label={`Get directions to ${name}`}
-            className="flex-1 py-2 rounded-lg border border-amber-300 bg-amber-300 text-center text-xs font-semibold text-neutral-900 transition hover:bg-amber-400 hover:border-amber-400"
+            className="flex-1 py-2 rounded-lg border border-amber-300 bg-amber-300 text-center text-xs font-semibold text-neutral-900 transition hover:bg-amber-400 hover:border-amber-400 dark:border-[rgba(255,213,79,0.75)] dark:bg-[rgba(255,213,79,0.75)] dark:hover:bg-[rgba(255,213,79,0.95)] dark:hover:border-[rgba(255,213,79,0.95)]"
           >
             Directions
           </a>
@@ -397,7 +433,7 @@ function ActionButtons({ service, name }: { service: ServiceResult; name: string
             target="_blank"
             rel="noopener noreferrer"
             aria-label={`Visit ${name} website`}
-            className="flex-1 py-2 rounded-lg border border-neutral-200 bg-neutral-50 text-center text-xs font-semibold text-neutral-900 transition hover:bg-neutral-100 hover:border-neutral-300 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-100 dark:hover:bg-neutral-700 dark:hover:border-neutral-600"
+            className="flex-1 py-2 rounded-lg border border-neutral-200 bg-neutral-50 text-center text-xs font-semibold text-neutral-900 transition hover:bg-neutral-100 hover:border-neutral-300 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-100 dark:hover:bg-neutral-800 dark:hover:border-neutral-600"
           >
             Website
           </a>
@@ -430,6 +466,7 @@ interface LocationCardProps {
 
 export function LocationCard({ services, isActive, index, total }: LocationCardProps) {
   const [detailsOpen, setDetailsOpen] = useState(false);
+  const [reviewOpen, setReviewOpen] = useState(false);
 
   const primary = services[0];
   const orgName = primary.organization || "Location";
@@ -471,7 +508,7 @@ export function LocationCard({ services, isActive, index, total }: LocationCardP
       role="listitem"
       aria-label={cardLabel}
       aria-current={isActive ? "true" : undefined}
-      className="flex-shrink-0 w-[280px] snap-start bg-white border border-neutral-200 rounded-2xl p-4 flex flex-col gap-2.5 transition-all hover:border-neutral-300 hover:shadow-md dark:bg-neutral-900 dark:border-neutral-800 dark:hover:border-neutral-700"
+      className="flex-shrink-0 w-[280px] snap-start bg-white border border-neutral-200 rounded-2xl p-4 flex flex-col gap-2.5 transition-all hover:border-neutral-300 hover:shadow-md dark:bg-neutral-800 dark:border-neutral-700 dark:hover:border-neutral-600"
     >
       {/* Organization header */}
       <div className="flex flex-col gap-0.5">
@@ -572,12 +609,44 @@ export function LocationCard({ services, isActive, index, total }: LocationCardP
         </div>
       </div>
 
-      {/* Review highlight */}
-      {review && (
-        <div className="text-xs text-neutral-500 dark:text-neutral-400 leading-relaxed bg-neutral-50 border border-neutral-100 rounded-lg px-3 py-2 italic dark:bg-neutral-800/60 dark:border-neutral-800">
-          <span aria-hidden="true">💬 </span>
-          {review.length > 120 ? review.slice(0, 117) + "…" : review}
-        </div>
+      {/* Review highlight — clickable to open the full text when
+          truncated. See ServiceCard above for the same pattern. */}
+      {review && (() => {
+        const truncated = review.length > REVIEW_TRUNCATE_AT;
+        const preview = truncated
+          ? review.slice(0, REVIEW_TRUNCATE_TO) + "…"
+          : review;
+        const baseCls = "text-xs text-neutral-500 dark:text-neutral-400 leading-relaxed bg-neutral-50 border border-neutral-100 rounded-lg px-3 py-2 italic dark:bg-neutral-700/60 dark:border-neutral-700";
+        if (!truncated) {
+          return (
+            <div className={baseCls}>
+              <span aria-hidden="true">💬 </span>
+              {preview}
+            </div>
+          );
+        }
+        return (
+          <button
+            type="button"
+            onClick={() => setReviewOpen(true)}
+            aria-label={`Read full review for ${orgName}`}
+            className={`${baseCls} text-left w-full transition hover:bg-neutral-100 hover:border-neutral-200 cursor-pointer dark:hover:bg-neutral-800 dark:hover:border-neutral-700`}
+          >
+            <span aria-hidden="true">💬 </span>
+            {preview}
+            <span className="ml-1 not-italic font-medium text-amber-700 dark:text-amber-400">
+              Read more
+            </span>
+          </button>
+        );
+      })()}
+
+      {reviewOpen && review && (
+        <ReviewDetailDialog
+          review={review}
+          locationName={orgName}
+          onClose={() => setReviewOpen(false)}
+        />
       )}
 
       {/* Shared details */}

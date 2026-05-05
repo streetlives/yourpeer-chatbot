@@ -79,7 +79,9 @@ const INITIAL_QUICK_REPLIES: QuickReply[] = [
   { label: "💼 Jobs", value: "I need help finding a job" },
   { label: "⚖️ Legal Help", value: "I need legal help" },
   { label: "🧠 Mental Health", value: "I need mental health support" },
-  { label: "📋 Other", value: "I need other services" },
+  // "📋 Other" intentionally removed — its destination wasn't clear
+  // from the label, so users avoided it. Free-text entry already
+  // handles "other" needs naturally.
 ];
 
 // ---------------------------------------------------------------------------

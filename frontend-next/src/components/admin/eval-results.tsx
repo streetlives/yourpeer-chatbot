@@ -75,7 +75,14 @@ export function EvalResults({ report }: EvalResultsProps) {
         <EvalSummaryCard href="#eval-scenario-details" label="Scenarios, jump to Scenario Details">
           <StatCard label="Scenarios" value={summary.scenarios_evaluated} colorClass="text-amber-500" />
         </EvalSummaryCard>
-        <EvalSummaryCard href="#eval-scenario-details" label="Passing rate, jump to Scenario Details">
+        <EvalSummaryCard
+          href="#eval-scenario-details"
+          label="Passing rate, jump to Scenario Details"
+          // Spans 2 columns because this card's note ("N/M ≥ 4.0") is
+          // longer than the others' (which have none) and otherwise wraps
+          // to a second line, making the card taller than its peers.
+          className="sm:col-span-2"
+        >
           <StatCard
             label="Passing Rate"
             value={passingDisplay}
@@ -291,17 +298,19 @@ export function EvalResults({ report }: EvalResultsProps) {
 function EvalSummaryCard({
   href,
   label,
+  className = "",
   children,
 }: {
   href: string;
   label: string;
+  className?: string;
   children: React.ReactNode;
 }) {
   return (
     <a
       href={href}
       aria-label={label}
-      className="block rounded-lg transition hover:ring-2 hover:ring-amber-300 hover:ring-offset-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 focus-visible:ring-offset-1"
+      className={`block rounded-lg transition hover:ring-2 hover:ring-amber-300 hover:ring-offset-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 focus-visible:ring-offset-1 ${className}`}
     >
       {children}
     </a>

@@ -63,7 +63,7 @@ export function useGeolocation() {
           setState({ latitude: null, longitude: null, error: message, loading: false });
           resolve({ error: message });
         },
-        { enableHighAccuracy: false, timeout: 10_000, maximumAge: 300_000 },
+        { enableHighAccuracy: false, timeout: 20_000, maximumAge: 300_000 },
       );
     });
   }, []);

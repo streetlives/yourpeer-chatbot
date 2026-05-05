@@ -16,7 +16,11 @@ export function AdminAuthGuard({ children }: { children: React.ReactNode }) {
 
   const checkAuth = useCallback(async () => {
     try {
-      const res = await fetch("/api/admin/auth");
+      // `cache: "no-store"` — without it Next.js/the browser can serve
+      // a stale "authenticated" response, letting an expired session
+      // appear past the login screen. See lib/chat/api.ts for the same
+      // fix on admin GET endpoints.
+      const res = await fetch("/api/admin/auth", { cache: "no-store" });
       // A non-OK response (typically 5xx) is an infrastructure problem,
       // not an auth signal. Rendering the login form in that case would
       // be misleading — the user thinks "I'm not signed in" when actually
