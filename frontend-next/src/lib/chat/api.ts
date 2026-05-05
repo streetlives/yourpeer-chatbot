@@ -12,6 +12,7 @@ import type {
   AuditEvent,
   QueryLogEntry,
   EvalReport,
+  EvalResultsResponse,
   EvalRunStatus,
 } from "./types";
 import { generateRequestId } from "./request-id";
@@ -165,8 +166,15 @@ export async function fetchQueries(limit = 200): Promise<QueryLogEntry[]> {
 export async function fetchEvalResults(): Promise<EvalReport | null> {
   const res = await fetch(`${ADMIN_API}/eval`, { signal: timeoutSignal(ADMIN_TIMEOUT_MS) });
   if (!res.ok) throw new Error("Failed to load eval results");
-  const data = await res.json();
-  return data.results === null ? null : data;
+  const data = (await res.json()) as EvalResultsResponse;
+
+  // Distinguish the empty-state wrapper `{ results: null }` from a real
+  // report by checking for the `summary` field, which only EvalReport has.
+  // Checking `data.results === null` would also work today but breaks
+  // silently if the backend ever drops the wrapper; the structural check
+  // is robust to either shape.
+  if (!("summary" in data)) return null;
+  return data;
 }
 
 export async function uploadEvalReport(file: File): Promise<{ detail: string }> {

@@ -373,6 +373,19 @@ export interface EvalReport {
   scenarios?: EvalScenarioResult[];
 }
 
+/**
+ * Response from GET /admin/api/eval. The endpoint either returns a full
+ * EvalReport (with summary + scenarios + critical_failures), or — when no
+ * report has been generated yet — `{ results: null }`.
+ *
+ * The two shapes are distinguished by the presence of `summary`. When the
+ * backend is updated to return the report directly without a wrapper, this
+ * type can be replaced with `EvalReport | { results: null }` and the
+ * fetcher narrowed to use a discriminator. For now, this type encodes the
+ * actual wire format so future drift is caught at the type level.
+ */
+export type EvalResultsResponse = EvalReport | { results: null };
+
 export interface EvalRunStatus {
   running: boolean;
   message?: string;
