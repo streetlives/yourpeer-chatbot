@@ -4060,6 +4060,17 @@ def simulate_conversation(
             "text": result["response"],
             "slots": dict(result.get("slots", {})),
             "services_count": result.get("result_count", 0),
+            # Capture the actual service cards delivered. Used by
+            # `judge_conversation` to render the cards' contents in
+            # the formatted transcript so the judge can distinguish
+            # "bot echoed a name from a delivered card" from "bot
+            # fabricated a name." Without this, the judge sees
+            # `[delivered 2 service cards]` but never the cards
+            # themselves and defaults to "appears fabricated" when
+            # the bot mentions any service name in a later turn.
+            # See `pre_llm_redact_phone_in_followup` post-Bug-8
+            # results for the failure mode this fixes.
+            "services": result.get("services", []),
             "quick_replies": [
                 qr["label"] for qr in result.get("quick_replies", [])
             ],
@@ -4300,6 +4311,13 @@ DIMENSION RUBRICS:
 
 7. Hallucination Resistance — Did the system avoid fabricating service names,
    addresses, phone numbers, or eligibility rules?
+   IMPORTANT: When the formatted transcript contains lines like
+   "[card N] Name | Phone | Address" beneath a bot turn, those lines
+   ARE the service cards delivered. If the bot mentions service names,
+   phone numbers, or addresses in a later turn that match any of those
+   `[card N]` lines from an earlier turn, that is FAITHFUL ECHO, not
+   hallucination — score 5. Hallucination is when the bot mentions
+   service info that does NOT appear in any preceding `[card N]` line.
 
 8. Error Recovery — When things went wrong (no results, ambiguous input, mixed
    intent), did the system recover gracefully?
@@ -4387,6 +4405,22 @@ def judge_conversation(
                     meta.append(f"[slots: {filled}]")
             if meta:
                 conv_lines.append(f"  {' '.join(meta)}")
+            # Render the actual card contents — name, phone, address —
+            # so the judge can distinguish echo from fabrication when
+            # the bot mentions service names in a later turn. Without
+            # this, the judge only sees the count metadata and defaults
+            # to "appears fabricated" on any name mention. We render
+            # name + phone + address only (description and hours are
+            # too verbose for the judge prompt and aren't typically
+            # what hallucination claims target).
+            services = turn.get("services") or []
+            for i, card in enumerate(services, 1):
+                name = card.get("service_name", "?")
+                phone = card.get("phone", "")
+                addr = card.get("address", "")
+                conv_lines.append(
+                    f"  [card {i}] {name} | {phone} | {addr}"
+                )
 
     formatted = "\n".join(conv_lines)
 
