@@ -11,36 +11,7 @@ import { triggerEvalRun, fetchEvalStatus, uploadEvalReport } from "@/lib/chat/ap
 import type { EvalReport } from "@/lib/chat/types";
 import { StatCard } from "./stat-card";
 import * as Dialog from "@radix-ui/react-dialog";
-
-const DIM_LABELS: Record<string, string> = {
-  slot_extraction: "Slot Extraction",
-  dialog_efficiency: "Dialog Efficiency",
-  response_tone: "Response Tone",
-  safety_crisis: "Safety & Crisis",
-  confirmation_ux: "Confirmation UX",
-  privacy: "Privacy",
-  hallucination_resistance: "Hallucination Resistance",
-  error_recovery: "Error Recovery",
-  dignity_anti_stigma: "Dignity & Anti-Stigma",
-  cultural_responsiveness: "Cultural Responsiveness",
-  equity_of_access: "Equity of Access",
-};
-
-const DIM_TARGETS: Record<string, number> = {
-  slot_extraction: 4.0,
-  dialog_efficiency: 3.5,
-  response_tone: 4.0,
-  safety_crisis: 4.5,
-  confirmation_ux: 3.5,
-  privacy: 4.5,
-  hallucination_resistance: 4.5,
-  error_recovery: 3.5,
-  dignity_anti_stigma: 4.0,
-  cultural_responsiveness: 4.0,
-  equity_of_access: 4.0,
-};
-
-const BLOCKERS = new Set(["safety_crisis", "hallucination_resistance"]);
+import { EVAL_DIMENSIONS, BLOCKER_KEYS, DIM_SHORT_LABELS } from "@/lib/admin/eval-dimensions";
 
 // -- Eval Runner Controls --
 
@@ -249,10 +220,9 @@ export function EvalResults({ report }: EvalResultsProps) {
       {/* Dimension scores */}
       <div className="mb-7">
         <h3 className="text-base font-semibold mb-4">Dimension Scores</h3>
-        {Object.entries(DIM_LABELS).map(([key, label]) => {
+        {EVAL_DIMENSIONS.map(({ key, shortLabel, target, blocker }) => {
           const d = summary.dimension_averages[key];
           if (!d) return null;
-          const target = DIM_TARGETS[key] ?? 4.0;
           const pct = (d.average / 5) * 100;
           const targetPct = (target / 5) * 100;
           const meetsTarget = d.average >= target;
@@ -273,8 +243,8 @@ export function EvalResults({ report }: EvalResultsProps) {
               className="flex items-center gap-3.5 py-2.5 border-b border-neutral-100 last:border-b-0"
             >
               <div className="w-[220px] flex-shrink-0 text-sm font-medium">
-                {label}
-                {BLOCKERS.has(key) && (
+                {shortLabel}
+                {blocker && (
                   <span className="ml-1.5 text-[0.65rem] text-red-600 font-semibold">
                     BLOCKER
                   </span>
@@ -394,7 +364,7 @@ export function EvalResults({ report }: EvalResultsProps) {
                   key={dim}
                   className="text-xs text-amber-600 mt-1.5 pl-3 border-l-2 border-amber-400"
                 >
-                  {DIM_LABELS[dim] || dim}: {d.score}/5 — {d.justification}
+                  {DIM_SHORT_LABELS[dim] || dim}: {d.score}/5 — {d.justification}
                 </div>
               );
             })}

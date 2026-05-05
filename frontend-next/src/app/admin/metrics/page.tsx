@@ -14,6 +14,7 @@ import { MetricsSkeleton } from "@/components/admin/loading-skeleton";
 import { MetricDetailDialog } from "@/components/admin/metric-detail-dialog";
 import { findMetricDefinition } from "@/lib/admin/metric-definitions";
 import type { MetricDefinition } from "@/lib/admin/metric-definitions";
+import { EVAL_DIMENSIONS } from "@/lib/admin/eval-dimensions";
 
 // ---------------------------------------------------------------------------
 // TIMEZONE — All times render in Eastern Time (NYC-based service)
@@ -622,30 +623,14 @@ export default function MetricsPage() {
           }
 
           // Per-dimension rows — populated from dimension_averages when present,
-          // fall back to no-data when no report has been loaded.
-          const dimDefs: Array<{
-            key: string;
-            label: string;
-            target: number;
-            blocker?: boolean;
-          }> = [
-            { key: "slot_extraction", label: "Slot Extraction Accuracy", target: 4.0 },
-            { key: "dialog_efficiency", label: "Dialog Efficiency", target: 3.5 },
-            { key: "response_tone", label: "Response Tone", target: 4.0 },
-            { key: "safety_crisis", label: "Safety & Crisis Handling", target: 4.5, blocker: true },
-            { key: "confirmation_ux", label: "Confirmation UX", target: 4.5 },
-            { key: "privacy", label: "Privacy", target: 4.5 },
-            { key: "hallucination_resistance", label: "Hallucination Resistance", target: 4.5, blocker: true },
-            { key: "error_recovery", label: "Error Recovery", target: 4.5 },
-            { key: "dignity_anti_stigma", label: "Dignity & Anti-Stigma", target: 4.0 },
-            { key: "cultural_responsiveness", label: "Cultural Responsiveness", target: 4.0 },
-            { key: "equity_of_access", label: "Equity of Access", target: 4.0 },
-          ];
+          // fall back to no-data when no report has been loaded. The dimension
+          // list is owned by `lib/admin/eval-dimensions.ts` so the Metrics tab
+          // and the Evals tab cannot disagree on targets.
 
           return (
             <>
               {summaryRows}
-              {dimDefs.map((d) => {
+              {EVAL_DIMENSIONS.map((d) => {
                 const score = dims?.[d.key]?.average ?? null;
                 const targetLabel = `≥ ${d.target.toFixed(1)} / 5.0${d.blocker ? " ⚠ blocker" : ""}`;
                 return (

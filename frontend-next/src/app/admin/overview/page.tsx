@@ -53,12 +53,15 @@ export default function OverviewPage() {
           : "text-red-600";
 
   // --- Avg Turns to Result ---
+  // Thresholds match `metrics/page.tsx`'s Median Turns to Query row:
+  // target ≤ 5 (free-text), warning 5–7, off-target > 7. The note shown
+  // to users says "≤ 5" rather than "≤ 4" so the two tabs agree.
   const avgTurns = s.avg_turns_to_result;
   const avgTurnsDisplay = avgTurns != null ? `${avgTurns}` : "—";
   const avgTurnsCls =
     avgTurns == null ? ""
-      : avgTurns <= 4 ? "text-green-600"
-        : avgTurns <= 6 ? "text-amber-500"
+      : avgTurns <= 5 ? "text-green-600"
+        : avgTurns <= 7 ? "text-amber-500"
           : "text-red-600";
 
   // --- No-Result Rate ---
@@ -97,7 +100,7 @@ export default function OverviewPage() {
           label="Avg Turns to Result"
           value={avgTurnsDisplay}
           colorClass={avgTurnsCls}
-          note="target ≤ 4"
+          note="target ≤ 5"
         />
         <StatCard
           label="Crises Detected"
