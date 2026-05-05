@@ -47,13 +47,16 @@ export function QueryLogTable({ queries }: QueryLogTableProps) {
             </tr>
           </thead>
           <tbody>
-            {(sorted as unknown as QueryLogEntry[]).map((q, i) => {
+            {(sorted as unknown as QueryLogEntry[]).map((q) => {
               const params = Object.entries(q.params || {})
                 .map(([k, v]) => `${k}=${JSON.stringify(v)}`)
                 .join(", ");
+              // Composite key — same reasoning as event-feed: a single
+              // session can fire multiple queries at the same timestamp.
+              const rowKey = `${q.timestamp}|${q.template_name}|${q.session_id ?? ""}`;
               return (
                 <tr
-                  key={i}
+                  key={rowKey}
                   onClick={() => setSelected(q)}
                   onKeyDown={(e) => {
                     if (e.key === "Enter" || e.key === " ") {

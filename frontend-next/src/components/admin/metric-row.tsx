@@ -88,7 +88,16 @@ export function MetricRow({
           onClick={onClick ? () => onClick(name) : undefined}
           role={onClick ? "button" : undefined}
           tabIndex={onClick ? 0 : undefined}
-          onKeyDown={onClick ? (e) => { if (e.key === "Enter") onClick(name); } : undefined}
+          onKeyDown={
+            onClick
+              ? (e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    onClick(name);
+                  }
+                }
+              : undefined
+          }
         >
           {name}
         </div>

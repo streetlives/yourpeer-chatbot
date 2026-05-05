@@ -308,28 +308,38 @@ export function CostCalculator() {
         </div>
         <div className="grid grid-cols-4 gap-2">
           {[2000, 10000, 36000, 50000].map((users) => {
+            // Project monthly cost at this user count by recomputing turn
+            // counts and running them through taskCost() for the recommended
+            // config. Reuses the same pricing data as the main calculator,
+            // so this stays in sync with model-data.ts pricing forever.
+            const recommended = configsWithCost.find((c) => c.id === "recommended")!;
             const turns = users * s.turnsPerSession;
-            let t =
-              ((200 / 1e6) * 1 + (80 / 1e6) * 5) *
-                Math.round(turns * (s.conversationalPct / 100)) +
-              ((450 / 1e6) * 1 + (60 / 1e6) * 5) *
-                Math.round(turns * (s.llmSlotPct / 100)) +
-              ((300 / 1e6) * 1 + (10 / 1e6) * 5) *
-                Math.round(turns * (s.classificationPct / 100)) +
-              ((350 / 1e6) * 3 + (20 / 1e6) * 15) *
-                Math.round(turns * (s.crisisLlmPct / 100)) +
-              ((280 / 1e6) * 1 + (70 / 1e6) * 5) *
-                Math.round(turns * (s.emotionalPct / 100)) +
-              ((350 / 1e6) * 1 + (60 / 1e6) * 5) *
-                Math.round(turns * (s.botQuestionPct / 100));
-            if (s.includeJury) t += ((800 / 1e6) * 3 + (400 / 1e6) * 15) * juryTurns;
-            if (s.includeMultilang) t += ((250 / 1e6) * 3 + (100 / 1e6) * 15) * Math.round(turns * (s.conversationalPct / 100));
+            const projectedCost =
+              taskCost(recommended.models.conv, "conversational",
+                Math.round(turns * (s.conversationalPct / 100))) +
+              taskCost(recommended.models.slots, "slotExtraction",
+                Math.round(turns * (s.llmSlotPct / 100))) +
+              taskCost(recommended.models.classification, "classification",
+                Math.round(turns * (s.classificationPct / 100))) +
+              taskCost(recommended.models.crisis, "crisisDetection",
+                Math.round(turns * (s.crisisLlmPct / 100))) +
+              taskCost(recommended.models.emotionalAck, "emotionalAck",
+                Math.round(turns * (s.emotionalPct / 100))) +
+              taskCost(recommended.models.botQuestion, "botQuestion",
+                Math.round(turns * (s.botQuestionPct / 100))) +
+              (s.includeJury
+                ? taskCost(recommended.models.jury, "jury", juryTurns)
+                : 0) +
+              (s.includeMultilang
+                ? taskCost(recommended.models.futureMultilang, "futureMultilang",
+                    Math.round(turns * (s.conversationalPct / 100)))
+                : 0);
             return (
               <div key={users} className="text-center py-1.5">
                 <div className="text-xs text-neutral-500">
                   {users === 36000 ? "AI capacity" : users.toLocaleString() + " users"}
                 </div>
-                <div className="text-lg font-bold font-mono">{fmt(t)}</div>
+                <div className="text-lg font-bold font-mono">{fmt(projectedCost)}</div>
                 <div className="text-[0.65rem] text-neutral-400">/month</div>
               </div>
             );

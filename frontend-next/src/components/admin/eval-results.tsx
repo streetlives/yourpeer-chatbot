@@ -37,16 +37,49 @@ export function EvalRunner({ onComplete }: EvalRunnerProps) {
 
   useEffect(() => () => stopPolling(), [stopPolling]);
 
+  // Polling safety thresholds. The interval is 2.5s, so:
+  //   1800 attempts ≈ 75 minutes (full eval is 30–60 min, plenty of headroom)
+  //   5 consecutive failures ≈ 12.5 seconds of network silence
+  // The hard cap protects against a backend that hangs in `running:true`
+  // forever; the consecutive-failure cap protects against the dashboard
+  // losing the backend (e.g. server restart mid-run) without the spinner
+  // spinning indefinitely on a zombie status check.
+  const MAX_POLL_ATTEMPTS = 1800;
+  const MAX_CONSECUTIVE_FAILURES = 5;
+
+  // Stop polling and put the runner back into a non-running state, with
+  // a final status message. The eval may or may not still be running on
+  // the backend — we just stop watching from this client.
+  const stopWatching = useCallback(
+    (message: string) => {
+      stopPolling();
+      setRunning(false);
+      setStatus(message);
+    },
+    [stopPolling],
+  );
+
   async function handleRun() {
     setConfirmOpen(false);
     setRunning(true);
     setStatus("Starting eval run…");
+    let attempts = 0;
+    let consecutiveFailures = 0;
     try {
-      const count = scenarioCount ? parseInt(scenarioCount) : undefined;
-      await triggerEvalRun(count);
+      const count = scenarioCount ? parseInt(scenarioCount, 10) : undefined;
+      const validCount = count != null && Number.isFinite(count) && count > 0 ? count : undefined;
+      await triggerEvalRun(validCount);
       pollRef.current = setInterval(async () => {
+        attempts += 1;
+        if (attempts > MAX_POLL_ATTEMPTS) {
+          stopWatching(
+            "⚠️ Status check timed out after 75 minutes — eval may still be running on the server. Refresh to check results.",
+          );
+          return;
+        }
         try {
           const s = await fetchEvalStatus();
+          consecutiveFailures = 0;
           const progress = s.total ? ` (${s.completed || 0}/${s.total})` : "";
           setStatus((s.message || "") + progress);
           if (!s.running) {
@@ -60,7 +93,14 @@ export function EvalRunner({ onComplete }: EvalRunnerProps) {
             }
           }
         } catch {
-          setStatus("Lost connection to server.");
+          consecutiveFailures += 1;
+          if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+            stopWatching(
+              "⚠️ Lost connection to server. The eval may still be running — refresh to check.",
+            );
+          } else {
+            setStatus(`Lost connection to server (retrying… ${consecutiveFailures}/${MAX_CONSECUTIVE_FAILURES}).`);
+          }
         }
       }, 2500);
     } catch (err) {
@@ -123,7 +163,7 @@ export function EvalRunner({ onComplete }: EvalRunnerProps) {
               <strong>Cost warning:</strong> Each scenario makes multiple
               Anthropic API calls (Haiku for conversation, Sonnet for user
               simulation, Opus for judging across 11 dimensions).
-              A full run of 167 scenarios typically costs <strong>$15–25</strong> in
+              A full run (currently around 175 scenarios) typically costs <strong>$15–25</strong> in
               API credits and takes 30–60 minutes. The backend will be under
               heavier load during the run.
             </div>
@@ -175,6 +215,20 @@ export function EvalRunner({ onComplete }: EvalRunnerProps) {
 
       {status && (
         <span className="text-sm text-neutral-500">{status}</span>
+      )}
+
+      {running && (
+        <button
+          onClick={() =>
+            stopWatching(
+              "Stopped watching status. The eval may still be running on the server.",
+            )
+          }
+          aria-label="Stop polling for eval status"
+          className="ml-2 px-2.5 py-1 rounded-md text-xs font-medium text-neutral-500 hover:text-neutral-700 hover:bg-neutral-100 transition"
+        >
+          Stop watching
+        </button>
       )}
     </div>
   );
@@ -307,9 +361,9 @@ export function EvalResults({ report }: EvalResultsProps) {
           <h3 className="text-base font-semibold text-red-600 mb-3">
             ⚠ Critical Failures
           </h3>
-          {report.critical_failures.map((cf, i) => (
+          {report.critical_failures.map((cf) => (
             <div
-              key={i}
+              key={`${cf.scenario}|${cf.failure}`}
               className="bg-red-50 rounded-lg px-3.5 py-2.5 mb-1.5 text-sm"
             >
               <strong>{cf.scenario}</strong>: {cf.failure}
@@ -320,11 +374,11 @@ export function EvalResults({ report }: EvalResultsProps) {
 
       {/* Scenario details */}
       <h3 className="text-base font-semibold mb-3">Scenario Details</h3>
-      {(report.scenarios || []).map((s, i) => {
+      {(report.scenarios || []).map((s) => {
         if (s.error) {
           return (
             <div
-              key={i}
+              key={s.name}
               className="bg-white border border-red-200 rounded-lg px-5 py-4 mb-2.5"
             >
               <div className="font-semibold text-sm">❌ {s.name}</div>
@@ -343,7 +397,7 @@ export function EvalResults({ report }: EvalResultsProps) {
 
         return (
           <div
-            key={i}
+            key={s.name}
             className="bg-white border border-neutral-200 rounded-lg px-5 py-4 mb-2.5"
           >
             <div className="flex justify-between items-center mb-2">
