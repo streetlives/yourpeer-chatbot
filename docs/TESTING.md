@@ -205,7 +205,7 @@ All backend modules and all public functions are covered. Tests are in `tests/un
 | `chat_models.py` | `integration/test_http_routes_and_models.py`, `integration/test_schema_and_mock_sync.py` | 27+ | Full |
 | `admin.py` (routes) | `integration/test_admin_api_routes.py` | 28 | Full |
 | `chat.py` (route) | `integration/test_http_routes_and_models.py` | 48 | Full |
-| `claude_client.py` | `unit/test_claude_client.py` | 14 | Full |
+| `claude_client.py` | `unit/test_claude_client.py` | 19 | Full |
 | `main.py` | `unit/test_main.py` | 14 | Full |
 | LLM isolation (cross-cutting) | `integration/test_service_data_llm_firewall.py` | 57 | Full |
 
@@ -462,7 +462,7 @@ Validates PII detection and redaction across eight PII types plus bot response r
 | Overlap handling | varies | Overlapping PII patterns handled correctly |
 | Integration | varies | End-to-end PII redaction through the chatbot pipeline |
 
-### `test_claude_client.py` — 14 tests
+### `test_claude_client.py` — 19 tests
 
 Unit tests for the Claude LLM client. All external calls mocked.
 
