@@ -3787,6 +3787,8 @@ except FileNotFoundError:
 try:
     from app.rag.query_executor import NEIGHBORHOOD_CENTERS, NYC_LOCATION_ALIASES
     from app.services.chatbot.execution import _CITY_TO_BOROUGH
+    from app.rag.query_templates import TEMPLATES as _PROD_TEMPLATES
+    from app.rag import resolve_template_key as _resolve_template_key
 except ImportError:
     # The eval can be imported in environments that don't have the
     # backend on the path (e.g. spot-check tests). Provide minimal
@@ -3802,6 +3804,9 @@ except ImportError:
         "Brooklyn": "Brooklyn", "Queens": "Queens",
         "Bronx": "Bronx", "Staten Island": "Staten Island",
     }
+    _PROD_TEMPLATES = {}
+    def _resolve_template_key(s):
+        return s
 
 
 def _resolve_borough(location: str | None) -> str | None:
@@ -3875,6 +3880,43 @@ _SERVICE_TYPE_TO_TEMPLATE = {
 }
 
 
+# Service-type -> set of lower-cased taxonomy names that production's
+# default query would match. Built from production's TEMPLATES dict
+# (default_params.taxonomy_names) at module-load time so the eval mock
+# can faithfully model the colocated-services filter.
+#
+# Production's colocated query (FILTER_BY_COLOCATED_TAXONOMY in
+# query_templates.py) selects rows where SOME OTHER service at the same
+# location has a taxonomy matching the colocated service type's
+# taxonomy_names. The fixture exposes that data per-row in the
+# `also_available` field (built by the same SQL pattern in
+# scripts/fixture/_q3_clean.sql), so a row matches the colocated filter
+# iff ``also_available`` overlaps the colocated type's taxonomy set.
+#
+# Empty dict when production isn't importable (e.g. spot-check tests).
+# In that case the colocated filter degrades to "always fallback,"
+# which matches the no-colocated-resolution case in production's
+# rag/__init__.py:544-545.
+def _build_service_type_taxonomy_lookup() -> dict[str, set[str]]:
+    """For each service_type label, return the lower-cased set of
+    taxonomy names that production's default query would match.
+
+    Empty dict when production isn't on the path.
+    """
+    if not _PROD_TEMPLATES:
+        return {}
+    out: dict[str, set[str]] = {}
+    for service_type in _SERVICE_TYPE_TO_TEMPLATE:
+        key = _resolve_template_key(service_type)
+        if key and key in _PROD_TEMPLATES:
+            tax_names = _PROD_TEMPLATES[key]["default_params"].get("taxonomy_names", [])
+            out[service_type] = {str(t).lower() for t in tax_names}
+    return out
+
+
+_SERVICE_TYPE_TAXONOMY_LOOKUP: dict[str, set[str]] = _build_service_type_taxonomy_lookup()
+
+
 # The on-error / no-results shape. Defined before _mock_query_services
 # so the function can reference it for sentinel handling, and so that
 # the MOCK_QUERY_RESULTS module-level constant computed below sees a
@@ -3887,6 +3929,107 @@ MOCK_EMPTY_RESULTS = {
     "relaxed": False,
     "execution_ms": 30,
 }
+
+
+def _filter_rows_by_service_and_borough(
+    service_type: str | None,
+    borough: str | None,
+) -> tuple[list[dict], bool]:
+    """Filter the fixture by service_type and borough.
+
+    Returns ``(rows, relaxed)`` where ``relaxed`` indicates the borough
+    filter was widened to all boroughs (mirrors production's relaxed-
+    search behavior when nothing matches the requested borough).
+    """
+    rows = [r for r in _FIXTURE if r.get("bot_service_type") == service_type]
+    relaxed = False
+    if borough:
+        in_borough = [r for r in rows if r.get("borough") == borough]
+        if in_borough:
+            rows = in_borough
+        else:
+            # No services in that borough - mirror production's
+            # relaxed-search behavior by widening to all boroughs and
+            # flagging that the result is broader than requested.
+            relaxed = True
+    return rows, relaxed
+
+
+def _filter_rows_by_colocated(
+    rows: list[dict],
+    colocated_service_types: list | None,
+) -> tuple[list[dict], bool]:
+    """Apply production's colocated-services filter.
+
+    Production's FILTER_BY_COLOCATED_TAXONOMY restricts results to
+    locations where SOME OTHER service is tagged with one of the
+    colocated types' taxonomies. The fixture exposes this per-row in
+    the ``also_available`` field, so we filter rows whose
+    ``also_available`` overlaps the union of colocated taxonomies.
+
+    Returns ``(filtered_rows, colocated_resolved)`` where
+    ``colocated_resolved`` is True iff at least one colocated type
+    was resolvable to a taxonomy set. False indicates the unresolved
+    case (production sets ``colocated_fallback=True`` here regardless
+    of result count - see rag/__init__.py:544-545).
+    """
+    if not colocated_service_types:
+        return rows, True
+
+    colocated_taxonomies: set[str] = set()
+    for co_type in colocated_service_types:
+        taxonomies = _SERVICE_TYPE_TAXONOMY_LOOKUP.get(co_type)
+        if taxonomies:
+            colocated_taxonomies |= taxonomies
+
+    if not colocated_taxonomies:
+        # Unresolved colocated types - production marks fallback and
+        # returns the unfiltered primary results. We signal this with
+        # colocated_resolved=False so the caller can take that path.
+        return rows, False
+
+    filtered = [
+        r for r in rows
+        if {str(t).lower() for t in (r.get("also_available") or [])}
+        & colocated_taxonomies
+    ]
+    return filtered, True
+
+
+def _filter_rows_by_service_detail(
+    rows: list[dict],
+    service_detail: str | None,
+) -> list[dict]:
+    """Narrow rows by ``service_detail`` substring match.
+
+    Production's service_detail narrowing
+    (rag/__init__.py::_DETAIL_TO_TAXONOMY_NARROWING) is hand-curated and
+    swaps the entire taxonomy_names list for a sub-category-specific
+    one. We can't replicate that exactly without re-implementing the
+    narrowing dict, so we approximate with a substring match against
+    each row's service_name, service_taxonomies, and description.
+
+    This is intentionally permissive - if the detail doesn't match
+    anything, we fall back to the unfiltered rows rather than
+    returning empty. Production's narrowing is stricter, but a strict
+    eval would invalidate scenarios where the fixture happens to lack
+    a perfect detail match.
+    """
+    if not service_detail:
+        return rows
+    detail_lower = service_detail.lower()
+    matched = [
+        r for r in rows
+        if (
+            detail_lower in (r.get("service_name") or "").lower()
+            or detail_lower in (r.get("service_description") or "").lower()
+            or any(
+                detail_lower in str(t).lower()
+                for t in (r.get("service_taxonomies") or [])
+            )
+        )
+    ]
+    return matched if matched else rows
 
 
 def _mock_query_services(*args, **kwargs) -> dict:
@@ -3902,15 +4045,27 @@ def _mock_query_services(*args, **kwargs) -> dict:
     Honored kwargs (production parity):
         - service_type (positional or kw): main filter
         - location: borough resolution via production lookup chain
-        - taxonomy_override: list[str] — when present, restricts to
+        - colocated_service_types: list[str] - co-location filter.
+          Restricts rows to those whose ``also_available`` overlaps
+          the union of taxonomies for the listed types. If 0 rows
+          match the strict filter, retries without colocation and
+          sets ``colocated_fallback=True`` in the response (matches
+          production's rag/__init__.py:530-545 retry-and-flag pattern).
+        - service_detail: str - sub-category narrowing. Substring
+          match against service_name / taxonomies / description.
+          Permissive: if no rows match, falls back to unfiltered
+          rather than returning empty. Production's narrowing is
+          stricter (hand-curated taxonomy swap) but this approximation
+          covers the common case for eval purposes.
+        - taxonomy_override: list[str] - when present, restricts to
           rows whose ``service_taxonomies`` overlap (case-insensitive)
           with the override list. Used by production's
           population-fallback flow (e.g. ``taxonomy_override=["youth"]``
           to find youth-specific shelters).
-        - max_results: int — caps the result count. Used by
+        - max_results: int - caps the result count. Used by
           population-fallback (``_POPULATION_FALLBACK_MAX = 3``).
         - all other kwargs (age, gender, urgency, etc.) accepted but
-          IGNORED — production filters by them but the eval fixture
+          IGNORED - production filters by them but the eval fixture
           doesn't carry the data needed to honor them. Tracked as
           Foundation 8 of the eval-quality plan.
 
@@ -3921,6 +4076,8 @@ def _mock_query_services(*args, **kwargs) -> dict:
     # Extract service_type from positional or keyword.
     service_type = args[0] if args else kwargs.get("service_type")
     location = kwargs.get("location")
+    colocated_service_types = kwargs.get("colocated_service_types")
+    service_detail = kwargs.get("service_detail")
     taxonomy_override = kwargs.get("taxonomy_override")
     max_results = kwargs.get("max_results")
 
@@ -3930,23 +4087,40 @@ def _mock_query_services(*args, **kwargs) -> dict:
 
     borough = _resolve_borough(location)
 
-    # Filter the fixture by service_type and borough.
-    rows = [r for r in _FIXTURE if r.get("bot_service_type") == service_type]
-    relaxed = False
-    if borough:
-        in_borough = [r for r in rows if r.get("borough") == borough]
-        if in_borough:
-            rows = in_borough
-        else:
-            # No services in that borough - mirror production's
-            # relaxed-search behavior by widening to all boroughs and
-            # flagging that the result is broader than requested.
-            relaxed = True
+    # Step 1: filter by service_type and borough.
+    rows, relaxed = _filter_rows_by_service_and_borough(service_type, borough)
 
-    # Honor taxonomy_override: production's population-fallback flow
-    # passes a list like ["youth"] or ["lgbtq young adult"] to filter
-    # to population-specific services. Match case-insensitive against
-    # the row's service_taxonomies array.
+    # Step 2: apply colocated filter and remember whether to fall back.
+    # Production retries the query without the colocated filter when
+    # the strict filter returns 0, and sets colocated_fallback=True
+    # on the response (rag/__init__.py:532-539). It also sets
+    # colocated_fallback=True when the colocated types couldn't be
+    # resolved at all (line 544-545), regardless of result count.
+    colocated_fallback = False
+    if colocated_service_types:
+        filtered_rows, colocated_resolved = _filter_rows_by_colocated(
+            rows, colocated_service_types,
+        )
+        if not colocated_resolved:
+            # Couldn't resolve colocated types to taxonomies - production
+            # flags fallback regardless of result count.
+            colocated_fallback = True
+        elif not filtered_rows:
+            # Strict colocated filter returned 0 - production retries
+            # without and flags fallback. We do the same here: rows
+            # remains unfiltered (use as-is below).
+            colocated_fallback = True
+        else:
+            # Strict colocated filter returned something - use it.
+            rows = filtered_rows
+
+    # Step 3: honor service_detail (sub-category narrowing).
+    rows = _filter_rows_by_service_detail(rows, service_detail)
+
+    # Step 4: honor taxonomy_override (population-fallback flow).
+    # Production's population-fallback passes a list like ["youth"] or
+    # ["lgbtq young adult"] to filter to population-specific services.
+    # Match case-insensitive against the row's service_taxonomies.
     if taxonomy_override:
         override_lower = {str(t).lower() for t in taxonomy_override}
         rows = [
@@ -3955,9 +4129,9 @@ def _mock_query_services(*args, **kwargs) -> dict:
             & override_lower
         ]
 
-    # Honor max_results: production's population-fallback caps results
-    # at _POPULATION_FALLBACK_MAX (= 3) to keep the fallback section
-    # short. Other call sites also use this for pagination.
+    # Step 5: honor max_results. Production's population-fallback caps
+    # results at _POPULATION_FALLBACK_MAX (= 3) to keep the fallback
+    # section short. Other call sites also use this for pagination.
     if max_results is not None and isinstance(max_results, int):
         rows = rows[:max_results]
 
@@ -3970,8 +4144,12 @@ def _mock_query_services(*args, **kwargs) -> dict:
     }
     if taxonomy_override:
         params["taxonomy_override"] = list(taxonomy_override)
+    if colocated_service_types:
+        params["colocated_service_types"] = list(colocated_service_types)
+    if service_detail:
+        params["service_detail"] = service_detail
 
-    return {
+    response = {
         "services": cards,
         "result_count": len(cards),
         "template_used": template,
@@ -3979,6 +4157,9 @@ def _mock_query_services(*args, **kwargs) -> dict:
         "relaxed": relaxed,
         "execution_ms": 45,
     }
+    if colocated_fallback:
+        response["colocated_fallback"] = True
+    return response
 
 
 # --- Backward-compat alias ---

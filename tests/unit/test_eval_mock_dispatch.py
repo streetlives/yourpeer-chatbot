@@ -470,3 +470,192 @@ class TestBackwardCompat:
     def test_mock_empty_results_has_zero_count(self):
         assert runner.MOCK_EMPTY_RESULTS["result_count"] == 0
         assert runner.MOCK_EMPTY_RESULTS["services"] == []
+
+
+# ---------------------------------------------------------------------------
+# Colocated service filter
+# ---------------------------------------------------------------------------
+
+
+class TestColocatedServiceTypes:
+    """Production's FILTER_BY_COLOCATED_TAXONOMY restricts results to
+    locations where some other service is tagged with one of the
+    colocated types' taxonomies. The mock approximates this using each
+    row's `also_available` field (built by the same SQL pattern in
+    scripts/fixture/_q3_clean.sql).
+
+    Production retries the query without the colocated filter when the
+    strict filter returns 0, and sets `colocated_fallback=True` on the
+    response (rag/__init__.py:530-545). The mock should mirror this.
+    """
+
+    def test_no_colocated_means_no_fallback_flag(self):
+        """Sanity: when no colocated_service_types is passed, the
+        response should not carry colocated_fallback at all."""
+        r = runner._mock_query_services(service_type="food", location="brooklyn")
+        assert "colocated_fallback" not in r
+
+    def test_colocated_with_strict_match_returns_intersection(self):
+        """When at least one row's also_available overlaps the
+        colocated taxonomy set, return that filtered subset and do
+        NOT set colocated_fallback."""
+        # Brooklyn food + clothing colocation: fixture has 1 strict
+        # match (Food Pantry whose location also offers Clothing Pantry).
+        r = runner._mock_query_services(
+            service_type="food", location="brooklyn",
+            colocated_service_types=["clothing"],
+        )
+        assert r["result_count"] >= 1
+        assert not r.get("colocated_fallback")
+
+    def test_colocated_with_zero_strict_matches_falls_back(self):
+        """When no row's also_available overlaps the colocated
+        taxonomy set, return the unfiltered primary results AND set
+        colocated_fallback=True (matches production retry-and-flag)."""
+        # Brooklyn food + shelter colocation: fixture has 0 strict
+        # matches. Should fall back to all 5 Brooklyn food rows.
+        r = runner._mock_query_services(
+            service_type="food", location="brooklyn",
+            colocated_service_types=["shelter"],
+        )
+        assert r["result_count"] == 5
+        assert r.get("colocated_fallback") is True
+
+    def test_colocated_unresolvable_type_flags_fallback(self):
+        """Production marks colocated_fallback=True when no colocated
+        type can be resolved to a taxonomy set, regardless of whether
+        the unfiltered query would have returned results
+        (rag/__init__.py:544-545)."""
+        r = runner._mock_query_services(
+            service_type="food", location="brooklyn",
+            colocated_service_types=["this_is_not_a_real_service_type"],
+        )
+        assert r["result_count"] == 5  # unfiltered primary still served
+        assert r.get("colocated_fallback") is True
+
+    def test_colocated_recorded_in_params_applied(self):
+        """The response's params_applied should reflect the colocated
+        types so log_query_execution can serialize them."""
+        r = runner._mock_query_services(
+            service_type="shelter", location="manhattan",
+            colocated_service_types=["food"],
+        )
+        assert r["params_applied"].get("colocated_service_types") == ["food"]
+
+    def test_colocated_real_data_smoke(self):
+        """Sanity check against fixture data: shelter in Manhattan
+        with food colocation should find the cluster of homeless-
+        services centers that offer multiple services. This is
+        regression-protection against accidentally filtering all rows."""
+        r = runner._mock_query_services(
+            service_type="shelter", location="manhattan",
+            colocated_service_types=["food"],
+        )
+        # Fixture has 4 such rows (Day Sleeping Room, Shelter
+        # Placement, Runaway Youth, Overnight Men Sign-Up). Don't pin
+        # exact count - fixture refresh may shift it.
+        assert r["result_count"] >= 1
+        assert not r.get("colocated_fallback")
+
+
+# ---------------------------------------------------------------------------
+# service_detail narrowing
+# ---------------------------------------------------------------------------
+
+
+class TestServiceDetailNarrowing:
+    """Production's service_detail narrowing
+    (rag/__init__.py::_DETAIL_TO_TAXONOMY_NARROWING) is hand-curated.
+    The mock approximates with a substring match against
+    service_name / taxonomies / description, with permissive fallback
+    when nothing matches.
+    """
+
+    def test_no_service_detail_returns_unfiltered(self):
+        """Sanity: when service_detail is None, behavior is unchanged."""
+        r = runner._mock_query_services(service_type="food", location="brooklyn")
+        assert r["result_count"] == 5
+
+    def test_service_detail_narrows_when_substring_matches(self):
+        """When at least one row's service_name/taxonomies/description
+        contains the detail substring, narrow to those rows."""
+        # 'soup kitchen' should match the Brooklyn Community Breakfast
+        # row whose taxonomy is "Soup Kitchen".
+        r = runner._mock_query_services(
+            service_type="food", location="brooklyn",
+            service_detail="soup kitchen",
+        )
+        assert r["result_count"] >= 1
+        assert all(
+            "soup kitchen" in (c.get("service_name") or "").lower()
+            or any(
+                "soup kitchen" in str(t).lower()
+                for t in (c.get("service_taxonomies") or [])
+            )
+            for c in r["services"]
+        )
+
+    def test_service_detail_falls_back_when_no_substring_match(self):
+        """Permissive: when nothing matches, return the unfiltered
+        rows. Production's narrowing is stricter (taxonomy swap), but
+        a strict eval would invalidate scenarios where the fixture
+        happens to lack a perfect match. Better to score the bot on
+        what it CAN return than to penalize the fixture's gap."""
+        r = runner._mock_query_services(
+            service_type="food", location="brooklyn",
+            service_detail="quantumcryogenicfeasts",
+        )
+        assert r["result_count"] == 5  # unfiltered primary rows
+
+    def test_service_detail_recorded_in_params_applied(self):
+        r = runner._mock_query_services(
+            service_type="other", location="manhattan",
+            service_detail="financial services",
+        )
+        assert r["params_applied"].get("service_detail") == "financial services"
+
+
+# ---------------------------------------------------------------------------
+# Service-type taxonomy lookup (built once at module load)
+# ---------------------------------------------------------------------------
+
+
+class TestServiceTypeTaxonomyLookup:
+    """The lookup is built at module load by reading production's
+    TEMPLATES dict. Ensures it's populated for the canonical service
+    types."""
+
+    def test_lookup_is_populated(self):
+        # Empty when production isn't on the path (spot-check env).
+        # In the normal test environment, production should be
+        # importable.
+        assert runner._SERVICE_TYPE_TAXONOMY_LOOKUP
+
+    def test_lookup_has_all_canonical_service_types(self):
+        canonical = set(runner._SERVICE_TYPE_TO_TEMPLATE.keys())
+        assert set(runner._SERVICE_TYPE_TAXONOMY_LOOKUP.keys()) == canonical
+
+    def test_lookup_food_includes_food_pantry(self):
+        food = runner._SERVICE_TYPE_TAXONOMY_LOOKUP.get("food", set())
+        assert "food pantry" in food
+        assert "soup kitchen" in food
+
+    def test_lookup_shelter_includes_youth_and_families(self):
+        shelter = runner._SERVICE_TYPE_TAXONOMY_LOOKUP.get("shelter", set())
+        # Production's shelter template enumerates child taxonomies
+        # explicitly (see query_templates.py:659-685). The eval mock
+        # depends on these being present for colocated filtering to
+        # work right.
+        assert "youth" in shelter
+        assert "families" in shelter
+        assert "single adult" in shelter
+
+    def test_lookup_values_are_lowercased(self):
+        """All taxonomy names must be lowercased for case-insensitive
+        comparison against fixture rows' service_taxonomies and
+        also_available."""
+        for service_type, taxonomies in runner._SERVICE_TYPE_TAXONOMY_LOOKUP.items():
+            for tax in taxonomies:
+                assert tax == tax.lower(), (
+                    f"{service_type} taxonomy {tax!r} is not lowercased"
+                )
