@@ -5,7 +5,6 @@
 // https://opensource.org/licenses/MIT.
 
 interface ChatStatusProps {
-  isLoading: boolean;
   error: string | null;
 }
 
@@ -19,10 +18,8 @@ interface ChatStatusProps {
  * geolocation flow's "Getting your location..." message), and this
  * component is only responsible for surfacing errors.
  *
- * isLoading is still accepted for API stability and future use
- * (e.g., a debouncing throttle indicator) but currently unused.
  */
-export function ChatStatus({ isLoading: _isLoading, error }: ChatStatusProps) {
+export function ChatStatus({ error }: ChatStatusProps) {
   if (!error) return null;
   return (
     <div

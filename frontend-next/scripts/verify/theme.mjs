@@ -293,6 +293,7 @@ test("end-to-end: system-user toggles to light", () => {
 
 test("end-to-end: choice persists across 'reload'", () => {
   const { store } = installStubs();
+  console.log('store', store)
   writeStoredChoice("dark");
   // Simulate reload: same store, re-read
   const reloaded = readStoredChoice();

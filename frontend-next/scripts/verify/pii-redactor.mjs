@@ -30,7 +30,7 @@
  */
 
 import assert from "node:assert/strict";
-import { detectPII, redactPII, hasPII } from "../../src/lib/chat/pii-redactor.ts";
+import { redactPII, hasPII } from "../../src/lib/chat/pii-redactor.ts";
 
 let passed = 0;
 let failed = 0;
