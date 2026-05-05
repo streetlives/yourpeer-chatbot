@@ -9,7 +9,8 @@
 import { useCallback } from "react";
 import { useAdminStore } from "@/lib/admin/store";
 import { useDataSlice } from "@/hooks/use-data-slice";
-import { EvalRunner, EvalResults } from "@/components/admin/eval-results";
+import { EvalRunner } from "@/components/admin/eval-runner";
+import { EvalResults } from "@/components/admin/eval-results";
 import { EvalSkeleton } from "@/components/admin/loading-skeleton";
 
 export default function EvalsPage() {

@@ -6,6 +6,7 @@
 import type { AuditEvent } from "@/lib/chat/types";
 import { useSortableTable } from "@/hooks/use-sortable-table";
 import { SortableHeader } from "./sortable-header";
+import { formatRelativeTime, formatAbsoluteTooltip } from "@/lib/admin/format-time";
 
 function typeBadge(type: string) {
   const label = type.replace(/_/g, " ");
@@ -74,7 +75,8 @@ export function EventFeed({ events }: EventFeedProps) {
         <tbody>
           {sorted.map((e) => {
             const ev = e as unknown as AuditEvent;
-            const time = new Date(ev.timestamp).toLocaleTimeString("en-US", { timeZone: "America/New_York" });
+            const time = formatRelativeTime(ev.timestamp);
+            const timeTooltip = formatAbsoluteTooltip(ev.timestamp);
             // Composite key — timestamp alone isn't unique because a single
             // session can log multiple events at the same millisecond
             // boundary (e.g. conversation_turn immediately followed by
@@ -164,7 +166,10 @@ export function EventFeed({ events }: EventFeedProps) {
 
             return (
               <tr key={rowKey} className="hover:bg-neutral-50/50">
-                <td className="px-4 py-2.5 font-mono text-xs border-b border-neutral-100">
+                <td
+                  className="px-4 py-2.5 font-mono text-xs border-b border-neutral-100"
+                  title={timeTooltip}
+                >
                   {time}
                 </td>
                 <td className="px-4 py-2.5 border-b border-neutral-100">

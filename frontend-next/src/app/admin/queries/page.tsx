@@ -17,7 +17,14 @@ export default function QueriesPage() {
   return (
     <DataPanel
       slice={slice}
-      skeleton={<TableSkeleton rows={6} cols={4} />}
+      skeleton={
+        <TableSkeleton
+          rows={6}
+          // Matches QueryLogTable: Time, Template, Params (wide truncated),
+          // Results (small), Duration (small), Relaxed (small badge)
+          widths={["w-20", "w-28", "w-44", "w-12", "w-14", "w-12"]}
+        />
+      }
       emptyState={
         <div className="text-center py-16 text-neutral-400">
           <div className="text-3xl mb-3">🔍</div>

@@ -45,7 +45,14 @@ export default function OverviewPage() {
         <h2 className="text-base font-semibold mb-4">Recent Activity</h2>
         <DataPanel
           slice={eventsSlice}
-          skeleton={<TableSkeleton rows={5} cols={3} />}
+          skeleton={
+            <TableSkeleton
+              rows={5}
+              // Matches EventFeed: Time (relative), Type (badge),
+              // Detail (wide), Session (id-prefix)
+              widths={["w-20", "w-24", "w-44", "w-20"]}
+            />
+          }
           emptyState={
             <div className="text-center py-10 text-neutral-400">
               <p className="text-sm">No recent events to display.</p>

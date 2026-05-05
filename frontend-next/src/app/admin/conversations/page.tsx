@@ -17,7 +17,14 @@ export default function ConversationsPage() {
   return (
     <DataPanel
       slice={slice}
-      skeleton={<TableSkeleton rows={6} cols={5} />}
+      skeleton={
+        <TableSkeleton
+          rows={6}
+          // Matches ConversationTable: Session (id-prefix), Turns (small),
+          // Outcome (badge), Slots (wide truncated), Last Active (timestamp)
+          widths={["w-24", "w-8", "w-20", "w-48", "w-28"]}
+        />
+      }
       emptyState={
         <div className="text-center py-16 text-neutral-400">
           <div className="text-3xl mb-3">💬</div>
