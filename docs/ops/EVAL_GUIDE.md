@@ -165,9 +165,24 @@ Given this research, a chatbot that is "functional but flat" is not meeting the 
 
 ---
 
-## The R28 baseline
+## Baselines and the R28 calibration event
 
-Run 28 (April 2026) established a new scoring baseline due to three simultaneous changes:
+### Baseline runs
+
+The eval runner supports comparing each new run against a saved baseline. A baseline is a snapshot of headline metrics, dimension scores, category averages, and key fix-target scenarios from a specific past run, used to compute deltas in the report.
+
+Two baselines are defined in `tests/eval/eval_llm_judge.py::BASELINES`:
+
+| Baseline | Use it for |
+|---|---|
+| **R38** (default) | Run-over-run comparison and STOP-dimension floor checks. R38 is the strongest Opus-era run — 4.61 overall, 173/175 passing, 8 critical failures. |
+| R28 | Long-trajectory analysis only. R28 was the first Opus-era run and serves as a historical-context anchor. Selected via `--baseline R28`. |
+
+Baselines are hardcoded constants today; Foundation 1 of `EVAL_QUALITY_ENGINEERING_PLAN.md` proposes replacing them with a `history.json` derived from archived run reports. Until then, when a new high-water-mark run lands, update both `R38_BASELINE` (or rename to whichever run) and the multi-run comparison columns in new entries.
+
+### The R28 calibration event
+
+Run 28 (April 2026) was not just a high-water-mark run — it introduced a scoring discontinuity that makes runs 14–27 not directly comparable to run 28+. Three things changed simultaneously:
 
 1. **Judge model upgrade.** The judge switched from Claude Sonnet to Claude Opus. Opus is stricter across all dimensions, scoring approximately 0.10–0.15 lower on the same chatbot behavior. This is intentional — Opus surfaces real gaps that Sonnet missed.
 
@@ -176,6 +191,8 @@ Run 28 (April 2026) established a new scoring baseline due to three simultaneous
 3. **Weighted scoring.** Dimension weights were introduced, with safety-critical dimensions weighted up to 3.0× and dialog polish weighted down to 0.5×.
 
 Because of these changes, Runs 14–27 (Sonnet judge, 8 dimensions, unweighted) are not directly comparable to Run 28+ (Opus judge, 11 dimensions, weighted). The historical progress tables in earlier runs show the Sonnet-era trajectory; Run 28 starts a new trajectory.
+
+R38 is the operational baseline; R28 is the start of the comparable era.
 
 ---
 
