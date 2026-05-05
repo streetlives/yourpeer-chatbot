@@ -268,38 +268,18 @@ export function ChatContainer() {
                 break;
               }
             }
-            return (
-              <>
-                {messages.map((msg) => (
-                  <ChatMessageBoundary key={msg.id}>
-                    <ChatMessage
-                      message={msg}
-                      onQuickReply={send}
-                      onRetry={retry}
-                      onCancel={cancelQueued}
-                      isLatestBot={msg.id === latestBotId}
-                      onFeedback={submitFeedback}
-                    />
-                  </ChatMessageBoundary>
-                ))}
-                {/* Inline "searching" status — same visual treatment
-                    as the geolocation flow's transient "Getting your
-                    location…" bot bubble. ChatStatus below the chat
-                    is too far from the action; users miss it. This
-                    sits inline where the bot reply will land. */}
-                {isLoading && (
-                  <div
-                    role="status"
-                    aria-live="polite"
-                    className="self-start max-w-[82%]"
-                  >
-                    <div className="px-4 py-3 rounded-2xl rounded-bl-md text-[0.94rem] leading-relaxed italic text-neutral-500 bg-neutral-100 dark:bg-neutral-700 dark:text-neutral-400 animate-in fade-in slide-in-from-bottom-1">
-                      Searching for services…
-                    </div>
-                  </div>
-                )}
-              </>
-            );
+            return messages.map((msg) => (
+              <ChatMessageBoundary key={msg.id}>
+                <ChatMessage
+                  message={msg}
+                  onQuickReply={send}
+                  onRetry={retry}
+                  onCancel={cancelQueued}
+                  isLatestBot={msg.id === latestBotId}
+                  onFeedback={submitFeedback}
+                />
+              </ChatMessageBoundary>
+            ));
           })()}
         </div>
       </div>

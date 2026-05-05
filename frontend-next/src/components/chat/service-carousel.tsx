@@ -6,7 +6,7 @@
 
 "use client";
 
-import { useRef, useState, useCallback } from "react";
+import { useRef, useState, useCallback, useEffect } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { ServiceCard, LocationCard } from "./service-card";
 import type { ServiceResult } from "@/lib/chat/types";
@@ -93,6 +93,22 @@ export function ServiceCarousel({ services }: ServiceCarouselProps) {
       scrollByCards(1);
     }
   }
+
+  // Compute initial boundary state on mount. handleScroll only fires
+  // on scroll events, so without this the default `atEnd: false`
+  // sticks when all cards fit in the viewport (maxScroll = 0, no
+  // scroll ever happens). The Next button would render enabled and
+  // click as a no-op. This effect closes that gap.
+  useEffect(() => {
+    if (!trackRef.current) return;
+    const t = trackRef.current;
+    const maxScroll = t.scrollWidth - t.clientWidth;
+    setAtStart(t.scrollLeft <= 1);
+    setAtEnd(maxScroll <= 0 || t.scrollLeft >= maxScroll - 1);
+    // Empty deps: services prop is stable per carousel instance
+    // (each bot message renders its own ServiceCarousel), so a
+    // run-once-on-mount effect is what's wanted here.
+  }, []);
 
   return (
     <div

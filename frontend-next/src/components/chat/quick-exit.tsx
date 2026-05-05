@@ -153,13 +153,15 @@ export function QuickExit() {
         className={[
           // Inline in chat header next to ThemeToggle. Previously
           // fixed top-right of viewport; moved here for visual
-          // adjacency with the theme toggle. Trade-off: the button
-          // is briefly absent during chat hydration (which renders
-          // <Loading…> until Zustand persist completes). Accepted
-          // because hydration is sub-second on a healthy session
-          // and the Esc-Esc keyboard shortcut still works during
-          // hydration via the document-level keydown listener.
-          "inline-flex items-center",
+          // adjacency with the theme toggle. No interactivity
+          // regression: SSR renders the button into the initial
+          // HTML in both placements, and the keydown listener
+          // registers in useEffect (post-hydration) regardless of
+          // where the component is mounted.
+          // gap-1.5 separates the ✕ glyph from the label — flex
+          // collapses whitespace between flex items, so a trailing
+          // space inside the span renders as zero gap without this.
+          "inline-flex items-center gap-1.5",
           // Visual: red, dense, unmissable but not screaming.
           "px-3 py-2 rounded-lg",
           "bg-red-600 text-white text-sm font-semibold",
@@ -172,7 +174,7 @@ export function QuickExit() {
           "dark:bg-red-600 dark:hover:bg-red-500 dark:ring-red-900/60",
         ].join(" ")}
       >
-        <span aria-hidden="true">✕ </span>
+        <span aria-hidden="true">✕</span>
         Leave site
       </button>
     </>

@@ -24,20 +24,20 @@ interface ServiceCardProps {
 function StatusBadge({ status }: { status?: string }) {
   if (status === "open") {
     return (
-      <span className="inline-block text-xs font-semibold px-2.5 py-0.5 rounded-lg bg-green-100 text-green-800 dark:bg-green-950/50 dark:text-green-300">
+      <span className="inline-block text-xs font-semibold px-2.5 py-0.5 rounded-lg bg-green-100 text-green-800 dark:bg-green-300 dark:text-green-950">
         Open now
       </span>
     );
   }
   if (status === "closed") {
     return (
-      <span className="inline-block text-xs font-semibold px-2.5 py-0.5 rounded-lg bg-red-50 text-red-700 dark:bg-red-950/40 dark:text-red-300">
+      <span className="inline-block text-xs font-semibold px-2.5 py-0.5 rounded-lg bg-red-50 text-red-700 dark:bg-red-300 dark:text-red-950">
         Closed
       </span>
     );
   }
   return (
-    <span className="inline-block text-xs font-semibold px-2.5 py-0.5 rounded-lg bg-neutral-100 text-neutral-500 dark:bg-neutral-700 dark:text-neutral-300">
+    <span className="inline-block text-xs font-semibold px-2.5 py-0.5 rounded-lg bg-neutral-100 text-neutral-500 dark:bg-neutral-300 dark:text-neutral-900">
       Call for hours
     </span>
   );
@@ -258,17 +258,17 @@ export function ServiceCard({ service, isActive, index, total }: ServiceCardProp
       {(service.fees || service.requires_membership || service.eligibility_summary) && (
         <div className="flex items-center gap-1.5 flex-wrap">
           {service.requires_membership && (
-            <span className="inline-block text-xs font-semibold text-amber-800 bg-amber-100 px-2 py-0.5 rounded-lg dark:text-amber-300 dark:bg-amber-950/50">
+            <span className="inline-block text-xs font-semibold text-amber-800 bg-amber-100 px-2 py-0.5 rounded-lg dark:text-amber-950 dark:bg-amber-300">
               Ref. may be required
             </span>
           )}
           {service.eligibility_summary && (
-            <span className="inline-block text-xs font-semibold text-blue-800 bg-blue-50 px-2 py-0.5 rounded-lg dark:text-blue-300 dark:bg-blue-950/50">
+            <span className="inline-block text-xs font-semibold text-blue-800 bg-blue-50 px-2 py-0.5 rounded-lg dark:text-blue-950 dark:bg-blue-300">
               {service.eligibility_summary}
             </span>
           )}
           {service.fees && (
-            <span className="inline-block text-xs font-semibold text-green-800 bg-green-100 px-2 py-0.5 rounded-lg dark:text-green-300 dark:bg-green-950/50">
+            <span className="inline-block text-xs font-semibold text-green-800 bg-green-100 px-2 py-0.5 rounded-lg dark:text-green-950 dark:bg-green-300">
               {service.fees}
             </span>
           )}
@@ -535,17 +535,17 @@ export function LocationCard({ services, isActive, index, total }: LocationCardP
       {allSameBadges && (primary.fees || primary.requires_membership || primary.eligibility_summary) && (
         <div className="flex items-center gap-1.5 flex-wrap">
           {primary.requires_membership && (
-            <span className="inline-block text-xs font-semibold text-amber-800 bg-amber-100 px-2 py-0.5 rounded-lg dark:text-amber-300 dark:bg-amber-950/50">
+            <span className="inline-block text-xs font-semibold text-amber-800 bg-amber-100 px-2 py-0.5 rounded-lg dark:text-amber-950 dark:bg-amber-300">
               Ref. may be required
             </span>
           )}
           {primary.eligibility_summary && (
-            <span className="inline-block text-xs font-semibold text-blue-800 bg-blue-50 px-2 py-0.5 rounded-lg dark:text-blue-300 dark:bg-blue-950/50">
+            <span className="inline-block text-xs font-semibold text-blue-800 bg-blue-50 px-2 py-0.5 rounded-lg dark:text-blue-950 dark:bg-blue-300">
               {primary.eligibility_summary}
             </span>
           )}
           {primary.fees && (
-            <span className="inline-block text-xs font-semibold text-green-800 bg-green-100 px-2 py-0.5 rounded-lg dark:text-green-300 dark:bg-green-950/50">
+            <span className="inline-block text-xs font-semibold text-green-800 bg-green-100 px-2 py-0.5 rounded-lg dark:text-green-950 dark:bg-green-300">
               {primary.fees}
             </span>
           )}
@@ -587,17 +587,17 @@ export function LocationCard({ services, isActive, index, total }: LocationCardP
                 {!allSameBadges && (svc.fees || svc.requires_membership || svc.eligibility_summary) && (
                   <div className="flex items-center gap-1 flex-wrap">
                     {svc.requires_membership && (
-                      <span className="inline-block text-[0.65rem] font-semibold text-amber-800 bg-amber-100 px-1.5 py-0.5 rounded-md dark:text-amber-300 dark:bg-amber-950/50">
+                      <span className="inline-block text-[0.65rem] font-semibold text-amber-800 bg-amber-100 px-1.5 py-0.5 rounded-md dark:text-amber-950 dark:bg-amber-300">
                         Ref. may be required
                       </span>
                     )}
                     {svc.eligibility_summary && (
-                      <span className="inline-block text-[0.65rem] font-semibold text-blue-800 bg-blue-50 px-1.5 py-0.5 rounded-md dark:text-blue-300 dark:bg-blue-950/50">
+                      <span className="inline-block text-[0.65rem] font-semibold text-blue-800 bg-blue-50 px-1.5 py-0.5 rounded-md dark:text-blue-950 dark:bg-blue-300">
                         {svc.eligibility_summary}
                       </span>
                     )}
                     {svc.fees && (
-                      <span className="inline-block text-[0.65rem] font-semibold text-green-800 bg-green-100 px-1.5 py-0.5 rounded-md dark:text-green-300 dark:bg-green-950/50">
+                      <span className="inline-block text-[0.65rem] font-semibold text-green-800 bg-green-100 px-1.5 py-0.5 rounded-md dark:text-green-950 dark:bg-green-300">
                         {svc.fees}
                       </span>
                     )}
