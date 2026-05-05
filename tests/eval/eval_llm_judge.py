@@ -3700,221 +3700,168 @@ SCENARIOS = [
 # and formatting, not LLM-judged hallucination.
 
 
-def _service_card(
-    name: str,
-    org: str,
-    addr: str,
-    phone: str,
-    description: str,
-    *,
-    hours: str = "9:00 AM – 5:00 PM",
-    is_open: str = "open",
-    fees: str = "Free",
-    slug: str | None = None,
-) -> dict:
-    """Build a single service card with all ten expected fields.
+def _service_card_from_fixture(row: dict) -> dict:
+    """Build a service card from a fixture row.
 
-    Centralized so a future field addition (e.g. `service_taxonomies`
-    for filter-keyword tests) lands in one place rather than 14 dicts.
+    The fixture (tests/eval/fixtures/services.json) is populated by
+    scripts/fixture/_q3_clean.sql against the Streetlives prod DB.
+    Each row already has the production response shape's fields; this
+    helper just renames a few keys to match what the bot's downstream
+    pipeline expects.
     """
-    if slug is None:
-        slug = name.lower().replace(" ", "-").replace("'", "")
     return {
-        "service_name": name,
-        "organization": org,
-        "address": addr,
-        "phone": phone,
-        "fees": fees,
-        "description": description,
-        "hours_today": hours,
-        "is_open": is_open,
-        "yourpeer_url": f"https://yourpeer.nyc/locations/{slug}",
+        # service_id is what production uses to dedup fallback results
+        # against main results. Must pass through.
+        "service_id": row.get("service_id"),
+        "service_name": row.get("service_name") or "Unknown Service",
+        "organization": row.get("organization_name") or "",
+        "address": (
+            f"{row['address']}, {row.get('city', '')}, "
+            f"{row.get('state', 'NY')} {row.get('zip_code', '')}"
+        ).strip(),
+        "phone": row.get("phone") or "",
+        "fees": row.get("fees") or "Free",
+        "description": row.get("service_description") or "",
+        # Schedule data isn't in the fixture (omitted for simplicity);
+        # use plausible defaults.
+        "hours_today": "9:00 AM - 5:00 PM",
+        "is_open": "open",
+        "yourpeer_url": (
+            f"https://yourpeer.nyc/locations/{row['location_slug']}"
+            if row.get("location_slug") else ""
+        ),
+        # Pass through structured fields the production response carries.
+        # Used by post-results filter handlers (sub-category narrowing,
+        # also-here display, etc.).
+        "service_taxonomies": row.get("service_taxonomies") or [],
+        "also_available": row.get("also_available") or [],
+        "languages": row.get("languages_spoken") or [],
+        "accessibility": row.get("accessibility_info") or "",
+        "requires_membership": row.get("requires_membership") or False,
+        "last_validated_at": row.get("last_validated_at") or "",
+        "latitude": row.get("latitude"),
+        "longitude": row.get("longitude"),
     }
 
 
-# Address fragments by borough — used to compose realistic-looking
-# addresses that match the user's searched location. A scenario
-# searching "Manhattan" gets Manhattan addresses; "Brooklyn" gets
-# Brooklyn addresses. ZIP codes are real for the borough.
-_BOROUGH_ADDRESSES = {
-    "manhattan": ("Manhattan", "10001"),
-    "brooklyn": ("Brooklyn", "11201"),
-    "queens": ("Queens", "11101"),
-    "bronx": ("Bronx", "10451"),
-    "staten island": ("Staten Island", "10301"),
-}
+# ---------------------------------------------------------------------------
+# Fixture loading and location resolution
+# ---------------------------------------------------------------------------
+# The eval used to hand-code two pieces of NYC geography knowledge:
+#   1. A _BOROUGH_ADDRESSES dict mapping the five boroughs to ZIPs.
+#   2. A _NEIGHBORHOOD_ADDRESSES dict mapping ~60 neighborhoods to
+#      (display name, ZIP) tuples.
+# Both were drift surfaces. Production already maintains this knowledge
+# in app.rag.query_executor.NEIGHBORHOOD_CENTERS (62 neighborhoods with
+# lat/lon coords) and app.rag.query_executor.NYC_LOCATION_ALIASES
+# (neighborhood -> city name), plus app.services.chatbot.execution.
+# _CITY_TO_BOROUGH (city -> canonical borough). We import those directly
+# now, so when production adds a neighborhood, the eval picks it up
+# automatically.
+#
+# The eval also used to build mock service cards from hand-coded
+# templates (8 service-type builders x ~2 cards each, with hardcoded
+# names, descriptions, and phone numbers like "212-555-0101"). That's
+# replaced with a fixture loaded from a real Streetlives DB snapshot
+# (tests/eval/fixtures/services.json, refreshed via
+# scripts/fixture/03_extract_fixture.sql).
+#
+# Net effect: this dispatcher knows nothing about NYC and nothing about
+# what services exist. It's a pure filter on production data. Drift
+# surface goes from "hand-coded everything" to "fixture age."
+
+import json as _json
+import pathlib as _pathlib
+
+_FIXTURE_PATH = _pathlib.Path(__file__).parent / "fixtures" / "services.json"
+
+try:
+    _FIXTURE: list[dict] = _json.loads(_FIXTURE_PATH.read_text())
+except FileNotFoundError:
+    # Allow the module to import even when the fixture is missing -
+    # surfaces a clearer error at first use rather than at import time.
+    _FIXTURE = []
 
 
-def _resolve_borough(location: str | None) -> tuple[str, str]:
-    """Return (display_name, zip) for a location string.
+# Production's location knowledge - imported, not duplicated.
+try:
+    from app.rag.query_executor import NEIGHBORHOOD_CENTERS, NYC_LOCATION_ALIASES
+    from app.services.chatbot.execution import _CITY_TO_BOROUGH
+except ImportError:
+    # The eval can be imported in environments that don't have the
+    # backend on the path (e.g. spot-check tests). Provide minimal
+    # fallbacks so the resolver still works for borough names alone.
+    NEIGHBORHOOD_CENTERS = {}
+    NYC_LOCATION_ALIASES = {
+        "manhattan": "Manhattan", "brooklyn": "Brooklyn",
+        "queens": "Queens", "bronx": "Bronx",
+        "staten island": "Staten Island",
+    }
+    _CITY_TO_BOROUGH = {
+        "New York": "Manhattan", "Manhattan": "Manhattan",
+        "Brooklyn": "Brooklyn", "Queens": "Queens",
+        "Bronx": "Bronx", "Staten Island": "Staten Island",
+    }
 
-    Falls back to Brooklyn if no recognized borough is mentioned —
-    matches the old hardcoded mock so existing scenarios that don't
-    specify a location are stable.
+
+def _resolve_borough(location: str | None) -> str | None:
+    """Resolve a location string to a canonical NYC borough name.
+
+    Uses production's lookup chain, with one wrinkle:
+    `NYC_LOCATION_ALIASES` is inconsistent in what its values mean.
+    For neighborhoods it returns a city name ('harlem' -> 'New York'),
+    for boroughs it returns the borough display name directly
+    ('manhattan' -> 'Manhattan'). The chain `_CITY_TO_BOROUGH` keys
+    on city ('New York' -> 'Manhattan'), so the borough-name case
+    needs a small bypass.
+
+    Tries:
+        1. Direct alias match. If the result is already a canonical
+           borough name (in `_CITY_TO_BOROUGH.values()`), return it.
+           Otherwise look it up in `_CITY_TO_BOROUGH`.
+        2. Substring search for compound inputs ("midtown Manhattan",
+           "shelter in Harlem near Penn Station"). Longest match wins
+           so "east harlem" beats "harlem".
+
+    Returns None when the location can't be resolved.
     """
     if not location:
-        return "Brooklyn", "11201"
-    loc = location.lower()
-    for key, (name, zip_) in _BOROUGH_ADDRESSES.items():
-        if key in loc:
-            return name, zip_
-    return "Brooklyn", "11201"
+        return None
+    loc = location.lower().strip()
+
+    canonical_boroughs = set(_CITY_TO_BOROUGH.values())
+
+    def _alias_to_borough(alias_value: str) -> str | None:
+        """An alias may return either a city name (look up in
+        _CITY_TO_BOROUGH) or a canonical borough name directly."""
+        if alias_value in canonical_boroughs:
+            return alias_value
+        return _CITY_TO_BOROUGH.get(alias_value)
+
+    # Step 1: exact alias match.
+    alias_value = NYC_LOCATION_ALIASES.get(loc)
+    if alias_value:
+        borough = _alias_to_borough(alias_value)
+        if borough:
+            return borough
+
+    # Step 2: longest substring alias match.
+    for alias in sorted(NYC_LOCATION_ALIASES, key=len, reverse=True):
+        if alias in loc:
+            alias_value = NYC_LOCATION_ALIASES[alias]
+            borough = _alias_to_borough(alias_value)
+            if borough:
+                return borough
+
+    # Unresolved.
+    return None
 
 
-# Service-type → mock builder. Each builder returns a list of cards.
-# Keep two cards per type so list-based assertions ("found 2 results")
-# stay stable.
+# ---------------------------------------------------------------------------
+# Mock query_services - fixture-based
+# ---------------------------------------------------------------------------
 
-def _food_cards(borough: str, zip_: str) -> list[dict]:
-    return [
-        _service_card(
-            "Community Food Pantry", "NYC Services",
-            f"100 Main St, {borough}, NY {zip_}", "212-555-0001",
-            "Free food distribution Mondays and Wednesdays.",
-        ),
-        _service_card(
-            "Hope Kitchen", "Hope Center",
-            f"200 Hope Ave, {borough}, NY {zip_}", "718-555-0002",
-            "Hot meals served daily.",
-            hours="11:00 AM – 2:00 PM", is_open="closed",
-        ),
-    ]
-
-
-def _shelter_cards(borough: str, zip_: str) -> list[dict]:
-    return [
-        _service_card(
-            "Safe Haven Shelter", "Department of Homeless Services",
-            f"300 Refuge Rd, {borough}, NY {zip_}", "212-555-0101",
-            "Emergency shelter beds. Intake 24/7.",
-            hours="24 hours", is_open="open",
-        ),
-        _service_card(
-            "Covenant House Crisis Center", "Covenant House",
-            f"400 Covenant Pl, {borough}, NY {zip_}", "212-555-0102",
-            "Youth and young adult shelter (16–24).",
-            hours="24 hours", is_open="open",
-        ),
-    ]
-
-
-def _clothing_cards(borough: str, zip_: str) -> list[dict]:
-    return [
-        _service_card(
-            "Free Clothing Closet", "Catholic Charities",
-            f"500 Garment St, {borough}, NY {zip_}", "212-555-0201",
-            "Clothing distribution by appointment.",
-        ),
-        _service_card(
-            "Bowery Mission Thrift", "The Bowery Mission",
-            f"600 Mission Ave, {borough}, NY {zip_}", "212-555-0202",
-            "Free seasonal clothing for adults.",
-            hours="10:00 AM – 4:00 PM",
-        ),
-    ]
-
-
-def _personal_care_cards(borough: str, zip_: str) -> list[dict]:
-    return [
-        _service_card(
-            "Drop-In Showers", "BRC",
-            f"700 Hygiene Way, {borough}, NY {zip_}", "212-555-0301",
-            "Free showers, hygiene kits, and laundry.",
-        ),
-        _service_card(
-            "Project Renewal Drop-In", "Project Renewal",
-            f"800 Renewal Blvd, {borough}, NY {zip_}", "212-555-0302",
-            "Showers, mailroom, case management.",
-        ),
-    ]
-
-
-def _medical_cards(borough: str, zip_: str) -> list[dict]:
-    return [
-        _service_card(
-            "Free Health Clinic", "NYC Health + Hospitals",
-            f"900 Wellness Dr, {borough}, NY {zip_}", "212-555-0401",
-            "Walk-in primary care. Sliding scale.",
-            hours="8:00 AM – 6:00 PM",
-        ),
-        _service_card(
-            "Mount Sinai Beth Israel Outreach", "Mount Sinai",
-            f"1000 Sinai St, {borough}, NY {zip_}", "212-555-0402",
-            "Mobile medical outreach for the unhoused.",
-        ),
-    ]
-
-
-def _mental_health_cards(borough: str, zip_: str) -> list[dict]:
-    return [
-        _service_card(
-            "Bridges to Health Counseling", "Coalition for the Homeless",
-            f"1100 Hope Way, {borough}, NY {zip_}", "212-555-0501",
-            "Walk-in counseling and peer support.",
-        ),
-        _service_card(
-            "Realization Center", "Realization Center",
-            f"1200 Recovery Rd, {borough}, NY {zip_}", "212-555-0502",
-            "Substance use counseling. Outpatient.",
-        ),
-    ]
-
-
-def _legal_cards(borough: str, zip_: str) -> list[dict]:
-    return [
-        _service_card(
-            "Legal Aid Society", "Legal Aid",
-            f"1300 Justice Ct, {borough}, NY {zip_}", "212-555-0601",
-            "Free civil legal services.",
-        ),
-        _service_card(
-            "UnLocal Immigration Services", "UnLocal Inc.",
-            f"1400 Pro Bono Ln, {borough}, NY {zip_}", "212-555-0602",
-            "Immigration legal aid. Sliding scale.",
-        ),
-    ]
-
-
-def _employment_cards(borough: str, zip_: str) -> list[dict]:
-    return [
-        _service_card(
-            "Workforce Development Center", "DYCD",
-            f"1500 Career Way, {borough}, NY {zip_}", "212-555-0701",
-            "Job training, resume help, placement.",
-        ),
-        _service_card(
-            "Doe Fund Ready, Willing & Able", "The Doe Fund",
-            f"1600 Opportunity St, {borough}, NY {zip_}", "212-555-0702",
-            "Paid work program. Reentry-friendly.",
-        ),
-    ]
-
-
-# Service-type → builder dispatch. `other` and unknown types get a
-# generic fallback that stays clearly labeled as "general services."
-_SERVICE_TYPE_TO_BUILDER = {
-    "food": _food_cards,
-    "shelter": _shelter_cards,
-    "clothing": _clothing_cards,
-    "personal_care": _personal_care_cards,
-    "medical": _medical_cards,
-    "mental_health": _mental_health_cards,
-    "legal": _legal_cards,
-    "employment": _employment_cards,
-}
-
-
-def _other_cards(borough: str, zip_: str) -> list[dict]:
-    return [
-        _service_card(
-            "Drop-In Center", "DYCD",
-            f"1700 Center St, {borough}, NY {zip_}", "212-555-0801",
-            "General intake, referrals, case management.",
-        ),
-    ]
-
-
-# Service-type → template-used label for the eval response shape.
+# Service-type -> template-used label for the eval response shape.
 _SERVICE_TYPE_TO_TEMPLATE = {
     "food": "FoodQuery",
     "shelter": "ShelterQuery",
@@ -3928,65 +3875,10 @@ _SERVICE_TYPE_TO_TEMPLATE = {
 }
 
 
-def _mock_query_services(*args, **kwargs) -> dict:
-    """Service-type-and-location-aware mock for ``query_services``.
-
-    Inspects the ``service_type`` and ``location`` arguments and
-    returns mock data shaped like the production response, with
-    service names, addresses, and phone numbers consistent with the
-    request. Replaces the previous static ``MOCK_QUERY_RESULTS``
-    which returned Brooklyn food pantries for every query (Bug 8 in
-    the May 2026 audit).
-
-    Accepts both positional and keyword arguments — `query_services`
-    in production takes ``service_type`` as the first positional, then
-    a long keyword list. The eval doesn't care which form the caller
-    uses; both work.
-
-    Sentinel values for special-case scenarios:
-        location=='__nowhere__'    → returns empty (for no_result tests)
-        service_type=='__error__'  → returns the on-error empty shape
-    """
-    # Extract service_type from positional or keyword argument
-    if args:
-        service_type = args[0]
-    else:
-        service_type = kwargs.get("service_type")
-
-    location = kwargs.get("location")
-
-    # Sentinels for tests that explicitly want empty results.
-    if service_type == "__error__" or location == "__nowhere__":
-        return MOCK_EMPTY_RESULTS
-
-    borough, zip_ = _resolve_borough(location)
-    builder = _SERVICE_TYPE_TO_BUILDER.get(service_type, _other_cards)
-    cards = builder(borough, zip_)
-    template = _SERVICE_TYPE_TO_TEMPLATE.get(service_type, "GeneralQuery")
-
-    return {
-        "services": cards,
-        "result_count": len(cards),
-        "template_used": template,
-        "params_applied": {
-            "taxonomy_name": (service_type or "other").title().replace("_", " "),
-            "city": borough,
-        },
-        "relaxed": False,
-        "execution_ms": 45,
-    }
-
-
-# --- Backward-compat alias ---
-# Other test modules (tests/conftest.py, test_format_pipeline_and_admin,
-# test_classification_and_routing) import MOCK_QUERY_RESULTS by name
-# and patch `query_services` with `return_value=MOCK_QUERY_RESULTS`.
-# They're testing routing and formatting, not LLM hallucination, so
-# the static mock is fine for them. Keep the name alive as the
-# food-Brooklyn case the dispatch produces.
-
-MOCK_QUERY_RESULTS = _mock_query_services(service_type="food", location="brooklyn")
-
+# The on-error / no-results shape. Defined before _mock_query_services
+# so the function can reference it for sentinel handling, and so that
+# the MOCK_QUERY_RESULTS module-level constant computed below sees a
+# real value not a forward reference.
 MOCK_EMPTY_RESULTS = {
     "services": [],
     "result_count": 0,
@@ -3995,6 +3887,108 @@ MOCK_EMPTY_RESULTS = {
     "relaxed": False,
     "execution_ms": 30,
 }
+
+
+def _mock_query_services(*args, **kwargs) -> dict:
+    """Fixture-based mock for ``query_services``.
+
+    Filters tests/eval/fixtures/services.json by service_type and
+    borough (resolved from the user-given location). Returns a
+    response in the same shape production's query_services produces.
+
+    Argument shape mirrors production: ``service_type`` first
+    positional, optional ``location`` keyword. Both forms accepted.
+
+    Honored kwargs (production parity):
+        - service_type (positional or kw): main filter
+        - location: borough resolution via production lookup chain
+        - taxonomy_override: list[str] — when present, restricts to
+          rows whose ``service_taxonomies`` overlap (case-insensitive)
+          with the override list. Used by production's
+          population-fallback flow (e.g. ``taxonomy_override=["youth"]``
+          to find youth-specific shelters).
+        - max_results: int — caps the result count. Used by
+          population-fallback (``_POPULATION_FALLBACK_MAX = 3``).
+        - all other kwargs (age, gender, urgency, etc.) accepted but
+          IGNORED — production filters by them but the eval fixture
+          doesn't carry the data needed to honor them. Tracked as
+          Foundation 8 of the eval-quality plan.
+
+    Sentinels for tests that explicitly want particular outcomes:
+        location=="__nowhere__"    -> empty results
+        service_type=="__error__"  -> empty results (on-error shape)
+    """
+    # Extract service_type from positional or keyword.
+    service_type = args[0] if args else kwargs.get("service_type")
+    location = kwargs.get("location")
+    taxonomy_override = kwargs.get("taxonomy_override")
+    max_results = kwargs.get("max_results")
+
+    # Sentinels for empty-result scenarios.
+    if service_type == "__error__" or location == "__nowhere__":
+        return MOCK_EMPTY_RESULTS
+
+    borough = _resolve_borough(location)
+
+    # Filter the fixture by service_type and borough.
+    rows = [r for r in _FIXTURE if r.get("bot_service_type") == service_type]
+    relaxed = False
+    if borough:
+        in_borough = [r for r in rows if r.get("borough") == borough]
+        if in_borough:
+            rows = in_borough
+        else:
+            # No services in that borough - mirror production's
+            # relaxed-search behavior by widening to all boroughs and
+            # flagging that the result is broader than requested.
+            relaxed = True
+
+    # Honor taxonomy_override: production's population-fallback flow
+    # passes a list like ["youth"] or ["lgbtq young adult"] to filter
+    # to population-specific services. Match case-insensitive against
+    # the row's service_taxonomies array.
+    if taxonomy_override:
+        override_lower = {str(t).lower() for t in taxonomy_override}
+        rows = [
+            r for r in rows
+            if {str(t).lower() for t in (r.get("service_taxonomies") or [])}
+            & override_lower
+        ]
+
+    # Honor max_results: production's population-fallback caps results
+    # at _POPULATION_FALLBACK_MAX (= 3) to keep the fallback section
+    # short. Other call sites also use this for pagination.
+    if max_results is not None and isinstance(max_results, int):
+        rows = rows[:max_results]
+
+    cards = [_service_card_from_fixture(r) for r in rows]
+    template = _SERVICE_TYPE_TO_TEMPLATE.get(service_type, "GeneralQuery")
+
+    params = {
+        "taxonomy_name": (service_type or "other").title().replace("_", " "),
+        "city": borough or "",
+    }
+    if taxonomy_override:
+        params["taxonomy_override"] = list(taxonomy_override)
+
+    return {
+        "services": cards,
+        "result_count": len(cards),
+        "template_used": template,
+        "params_applied": params,
+        "relaxed": relaxed,
+        "execution_ms": 45,
+    }
+
+
+# --- Backward-compat alias ---
+# Other test modules (tests/conftest.py, test_format_pipeline_and_admin,
+# test_classification_and_routing) import MOCK_QUERY_RESULTS by name
+# and patch query_services with return_value=MOCK_QUERY_RESULTS. They
+# test routing and formatting, not LLM hallucination, so a static value
+# is fine for them. Keep the name alive as a frozen "food in Brooklyn"
+# response from the fixture.
+MOCK_QUERY_RESULTS = _mock_query_services(service_type="food", location="brooklyn")
 
 
 # ---------------------------------------------------------------------------

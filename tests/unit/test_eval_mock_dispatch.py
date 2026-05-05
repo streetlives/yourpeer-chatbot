@@ -1,20 +1,27 @@
-"""Tests for the eval-runner's service-type-aware mock dispatcher.
+"""Tests for the eval-runner's fixture-based mock dispatcher.
 
-Bug 8 fix (May 2026): the previous static `MOCK_QUERY_RESULTS` returned
-the same Brooklyn food pantry for every search, regardless of what
-the bot actually queried for. That made every Hallucination Resistance
-score noisy: a scenario searching for shelter in Manhattan got back
-food in Brooklyn, and the LLM judge correctly flagged the resulting
-transcript as hallucination — when the bot was just faithfully
-echoing corrupted mock data.
+History:
+- Bug 8 (May 2026): static MOCK_QUERY_RESULTS returned Brooklyn food
+  pantries for every search. Replaced with a service-type-aware
+  dispatcher.
+- Bug 8 layer 2 (May 2026): dispatcher's borough-only resolver fell
+  back to Brooklyn for any neighborhood search, producing ~32
+  false-positive location-mismatch CFs in R39. Added neighborhood
+  resolution table.
+- Path C (May 2026): replaced the hand-coded service cards (8 builder
+  functions) with a fixture loaded from a real Streetlives DB
+  snapshot. Replaced the hand-coded neighborhood table with imports
+  from production's NEIGHBORHOOD_CENTERS / NYC_LOCATION_ALIASES /
+  _CITY_TO_BOROUGH. The dispatcher now knows nothing about NYC and
+  nothing about what services exist — it's a pure filter on
+  production data.
 
-These tests verify:
-- Each service type returns appropriately-named services
-- The address reflects the searched borough
-- The template_used field reflects the searched type
-- Sentinels return empty results for no_result scenarios
-- Backward compatibility: MOCK_QUERY_RESULTS preserves the old shape
-- Every shape detail of the production response is preserved
+These tests verify the dispatcher's contract:
+- service_type filter actually filters
+- borough filter actually filters (using production's lookup chain)
+- response shape matches production's query_services
+- sentinels return empty results
+- backward-compat constants still work
 """
 
 from __future__ import annotations
@@ -25,7 +32,6 @@ import sys
 import pytest
 
 
-# Importable without running main()
 _EVAL_DIR = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "eval")
 )
@@ -36,260 +42,431 @@ import eval_llm_judge as runner  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
-# Service type → cards mapping
+# Fixture sanity — does the fixture exist and have data?
+# ---------------------------------------------------------------------------
+
+
+class TestFixtureLoaded:
+    """Ensures the fixture file loaded at import. Without it, every
+    other test would silently pass with empty results."""
+
+    def test_fixture_is_nonempty(self):
+        """The fixture should have at least 100 rows. Expected size is
+        ~218 (rn<=5 cap, ~9 service types × 5 boroughs)."""
+        assert len(runner._FIXTURE) > 100, (
+            f"Fixture only has {len(runner._FIXTURE)} rows. "
+            f"Expected ~200. Did the JSON file load correctly?"
+        )
+
+    def test_fixture_rows_have_required_fields(self):
+        """Every row needs the fields the dispatcher reads."""
+        required = [
+            "service_id", "service_name", "organization_name",
+            "phone", "address", "city", "borough",
+            "bot_service_type",
+        ]
+        sample = runner._FIXTURE[0]
+        for field in required:
+            assert field in sample, (
+                f"Fixture row missing required field {field!r}: {sample}"
+            )
+
+
+# ---------------------------------------------------------------------------
+# Service type filter
 # ---------------------------------------------------------------------------
 
 ALL_SERVICE_TYPES = [
     "food", "shelter", "clothing", "personal_care",
-    "medical", "mental_health", "legal", "employment",
+    "medical", "mental_health", "legal", "employment", "other",
 ]
 
 
-def test_each_service_type_returns_nonempty_results():
-    """No service type should silently return empty cards."""
-    for st in ALL_SERVICE_TYPES:
-        result = runner._mock_query_services(service_type=st)
-        assert result["result_count"] > 0, f"{st} returned no cards"
-        assert len(result["services"]) > 0
+class TestServiceTypeFilter:
+    """The dispatcher must filter the fixture by service_type."""
 
-
-def test_service_names_distinguish_by_type():
-    """Different service types must return distinguishable names. The
-    core Bug 8 issue was that shelter + medical + clothing all returned
-    'Community Food Pantry'. This test would have failed in the old
-    code."""
-    names_by_type = {}
-    for st in ALL_SERVICE_TYPES:
-        result = runner._mock_query_services(service_type=st)
-        names_by_type[st] = {s["service_name"] for s in result["services"]}
-
-    # Pairwise: no two service types share their primary card name
-    for st1 in ALL_SERVICE_TYPES:
-        for st2 in ALL_SERVICE_TYPES:
-            if st1 >= st2:
-                continue
-            shared = names_by_type[st1] & names_by_type[st2]
-            assert not shared, (
-                f"{st1} and {st2} share service names {shared} — "
-                f"Bug 8 has regressed"
-            )
-
-
-def test_template_used_reflects_service_type():
-    """`template_used` is in the response shape and the judge sees it.
-    A mismatched template_used would leak the bug back as a slot-extraction
-    or hallucination penalty."""
-    expected = {
-        "food": "FoodQuery",
-        "shelter": "ShelterQuery",
-        "clothing": "ClothingQuery",
-        "personal_care": "ShowerQuery",
-        "medical": "HealthQuery",
-        "mental_health": "MentalHealthQuery",
-        "legal": "LegalQuery",
-        "employment": "EmploymentQuery",
-    }
-    for st, expected_template in expected.items():
-        result = runner._mock_query_services(service_type=st)
-        assert result["template_used"] == expected_template
-
-
-# ---------------------------------------------------------------------------
-# Location reflection
-# ---------------------------------------------------------------------------
-
-@pytest.mark.parametrize("borough", ["manhattan", "brooklyn", "queens", "bronx", "staten island"])
-def test_address_reflects_borough(borough):
-    """When the bot searched 'shelter in Manhattan', the mock must
-    return Manhattan addresses — not 'Brooklyn' as the old static
-    mock did. Otherwise the judge sees a location mismatch."""
-    result = runner._mock_query_services(
-        service_type="shelter", location=borough,
-    )
-    expected_display = "Staten Island" if borough == "staten island" else borough.title()
-    for card in result["services"]:
-        assert expected_display in card["address"], (
-            f"Card address {card['address']!r} should contain "
-            f"borough display name {expected_display!r}"
-        )
-
-
-def test_unknown_location_falls_back_to_brooklyn():
-    """Backward compat: scenarios that don't specify a location land
-    on Brooklyn (matches the old hardcoded mock)."""
-    result = runner._mock_query_services(service_type="food")
-    for card in result["services"]:
-        assert "Brooklyn" in card["address"]
-
-
-def test_neighborhood_routes_to_borough():
-    """A Manhattan neighborhood like 'soho' should route to Manhattan
-    addresses if the borough match logic catches it. The current
-    implementation does substring match on borough name only — so
-    'soho' falls back to Brooklyn. This test pins the current behavior;
-    if a future change makes the matcher smarter, this test should be
-    updated."""
-    result = runner._mock_query_services(
-        service_type="food", location="soho",
-    )
-    # Pinning current behavior — neighborhood-only locations fall back.
-    # Not a bug per se, but worth documenting.
-    assert any(
-        "Brooklyn" in card["address"] or "Manhattan" in card["address"]
-        for card in result["services"]
-    )
-
-
-# ---------------------------------------------------------------------------
-# Argument forms
-# ---------------------------------------------------------------------------
-
-def test_positional_service_type_arg():
-    """Production query_services takes service_type as first positional.
-    The mock must accept that form too — patching with side_effect
-    delivers args positionally."""
-    result = runner._mock_query_services("food", location="brooklyn")
-    assert result["services"][0]["service_name"] == "Community Food Pantry"
-
-
-def test_keyword_service_type_arg():
-    """Keyword form works equivalently."""
-    result = runner._mock_query_services(service_type="food", location="brooklyn")
-    assert result["services"][0]["service_name"] == "Community Food Pantry"
-
-
-def test_extra_kwargs_ignored():
-    """Production query_services takes ~16 keyword args. The mock must
-    silently accept all of them — anything else would crash the eval."""
-    result = runner._mock_query_services(
-        service_type="medical",
-        location="manhattan",
-        age=24,
-        gender="female",
-        weekday=3,
-        current_time="14:00",
-        max_results=10,
-        latitude=40.7,
-        longitude=-74.0,
-        family_status="alone",
-        colocated_service_types=["clothing"],
-        service_detail="primary care",
-        populations=["lgbtq"],
-        org_name=None,
-        no_requirements=False,
-        taxonomy_override=None,
-    )
-    assert result["result_count"] > 0
-
-
-# ---------------------------------------------------------------------------
-# Sentinels and edge cases
-# ---------------------------------------------------------------------------
-
-def test_nowhere_sentinel_returns_empty():
-    """Sentinel for explicitly testing the no-result path."""
-    result = runner._mock_query_services(
-        service_type="shelter", location="__nowhere__",
-    )
-    assert result["result_count"] == 0
-    assert result["services"] == []
-
-
-def test_error_sentinel_returns_empty():
-    """Same shape on error (matches the old MOCK_EMPTY_RESULTS)."""
-    result = runner._mock_query_services(service_type="__error__")
-    assert result["result_count"] == 0
-    assert result["services"] == []
-
-
-def test_unknown_service_type_falls_back_gracefully():
-    """An unknown service_type shouldn't crash — it returns generic
-    drop-in center results."""
-    result = runner._mock_query_services(service_type="widget")
-    assert result["result_count"] >= 1
-    assert result["template_used"] == "GeneralQuery"
-
-
-def test_none_service_type_falls_back():
-    """When the bot calls with service_type=None (no slot extracted),
-    the mock should still return something — we don't want eval
-    scenarios to silently miss this path."""
-    result = runner._mock_query_services(service_type=None)
-    assert result["result_count"] >= 1
-
-
-# ---------------------------------------------------------------------------
-# Card shape preservation
-# ---------------------------------------------------------------------------
-
-REQUIRED_CARD_FIELDS = {
-    "service_name", "organization", "address", "phone", "fees",
-    "description", "hours_today", "is_open", "yourpeer_url",
-}
-
-REQUIRED_RESPONSE_FIELDS = {
-    "services", "result_count", "template_used", "params_applied",
-    "relaxed", "execution_ms",
-}
-
-
-def test_response_shape_matches_production():
-    """Top-level response keys match what production query_services
-    returns. The chatbot reads these; missing one would crash a
-    handler before the judge ever saw the conversation."""
-    result = runner._mock_query_services(service_type="food")
-    missing = REQUIRED_RESPONSE_FIELDS - result.keys()
-    assert not missing, f"Response missing fields: {missing}"
-
-
-def test_card_shape_preserved_across_all_service_types():
-    """Every card from every service type has the full ten fields.
-    Regression test: a future addition of a new service type that
-    forgets a field would silently corrupt the eval transcripts."""
-    for st in ALL_SERVICE_TYPES:
-        result = runner._mock_query_services(service_type=st)
+    @pytest.mark.parametrize("service_type", ALL_SERVICE_TYPES)
+    def test_service_type_returns_only_matching_rows(self, service_type):
+        """Whatever cards come back must belong to fixture rows tagged
+        with the requested service_type. The dispatcher should NEVER
+        return shelter cards in response to a food search."""
+        # Get the matching fixture rows directly (ground truth)
+        expected_service_names = {
+            r["service_name"]
+            for r in runner._FIXTURE
+            if r["bot_service_type"] == service_type
+        }
+        result = runner._mock_query_services(service_type=service_type)
         for card in result["services"]:
-            missing = REQUIRED_CARD_FIELDS - card.keys()
-            assert not missing, (
-                f"{st} card {card.get('service_name')!r} missing "
-                f"fields: {missing}"
+            assert card["service_name"] in expected_service_names, (
+                f"Card {card['service_name']!r} from {service_type!r} search "
+                f"isn't in any fixture row tagged {service_type!r}"
+            )
+
+    @pytest.mark.parametrize("service_type", ALL_SERVICE_TYPES)
+    def test_service_type_returns_nonempty(self, service_type):
+        """Every bot-recognized service_type should have at least
+        one row in the fixture. If a future fixture refresh produces
+        zero rows for some service_type, this test catches it before
+        the eval runs against an unknowingly-empty bucket."""
+        result = runner._mock_query_services(service_type=service_type)
+        assert result["result_count"] > 0, (
+            f"{service_type!r} returned no cards. The fixture may be "
+            f"stale or the bucketing CASE in scripts/fixture/ may need "
+            f"updating."
+        )
+
+    def test_unknown_service_type_returns_empty(self):
+        """Unknown service types return empty rather than crashing."""
+        result = runner._mock_query_services(service_type="rocketship")
+        assert result["result_count"] == 0
+
+
+# ---------------------------------------------------------------------------
+# Borough filter
+# ---------------------------------------------------------------------------
+
+
+class TestBoroughFilter:
+    """The dispatcher must filter by borough using production's
+    NYC_LOCATION_ALIASES + _CITY_TO_BOROUGH chain."""
+
+    @pytest.mark.parametrize("borough", [
+        "Manhattan", "Brooklyn", "Queens", "Bronx", "Staten Island",
+    ])
+    def test_borough_filter_narrows_results(self, borough):
+        """A borough-named search returns only cards from fixture rows
+        tagged with that borough."""
+        result = runner._mock_query_services(
+            service_type="food", location=borough,
+        )
+        # Every returned card should belong to a fixture row whose
+        # borough field is the requested borough.
+        expected_addrs = {
+            f"{r['address']}, {r['city']}, {r['state']} {r['zip_code']}".strip()
+            for r in runner._FIXTURE
+            if r["bot_service_type"] == "food" and r["borough"] == borough
+        }
+        for card in result["services"]:
+            assert card["address"] in expected_addrs, (
+                f"Card {card['service_name']!r} address {card['address']!r} "
+                f"isn't in {borough!r} food rows. Borough filter failed."
+            )
+
+    @pytest.mark.parametrize("neighborhood,expected_borough", [
+        ("Harlem", "Manhattan"),
+        ("East Harlem", "Manhattan"),
+        ("Soho", "Manhattan"),
+        ("Lower East Side", "Manhattan"),
+        ("Times Square", "Manhattan"),
+        ("Penn Station", "Manhattan"),
+        ("Jackson Heights", "Queens"),
+        ("Flushing", "Queens"),
+        ("Williamsburg", "Brooklyn"),
+        ("Mott Haven", "Bronx"),
+    ])
+    def test_neighborhood_resolves_to_correct_borough(
+        self, neighborhood, expected_borough,
+    ):
+        """A neighborhood search returns cards in that neighborhood's
+        borough — using production's lookup chain, not a hand-coded
+        eval table."""
+        result = runner._mock_query_services(
+            service_type="food", location=neighborhood,
+        )
+        # Build a set of (service_name, formatted_address) tuples for
+        # rows in the expected borough. The card's address field is
+        # composed from the same fixture fields, so an exact match
+        # tells us the dispatcher actually returned a borough-matching
+        # row (not just a row with a colliding service_name).
+        expected_addrs = {
+            f"{r['address']}, {r['city']}, {r['state']} {r['zip_code']}".strip()
+            for r in runner._FIXTURE
+            if r["bot_service_type"] == "food"
+            and r["borough"] == expected_borough
+        }
+        assert result["services"], (
+            f"{neighborhood} returned no cards. Resolver may have "
+            f"failed silently."
+        )
+        for card in result["services"]:
+            assert card["address"] in expected_addrs, (
+                f"{neighborhood!r} should resolve to {expected_borough!r}, "
+                f"but returned a card at {card['address']!r} which is not "
+                f"in any {expected_borough!r} food row."
+            )
+
+    def test_unrecognized_location_does_not_crash(self):
+        """Unrecognized locations don't crash — the dispatcher returns
+        any matching service-type rows. May be flagged as relaxed
+        (broader than requested) but always succeeds."""
+        result = runner._mock_query_services(
+            service_type="food", location="Atlantis",
+        )
+        # Either: returns rows because resolver couldn't narrow, or
+        # returns empty. Either way, must not crash.
+        assert isinstance(result["services"], list)
+
+
+class TestResolveBorough:
+    """Direct tests for _resolve_borough — the function that powers
+    the borough filter via production's lookup chain."""
+
+    @pytest.mark.parametrize("location,expected", [
+        # The five boroughs (case variants)
+        ("Manhattan", "Manhattan"),
+        ("manhattan", "Manhattan"),
+        ("MANHATTAN", "Manhattan"),
+        ("Brooklyn", "Brooklyn"),
+        ("Queens", "Queens"),
+        ("Bronx", "Bronx"),
+        ("Staten Island", "Staten Island"),
+        # Manhattan neighborhoods
+        ("Harlem", "Manhattan"),
+        ("East Harlem", "Manhattan"),
+        ("Soho", "Manhattan"),
+        ("Lower East Side", "Manhattan"),
+        ("Times Square", "Manhattan"),
+        ("Midtown", "Manhattan"),
+        ("Penn Station", "Manhattan"),
+        # Queens neighborhoods
+        ("Jackson Heights", "Queens"),
+        ("Flushing", "Queens"),
+        ("Astoria", "Queens"),
+        # Brooklyn neighborhoods
+        ("Williamsburg", "Brooklyn"),
+        # Bronx neighborhoods
+        ("Mott Haven", "Bronx"),
+        # Compound inputs (substring match)
+        ("midtown Manhattan", "Manhattan"),
+        ("shelter in Harlem", "Manhattan"),
+        ("near Penn Station", "Manhattan"),
+        # Unresolvable
+        (None, None),
+        ("", None),
+        ("Atlantis", None),
+        ("Mars", None),
+    ])
+    def test_resolves_correctly(self, location, expected):
+        assert runner._resolve_borough(location) == expected
+
+
+# ---------------------------------------------------------------------------
+# Sentinels
+# ---------------------------------------------------------------------------
+
+
+class TestSentinels:
+    """Special argument values that test scenarios use to force
+    particular dispatcher behavior."""
+
+    def test_nowhere_location_returns_empty(self):
+        result = runner._mock_query_services(
+            service_type="food", location="__nowhere__",
+        )
+        assert result["result_count"] == 0
+        assert result["services"] == []
+
+    def test_error_service_type_returns_empty(self):
+        result = runner._mock_query_services(
+            service_type="__error__", location="Brooklyn",
+        )
+        assert result["result_count"] == 0
+        assert result["services"] == []
+
+
+# ---------------------------------------------------------------------------
+# Argument shape — production calls query_services positionally and by keyword
+# ---------------------------------------------------------------------------
+
+
+class TestArgumentShape:
+    """The dispatcher accepts both positional and keyword forms,
+    because production's query_services uses both."""
+
+    def test_positional_service_type(self):
+        """Production sometimes calls query_services('food', ...).
+        Dispatcher must accept positional service_type."""
+        result = runner._mock_query_services("food")
+        assert result["result_count"] > 0
+
+    def test_keyword_service_type(self):
+        result = runner._mock_query_services(service_type="food")
+        assert result["result_count"] > 0
+
+    def test_extra_kwargs_silently_accepted(self):
+        """Production passes many other kwargs (age, gender, urgency,
+        radius_meters, etc.). The dispatcher ignores them but must
+        not crash."""
+        result = runner._mock_query_services(
+            service_type="food", location="Brooklyn",
+            age=25, gender="women", urgency="high",
+            radius_meters=2000, time_of_day="evening",
+            family_status="with_children", language="es",
+            requires_referral=False, accessibility_needed=True,
+        )
+        assert result["result_count"] > 0
+
+
+# ---------------------------------------------------------------------------
+# Population-fallback parity — taxonomy_override + max_results
+# ---------------------------------------------------------------------------
+
+
+class TestTaxonomyOverride:
+    """Production's population-fallback flow calls query_services with
+    `taxonomy_override=["youth"]` (or similar) to find population-
+    specific services. The dispatcher must filter the fixture to rows
+    whose service_taxonomies overlap (case-insensitive) with the
+    override list. Without this filter, population fallback returns
+    all-borough rows and the bot displays inappropriate cards
+    (veterans housing, formerly-incarcerated shelters, etc.) labeled
+    as "youth-friendly" — a major eval-fidelity issue surfaced by
+    shelter_queens_17 in the May 2026 subset run.
+    """
+
+    def test_taxonomy_override_filters_to_matching_rows(self):
+        """Override matches a row's service_taxonomies array
+        case-insensitively."""
+        result = runner._mock_query_services(
+            service_type="shelter", location=None,
+            taxonomy_override=["veterans short-term housing"],
+        )
+        # The fixture has Charles B. Wang's Veterans Short-Term
+        # Housing service in Queens.
+        assert result["result_count"] >= 1
+        for card in result["services"]:
+            taxes = {t.lower() for t in card.get("service_taxonomies", [])}
+            assert "veterans short-term housing" in taxes
+
+    def test_taxonomy_override_returns_zero_when_no_match(self):
+        """If no fixture row matches the override taxonomies, the
+        result is empty. This is production-faithful — production's
+        population-fallback dedup-to-empty path triggers a logged
+        warning rather than appending fallback cards."""
+        result = runner._mock_query_services(
+            service_type="shelter", location=None,
+            taxonomy_override=["nonexistent-taxonomy"],
+        )
+        assert result["result_count"] == 0
+
+    def test_taxonomy_override_records_in_params_applied(self):
+        """The eval transcript and judge prompt include params_applied
+        so the judge can verify which template ran. taxonomy_override
+        must appear there."""
+        result = runner._mock_query_services(
+            service_type="shelter",
+            taxonomy_override=["youth", "lgbtq young adult"],
+        )
+        assert result["params_applied"].get("taxonomy_override") == [
+            "youth", "lgbtq young adult",
+        ]
+
+
+class TestMaxResults:
+    """Production's population-fallback caps results at
+    _POPULATION_FALLBACK_MAX (= 3). Some main queries also use
+    max_results for pagination. The dispatcher must honor it."""
+
+    def test_max_results_caps_count(self):
+        result = runner._mock_query_services(
+            service_type="shelter", location=None, max_results=2,
+        )
+        assert result["result_count"] == 2
+
+    def test_max_results_zero_returns_empty(self):
+        result = runner._mock_query_services(
+            service_type="shelter", location=None, max_results=0,
+        )
+        assert result["result_count"] == 0
+
+    def test_max_results_higher_than_data_returns_all(self):
+        result = runner._mock_query_services(
+            service_type="shelter", location=None, max_results=999,
+        )
+        # Should return all 25 shelter rows; max acts as a cap, not a target
+        assert result["result_count"] >= 5
+        assert result["result_count"] <= 999
+
+    def test_max_results_combines_with_taxonomy_override(self):
+        """Production's population fallback uses both together."""
+        result = runner._mock_query_services(
+            service_type="shelter", location=None,
+            taxonomy_override=["single adult"],
+            max_results=3,
+        )
+        assert result["result_count"] <= 3
+
+
+class TestServiceIdPassthrough:
+    """Production's population-fallback dedup uses service_id to
+    avoid showing the same row in main + fallback. Cards must
+    include service_id."""
+
+    def test_card_has_service_id(self):
+        result = runner._mock_query_services(service_type="food")
+        for card in result["services"]:
+            assert "service_id" in card
+            assert card["service_id"], (
+                f"Card {card.get('service_name')!r} has no service_id"
             )
 
 
-def test_cards_have_unique_phone_numbers_within_a_search():
-    """Within a single response, no two cards share a phone number.
-    This is what the Bug 8 judge note flagged — if two cards have
-    the same phone, the bot looks like it's deduplicating poorly."""
-    for st in ALL_SERVICE_TYPES:
-        result = runner._mock_query_services(service_type=st)
-        phones = [card["phone"] for card in result["services"]]
-        assert len(phones) == len(set(phones)), (
-            f"{st} has duplicate phone numbers across cards"
-        )
+# ---------------------------------------------------------------------------
+# Response shape — must match production
+# ---------------------------------------------------------------------------
+
+
+class TestResponseShape:
+    """The dispatcher's response shape must match what production's
+    query_services returns. The bot's downstream pipeline expects
+    specific fields; missing one can cause subtle bugs."""
+
+    def test_response_has_expected_top_level_keys(self):
+        result = runner._mock_query_services(service_type="food")
+        for key in ["services", "result_count", "template_used",
+                    "params_applied", "relaxed", "execution_ms"]:
+            assert key in result, f"Missing top-level key: {key!r}"
+
+    def test_each_card_has_expected_fields(self):
+        """Every card needs name, org, address, phone, etc. for the
+        bot's formatter."""
+        result = runner._mock_query_services(service_type="food")
+        for card in result["services"]:
+            for field in ["service_name", "organization", "address",
+                          "phone", "fees", "description", "hours_today",
+                          "is_open", "yourpeer_url"]:
+                assert field in card, (
+                    f"Card {card.get('service_name')!r} missing {field!r}"
+                )
+
+    def test_template_used_reflects_service_type(self):
+        result = runner._mock_query_services(service_type="shelter")
+        assert "Shelter" in result["template_used"]
 
 
 # ---------------------------------------------------------------------------
-# Backward compatibility
+# Backward compatibility constants
 # ---------------------------------------------------------------------------
 
-def test_mock_query_results_constant_still_exists():
-    """conftest.py and other test modules import MOCK_QUERY_RESULTS by
-    name. Removing the constant would break those tests."""
-    assert hasattr(runner, "MOCK_QUERY_RESULTS")
-    assert isinstance(runner.MOCK_QUERY_RESULTS, dict)
 
+class TestBackwardCompat:
+    """Other test modules import MOCK_QUERY_RESULTS / MOCK_EMPTY_RESULTS
+    by name. They must keep working."""
 
-def test_mock_query_results_is_food_brooklyn():
-    """The constant alias preserves the original food-Brooklyn case
-    so existing tests that snapshot specific values still work."""
-    mqr = runner.MOCK_QUERY_RESULTS
-    assert mqr["template_used"] == "FoodQuery"
-    assert mqr["result_count"] == 2
-    assert mqr["services"][0]["service_name"] == "Community Food Pantry"
-    assert "Brooklyn" in mqr["services"][0]["address"]
+    def test_mock_query_results_still_exists(self):
+        assert hasattr(runner, "MOCK_QUERY_RESULTS")
 
+    def test_mock_query_results_is_food_brooklyn(self):
+        """Convention: MOCK_QUERY_RESULTS is a frozen 'food in
+        Brooklyn' response. Other tests pin behavior against it."""
+        mqr = runner.MOCK_QUERY_RESULTS
+        assert mqr["result_count"] > 0
+        assert "food" in mqr["template_used"].lower()
 
-def test_mock_empty_results_constant_still_exists():
-    """Some tests use MOCK_EMPTY_RESULTS for explicit no-result cases."""
-    assert hasattr(runner, "MOCK_EMPTY_RESULTS")
-    assert runner.MOCK_EMPTY_RESULTS["result_count"] == 0
+    def test_mock_empty_results_still_exists(self):
+        assert hasattr(runner, "MOCK_EMPTY_RESULTS")
+
+    def test_mock_empty_results_has_zero_count(self):
+        assert runner.MOCK_EMPTY_RESULTS["result_count"] == 0
+        assert runner.MOCK_EMPTY_RESULTS["services"] == []
