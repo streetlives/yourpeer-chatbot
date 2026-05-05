@@ -208,6 +208,258 @@ class TestBoroughFilter:
         assert isinstance(result["services"], list)
 
 
+class TestNeighborhoodProximity:
+    """Cluster 2 fix (location precision/drift). Production routes
+    non-borough locations through ST_DWithin against the neighborhood
+    center — see backend/app/rag/__init__.py:266 and the
+    NEIGHBORHOOD_CENTERS dict in backend/app/rag/query_executor.py.
+
+    The eval mock now mirrors this with a haversine-distance filter
+    in _filter_rows_by_neighborhood_proximity. Without it, a
+    "shower in Lower East Side" query returned any Manhattan rows;
+    with it, results are restricted to within 1.6 km of LES center,
+    sorted by ascending distance.
+
+    Closes 3 R40 failing scenarios that previously had borough-correct
+    but neighborhood-wrong cards:
+      - multi_cross_neighborhood_shower_les_food_chinatown (4.45)
+      - multi_three_services_legal_benefits_food (3.73 - Jamaica
+        returned for Jackson Heights ask)
+      - multi_asylum_seeker_food_legal (3.64)
+    """
+
+    def test_borough_query_unaffected_by_proximity(self):
+        """Sanity: borough names pass through proximity unchanged.
+        Manhattan returns its full bucket, Brooklyn its full bucket,
+        etc. Proximity narrowing must not fire on boroughs."""
+        manhattan = runner._mock_query_services(
+            service_type="food", location="manhattan",
+        )
+        # All cards must be in Manhattan (borough filter took
+        # precedence; proximity was a no-op).
+        assert manhattan["result_count"] > 0
+        for card in manhattan["services"]:
+            addr = (card.get("address") or "").lower()
+            # Manhattan cards have addresses with "new york" (city),
+            # not "brooklyn"/"bronx"/"queens"/"staten island".
+            assert not any(
+                b in addr for b in (
+                    "brooklyn, ny", "bronx, ny", "queens, ny",
+                    "staten island, ny",
+                )
+            ), f"Non-Manhattan card leaked through borough query: {addr!r}"
+
+    def test_jackson_heights_excludes_jamaica(self):
+        """The original bug: a Jackson Heights query returned Jamaica
+        cards (both Queens, but ~7 km apart). Proximity now restricts
+        to within 1.6 km of Jackson Heights center (40.7557, -73.8831).
+        Jamaica is at (40.7029, -73.7898) — about 9 km away by
+        haversine, well outside the radius."""
+        from app.rag.query_executor import (
+            NEIGHBORHOOD_CENTERS,
+            DEFAULT_NEIGHBORHOOD_RADIUS_METERS,
+        )
+        from tests.eval.eval_llm_judge import _haversine_meters
+
+        jh_lat, jh_lon = NEIGHBORHOOD_CENTERS["jackson heights"]
+
+        for service_type in ("food", "legal", "other"):
+            result = runner._mock_query_services(
+                service_type=service_type, location="jackson heights",
+            )
+            for card in result["services"]:
+                # Card lat/lon comes through via _service_card_from_fixture.
+                # If the dispatcher narrowed to in-radius rows, every
+                # card must be within radius (allow a little slack
+                # for floating-point + groupByLocation address re-resolves).
+                clat = card.get("latitude")
+                clon = card.get("longitude")
+                if clat is None or clon is None:
+                    continue
+                dist = _haversine_meters(jh_lat, jh_lon, float(clat), float(clon))
+                # 1.6 km is the production radius. We allow the
+                # eval-side fallback to widen up to ~10 km when
+                # nothing's in the strict radius — but the
+                # narrowing must at least exclude Jamaica
+                # (~9 km away). So the assertion is that no card
+                # is at Jamaica's distance.
+                jamaica_lat, jamaica_lon = NEIGHBORHOOD_CENTERS["jamaica"]
+                jamaica_dist = _haversine_meters(
+                    jh_lat, jh_lon, jamaica_lat, jamaica_lon,
+                )
+                # If we got an in-radius match, dist <= 1600.
+                # If we got an out-of-radius fallback, dist <= jamaica_dist
+                # because we sorted by ascending distance and Jamaica
+                # is the farthest Queens neighborhood from JH.
+                # Either way: dist must be < jamaica_dist (strict).
+                assert dist < jamaica_dist, (
+                    f"{service_type} in Jackson Heights returned a card "
+                    f"at distance {dist:.0f}m (Jamaica is at "
+                    f"{jamaica_dist:.0f}m); proximity filter not working"
+                )
+
+    def test_lower_east_side_results_near_les_center(self):
+        """LES query should return rows within 1.6 km of LES center
+        (40.715, -73.9843), sorted by ascending distance from that
+        point. The first card should be the closest in-borough match."""
+        from app.rag.query_executor import (
+            NEIGHBORHOOD_CENTERS,
+            DEFAULT_NEIGHBORHOOD_RADIUS_METERS,
+        )
+        from tests.eval.eval_llm_judge import _haversine_meters
+
+        les_lat, les_lon = NEIGHBORHOOD_CENTERS["lower east side"]
+
+        result = runner._mock_query_services(
+            service_type="personal_care", location="lower east side",
+        )
+        # Compute distance for every returned card and verify
+        # ascending order.
+        distances = []
+        for card in result["services"]:
+            clat = card.get("latitude")
+            clon = card.get("longitude")
+            if clat is None or clon is None:
+                continue
+            dist = _haversine_meters(les_lat, les_lon, float(clat), float(clon))
+            distances.append(dist)
+
+        # Distances must be non-decreasing (sorted by proximity).
+        for i in range(len(distances) - 1):
+            assert distances[i] <= distances[i + 1] + 0.01, (
+                f"Card {i} at {distances[i]:.0f}m is farther than "
+                f"card {i+1} at {distances[i+1]:.0f}m — not sorted "
+                f"by proximity"
+            )
+
+        # Closest card should be within 5km. (LES is dense with
+        # services; the fixture should have at least one within
+        # walking distance.)
+        if distances:
+            assert distances[0] < 5000, (
+                f"Closest LES personal_care card is {distances[0]:.0f}m "
+                f"away — much farther than expected"
+            )
+
+    def test_chinatown_results_near_chinatown_center(self):
+        """Chinatown food query should return cards near Chinatown
+        center (40.7158, -73.997), not Harlem or Midtown."""
+        from app.rag.query_executor import NEIGHBORHOOD_CENTERS
+        from tests.eval.eval_llm_judge import _haversine_meters
+
+        ct_lat, ct_lon = NEIGHBORHOOD_CENTERS["chinatown"]
+
+        result = runner._mock_query_services(
+            service_type="food", location="chinatown",
+        )
+        # Verify all cards are closer to Chinatown than to Harlem
+        # (Harlem is ~10 km north; cards near Chinatown should be
+        # much closer to Chinatown).
+        if "harlem" in NEIGHBORHOOD_CENTERS:
+            harlem_lat, harlem_lon = NEIGHBORHOOD_CENTERS["harlem"]
+            for card in result["services"]:
+                clat = card.get("latitude")
+                clon = card.get("longitude")
+                if clat is None or clon is None:
+                    continue
+                dist_ct = _haversine_meters(
+                    ct_lat, ct_lon, float(clat), float(clon),
+                )
+                dist_harlem = _haversine_meters(
+                    harlem_lat, harlem_lon, float(clat), float(clon),
+                )
+                assert dist_ct < dist_harlem, (
+                    f"Chinatown query returned a card closer to "
+                    f"Harlem ({dist_harlem:.0f}m) than to Chinatown "
+                    f"({dist_ct:.0f}m): {card.get('service_name')!r}"
+                )
+
+    def test_unknown_neighborhood_passes_through(self):
+        """When the neighborhood isn't in NEIGHBORHOOD_CENTERS (e.g.
+        because the user typed a misspelling or an obscure subdivision
+        name), proximity narrowing is a no-op and we fall back to
+        whatever the upstream resolver produced."""
+        # The borough resolver may map "the lower east area" to
+        # Manhattan, or may not match at all. Either way, no crash
+        # and a plausible response.
+        result = runner._mock_query_services(
+            service_type="food", location="the lower east area",
+        )
+        assert isinstance(result["services"], list)
+        # Some result count, no exception.
+        assert "result_count" in result
+
+    def test_borough_query_returns_unsorted_full_borough(self):
+        """When the user gives a borough, proximity is bypassed.
+        Cards aren't sorted by distance to any neighborhood center
+        — they come through in fixture order (or whatever the
+        upstream filter produced)."""
+        result = runner._mock_query_services(
+            service_type="food", location="brooklyn",
+        )
+        # Sanity: we got Brooklyn rows.
+        assert result["result_count"] > 0
+        # All cards in Brooklyn — proximity didn't reorder by
+        # any NYC neighborhood center.
+        for card in result["services"]:
+            addr = (card.get("address") or "").lower()
+            # Brooklyn cards have "brooklyn, ny" in their address.
+            assert "brooklyn" in addr or "ny 11" in addr, (
+                f"Brooklyn query returned non-Brooklyn card: {addr!r}"
+            )
+
+    def test_proximity_with_max_results_caps_to_closest(self):
+        """When max_results is set, the proximity-sorted results are
+        capped to N closest. This combines cluster 2's proximity
+        with the existing max_results (population fallback) handling."""
+        result = runner._mock_query_services(
+            service_type="food", location="chinatown", max_results=2,
+        )
+        assert result["result_count"] <= 2
+
+
+class TestHaversineMeters:
+    """Pure-function tests for _haversine_meters. Used by the
+    neighborhood proximity filter."""
+
+    def test_zero_distance(self):
+        """Same point → 0 meters."""
+        from tests.eval.eval_llm_judge import _haversine_meters
+        # Times Square
+        d = _haversine_meters(40.7580, -73.9855, 40.7580, -73.9855)
+        assert abs(d) < 0.01
+
+    def test_known_nyc_distance(self):
+        """Times Square to Battery Park is approximately 6.6 km
+        by great-circle distance (street-level walking is longer)."""
+        from tests.eval.eval_llm_judge import _haversine_meters
+        d = _haversine_meters(40.7580, -73.9855, 40.7033, -74.0170)
+        # Allow 200m slack for the simplified earth model.
+        assert 6400 < d < 6800, f"Expected ~6.6 km, got {d:.0f}m"
+
+    def test_jackson_heights_to_jamaica_is_far(self):
+        """The original bug: cards from Jamaica being returned for a
+        Jackson Heights search. Verify the distance is well above
+        the 1.6 km radius."""
+        from app.rag.query_executor import NEIGHBORHOOD_CENTERS
+        from tests.eval.eval_llm_judge import _haversine_meters
+        jh = NEIGHBORHOOD_CENTERS["jackson heights"]
+        jam = NEIGHBORHOOD_CENTERS["jamaica"]
+        d = _haversine_meters(jh[0], jh[1], jam[0], jam[1])
+        # Should be ~9 km — well outside the 1.6 km radius.
+        assert d > 5000, (
+            f"Jackson Heights to Jamaica is only {d:.0f}m — "
+            f"unexpected. Bug not reproduced."
+        )
+
+    def test_symmetric(self):
+        """haversine(A, B) == haversine(B, A)."""
+        from tests.eval.eval_llm_judge import _haversine_meters
+        d1 = _haversine_meters(40.7580, -73.9855, 40.7033, -74.0170)
+        d2 = _haversine_meters(40.7033, -74.0170, 40.7580, -73.9855)
+        assert abs(d1 - d2) < 0.01
+
+
 class TestResolveBorough:
     """Direct tests for _resolve_borough — the function that powers
     the borough filter via production's lookup chain."""
@@ -571,11 +823,25 @@ class TestColocatedServiceTypes:
 
 
 class TestServiceDetailNarrowing:
-    """Production's service_detail narrowing
-    (rag/__init__.py::_DETAIL_TO_TAXONOMY_NARROWING) is hand-curated.
-    The mock approximates with a substring match against
-    service_name / taxonomies / description, with permissive fallback
-    when nothing matches.
+    """The eval narrowing now mirrors production's strict approach:
+
+    1. If ``service_detail`` is in production's ``_DETAIL_TO_TAXONOMY_NARROWING``,
+       filter rows by overlap with the listed taxonomies. **Strict.**
+    2. Else if it's in ``_DETAIL_DESCRIPTION_FILTERS``, filter rows by
+       regex match against ``service_description``.
+    3. Else fall back to a permissive substring match against
+       service_name / service_taxonomies / service_description.
+
+    All three strategies fall back to the unfiltered row set when no
+    match is found, on the principle that strict 0-result fallback
+    would invalidate scenarios the eval should be checking. The
+    fixture's per-borough taxonomy coverage is thinner than
+    production's DB.
+
+    These tests landed with Finding 5 of the May 5, 2026 eval-fidelity
+    audit — closing the gap where the eval used permissive substring
+    matching for ALL service_detail values, including ones production
+    handles strictly via taxonomy swap.
     """
 
     def test_no_service_detail_returns_unfiltered(self):
@@ -591,31 +857,102 @@ class TestServiceDetailNarrowing:
         r = runner._mock_query_services(service_type="food", location="brooklyn")
         assert r["result_count"] == baseline["result_count"]
 
-    def test_service_detail_narrows_when_substring_matches(self):
-        """When at least one row's service_name/taxonomies/description
-        contains the detail substring, narrow to those rows."""
-        # 'soup kitchen' should match the Brooklyn Community Breakfast
-        # row whose taxonomy is "Soup Kitchen".
+    def test_taxonomy_strategy_strict_for_detox(self):
+        """Strategy 1 (taxonomy strict): ``detox`` is in production's
+        taxonomy-narrowing dict (maps to ['substance use treatment',
+        'residential recovery']). Eval must apply strict taxonomy
+        filtering, not loose substring match. All returned rows must
+        be tagged with one of the listed taxonomies."""
+        from app.rag import _DETAIL_TO_TAXONOMY_NARROWING
+        narrowed = {t.lower() for t in _DETAIL_TO_TAXONOMY_NARROWING["detox"]}
+        # Use medical (the post-cluster-5 routing target for detox).
+        r = runner._mock_query_services(
+            service_type="medical", location="manhattan",
+            service_detail="detox",
+        )
+        # If we got results, every row must be tagged correctly.
+        for c in r["services"]:
+            tax_set = {str(t).lower() for t in (c.get("service_taxonomies") or [])}
+            assert tax_set & narrowed, (
+                f"Card {c.get('service_name')} taxonomies={tax_set} "
+                f"don't overlap detox-narrowed {narrowed}"
+            )
+
+    def test_taxonomy_strategy_strict_for_food_subtypes(self):
+        """Strategy 1: 'soup kitchens' is in the taxonomy-narrowing dict
+        (maps to ['soup kitchen', 'mobile soup kitchen']). All returned
+        rows must carry one of those taxonomies."""
+        from app.rag import _DETAIL_TO_TAXONOMY_NARROWING
+        narrowed = {t.lower() for t in _DETAIL_TO_TAXONOMY_NARROWING["soup kitchens"]}
         r = runner._mock_query_services(
             service_type="food", location="brooklyn",
-            service_detail="soup kitchen",
+            service_detail="soup kitchens",
         )
-        assert r["result_count"] >= 1
-        assert all(
-            "soup kitchen" in (c.get("service_name") or "").lower()
-            or any(
-                "soup kitchen" in str(t).lower()
-                for t in (c.get("service_taxonomies") or [])
-            )
-            for c in r["services"]
-        )
+        if r["result_count"] > 0:
+            for c in r["services"]:
+                tax_set = {str(t).lower() for t in (c.get("service_taxonomies") or [])}
+                assert tax_set & narrowed
 
-    def test_service_detail_falls_back_when_no_substring_match(self):
-        """Permissive: when nothing matches, return the unfiltered
-        rows. Production's narrowing is stricter (taxonomy swap), but
-        a strict eval would invalidate scenarios where the fixture
-        happens to lack a perfect match. Better to score the bot on
-        what it CAN return than to penalize the fixture's gap."""
+    def test_description_regex_strategy_for_financial_services(self):
+        """Strategy 2 (description regex): 'financial services' is in
+        the description-filters dict, not the taxonomy dict. Eval must
+        apply the regex (production's pattern: 'financial|money manage|
+        budget|credit|debt|financial literacy') against
+        service_description, not substring match against the literal
+        'financial services'.
+
+        Brooklyn fixture has 'other'-bucket rows whose descriptions
+        match the financial regex (Health Services Hotline mentions
+        'Debt', Community Services mentions 'financial counseling').
+        """
+        baseline = runner._mock_query_services(
+            service_type="other", location="brooklyn",
+        )
+        r = runner._mock_query_services(
+            service_type="other", location="brooklyn",
+            service_detail="financial services",
+        )
+        # Strict regex must narrow the bucket — count drops below
+        # baseline (the bucket size).
+        assert r["result_count"] < baseline["result_count"], (
+            f"Strict regex narrowing should reduce bucket size: "
+            f"baseline={baseline['result_count']}, narrowed={r['result_count']}"
+        )
+        # And every returned card's description matches one of the
+        # regex's terms.
+        for c in r["services"]:
+            desc = (c.get("description") or "").lower()
+            assert any(kw in desc for kw in ("financial", "money", "budget", "credit", "debt")), (
+                f"Card {c.get('service_name')!r} description doesn't match "
+                f"financial regex: {desc[:120]!r}"
+            )
+
+    def test_description_regex_falls_back_when_borough_has_no_matches(self):
+        """Strategy 2's safety net: when the borough has 0 rows
+        matching the description regex, fall back to unfiltered.
+
+        Manhattan's 'other' bucket has 13 rows but none with
+        financial-related descriptions (the financial-tagged rows live
+        in Bronx and Brooklyn). Production would return 0 here; the
+        eval prefers showing what's in the bucket so the bot is scored
+        on its handling of those rows rather than on the fixture's
+        coverage gap.
+        """
+        baseline = runner._mock_query_services(
+            service_type="other", location="manhattan",
+        )
+        r = runner._mock_query_services(
+            service_type="other", location="manhattan",
+            service_detail="financial services",
+        )
+        # Safety net: fell back to unfiltered.
+        assert r["result_count"] == baseline["result_count"]
+
+    def test_unknown_detail_falls_back_to_substring_then_unfiltered(self):
+        """Strategy 3 (permissive fallback): when service_detail is
+        not in either production dict, fall back to substring match
+        against name / taxonomies / description, then to unfiltered
+        when nothing matches."""
         baseline = runner._mock_query_services(
             service_type="food", location="brooklyn",
         )
@@ -623,7 +960,32 @@ class TestServiceDetailNarrowing:
             service_type="food", location="brooklyn",
             service_detail="quantumcryogenicfeasts",
         )
-        assert r["result_count"] == baseline["result_count"]  # unfiltered primary
+        # quantumcryogenicfeasts isn't in either dict and matches
+        # nothing → unfiltered result.
+        assert r["result_count"] == baseline["result_count"]
+
+    def test_strict_taxonomy_falls_back_to_unfiltered_on_zero_match(self):
+        """When strict taxonomy narrowing is applied but the fixture
+        has 0 rows tagged with the narrowed taxonomy in the searched
+        borough, fall back to unfiltered rather than empty. This is
+        an eval-specific safety net — production would return 0; eval
+        prefers showing the user what's available rather than
+        invalidating the scenario over fixture-coverage gaps."""
+        # Pick a detail-borough combination where the taxonomy
+        # narrowing yields no rows in that borough but the bucket
+        # itself has rows. Detox in Staten Island fits if the fixture
+        # has substance-use rows only in other boroughs.
+        baseline = runner._mock_query_services(
+            service_type="medical", location="staten island",
+        )
+        r = runner._mock_query_services(
+            service_type="medical", location="staten island",
+            service_detail="detox",
+        )
+        # Either we got narrowed results OR we fell back to the full
+        # bucket. Either is acceptable; what's NOT acceptable is 0.
+        if baseline["result_count"] > 0:
+            assert r["result_count"] > 0
 
     def test_service_detail_recorded_in_params_applied(self):
         r = runner._mock_query_services(

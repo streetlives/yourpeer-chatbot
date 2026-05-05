@@ -83,23 +83,26 @@ Usage:
 
 import sys
 import os
+import re
+import re as _re_elig
 import json
+import json as _json
 import time
+import math
 import argparse
 import logging
 import io
-from contextlib import redirect_stdout
-import anthropic
-import json as _json
 import pathlib as _pathlib
-import re as _re_elig
-
-from app.services.chatbot.context import _REDACT_BEFORE_LLM
+import anthropic
+from contextlib import redirect_stdout
+from pathlib import Path
 from app.services.chatbot import generate_reply
 from app.services.session_store import clear_session
 from app.privacy.pii_redactor import redact_pii
+from app.services.chatbot.context import _REDACT_BEFORE_LLM
 from datetime import datetime
 from unittest.mock import patch
+
 
 # MUST come before any `from app.*` import below. The `app` package lives
 # under backend/, not at the repo root, so we prepend that to sys.path
@@ -3808,6 +3811,10 @@ def _service_card_from_fixture(row: dict) -> dict:
 # what services exist. It's a pure filter on production data. Drift
 # surface goes from "hand-coded everything" to "fixture age."
 
+# (json and pathlib used for fixture loading — imported at the top of
+# the file as `_json` and `_pathlib` aliases to avoid name collisions
+# with local variables.)
+
 _FIXTURE_PATH = _pathlib.Path(__file__).parent / "fixtures" / "services.json"
 
 try:
@@ -3820,10 +3827,20 @@ except FileNotFoundError:
 
 # Production's location knowledge - imported, not duplicated.
 try:
-    from app.rag.query_executor import NEIGHBORHOOD_CENTERS, NYC_LOCATION_ALIASES
+    from app.rag.query_executor import (
+        NEIGHBORHOOD_CENTERS,
+        NYC_LOCATION_ALIASES,
+        DEFAULT_NEIGHBORHOOD_RADIUS_METERS,
+        get_neighborhood_center,
+        is_borough as _prod_is_borough,
+    )
     from app.services.chatbot.execution import _CITY_TO_BOROUGH
     from app.rag.query_templates import TEMPLATES as _PROD_TEMPLATES
     from app.rag import resolve_template_key as _resolve_template_key
+    from app.rag import (
+        _DETAIL_TO_TAXONOMY_NARROWING as _PROD_DETAIL_TO_TAXONOMY_NARROWING,
+        _DETAIL_DESCRIPTION_FILTERS as _PROD_DETAIL_DESCRIPTION_FILTERS,
+    )
 except ImportError:
     # The eval can be imported in environments that don't have the
     # backend on the path (e.g. spot-check tests). Provide minimal
@@ -3840,8 +3857,18 @@ except ImportError:
         "Bronx": "Bronx", "Staten Island": "Staten Island",
     }
     _PROD_TEMPLATES = {}
+    DEFAULT_NEIGHBORHOOD_RADIUS_METERS = 1600
     def _resolve_template_key(s):
         return s
+    def get_neighborhood_center(s):
+        return None
+    def _prod_is_borough(s):
+        return s and s.lower().strip() in {
+            "manhattan", "brooklyn", "queens", "bronx",
+            "the bronx", "staten island",
+        }
+    _PROD_DETAIL_TO_TAXONOMY_NARROWING = {}
+    _PROD_DETAIL_DESCRIPTION_FILTERS = {}
 
 
 def _resolve_borough(location: str | None) -> str | None:
@@ -3990,6 +4017,130 @@ def _filter_rows_by_service_and_borough(
     return rows, relaxed
 
 
+# ---------------------------------------------------------------------------
+# Neighborhood proximity filter (cluster 2: location precision/drift fix)
+# ---------------------------------------------------------------------------
+# When the user gives a neighborhood (not a borough), production routes
+# through ST_DWithin(pa.position, ST_MakePoint(lon, lat), radius_meters)
+# to filter rows to those within the radius of the neighborhood center.
+# See backend/app/rag/__init__.py:266 (the user_params['lat'/'lon'/
+# 'radius_meters'] block for non-borough locations) and
+# backend/app/rag/query_executor.py:782 (NEIGHBORHOOD_CENTERS).
+#
+# Without this filter, the eval mock would return any rows in the parent
+# borough — so a "shower in Lower East Side" query would return rows
+# from Harlem or Midtown alongside genuine LES rows. The judge then
+# correctly flags the cards as "in the wrong neighborhood" against the
+# user's explicit ask, which surfaced as cluster 2 of the R40
+# investigation: multi_cross_neighborhood_shower_les_food_chinatown
+# (4.45, floor 4.5), multi_three_services_legal_benefits_food (3.73 —
+# Jamaica returned for a Jackson Heights ask), and
+# multi_asylum_seeker_food_legal (3.64).
+#
+# Earlier transcripts described this as "fixture-coverage limit
+# (Foundation 8)" — but the data was always there: 100% of fixture
+# rows have lat/lon, and production exposes NEIGHBORHOOD_CENTERS at
+# module level. The eval mock just wasn't using them. This fix closes
+# the gap.
+
+
+def _haversine_meters(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Great-circle distance in meters between two (lat, lon) points.
+
+    Pure-python implementation — no scipy/numpy dependency. Earth's
+    mean radius is approx 6,371 km. At NYC latitudes (~40.7°N) the
+    haversine formula has accuracy well under 1m for distances under
+    a few km, which is more precision than this filter needs.
+    """
+    r_earth_m = 6_371_000.0
+    rad_lat1 = math.radians(lat1)
+    rad_lat2 = math.radians(lat2)
+    delta_lat = math.radians(lat2 - lat1)
+    delta_lon = math.radians(lon2 - lon1)
+    a = (
+        math.sin(delta_lat / 2) ** 2
+        + math.cos(rad_lat1) * math.cos(rad_lat2) * math.sin(delta_lon / 2) ** 2
+    )
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+    return r_earth_m * c
+
+
+def _filter_rows_by_neighborhood_proximity(
+    rows: list[dict],
+    location: str | None,
+    radius_meters: float = DEFAULT_NEIGHBORHOOD_RADIUS_METERS,
+) -> tuple[list[dict], bool]:
+    """Filter rows to those within ``radius_meters`` of the
+    neighborhood center, sorted by ascending distance.
+
+    Mirrors production's ``ST_DWithin`` behavior in
+    ``rag/__init__.py:266`` for non-borough locations.
+
+    Resolution:
+      1. If ``location`` is a borough (or None / unknown), return rows
+         unchanged with ``narrowed=False``.
+      2. If ``location`` is a known neighborhood and at least one row
+         is within ``radius_meters`` of the center → return those
+         rows sorted by ascending distance, ``narrowed=True``.
+      3. If ``location`` is a known neighborhood but no rows are
+         within radius → return ALL rows sorted by ascending distance
+         from the center, ``narrowed=False``. This is the eval-side
+         relaxed-search analogue: production would return 0 results
+         and the bot would say "I broadened the search a bit," but
+         the eval prefers showing the user the closest available
+         options rather than empty. The borough filter has already
+         restricted to the correct borough at this point.
+
+    The closest-match-when-no-radius-hit behavior matters because
+    fixture per-borough coverage is thin (5-15 rows per borough per
+    service_type). For a borough with no rows within 1.6km of the
+    requested neighborhood, returning the closest 5 rows gives the
+    bot something to work with and ranks them by proximity — better
+    than returning a random borough slice.
+    """
+    if not location:
+        return rows, False
+    if _prod_is_borough(location):
+        # Borough-level search: no neighborhood narrowing, keep
+        # the full borough bucket.
+        return rows, False
+
+    center = get_neighborhood_center(location)
+    if not center:
+        # Unknown neighborhood — fall back to whatever the borough
+        # filter produced. (E.g. user typed "Harlem-adjacent area"
+        # which doesn't resolve, but the upstream borough resolver
+        # may have produced something useful.)
+        return rows, False
+
+    lat0, lon0 = center
+
+    # Compute distance for every row that has coordinates. Rows
+    # without coords get a sentinel "infinity" distance so they
+    # rank last, mirroring production's ST_DWithin which excludes
+    # NULL-position rows.
+    INF = float("inf")
+    rows_with_dist = []
+    for r in rows:
+        rlat = r.get("latitude")
+        rlon = r.get("longitude")
+        if rlat is None or rlon is None:
+            rows_with_dist.append((INF, r))
+        else:
+            dist = _haversine_meters(lat0, lon0, float(rlat), float(rlon))
+            rows_with_dist.append((dist, r))
+
+    in_radius = [(d, r) for d, r in rows_with_dist if d <= radius_meters]
+    if in_radius:
+        in_radius.sort(key=lambda x: x[0])
+        return [r for _, r in in_radius], True
+
+    # No rows within radius — sort all rows by proximity and return.
+    # Caller may still apply max_results to cap to closest N.
+    rows_with_dist.sort(key=lambda x: x[0])
+    return [r for _, r in rows_with_dist], False
+
+
 def _filter_rows_by_colocated(
     rows: list[dict],
     colocated_service_types: list | None,
@@ -4035,23 +4186,91 @@ def _filter_rows_by_service_detail(
     rows: list[dict],
     service_detail: str | None,
 ) -> list[dict]:
-    """Narrow rows by ``service_detail`` substring match.
+    """Narrow rows by ``service_detail`` using production's strict
+    narrowing dicts, with a permissive substring fallback when the
+    detail isn't in either dict.
 
-    Production's service_detail narrowing
-    (rag/__init__.py::_DETAIL_TO_TAXONOMY_NARROWING) is hand-curated and
-    swaps the entire taxonomy_names list for a sub-category-specific
-    one. We can't replicate that exactly without re-implementing the
-    narrowing dict, so we approximate with a substring match against
-    each row's service_name, service_taxonomies, and description.
+    Production has two strict narrowing strategies (in
+    ``backend/app/rag/__init__.py``, lifted to module level on May 5,
+    2026 to support eval reuse):
 
-    This is intentionally permissive - if the detail doesn't match
-    anything, we fall back to the unfiltered rows rather than
-    returning empty. Production's narrowing is stricter, but a strict
-    eval would invalidate scenarios where the fixture happens to lack
-    a perfect detail match.
+      1. ``_DETAIL_TO_TAXONOMY_NARROWING`` — swaps ``taxonomy_names``
+         for the sub-list. Used for categories with distinct
+         sub-taxonomies (food sub-types, personal_care sub-types,
+         substance use sub-types). Strict: matched rows are tagged
+         with one of the listed taxonomies.
+
+      2. ``_DETAIL_DESCRIPTION_FILTERS`` — adds a description regex
+         pattern. Used for sub-types that share a parent taxonomy
+         and can only be distinguished by description text (English
+         classes, dental care, AA meetings, etc.).
+
+    Resolution order:
+      1. If ``service_detail`` is in the taxonomy-narrowing dict,
+         filter rows by overlap with the listed taxonomies. **Strict
+         in production, strict here too.**
+      2. Else if it's in the description-filters dict, filter rows by
+         regex match on the description.
+      3. Else fall back to a permissive substring match against
+         service_name / service_taxonomies / service_description, with
+         the existing safety net of falling back to unfiltered when
+         nothing matches.
+
+    Closes Finding 5 of the May 5, 2026 eval-fidelity audit. Before
+    this change, the eval used a permissive substring match for ALL
+    service_detail values, including ones production handles strictly
+    via taxonomy swap. That meant the eval could return rows production
+    wouldn't (substring-matched but taxonomy-mismatched), or miss rows
+    production would surface — same risk class as the count-mismatch
+    bug surfaced by R42's peer_detox_manhattan probe.
     """
     if not service_detail:
         return rows
+
+    # Strategy 1: strict taxonomy narrowing (production parity).
+    narrowed_taxonomies = _PROD_DETAIL_TO_TAXONOMY_NARROWING.get(service_detail)
+    if narrowed_taxonomies:
+        narrowed_lower = {t.lower() for t in narrowed_taxonomies}
+        matched = [
+            r for r in rows
+            if {str(t).lower() for t in (r.get("service_taxonomies") or [])}
+            & narrowed_lower
+        ]
+        # Even with strict narrowing, if the fixture happens to have 0
+        # rows tagged with the narrowed taxonomy in the borough being
+        # searched, fall back to unfiltered. Production's behavior here
+        # is "0 results returned" — but for eval purposes that hurts
+        # scenario coverage more than it helps. The fixture's per-borough
+        # taxonomy coverage is thinner than production's DB, so a strict
+        # 0-result fallback would invalidate scenarios the eval should
+        # be checking. Tracked as a known fixture-coverage gap.
+        return matched if matched else rows
+
+    # Strategy 2: description regex filter (production parity).
+    description_pattern = _PROD_DETAIL_DESCRIPTION_FILTERS.get(service_detail)
+    if description_pattern:
+        try:
+            # Production's regex uses \m / \M for word boundaries
+            # (Postgres syntax). Python's re uses \b. Translate the
+            # most common cases so the eval doesn't blow up on import.
+            py_pattern = description_pattern.replace(r"\m", r"\b").replace(r"\M", r"\b")
+            compiled = re.compile(py_pattern, re.IGNORECASE)
+        except re.error:
+            # If translation fails (uncommon Postgres-specific construct),
+            # fall back to permissive substring match below.
+            compiled = None
+        if compiled is not None:
+            matched = [
+                r for r in rows
+                if compiled.search(r.get("service_description") or "")
+            ]
+            return matched if matched else rows
+
+    # Strategy 3: permissive substring fallback (eval-specific).
+    # Used only when neither production dict has the key — covers
+    # scenarios that pass an ad-hoc service_detail string we haven't
+    # added to either dict. Falls back to unfiltered if nothing matches,
+    # matching prior eval behavior.
     detail_lower = service_detail.lower()
     matched = [
         r for r in rows
@@ -4115,6 +4334,8 @@ _FAMILY_STATUS_TAXONOMIES = {
 # the gender exclusion logic. Patterns are matched case-insensitively as
 # whole words to avoid false positives ("women" should not match
 # "womenswear" — though the fixture doesn't have such cases, defensive).
+# (`_re_elig` is the same `re` module aliased at the top of this file
+# to avoid colliding with local `re` variables further down.)
 _MEN_ONLY_NAME_RE = _re_elig.compile(r"\b(men's|men|male)\b", _re_elig.IGNORECASE)
 _WOMEN_ONLY_NAME_RE = _re_elig.compile(r"\b(women's|women|female)\b", _re_elig.IGNORECASE)
 
@@ -4363,6 +4584,24 @@ def _mock_query_services(*args, **kwargs) -> dict:
 
     # Step 1: filter by service_type and borough.
     rows, relaxed = _filter_rows_by_service_and_borough(service_type, borough)
+
+    # Step 1.5: apply neighborhood proximity filter when the user gave
+    # a neighborhood (not a borough). Mirrors production's ST_DWithin
+    # in rag/__init__.py:266 — when location resolves to a known
+    # neighborhood center, narrow to rows within
+    # DEFAULT_NEIGHBORHOOD_RADIUS_METERS (=1600m) of that center,
+    # sorted by ascending distance. Borough queries pass through
+    # unchanged. Closes cluster 2 (location precision/drift) of the
+    # R40 investigation:
+    #   - multi_cross_neighborhood_shower_les_food_chinatown (4.45 →
+    #     LES rows now within 1.6km of LES center, not Harlem)
+    #   - multi_three_services_legal_benefits_food (3.73 → Jackson
+    #     Heights cards no longer drift to Jamaica)
+    #   - multi_asylum_seeker_food_legal (3.64 → Jackson Heights
+    #     proximity honored)
+    rows, _proximity_narrowed = _filter_rows_by_neighborhood_proximity(
+        rows, location,
+    )
 
     # Step 2: apply colocated filter and remember whether to fall back.
     # Production retries the query without the colocated filter when
@@ -5447,7 +5686,7 @@ def _load_prior_scored_scenarios(subset_from):
         ran successfully. Empty list if the input had no scored
         scenarios. Exits with code 2 on usage/IO errors.
     """
-    report_path = _pathlib.Path(subset_from)
+    report_path = Path(subset_from)
 
     # Case 3: directory — resolve to a file inside.
     if report_path.is_dir():
@@ -5580,7 +5819,6 @@ def _apply_subset_filter(all_scenarios, subset, subset_from, threshold_override)
     Exits with code 2 on any usage/IO error so the caller doesn't have to
     branch on return values. Exits 0 if zero scenarios match (nothing to do).
     """
-
     if subset_from is None:
         print(f"ERROR: --subset {subset} requires --subset-from PATH "
               f"(path to a prior eval report — either eval_results/runs/"
@@ -5621,7 +5859,7 @@ def _apply_subset_filter(all_scenarios, subset, subset_from, threshold_override)
 
     # Display name of the report — for directories show the dir, for
     # files show the file. Helps the user confirm which artifact was used.
-    display_name = _pathlib.Path(subset_from).name or subset_from
+    display_name = Path(subset_from).name or subset_from
     print(f"Subset '{subset}': {len(matched)} scenario(s) below threshold "
           f"{threshold} in {display_name}")
     return matched
@@ -5725,6 +5963,7 @@ def main():
     # so this reflects what actually took effect (env var vs. CLI flag
     # vs. default). If someone exports REDACT_BEFORE_LLM=true in their
     # shell and runs without the CLI flag, this still prints "ON".
+    # (`_REDACT_BEFORE_LLM` is imported at the top of this file.)
     if _REDACT_BEFORE_LLM:
         print("  Pre-LLM redaction: ON (REDACT_BEFORE_LLM=true)")
     else:
