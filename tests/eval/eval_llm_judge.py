@@ -96,10 +96,6 @@ import pathlib as _pathlib
 import anthropic
 from contextlib import redirect_stdout
 from pathlib import Path
-from app.services.chatbot import generate_reply
-from app.services.session_store import clear_session
-from app.privacy.pii_redactor import redact_pii
-from app.services.chatbot.context import _REDACT_BEFORE_LLM
 from datetime import datetime
 from unittest.mock import patch
 
@@ -141,7 +137,10 @@ def _early_redact_flag_check() -> bool:
 
 if _early_redact_flag_check():
     os.environ["REDACT_BEFORE_LLM"] = "true"
-
+from app.services.chatbot import generate_reply
+from app.services.session_store import clear_session
+from app.privacy.pii_redactor import redact_pii
+from app.services.chatbot.context import _REDACT_BEFORE_LLM
 # Suppress noisy logs during eval
 logging.basicConfig(level=logging.WARNING)
 
