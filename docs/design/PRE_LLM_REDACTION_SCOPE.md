@@ -1,5 +1,13 @@
 # Server-side pre-LLM redaction — PR scope
 
+<!-- drift:ignore-file -->
+<!-- This doc pins exact LLM call-site line numbers as part of its
+     scope analysis. The line-number references are the point of the
+     doc — rewriting to function names would lose the precision the
+     redaction scope analysis depends on. The forward-reference to
+     tests/integration/test_pre_llm_redaction.py is an exception
+     (the test exists), corrected in this PR. -->
+
 **Status:** Phase 1 complete. Phase 2 in flight. Phase 3 pending one R41 diagnostic run.
 **Originally authored:** Engineering, May 3 2026.
 **Last updated:** May 5 2026.
@@ -764,7 +772,7 @@ Files to modify:
 | `app/services/chatbot/handlers/meta.py` | Pass `ctx.redacted_message` to `_build_bot_question_prompt` |
 | `app/llm/claude_client.py` | Delete `classify_message_llm` |
 | `tests/eval/eval_llm_judge.py` | Add `--redact-before-llm` CLI flag, 7 new scenarios |
-| `tests/unit/test_pre_llm_redaction.py` | New: comprehensive call-site test |
+| `tests/integration/test_pre_llm_redaction.py` | New: comprehensive call-site test |
 
 Files to read (no change needed, but verified):
 

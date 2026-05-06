@@ -111,6 +111,19 @@ _DETAIL_DESCRIPTION_FILTERS = {
     "money management": r"money manage|budget|financial|savings|debt",
     "public assistance": r"public assist|welfare|benefit|TANF|cash assist",
     "SYEP programs": r"SYEP|summer youth|summer employment|youth employment",
+    # ID-services sub-types — added with the IDNYC routing fix
+    # (peer_free_id_manhattan). These match Streetlives services that
+    # help users obtain ID documents. "IDNYC" is NYC's free city ID
+    # program specifically; "ID services" is the broader category
+    # (state ID, replacement IDs, identification help); "birth
+    # certificate" is a separate vital record. PG word-boundary
+    # anchors (\m...\M) on bare "ID" prevent substring matches
+    # against "Medicaid", "ride", "video", etc. (\b is the backspace
+    # character in PG regex, not a word boundary — see
+    # TestWordBoundaryCorrectness.)
+    "IDNYC": r"IDNYC|NYC.?ID|municipal.?ID|city.?ID",
+    "ID services": r"\mID\M|identification|state.?ID|driver.?license|non.?driver",
+    "birth certificate": r"birth certificate|vital record|certificate of birth",
     # ── health_care sub-types ──
     "dental care": r"dental|dentist|oral health|tooth|teeth",
     "vision care": r"vision|eye|optometr|ophthalmol|glasses|optical",

@@ -192,11 +192,73 @@ def _build_confirmation_message(slots: dict) -> str:
         # Only show if age wasn't stated (otherwise "(age 65)" covers it)
         _prefix = "senior-friendly "
 
+    # Apply the population/identity affordance to the confirmation.
+    #
+    # Single-service confirmations: prepend the prefix to the service
+    # label as before — "I'll look for LGBTQ-friendly shelter in
+    # Brooklyn." This reads naturally because the prefix modifies the
+    # one service the user asked about.
+    #
+    # Multi-service confirmations: prepending the prefix to a joined
+    # service list creates noun-phrase ambiguity. When service_label
+    # is "food, asylum services, and food stamps / SNAP", prepending
+    # "immigration-friendly " produces "immigration-friendly food,
+    # asylum services, and food stamps / SNAP" — which the LLM judge
+    # (and a human reader) parses as "immigration-friendly food" being
+    # a coupled phrase. "Immigration-friendly food" isn't a service
+    # category that exists; food pantries don't carry immigration
+    # eligibility filters. The same logic applies to LGBTQ-friendly,
+    # veteran-friendly, etc. — these are population-affordances, not
+    # service-taxonomy modifiers, and they should attach to the user
+    # not the service list.
+    #
+    # For multi-service, render the affordance as a separate trailing
+    # sentence ("I'll prioritize immigration-friendly options where
+    # applicable.") so the user still sees the population
+    # acknowledgment without the noun-phrase ambiguity. Detection key
+    # is whether any same-location queued services merged into
+    # service_label; cross-location queued items are handled below
+    # and don't trigger the trailing-sentence path because they're
+    # rendered as a separate ", then X" clause anyway.
+    is_multi_service_label = bool(same_location_queued)
+
     if _prefix:
-        parts[0] = parts[0].replace(
-            f"I\u2019ll look for {service_label}",
-            f"I\u2019ll look for {_prefix}{service_label}",
-        )
+        if is_multi_service_label:
+            # Strip trailing whitespace from the prefix text and
+            # capitalize the first letter for use as a standalone
+            # sentence. _prefix values end with a trailing space
+            # (legacy behavior; preserved to keep single-service path
+            # untouched), so strip before formatting.
+            affordance = _prefix.strip()
+            # Render as a clean follow-up sentence. Avoid the awkward
+            # "I'll prioritize <X>-friendly..." construction for the
+            # "accessible" affordance (which is an adjective without
+            # the "-friendly" suffix); fall through to a generic
+            # "options that match your situation" framing.
+            if affordance.endswith("-friendly"):
+                _trailing_affordance = (
+                    f" I'll prioritize {affordance} options where "
+                    f"available."
+                )
+            elif affordance == "accessible":
+                _trailing_affordance = (
+                    " I'll prioritize accessible options where available."
+                )
+            else:
+                # Defensive: any future affordance value gets a
+                # neutral framing rather than corrupting the message.
+                _trailing_affordance = (
+                    f" I'll prioritize {affordance} options where "
+                    f"available."
+                )
+        else:
+            parts[0] = parts[0].replace(
+                f"I\u2019ll look for {service_label}",
+                f"I\u2019ll look for {_prefix}{service_label}",
+            )
+            _trailing_affordance = ""
+    else:
+        _trailing_affordance = ""
 
     # Append cross-location queued services as ", then X in Y" — placed
     # before family_status so "with children" applies to the whole
@@ -248,6 +310,11 @@ def _build_confirmation_message(slots: dict) -> str:
         parts[0] += ", for yourself"
 
     parts[0] += " \u2014 sound good?"
+
+    # Multi-service population affordance, surfaced as a separate
+    # sentence. See is_multi_service_label block above for rationale.
+    if _trailing_affordance:
+        parts[0] += _trailing_affordance
 
     return " ".join(parts)
 

@@ -1,5 +1,11 @@
 # YourPeer — Evaluation Quality Engineering Plan (v2)
 
+<!-- drift:ignore-file -->
+<!-- This is a plan document — it intentionally references files,
+     scripts, and tests that don't exist yet. Suppressing file-ref
+     and prose-line-num warnings file-wide because the doc's
+     purpose is to describe work not yet done. -->
+
 **Written:** May 4, 2026 (rev. 2)
 **Supersedes:** `EVAL_QUALITY_ENGINEERING_PLAN.md` (April 21, 2026, R34-era)
 **Anchor run:** R38 (May 3, 2026) — 175 scenarios, 173 passing (98.9%), 8 critical failures

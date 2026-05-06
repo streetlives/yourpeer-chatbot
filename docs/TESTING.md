@@ -205,7 +205,7 @@ All backend modules and all public functions are covered. Tests are in `tests/un
 | `chat_models.py` | `integration/test_http_routes_and_models.py`, `integration/test_schema_and_mock_sync.py` | 27+ | Full |
 | `admin.py` (routes) | `integration/test_admin_api_routes.py` | 28 | Full |
 | `chat.py` (route) | `integration/test_http_routes_and_models.py` | 48 | Full |
-| `claude_client.py` | `unit/test_claude_client.py` | 19 | Full |
+| `claude_client.py` | `unit/test_claude_client.py` | 14 | Full |
 | `main.py` | `unit/test_main.py` | 14 | Full |
 | LLM isolation (cross-cutting) | `integration/test_service_data_llm_firewall.py` | 57 | Full |
 
@@ -252,7 +252,7 @@ Validates the main chatbot routing — message classification (split classifier 
 | Escalation phrase variants | 3 | "connect with a person" routes to escalation, "connect with peer navigator" routes to escalation, peer navigator label standardized |
 | Location change UX | 1 | Location change shows "Use my location" as first option |
 
-### `test_slot_extraction_regex.py` — 117 tests
+### `test_slot_extraction_regex.py` — 118 tests
 
 Validates the regex-based slot extraction pipeline.
 
@@ -462,7 +462,7 @@ Validates PII detection and redaction across eight PII types plus bot response r
 | Overlap handling | varies | Overlapping PII patterns handled correctly |
 | Integration | varies | End-to-end PII redaction through the chatbot pipeline |
 
-### `test_claude_client.py` — 19 tests
+### `test_claude_client.py` — 14 tests
 
 Unit tests for the Claude LLM client. All external calls mocked.
 
@@ -664,7 +664,7 @@ Validates the boundary between post-results follow-up questions and new service 
 
 The four industry-recommended ambiguity handling patterns — confidence scoring, disambiguation prompts, correction recovery, and ambiguity logging — are now exercised across `tests/unit/test_audit_regression.py` (regression guards for the individual behaviors) and `tests/eval/eval_llm_judge.py` (end-to-end scoring of ambiguous scenarios). Behaviors covered: confidence scoring for regex/reset/keyword/correction/disambiguation cases, unmatched-name disambiguation prompts, the 5 correction phrases with their slot-clearing semantics, "Not what I meant" button wiring, and audit-event logging of the correction/disambiguation categories with confidence fields.
 
-### `test_populations.py` — 93 tests
+### `test_populations.py` — 100 tests
 
 Validates Phase 3 (population context extraction and query boosts) and Phase 5 (DV crisis → population injection). Covers the full pipeline: regex extraction → session merge → query parameter generation → ORDER BY SQL → confirmation message → LLM schema compliance.
 

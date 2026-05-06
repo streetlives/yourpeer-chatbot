@@ -91,14 +91,36 @@ class TestFix1MentalHealthKeywords:
         assert slots["service_type"] is None
 
     def test_real_mental_health_still_works(self):
-        """Actual mental health service keywords should still extract."""
+        """Actual mental health service keywords should still extract.
+
+        Note: As of the Cluster 5 substance-use routing fix, phrases
+        about addiction / substance abuse / AA route to ``medical``
+        (not ``mental_health``). This is intentional — the medical
+        template handles substance-use treatment with the medical-
+        supervision safety addendum (alcohol/opiate withdrawal can
+        be medically dangerous). See ``_substance_use_safety_addendum``
+        in ``execution.py`` and the routing directive in
+        ``slot_extraction/prompts.py:_SHORT_SYSTEM_PROMPT``.
+
+        Pure-mental-health phrases (counseling, therapy, grief) still
+        route to ``mental_health`` and are the primary thing this test
+        is guarding against the Fix 1 over-narrowing originally
+        flagged."""
         cases = [
+            # Pure mental health — these are the canonical cases this
+            # test was authored to guard.
             ("I need counseling", "mental_health"),
             ("I need therapy", "mental_health"),
-            ("I need help with addiction", "mental_health"),
-            ("Where can I find AA meetings?", "mental_health"),
-            ("I need substance abuse help", "mental_health"),
             ("I'm dealing with grief", "mental_health"),
+            # Substance-use phrases — Cluster 5 routes these to medical
+            # so the medical template's substance-use-aware addendum
+            # can fire (SAMHSA helpline + medical-supervision warning
+            # for alcohol/opiate withdrawal). Pre-Cluster-5, these
+            # routed to mental_health, which silently lost the safety
+            # addendum.
+            ("I need help with addiction", "medical"),
+            ("Where can I find AA meetings?", "medical"),
+            ("I need substance abuse help", "medical"),
         ]
         for phrase, expected in cases:
             slots = extract_slots(phrase)

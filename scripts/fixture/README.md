@@ -306,8 +306,8 @@ not exist":
 
 1. Check `backend/app/rag/query_templates.py` for the correct table
    and column names. The production query templates are authoritative.
-2. Diff the WITH block against the canonical FoodQuery template
-   (around line 55–170 of that file).
+2. Diff the WITH block against the canonical `FoodQuery` template
+   (search for `FoodQuery` or `food_query` in `query_templates.py`).
 3. Common drift surfaces: `service_taxonomy` (sometimes typed
    `services_taxonomies`), `service_at_locations` (the junction table
    between services and locations — easy to miss), `physical_addresses`

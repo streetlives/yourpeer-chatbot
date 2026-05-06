@@ -517,9 +517,45 @@ def _apply_queue_offer(
         loc_clean, _ = redact_pii(next_location)
         loc_display = _display_location(loc_clean)
         loc_suffix = f" in {loc_display}"
+
+    # Queue-depth transparency: when more than one item is still
+    # pending, the user explicitly asked for several things and only
+    # ONE will be offered as a follow-up at a time. Without surfacing
+    # the queue depth, the user (and the eval judge) reads the
+    # one-item offer as if the rest were silently dropped.
+    #
+    # Example failure mode (from multi_three_services_legal_benefits_food
+    # in the R42-borderline run): user asks for food, asylum services,
+    # and food stamps. Confirmation lists all three. Results show 1
+    # food card + "You also mentioned asylum services — search?"
+    # Judge marks "food stamps appears dropped from the queue." The
+    # food stamps slot persists in _queued_services and would be
+    # offered next, but the bot didn't tell the user that.
+    if remaining:
+        # remaining was already sliced from queued[1:]; len(remaining)
+        # is the count of items still queued AFTER this offer.
+        next_remaining = remaining[0]
+        next_remaining_label = (
+            (next_remaining[1] if len(next_remaining) > 1 and next_remaining[1] else None)
+            or _SERVICE_LABELS.get(next_remaining[0], next_remaining[0])
+        )
+        if len(remaining) == 1:
+            # One more item beyond this offer.
+            queue_tail = (
+                f" ({next_remaining_label} after that)"
+            )
+        else:
+            # Multiple still queued.
+            queue_tail = (
+                f" ({next_remaining_label} and "
+                f"{len(remaining) - 1} more after that)"
+            )
+    else:
+        queue_tail = ""
+
     augmented = bot_response + (
         f"\n\nYou also mentioned {label}{loc_suffix} — would you like me to "
-        f"search for that too?"
+        f"search for that too?{queue_tail}"
     )
     # Note: qr_value (the button's returned message) stays lowercase —
     # it's a command string fed back through slot extraction, which is

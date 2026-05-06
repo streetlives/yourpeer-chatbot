@@ -137,10 +137,19 @@ def _early_redact_flag_check() -> bool:
 
 if _early_redact_flag_check():
     os.environ["REDACT_BEFORE_LLM"] = "true"
-from app.services.chatbot import generate_reply
-from app.services.session_store import clear_session
-from app.privacy.pii_redactor import redact_pii
-from app.services.chatbot.context import _REDACT_BEFORE_LLM
+
+# These imports are intentionally NOT at the top of the file. The
+# Phase 2 PII redaction flag (`_REDACT_BEFORE_LLM`) is bound at
+# module-load time when `app.services.chatbot.context` is imported,
+# from `os.environ["REDACT_BEFORE_LLM"]`. The early argv peek above
+# sets that env var BEFORE these imports run. Reversing the order
+# would freeze redaction OFF regardless of CLI flags, breaking
+# Phase 2 of PRE_LLM_REDACTION_SCOPE.md.
+from app.services.chatbot import generate_reply  # noqa: E402  -- see comment above
+from app.services.session_store import clear_session  # noqa: E402
+from app.privacy.pii_redactor import redact_pii  # noqa: E402
+from app.services.chatbot.context import _REDACT_BEFORE_LLM  # noqa: E402
+
 # Suppress noisy logs during eval
 logging.basicConfig(level=logging.WARNING)
 
@@ -1040,6 +1049,70 @@ SCENARIOS = [
             "service_type": "shelter",
             "location_contains": "manhattan",
         },
+    },
+    {
+        "id": "multiturn_substance_disclosure_then_food_no_carryover",
+        "name": "Substance disclosure → switch to food (no addendum carryover)",
+        "category": "multi_turn",
+        "description":
+            "User discloses alcohol detox intent on turn 1, then changes "
+            "service type to food on turn 2. The bot should NOT carry the "
+            "substance-use safety addendum (SAMHSA helpline, "
+            "medical-supervision text about alcohol/opiate withdrawal) "
+            "into the food search results. The _emotional_context slot "
+            "persists across turns (shared with shame/medical_urgent "
+            "continuity), but the addendum gate in execution.py "
+            "(_substance_use_safety_addendum) requires the CURRENT "
+            "search to also be substance-related "
+            "(service_type=='medical' AND service_detail in the "
+            "substance-related set). This scenario verifies the gate "
+            "holds end-to-end: a food search after substance disclosure "
+            "should look like any other food search, with no clinical "
+            "language about withdrawal, overdose, or detox safety.",
+        "user_turns": [
+            "I need to detox from alcohol in Manhattan",
+            "Actually, I need food instead",
+            "Yes, search",
+        ],
+        "expected": {
+            "service_type": "food",
+            "location_contains": "manhattan",
+            # The food results MUST NOT carry the substance-use addendum.
+            # Pinned phrases:
+            #   - SAMHSA helpline number (the addendum's most distinctive
+            #     marker; appears in both alcohol/opiate and generic
+            #     subtype branches — see execution.py
+            #     _substance_use_safety_addendum).
+            #   - "withdrawal" / "medically risky" — alcohol/opiate-
+            #     specific clinical language that's actively wrong on
+            #     a food search.
+            #   - "1-800-662-4357" — the spelled-out SAMHSA number.
+            "should_not_contain": [
+                "1-800-662-4357",
+                "withdrawal",
+                "medically risky",
+                "medically-supervised",
+                "SAMHSA",
+                "overdose",
+            ],
+            # Sanity: the food intent must reach search; if the bot
+            # gets stuck on the contradiction or asks for clarification
+            # a third time, that's a separate failure mode worth flagging.
+            "should_reach_confirmation": True,
+        },
+        "notes":
+            "Authored after the bug-1/2/3/4 audit of Bundle 1 surfaced "
+            "this cross-turn carryover bug. Production fix: gate "
+            "_substance_use_safety_addendum on the CURRENT search "
+            "being substance-related (service_type=='medical' AND "
+            "service_detail in _SUBSTANCE_USE_SERVICE_DETAILS). Unit "
+            "test coverage in test_tone_and_empathy.py "
+            "(TestSubstanceUseAddendumNoCrossTurnLeak); this scenario "
+            "covers the same behavior end-to-end through the eval "
+            "judge, which the unit tests cannot. A regression here "
+            "is a ship-blocker — the failure mode is wrong clinical "
+            "messaging on unrelated searches, not just missing "
+            "messaging.",
     },
     {
         "id": "multiturn_multiple_needs",
@@ -2507,6 +2580,80 @@ SCENARIOS = [
             "should_handle_additional_service": True,
             "additional_service": "food",
         },
+    },
+    {
+        "id": "multi_cross_borough_three_services_queue_depth",
+        "name": "Cross-borough triple: queue depth visible to user",
+        "category": "multi_intent",
+        "description":
+            "User asks for three services across three boroughs. The queue "
+            "path is forced to fire because cross-borough queued items are "
+            "explicitly excluded from the colocation filter "
+            "(execution.py: \"Cross-borough requests should remain queued, "
+            "not co-located\"). After delivering shelter results in Brooklyn, "
+            "the bot offers the next queued item (food in Manhattan) — and "
+            "the offer text MUST surface that a third item (job help in "
+            "Queens) is still queued behind it. "
+            "\n\n"
+            "Pre-fix behavior (R42-borderline run, "
+            "multi_three_services_legal_benefits_food at 3.91 with 2 CFs): "
+            "the offer message named only the next-up queued item with no "
+            "signal that the third item was still pending, leading the "
+            "judge to mark it as 'silently dropped from the queue.' "
+            "Post-fix: the offer message includes a parenthetical tail — "
+            "'(job help after that)' — showing the user nothing was "
+            "dropped from their original ask. "
+            "\n\n"
+            "Cross-borough variant (rather than same-borough triple) is "
+            "necessary because the eval mock's colocation filter "
+            "(also_available field) is permissive: most fixture rows claim "
+            "to also handle adjacent service types, so a same-borough "
+            "triple often returns a single colocated result and "
+            "_apply_queue_offer doesn't fire. The cross-borough split is "
+            "the cleanest forcing function for the queue path.",
+        "user_turns": [
+            "I need shelter in Brooklyn, food in Manhattan, and employment "
+            "help in Queens",
+            "Yes, search",
+        ],
+        "expected": {
+            "service_type": "shelter",
+            "location_contains": "brooklyn",
+            "should_reach_confirmation": True,
+            "should_handle_additional_service": True,
+            "additional_service": "food",
+            # The queue-tail parenthetical is what Fix B added. The
+            # judge sees the queue offer ("You also mentioned food in
+            # Manhattan — search?") and should NOT flag the third
+            # service as dropped, because the message explicitly
+            # mentions it as still queued.
+            "should_contain": [
+                "after that",  # queue-tail marker
+            ],
+            # The previous failure mode was the judge inferring the
+            # third item was dropped. Pin the exact phrasing as
+            # forbidden so a regression of Fix B surfaces here.
+            "should_not_contain": [
+                "appears dropped",
+                "appears to have been dropped",
+                "silently dropped",
+            ],
+        },
+        "notes":
+            "Authored after the R42-borderline subset run flagged "
+            "multi_three_services_legal_benefits_food (3.91, 2 CFs) for "
+            "queue-depth opacity. Fix B in execution.py::_apply_queue_offer "
+            "adds the parenthetical tail. Unit test coverage in "
+            "test_multi_intent_queue.py::TestQueueOfferDepthTransparency. "
+            "This scenario covers the same behavior end-to-end through the "
+            "Opus judge, which the unit tests cannot. "
+            "\n\n"
+            "Note that should_not_contain phrases are matched against the "
+            "judge's free-text justification fields, not the bot's response "
+            "text directly — a reading of the assertion is that the JUDGE "
+            "should not characterize this offer as dropping the third "
+            "service. If a future judge model phrases the same concern "
+            "differently, update the negative-assertion list to match.",
     },
     {
         "id": "multi_cross_neighborhood_shower_les_food_chinatown",

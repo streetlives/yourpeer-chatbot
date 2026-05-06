@@ -246,7 +246,7 @@ If you also pass `--output PATH`, the report is additionally copied to `PATH` af
 
 ### What to do with the results
 
-After a run completes, the script prints a summary to the console and optionally writes a JSON report. To create a formatted eval report (the kind stored in `docs/ops/EVAL_RESULTS.md`), compare the new results to the previous run's data and document:
+After a run completes, the script prints a summary to the console and optionally writes a JSON report. To create a formatted eval report (the kind stored in `docs/ops/EVAL_RESULTS_R28-R41.md` — the historical Sonnet-era runs are in `docs/ops/EVAL_RESULTS_R1-R27.md`), compare the new results to the previous run's data and document:
 
 - Overall average and delta
 - Passing count and delta
@@ -255,7 +255,7 @@ After a run completes, the script prints a summary to the console and optionally
 - Dimension score changes >0.05
 - Category average changes >0.05
 
-The `docs/ops/EVAL_RESULTS.md` file contains the full history of all runs. New runs are appended to the bottom of that file.
+The `docs/ops/EVAL_RESULTS_R28-R41.md` file contains the current Opus-era run history (Runs 28 onwards). New runs are appended to the bottom of that file. The `docs/ops/EVAL_RESULTS_R1-R27.md` file holds the historical Sonnet-era archive and is no longer appended to.
 
 ### Cost breakdown
 
@@ -283,7 +283,7 @@ These assumptions have NOT been validated and should be reviewed:
 |---|---|
 | The eval runner (scenarios + judge + reporter) | `tests/eval/eval_llm_judge.py` |
 | Per-run archive (one directory per run, timestamped) | `eval_results/runs/<timestamp>/` |
-| Full run history with commentary | `docs/ops/EVAL_RESULTS.md` |
+| Full run history with commentary | `docs/ops/EVAL_RESULTS_R28-R41.md` (current) and `docs/ops/EVAL_RESULTS_R1-R27.md` (historical) |
 | Dimension weights | `DIMENSION_WEIGHTS` dict in `eval_llm_judge.py` |
 | Scoring rubric (judge prompt) | The `JUDGE_SYSTEM_PROMPT` string in `eval_llm_judge.py` |
 | Scenario definitions | The `SCENARIOS` list in `eval_llm_judge.py` |
