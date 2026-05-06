@@ -687,6 +687,29 @@ def _build_db_failure_message(session_id: str, slots: dict) -> str:
     )
 
 
+# Service-detail values that indicate a substance-use treatment search.
+# Sourced from _NOTABLE_SUB_TYPES in slot_extraction_regex.py — kept as
+# a parallel set here to avoid an upward import. If new substance-use
+# treatment service-detail canonicals are added there, they should be
+# added here too. Drift detection: the substance-use disclosure tests
+# in test_tone_and_empathy.py exercise the canonical values, so a new
+# canonical that doesn't fire the addendum will surface there.
+_SUBSTANCE_USE_SERVICE_DETAILS = frozenset({
+    "detox",
+    "rehab services",
+    "recovery services",
+    "addiction services",
+    "substance abuse services",
+    "harm reduction services",
+    "substance use treatment",
+    "treatment programs",
+    "treatment centers",
+    "inpatient treatment",
+    "outpatient treatment",
+    "sober living",
+})
+
+
 def _substance_use_safety_addendum(slots: dict) -> str:
     """Return the safety addendum text for a substance-use disclosure,
     or empty string if no addendum should fire.
@@ -695,6 +718,21 @@ def _substance_use_safety_addendum(slots: dict) -> str:
     a 911 prompt for emergencies, and — for alcohol/opiate disclosures
     — a medical-supervision recommendation grounded in the specific
     risks of those withdrawal profiles.
+
+    **Two gates, both required:**
+
+    1. ``slots["_emotional_context"]`` starts with
+       ``"substance_use_disclosure"`` — the user disclosed substance
+       use at some point in the session.
+
+    2. The CURRENT search is for substance-use treatment:
+       ``service_type == "medical"`` AND ``service_detail`` is in
+       ``_SUBSTANCE_USE_SERVICE_DETAILS``. Without this gate, the
+       persisted ``_emotional_context`` slot leaks the addendum into
+       unrelated subsequent searches (e.g., user discloses substance
+       use on turn 1, says "actually, I need food instead" on turn 2,
+       and the food search results would otherwise carry the
+       alcohol/opiate safety text).
 
     Branches on the emotional_context subtype set by tone.py:
 
@@ -719,6 +757,16 @@ def _substance_use_safety_addendum(slots: dict) -> str:
     """
     ctx = slots.get("_emotional_context")
     if not ctx or not ctx.startswith("substance_use_disclosure"):
+        return ""
+    # Cross-turn carryover gate. The _emotional_context slot persists
+    # across turns (shared infrastructure with shame/medical_urgent
+    # continuity), so we additionally require the CURRENT search to
+    # actually be for substance-use treatment before firing the
+    # addendum. See _SUBSTANCE_USE_SERVICE_DETAILS for the canonical
+    # list of substance-related service_detail values.
+    if slots.get("service_type") != "medical":
+        return ""
+    if slots.get("service_detail") not in _SUBSTANCE_USE_SERVICE_DETAILS:
         return ""
     if ctx == "substance_use_disclosure_alcohol_opiate":
         return (

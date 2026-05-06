@@ -783,29 +783,34 @@ class TestSubstanceUseExclusions:
             f"use prefix, got: {r['response'][:160]}"
         )
 
-    def test_recovery_with_relapse_disclosure_still_triggers(self):
+    def test_recovery_with_relapse_currently_excluded_documented_limitation(self):
         """Edge case: long-term recovery is excluded by default, but
         if the user pairs it with an active service request that
         clearly indicates current need (e.g. 'I'm 2 years sober but
-        I just relapsed and need detox'), we should NOT silently
-        exclude — the second clause is a substance-use disclosure.
+        I just relapsed and need detox'), we should ideally NOT
+        silently exclude — the second clause is a substance-use
+        disclosure.
 
-        Current behavior: the year-recovery regex matches and
-        excludes. This is a known limitation — the bug-hunt's fix
+        **Current behavior: the year-recovery regex matches and
+        excludes.** This is a known limitation — the bug-hunt's fix
         prioritizes preventing false positives over catching every
-        edge case. If this becomes a real eval failure, the regex
-        could be tightened to require the recovery clause to be
-        the entire message rather than a prefix.
+        edge case. The assertion below pins the current (imperfect)
+        behavior so a future change is explicit. If this scenario
+        surfaces in evals, tighten the regex to require the recovery
+        clause to be the entire sentence or to be flanked by an
+        ``and``-clause that doesn't include relapse / current-need
+        markers.
         """
         r = send("I'm 2 years sober but I just relapsed and need detox in Manhattan")
-        # Document the current behavior: exclusion wins. This test
-        # exists to make the trade-off explicit, not to assert the
-        # behavior is desirable.
+        # Pinning the current behavior: exclusion still fires. This
+        # test exists to make the trade-off explicit, not to assert
+        # the behavior is desirable.
         assert not self._is_strengths_prefix(r["response"]), (
             "Documented limitation: year-based recovery exclusion "
-            "fires even when paired with active disclosure. "
-            "If this scenario surfaces in evals, tighten the regex "
-            "to require recovery to be the entire sentence."
+            "currently fires even when paired with active relapse "
+            "disclosure. If this scenario surfaces in evals, tighten "
+            "the regex; if this assertion starts failing because the "
+            "regex was tightened, update the test name and behavior."
         )
 
 
@@ -968,6 +973,232 @@ class TestSoberKeywordExtraction:
         # Pure state language — should not extract as service intent
         assert _extract_all_service_types("I want to be sober") == []
         assert _extract_all_service_types("trying to get sober") == []
+
+
+# ---------------------------------------------------------------------------
+# Substance-use exclusion follow-up fixes (bugs 1/2/3)
+# ---------------------------------------------------------------------------
+# After the initial bug-hunt cluster (#7/#8/#9), an audit surfaced three
+# more bugs that the green tests didn't catch:
+#
+#   Bug 1 — _emotional_context persists across turns. A user disclosing
+#           substance use on turn 1 and asking for food on turn 2 would
+#           get the alcohol/opiate addendum tacked onto the food results.
+#           Fix: gate the addendum in execution.py on the CURRENT search
+#           being substance-related (service_type=medical AND service_detail
+#           in the substance-related set).
+#
+#   Bug 2 — pronoun exclusion was too broad. ``\b(?:he|she|they)\s+
+#           (?:is|are|has|have|needs?)\b`` fired on any third-party pronoun
+#           +verb anywhere in the message, suppressing legitimate first-
+#           person disclosures like "I'm an alcoholic. She is supportive."
+#           Fix: removed the pronoun-only pattern; the ``my X`` and
+#           ``for X`` patterns cover the intended third-party cases.
+#
+#   Bug 3 — ``my X`` exclusion fired on multi-party disclosures where the
+#           user is one of the parties: "My partner and I both drink too
+#           much" — excluded even though user IS one of the parties
+#           disclosing. Fix: added _FIRST_PERSON_OVERRIDE that bypasses
+#           third-party exclusions when an unambiguous first-person
+#           disclosure phrase (singular or plural-inclusive) is present.
+
+
+class TestSubstanceUseAddendumNoCrossTurnLeak:
+    """Bug 1: addendum should NOT leak across turns when the user
+    discloses substance use and then changes service type.
+
+    The _emotional_context slot is persisted across turns (shared
+    infrastructure with shame and medical_urgent continuity), so a
+    user who disclosed substance use on turn 1 has the slot still set
+    to "substance_use_disclosure_*" on turn 2. The previous version
+    of the addendum gate read only that slot, so a food search on
+    turn 2 inherited the alcohol/opiate safety message.
+
+    The fix gates the addendum on the CURRENT search being for
+    substance-use treatment (service_type=="medical" AND service_detail
+    in the substance-related set).
+    """
+
+    def test_substance_disclosure_then_change_to_food_no_addendum(self):
+        """The original Bug 1 repro: user discloses alcohol detox
+        intent on turn 1, then says 'Actually, I need food instead'
+        on turn 2. Food search results should NOT carry the SAMHSA /
+        medical-supervision text."""
+        r = send_multi([
+            "I need to detox from alcohol in Manhattan",
+            "Actually, I need food instead",
+        ])
+        # Turn 2's response is the food confirmation+search.
+        food_response = r[1]["response"].lower()
+        assert "1-800-662-4357" not in food_response, (
+            f"SAMHSA helpline leaked into food search. "
+            f"Got: {r[1]['response'][:300]}"
+        )
+        assert "medically" not in food_response and "withdrawal" not in food_response, (
+            f"Alcohol/opiate-specific safety language leaked into "
+            f"food search. Got: {r[1]['response'][:300]}"
+        )
+
+    def test_substance_disclosure_then_change_to_clothing_no_addendum(self):
+        """Same bug, different unrelated service type."""
+        r = send_multi([
+            "I'm an alcoholic and need a treatment program in Brooklyn",
+            "Actually, I need clothing instead",
+        ])
+        clothing_response = r[1]["response"].lower()
+        assert "1-800-662-4357" not in clothing_response, (
+            f"SAMHSA helpline leaked into clothing search. "
+            f"Got: {r[1]['response'][:300]}"
+        )
+
+    def test_substance_disclosure_then_yes_search_still_gets_addendum(self):
+        """Sanity: the legitimate flow (disclose → confirm → search)
+        still produces the addendum on the substance-use results."""
+        r = send_multi([
+            "I need to detox from alcohol in Manhattan",
+            "Yes, search",
+        ])
+        results = r[1]["response"].lower()
+        assert "1-800-662-4357" in results, (
+            f"Addendum should fire on legitimate substance-use search. "
+            f"Got: {r[1]['response'][:300]}"
+        )
+
+    def test_no_substance_disclosure_then_medical_no_addendum(self):
+        """Sanity: a routine non-substance medical search should NOT
+        get the SAMHSA addendum, regardless of carryover state."""
+        r = send_multi([
+            "I need a doctor in Manhattan",
+            "Yes, search",
+        ])
+        results = r[1]["response"].lower()
+        assert "1-800-662-4357" not in results
+
+    @pytest.mark.skip(
+        reason="Documented limitation. The slot-merge layer doesn't "
+        "clear service_detail on a within-medical service-detail "
+        "transition (detox → general doctor). When user message is "
+        "'Actually, I just need a regular doctor' on turn 2, slot "
+        "extraction returns service_detail=None for that message, "
+        "and merge preserves service_detail='detox' from turn 1. "
+        "The addendum gate then fires because service_detail still "
+        "matches the substance-related set. Fixing this requires "
+        "tightening slot merge to clear service_detail on explicit "
+        "'just a doctor' / 'regular' / 'primary care' phrasings, "
+        "which is out of scope for the substance-use cluster fix."
+    )
+    def test_substance_disclosure_then_change_to_general_medical_no_addendum(self):
+        r = send_multi([
+            "I need detox in Manhattan",
+            "Actually, I just need a regular doctor",
+        ])
+        medical_response = r[1]["response"].lower()
+        assert "1-800-662-4357" not in medical_response
+
+
+class TestSubstanceUseExclusionPronounCollateral:
+    """Bug 2: legitimate first-person disclosures with collateral
+    third-party pronouns (in unrelated supportive sentences) should
+    fire the trigger, not be suppressed by a stray ``she is`` /
+    ``he has`` / ``they are`` somewhere in the message.
+
+    These tests target the trigger logic directly via
+    ``_compute_tone_prefix`` rather than going through ``send()`` —
+    the trigger logic is the unit under test, and going through the
+    full pipeline introduces dependencies on the slot extractor and
+    semantic router that don't add value to this assertion.
+    """
+
+    @pytest.mark.parametrize("msg", [
+        # First-person disclosure with supportive third-party mention
+        "I'm an alcoholic. She is supportive of my recovery.",
+        "I need detox. He has been begging me to go for months.",
+        "They are running detox programs nearby and I need one.",
+        "My counselor said I should detox. He is a good doctor.",
+    ])
+    def test_first_person_with_supportive_third_party_still_triggers(self, msg):
+        """Pre-fix behavior: pronoun exclusion fired on 'she is' /
+        'he has' / 'they are' anywhere in the message, suppressing
+        the legitimate first-person disclosure. Post-fix: the
+        pronoun-only pattern was removed, so these now trigger
+        correctly."""
+        from app.services.chatbot.tone import _compute_tone_prefix
+        prefix, ctx = _compute_tone_prefix(
+            message=msg,
+            response_tone=None,
+            is_service_flow=True,
+            prior_emotional_context=None,
+        )
+        assert ctx is not None and ctx.startswith("substance_use_disclosure"), (
+            f"First-person disclosure with collateral third-party "
+            f"pronoun should set substance-use context. Got "
+            f"ctx={ctx!r} for msg={msg!r}"
+        )
+
+
+class TestSubstanceUseFirstPersonOverride:
+    """Bug 3: multi-party disclosures where the user is one of the
+    parties should fire the trigger, not be suppressed by the
+    third-party exclusion.
+
+    The fix adds _FIRST_PERSON_OVERRIDE — when an unambiguous first-
+    person disclosure phrase (singular or plural-inclusive) is
+    present, third-party / non-substance exclusions are bypassed.
+
+    Tests target the trigger logic directly. See note on
+    TestSubstanceUseExclusionPronounCollateral for rationale.
+    """
+
+    @pytest.mark.parametrize("msg", [
+        # Singular first-person + third-party collateral
+        "I'm an alcoholic, my wife is worried about me, need treatment in Brooklyn",
+        "I'm addicted to opiates, my husband supports me, need rehab in Queens",
+        # Plural first-person inclusion (user is one of the parties)
+        "My partner and I both drink too much, we need help in Brooklyn",
+        "My husband and I are both struggling with addiction, need rehab in Manhattan",
+        "My partner and I are both addicted to opiates, we need rehab in Queens",
+        "We're both struggling with alcohol, need detox in Manhattan",
+    ])
+    def test_multi_party_first_person_override_triggers(self, msg):
+        """User IS one of the parties needing help. The first-person
+        marker (singular ``I'm``, plural ``we're``, inclusion phrasing
+        ``and I both``) overrides the third-party exclusion."""
+        from app.services.chatbot.tone import _compute_tone_prefix
+        prefix, ctx = _compute_tone_prefix(
+            message=msg,
+            response_tone=None,
+            is_service_flow=True,
+            prior_emotional_context=None,
+        )
+        assert ctx is not None and ctx.startswith("substance_use_disclosure"), (
+            f"Multi-party first-person disclosure should set substance-"
+            f"use context. Got ctx={ctx!r} for msg={msg!r}"
+        )
+
+    @pytest.mark.parametrize("msg", [
+        # Pure third-party — user is asking on behalf of someone else
+        "My son is addicted to opiates, where can I get him help",
+        "My daughter needs detox in Manhattan",
+        "Looking for rehab for my friend in Queens",
+        "My husband needs treatment for his alcoholism",
+        "My wife is an alcoholic, where can I get her help",
+    ])
+    def test_pure_third_party_still_excludes(self, msg):
+        """Regression guard: the override should NOT bypass exclusions
+        on pure third-party requests where the user is not one of the
+        parties. These messages have no first-person disclosure
+        phrasing, so the third-party exclusion correctly fires."""
+        from app.services.chatbot.tone import _compute_tone_prefix
+        prefix, ctx = _compute_tone_prefix(
+            message=msg,
+            response_tone=None,
+            is_service_flow=True,
+            prior_emotional_context=None,
+        )
+        assert ctx is None, (
+            f"Pure third-party request should NOT set substance-use "
+            f"context. Got ctx={ctx!r} for msg={msg!r}"
+        )
 
 
 # ---------------------------------------------------------------------------

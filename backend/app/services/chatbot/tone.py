@@ -66,6 +66,7 @@ _SUBSTANCE_USE_DISCLOSURE_PHRASES = (
     "addiction", "addicted",
     "alcoholic", "alcoholism",
     "drinking too much", "drinking a lot", "been drinking",
+    "drink too much", "drink a lot",
     "struggle with drinking", "struggling with drinking",
     "using drugs", "use drugs", "using again",
     "opiate", "opiates", "opioid", "opioids",
@@ -126,7 +127,19 @@ _SUBSTANCE_USE_EXCLUSIONS = (
         r"family\s*member|someone)\b",
         re.I,
     ),
-    re.compile(r"\b(?:he|she|they)\s+(?:is|are|has|have|needs?)\b", re.I),
+    # NOTE: The bare third-party-pronoun pattern
+    # ``\b(?:he|she|they)\s+(?:is|are|has|have|needs?)\b`` was REMOVED
+    # in the bug-1/2/3 follow-up. It produced false negatives on
+    # legitimate first-person disclosures that mentioned a third party
+    # incidentally — e.g. "I'm an alcoholic. She is supportive." —
+    # because the pronoun + verb pattern has no connection to substance
+    # content. The remaining ``my X`` / ``for X`` patterns cover the
+    # intended third-party cases without this scattershot. If a future
+    # eval surfaces a case like "she needs detox" leaking through, the
+    # right fix is a tighter pronoun pattern that connects pronoun to
+    # substance content (e.g. ``(?:he|she|they)\s+(?:is|has|needs)\s+
+    # (?:addicted|alcoholic|in recovery|detox|rehab|treatment)``),
+    # not the broad form that was here.
     # Professional / informational lookup
     re.compile(
         r"\b(?:address|phone(?:\s*number)?|location|directions?|"
@@ -150,6 +163,55 @@ _SUBSTANCE_USE_EXCLUSIONS = (
         r"spending|work|exercise)\b",
         re.I,
     ),
+)
+
+# Unambiguous first-person disclosure phrases. When ANY of these match,
+# the user is unambiguously disclosing their OWN substance use, even
+# if a third-party exclusion (``my husband``, ``my partner``) also
+# matches. This handles two real cases:
+#
+# 1. Multi-party disclosure: "My husband and I both drink too much,
+#    we need help" — without the override, ``my husband`` excludes
+#    even though the user is one of the parties.
+#
+# 2. Collateral mention: "I'm an alcoholic, my wife is worried about
+#    me, need treatment" — first clause is explicit first-person, but
+#    ``my wife`` would otherwise exclude.
+#
+# The override is INTENTIONALLY more conservative than the trigger
+# itself — only fires on phrases that are unambiguously first-person
+# AND substance-related, so a generic "I need help" doesn't bypass
+# the third-party exclusions.
+_FIRST_PERSON_OVERRIDE = re.compile(
+    r"\b("
+    # Singular first-person markers
+    r"i'?m\s+(?:an?\s+)?(?:alcoholic|addict|addicted|in recovery)|"
+    r"i\s+am\s+(?:an?\s+)?(?:alcoholic|addict|addicted|in recovery)|"
+    r"i'?ve\s+been\s+(?:drinking|using)|"
+    r"i\s+(?:need|want)\s+(?:to\s+)?(?:detox|get\s+(?:into\s+)?rehab|"
+    r"go\s+to\s+rehab|treatment\s+for|a\s+treatment\s+program)|"
+    r"i\s+(?:have|got)\s+(?:an?\s+)?addiction|"
+    r"i'?m\s+(?:struggling|trying\s+to\s+get\s+clean|"
+    r"trying\s+to\s+stay\s+sober)|"
+    r"my\s+(?:drinking|using|addiction)|"
+    # First-person-plural markers (multi-party disclosures where the
+    # user is one of the parties). Constrained to substance-specific
+    # phrasings — "we need help" alone is too generic to override
+    # third-party exclusions. Verb forms include drink|drinks|drinking
+    # because the trigger phrase set carries both "drink too much" and
+    # "drinking too much".
+    r"we'?re\s+(?:both\s+|all\s+)?(?:struggling|using|drink(?:ing|s)?|"
+    r"addicted|alcoholic|in recovery)|"
+    r"we\s+are\s+(?:both\s+|all\s+)?(?:struggling|using|drink(?:ing|s)?|"
+    r"addicted|alcoholic|in recovery)|"
+    r"we\s+(?:both\s+|all\s+)?(?:need|want)\s+(?:to\s+)?"
+    r"(?:detox|get\s+(?:into\s+)?rehab|go\s+to\s+rehab|"
+    r"a\s+treatment\s+program|treatment\s+for)|"
+    # Inclusion phrasings: "X and I both" / "X and I are both"
+    r"and\s+i\s+(?:are\s+)?both\s+(?:struggling|using|drink(?:ing|s)?|"
+    r"alcoholic|addicted|in\s+recovery)"
+    r")\b",
+    re.I,
 )
 
 # Alcohol / opiate disclosure is a SUBSET of substance-use disclosure
@@ -219,7 +281,15 @@ def _compute_tone_prefix(
     is_substance_use_disclosure = (
         is_service_flow
         and any(s in msg_lower for s in _SUBSTANCE_USE_DISCLOSURE_PHRASES)
-        and not any(p.search(msg_lower) for p in _SUBSTANCE_USE_EXCLUSIONS)
+        and (
+            # Override: unambiguous first-person disclosure phrases
+            # bypass third-party / non-substance exclusions. Handles
+            # multi-party cases ("my partner and I both drink") and
+            # collateral mentions ("I'm an alcoholic, my wife is
+            # worried about me").
+            _FIRST_PERSON_OVERRIDE.search(msg_lower)
+            or not any(p.search(msg_lower) for p in _SUBSTANCE_USE_EXCLUSIONS)
+        )
     )
 
     prefix = ""
