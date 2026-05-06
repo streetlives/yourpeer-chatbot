@@ -1,6 +1,6 @@
 # Direct dependencies only — transitive deps resolved by pip
 fastapi>=0.100.0
-uvicorn>=0.20.0
+uvicorn>=0.46.0
 pydantic>=2.13.3
 python-dotenv>=1.0.0
 SQLAlchemy>=2.0.0
