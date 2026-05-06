@@ -77,6 +77,104 @@ _SUBSTANCE_USE_DISCLOSURE_PHRASES = (
     "substance abuse", "substance use",
 )
 
+# Patterns that NEGATE the substance-use disclosure trigger even when a
+# keyword from _SUBSTANCE_USE_DISCLOSURE_PHRASES matched. Each fires
+# against the lowercased message; any match suppresses the trigger.
+#
+# Four classes of false positive observed in the bug-hunt audit:
+#
+# 1. Long-term recovery (the user is in stable recovery, NOT actively
+#    seeking detox): "I'm 5 years sober", "10 months clean."
+# 2. Third-party requests (someone OTHER than the user is the person
+#    with the issue): "my son is addicted", "for my daughter."
+# 3. Professional / informational lookup (clinician or staff member
+#    looking up an address, not seeking treatment): "address of Mt
+#    Sinai detox", "where do I refer patients."
+# 4. Non-substance addictions (the keyword "addiction" / "addicted"
+#    matched, but the addiction is to a non-substance behavior):
+#    "gambling addiction", "shopping addiction", "porn addiction."
+#
+# False negatives from these patterns are acceptable in either
+# direction — a missed disclosure falls through to the existing
+# emotional / shame / baseline-warmth paths, which are still
+# trauma-informed. A false POSITIVE adds an unsolicited SAMHSA
+# helpline + medical-supervision note that's incorrect for the
+# user's situation, which is the harm the bug-hunt flagged.
+_SUBSTANCE_USE_EXCLUSIONS = (
+    # Long-term recovery: explicit duration of sobriety / cleanness
+    re.compile(
+        r"\b\d+\s*(?:year|yr|month|day|week)s?\s*"
+        r"(?:sober|clean|in recovery|of recovery)\b",
+        re.I,
+    ),
+    re.compile(
+        r"\b(?:sober|clean)\s*(?:for|since)\s*\d+\s*"
+        r"(?:year|yr|month|day|week)",
+        re.I,
+    ),
+    # Third-party: another person is the disclosed user
+    re.compile(
+        r"\bmy\s+(?:son|daughter|husband|wife|partner|boyfriend|"
+        r"girlfriend|spouse|brother|sister|mom|dad|mother|father|"
+        r"kid|child|nephew|niece|cousin|friend|family\s*member|"
+        r"loved\s*one|relative)\b",
+        re.I,
+    ),
+    re.compile(
+        r"\bfor\s+(?:my\s+)?(?:son|daughter|client|patient|friend|"
+        r"relative|partner|spouse|kid|child|loved\s*one|"
+        r"family\s*member|someone)\b",
+        re.I,
+    ),
+    re.compile(r"\b(?:he|she|they)\s+(?:is|are|has|have|needs?)\b", re.I),
+    # Professional / informational lookup
+    re.compile(
+        r"\b(?:address|phone(?:\s*number)?|location|directions?|"
+        r"hours?|contact|website)\s+(?:of|for|to)\b",
+        re.I,
+    ),
+    re.compile(r"\b(?:how|where)\s+do\s+i\s+refer\b", re.I),
+    re.compile(r"\bfor\s+(?:my\s+)?(?:patient|client)s?\b", re.I),
+    re.compile(r"\b(?:patient|client)\s+(?:lookup|info|information)\b", re.I),
+    # Non-substance addictions: the keyword "addict(ion|ed)" matched,
+    # but the addiction is named as something other than a substance.
+    re.compile(
+        r"\b(?:gambling|shopping|porn|food|phone|screen|sex|"
+        r"video\s*game|gaming|internet|social\s*media|spending|"
+        r"work|exercise)\s+(?:addict|addiction|addicted|problem)\b",
+        re.I,
+    ),
+    re.compile(
+        r"\baddict(?:ion|ed)\s+to\s+(?:gambling|shopping|porn|food|"
+        r"phone|screen|sex|video\s*game|gaming|internet|social\s*media|"
+        r"spending|work|exercise)\b",
+        re.I,
+    ),
+)
+
+# Alcohol / opiate disclosure is a SUBSET of substance-use disclosure
+# that warrants more specific safety language. Alcohol withdrawal can
+# be life-threatening (delirium tremens, seizures); opiate withdrawal
+# carries elevated overdose risk on relapse because tolerance drops
+# during abstinence. The medical-supervision note in the addendum is
+# correct and important for these substances. For users disclosing
+# OTHER substances (cocaine, meth, marijuana, benzos) or non-specific
+# addiction, the alcohol/opiate-specific text is mistuned — those
+# cases get the generic safety addendum instead.
+#
+# This is a regex (not a phrase tuple) because we want word-boundary
+# matching: "opiate" should match in "opiate addiction" but not as an
+# accidental substring of some unrelated word.
+_ALCOHOL_OPIATE_PATTERN = re.compile(
+    r"\b("
+    r"alcohol|alcoholic|alcoholism|drinking|"
+    r"opiate|opiates|opioid|opioids|"
+    r"heroin|fentanyl|methadone|suboxone|oxy(?:codone|contin)?|"
+    r"vicodin|percocet|hydrocodone|morphine"
+    r")\b",
+    re.I,
+)
+
 
 def _compute_tone_prefix(
     message: str,
@@ -121,6 +219,7 @@ def _compute_tone_prefix(
     is_substance_use_disclosure = (
         is_service_flow
         and any(s in msg_lower for s in _SUBSTANCE_USE_DISCLOSURE_PHRASES)
+        and not any(p.search(msg_lower) for p in _SUBSTANCE_USE_EXCLUSIONS)
     )
 
     prefix = ""
@@ -136,12 +235,21 @@ def _compute_tone_prefix(
         # Strengths-based acknowledgment for substance-use disclosure.
         # The downstream caller adds a safety addendum to the results
         # message (SAMHSA helpline + medical-supervision note) when
-        # emotional_context == "substance_use_disclosure".
+        # emotional_context starts with "substance_use_disclosure".
+        #
+        # Subtype split: alcohol/opiate disclosures get medical-
+        # supervision language because withdrawal from those is
+        # specifically dangerous. Other substance disclosures get
+        # generic safety language without the alcohol/opiate-specific
+        # claims (see execution.py for the addendum text branch).
         prefix = (
             "Reaching out for help with this is a real step forward. "
             "Let me find what's available. "
         )
-        emotional_context = "substance_use_disclosure"
+        if _ALCOHOL_OPIATE_PATTERN.search(msg_lower):
+            emotional_context = "substance_use_disclosure_alcohol_opiate"
+        else:
+            emotional_context = "substance_use_disclosure_other"
     elif is_medical_urgent:
         prefix = "That sounds urgent — let me help you find care right away. "
         emotional_context = "medical_urgent"

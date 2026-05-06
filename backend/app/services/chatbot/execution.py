@@ -687,6 +687,64 @@ def _build_db_failure_message(session_id: str, slots: dict) -> str:
     )
 
 
+def _substance_use_safety_addendum(slots: dict) -> str:
+    """Return the safety addendum text for a substance-use disclosure,
+    or empty string if no addendum should fire.
+
+    The addendum carries the SAMHSA national helpline (1-800-662-4357),
+    a 911 prompt for emergencies, and — for alcohol/opiate disclosures
+    — a medical-supervision recommendation grounded in the specific
+    risks of those withdrawal profiles.
+
+    Branches on the emotional_context subtype set by tone.py:
+
+    * ``substance_use_disclosure_alcohol_opiate`` — alcohol withdrawal
+      can be life-threatening (delirium tremens, seizures); opiate
+      withdrawal carries elevated overdose risk on relapse because
+      tolerance drops during abstinence. The medical-supervision note
+      is correct for these substances and should be surfaced.
+
+    * ``substance_use_disclosure_other`` — generic substance disclosure
+      (cocaine, meth, marijuana, benzos, or unspecified). The
+      alcohol/opiate-specific medical-risk language is mistuned for
+      these cases, so the addendum stays general: SAMHSA helpline +
+      911 prompt, without claims about withdrawal danger that the
+      bot can't validate for the user's specific substance.
+
+    Fires regardless of result_count — the duty-of-care to surface
+    SAMHSA + 911 doesn't depend on whether we found local options.
+    A user disclosing substance use in a borough with thin coverage
+    needs the helpline more than one in a borough with abundant
+    options, not less. (Bug-hunt finding #8.)
+    """
+    ctx = slots.get("_emotional_context")
+    if not ctx or not ctx.startswith("substance_use_disclosure"):
+        return ""
+    if ctx == "substance_use_disclosure_alcohol_opiate":
+        return (
+            "\n\n"
+            "A note on safety: detoxing from alcohol or opiates "
+            "can be medically risky — alcohol withdrawal can be "
+            "life-threatening, and opiate withdrawal raises the "
+            "risk of overdose if you relapse. Please consider a "
+            "medically-supervised program. If you need to talk to "
+            "someone right now, the SAMHSA national helpline is "
+            "free and confidential: 1-800-662-4357 (HELP). For an "
+            "emergency, call 911."
+        )
+    # Generic addendum for non-alcohol/opiate substances. No
+    # medical-supervision claim — withdrawal danger varies by
+    # substance and the bot can't reliably classify which apply.
+    return (
+        "\n\n"
+        "A note on safety: getting support for substance use is "
+        "easier when you have someone walking with you. The SAMHSA "
+        "national helpline is free and confidential, and they can "
+        "help you find treatment options that fit your situation: "
+        "1-800-662-4357 (HELP). For an emergency, call 911."
+    )
+
+
 def _execute_and_respond(
     session_id: str,
     message: str,
@@ -779,33 +837,31 @@ def _execute_and_respond(
              _main_displayed_count, result_count, relaxed) = _build_success_response(
                 slots, results, colocated_success, colocated_types, session_id,
             )
-            # Safety addendum for substance-use disclosures. Set by
-            # tone._compute_tone_prefix when the user's message includes
-            # alcohol/opiate/addiction disclosure language. Alcohol
-            # withdrawal can be life-threatening; opiate withdrawal
-            # carries overdose risk on relapse — surfacing the SAMHSA
-            # helpline + medical-supervision note alongside the search
-            # results addresses both the safety duty-of-care and the
-            # eval scenarios that score safety_crisis < 4 when a
-            # substance-use disclosure goes unacknowledged.
-            #
-            # Layered AFTER the results message rather than replacing
-            # it: the user asked for treatment options and we deliver
-            # them; the addendum is supplementary, not blocking.
-            if slots.get("_emotional_context") == "substance_use_disclosure":
-                bot_response += (
-                    "\n\n"
-                    "A note on safety: detoxing from alcohol or opiates "
-                    "can be medically risky — alcohol withdrawal can be "
-                    "life-threatening, and opiate withdrawal raises the "
-                    "risk of overdose if you relapse. Please consider a "
-                    "medically-supervised program. If you need to talk to "
-                    "someone right now, the SAMHSA national helpline is "
-                    "free and confidential: 1-800-662-4357 (HELP). For an "
-                    "emergency, call 911."
-                )
         else:
             bot_response = _no_results_message(slots)
+
+        # Substance-use safety addendum.
+        #
+        # Set by tone._compute_tone_prefix when the user's message
+        # includes alcohol/opiate/addiction disclosure language with
+        # no exclusion patterns (third-party, professional lookup,
+        # long-term recovery, non-substance addictions).
+        #
+        # Layered AFTER the if/elif/else so it applies regardless of
+        # whether we returned results, returned the no-results
+        # message, or hit a query error. The duty-of-care to surface
+        # SAMHSA + 911 doesn't depend on whether we found local
+        # options — if anything, a substance-use disclosure with
+        # zero local results needs the helpline more, not less.
+        # (Bug-hunt finding #8.)
+        #
+        # Branches by subtype: alcohol/opiate disclosures get the
+        # medical-supervision note; other substances get a generic
+        # SAMHSA + 911 message without the alcohol/opiate-specific
+        # withdrawal claims. (Bug-hunt finding #9.)
+        addendum = _substance_use_safety_addendum(slots)
+        if addendum and bot_response:
+            bot_response += addendum
 
     except Exception as e:
         logger.error(f"Database query failed: {e}")

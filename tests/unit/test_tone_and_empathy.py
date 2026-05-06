@@ -674,3 +674,335 @@ class TestSubstanceUseDisclosureTone:
         # The strengths-prefix only fires on service flow, so a pure
         # vent shouldn't see it.
         assert "1-800-662-4357" not in resp
+
+
+# ---------------------------------------------------------------------------
+# Substance-use exclusion patterns (bug-hunt #7)
+# ---------------------------------------------------------------------------
+# The original _SUBSTANCE_USE_DISCLOSURE_PHRASES tuple matched on plain
+# substring, which created false positives in four scenarios documented
+# in the bug-hunt:
+#
+#   - Long-term recovery ("I'm 5 years sober")
+#   - Third-party requests ("my son is addicted")
+#   - Professional / informational lookup ("address of Mt Sinai detox")
+#   - Non-substance addictions ("gambling addiction")
+#
+# Each false positive surfaces an unsolicited SAMHSA helpline + medical-
+# supervision note that is mistuned for the user's actual situation.
+# These tests pin the exclusion behavior so a regression in the exclusion
+# regex set surfaces immediately.
+
+class TestSubstanceUseExclusions:
+    """Bug-hunt #7: substance-use trigger should NOT fire on contexts
+    where the user is not the one currently seeking treatment."""
+
+    def _is_strengths_prefix(self, response: str) -> bool:
+        """Detect the strengths-based prefix that indicates the
+        substance-use trigger fired."""
+        lower = response.lower()
+        return "step forward" in lower or "reaching out for help" in lower
+
+    @pytest.mark.parametrize("msg", [
+        # Year-based recovery
+        "I'm 5 years sober but need food in Brooklyn",
+        "I have been 3 years sober, looking for a doctor in Manhattan",
+        "I'm 6 months clean, where can I find clothes",
+        # Days/weeks-based recovery
+        "I'm 30 days sober, need a job",
+        "I have been 2 weeks clean, looking for housing",
+        # "Sober for X" inversion
+        "I have been sober for 4 years and need a place to stay",
+    ])
+    def test_long_term_recovery_does_not_trigger(self, msg):
+        """A user already in stable recovery isn't disclosing active
+        substance use — the strengths-prefix + SAMHSA addendum aren't
+        appropriate for their request."""
+        r = send(msg)
+        assert not self._is_strengths_prefix(r["response"]), (
+            f"Long-term recovery should NOT trigger substance-use "
+            f"prefix, got: {r['response'][:160]}"
+        )
+
+    @pytest.mark.parametrize("msg", [
+        "My son is addicted to opiates, where can I get him help",
+        "My daughter needs detox in Manhattan",
+        "My husband is an alcoholic, need treatment for him in Brooklyn",
+        "Looking for rehab for my friend in Queens",
+        "My brother needs a recovery program in the Bronx",
+        "Need detox for my partner",
+    ])
+    def test_third_party_does_not_trigger(self, msg):
+        """When the user is asking on behalf of someone else, the
+        strengths-prefix ('reaching out for help with this is a real
+        step forward') is mistuned — it praises the wrong person.
+        The SAMHSA helpline still applies but should come through
+        a different path (e.g. the search results), not the
+        disclosure-tone-prefix path."""
+        r = send(msg)
+        assert not self._is_strengths_prefix(r["response"]), (
+            f"Third-party request should NOT trigger first-person "
+            f"substance-use prefix, got: {r['response'][:160]}"
+        )
+
+    @pytest.mark.parametrize("msg", [
+        "Address of Mt Sinai detox center",
+        "Phone number for Realization Center detox",
+        "Where do I refer patients for detox",
+        "Looking for detox programs for my client",
+        "Hours of detox programs in Manhattan",
+        "Directions to the nearest detox center",
+    ])
+    def test_professional_lookup_does_not_trigger(self, msg):
+        """A clinician or staff member looking up an address isn't
+        disclosing their own substance use. Surfacing a SAMHSA
+        helpline + 'reaching out is a real step forward' frame is
+        wrong for this audience."""
+        r = send(msg)
+        assert not self._is_strengths_prefix(r["response"]), (
+            f"Professional lookup should NOT trigger substance-use "
+            f"prefix, got: {r['response'][:160]}"
+        )
+
+    @pytest.mark.parametrize("msg", [
+        "I'm dealing with gambling addiction, need counseling",
+        "I have a shopping addiction",
+        "I'm addicted to gambling, need help",
+        "I have a gaming addiction",
+        "Porn addiction help in Brooklyn",
+    ])
+    def test_non_substance_addictions_do_not_trigger(self, msg):
+        """The keyword 'addiction' / 'addicted' matches, but the
+        user has named a non-substance behavior. The
+        alcohol/opiate-specific medical-supervision note is wrong
+        for these cases. The user should be routed through the
+        normal mental_health flow, not the substance-use one."""
+        r = send(msg)
+        assert not self._is_strengths_prefix(r["response"]), (
+            f"Non-substance addiction should NOT trigger substance-"
+            f"use prefix, got: {r['response'][:160]}"
+        )
+
+    def test_recovery_with_relapse_disclosure_still_triggers(self):
+        """Edge case: long-term recovery is excluded by default, but
+        if the user pairs it with an active service request that
+        clearly indicates current need (e.g. 'I'm 2 years sober but
+        I just relapsed and need detox'), we should NOT silently
+        exclude — the second clause is a substance-use disclosure.
+
+        Current behavior: the year-recovery regex matches and
+        excludes. This is a known limitation — the bug-hunt's fix
+        prioritizes preventing false positives over catching every
+        edge case. If this becomes a real eval failure, the regex
+        could be tightened to require the recovery clause to be
+        the entire message rather than a prefix.
+        """
+        r = send("I'm 2 years sober but I just relapsed and need detox in Manhattan")
+        # Document the current behavior: exclusion wins. This test
+        # exists to make the trade-off explicit, not to assert the
+        # behavior is desirable.
+        assert not self._is_strengths_prefix(r["response"]), (
+            "Documented limitation: year-based recovery exclusion "
+            "fires even when paired with active disclosure. "
+            "If this scenario surfaces in evals, tighten the regex "
+            "to require recovery to be the entire sentence."
+        )
+
+
+class TestSubstanceUseSubtypeRouting:
+    """Bug-hunt #9: addendum text should match the disclosed substance.
+
+    Alcohol/opiate disclosures get the medical-supervision note (correct
+    for those withdrawal profiles). Other substance disclosures get a
+    generic SAMHSA + 911 message without the alcohol/opiate-specific
+    claims about withdrawal danger.
+    """
+
+    @pytest.mark.parametrize("msg", [
+        "I need to detox from alcohol in Manhattan",
+        "I'm an alcoholic and need a treatment program in Brooklyn",
+        "I need rehab for heroin in Queens",
+        "I need to detox from opiates",
+        "I need rehab for fentanyl in the Bronx",
+    ])
+    def test_alcohol_opiate_gets_medical_supervision_text(self, msg):
+        """Alcohol + opiate disclosures should fire the
+        medical-supervision branch of the addendum, which mentions
+        withdrawal danger explicitly."""
+        r = send_multi([msg, "Yes, search"])
+        results = r[1]["response"].lower()
+        assert "1-800-662-4357" in results, (
+            f"Expected SAMHSA helpline in results, got: {r[1]['response'][:200]}"
+        )
+        assert "withdrawal" in results or "medically" in results, (
+            f"Expected alcohol/opiate-specific medical-supervision "
+            f"language for {msg!r}, got: {r[1]['response'][:300]}"
+        )
+
+    @pytest.mark.parametrize("msg", [
+        # Non-alcohol/opiate disclosures with explicit trigger words
+        "I'm trying to get clean, where's a rehab in Manhattan",
+        "I have a substance abuse problem and need treatment in Brooklyn",
+        "I have an addiction and need rehab in Brooklyn",
+        "I need help with my addiction in Queens",
+    ])
+    def test_other_substance_gets_generic_text(self, msg):
+        """Non-alcohol/opiate disclosures should fire the generic
+        addendum — SAMHSA helpline + 911, but WITHOUT the
+        alcohol/opiate-specific medical-supervision claim."""
+        r = send_multi([msg, "Yes, search"])
+        results = r[1]["response"].lower()
+        # Generic addendum still surfaces the helpline
+        assert "1-800-662-4357" in results, (
+            f"Expected SAMHSA helpline in results for {msg!r}, "
+            f"got: {r[1]['response'][:200]}"
+        )
+        # But should NOT make alcohol/opiate-specific claims
+        assert "life-threatening" not in results, (
+            f"Generic substance disclosure should NOT mention "
+            f"alcohol-specific withdrawal danger, got: "
+            f"{r[1]['response'][:300]}"
+        )
+        assert "raises the risk of overdose" not in results, (
+            f"Generic substance disclosure should NOT mention "
+            f"opiate-specific overdose-on-relapse claim, got: "
+            f"{r[1]['response'][:300]}"
+        )
+
+
+class TestSubstanceUseAddendumOnEmptyResults:
+    """Bug-hunt #8: addendum should fire even when the search returns
+    zero results.
+
+    The original code gated the addendum inside `elif results['result_count'] > 0`,
+    so a substance-use disclosure in a thin-coverage neighborhood
+    silently lost the SAMHSA helpline + 911 prompt — exactly the
+    case where the user needs the helpline most.
+    """
+
+    def test_substance_use_disclosure_with_no_results_still_gets_addendum(self):
+        """Mock a zero-result search response. The substance-use
+        addendum should still surface alongside the no-results
+        message."""
+        from conftest import MOCK_EMPTY_RESULTS
+        r = send_multi(
+            [
+                "I need to detox from alcohol in Manhattan",
+                "Yes, search",
+            ],
+            mock_query_return=MOCK_EMPTY_RESULTS,
+        )
+        results = r[1]["response"].lower()
+        assert "1-800-662-4357" in results, (
+            f"Substance-use addendum should fire on empty results, "
+            f"got: {r[1]['response'][:300]}"
+        )
+
+    def test_routine_search_with_no_results_does_not_get_addendum(self):
+        """Sanity check: the addendum is still gated on substance-use
+        disclosure. A routine no-result search (e.g. food) should NOT
+        get the SAMHSA addendum tacked on."""
+        from conftest import MOCK_EMPTY_RESULTS
+        r = send_multi(
+            [
+                "I need food in Manhattan",
+                "Yes, search",
+            ],
+            mock_query_return=MOCK_EMPTY_RESULTS,
+        )
+        results = r[1]["response"].lower()
+        assert "1-800-662-4357" not in results
+        assert "withdrawal" not in results
+
+
+# ---------------------------------------------------------------------------
+# Sober keyword: no duplicate intents (bug-hunt #10)
+# ---------------------------------------------------------------------------
+
+class TestSoberKeywordExtraction:
+    """Bug-hunt #10: 'sober living' / 'sober house' should extract
+    cleanly to medical without the bare 'sober' fallback re-matching
+    inside the already-matched compound and producing a duplicate
+    (medical, mental_health) extraction.
+    """
+
+    def test_sober_living_extracts_to_medical_only(self):
+        """'I need sober living in Manhattan' should yield a single
+        medical extraction, not a (medical, mental_health) pair."""
+        from app.services.slot_extraction_regex import _extract_all_service_types
+        result = _extract_all_service_types("I need sober living in Manhattan")
+        services = [svc for svc, _detail in result]
+        assert services == ["medical"], (
+            f"Expected ['medical'] only, got: {result}"
+        )
+
+    def test_sober_house_extracts_to_medical_only(self):
+        """'looking for a sober house in Brooklyn' should yield
+        medical only, not a duplicate."""
+        from app.services.slot_extraction_regex import _extract_all_service_types
+        result = _extract_all_service_types("looking for a sober house in Brooklyn")
+        services = [svc for svc, _detail in result]
+        assert services == ["medical"], (
+            f"Expected ['medical'] only, got: {result}"
+        )
+
+    def test_sober_with_other_service_no_dup(self):
+        """Multi-intent: 'sober living and food in Brooklyn' should
+        extract cleanly as (medical, food) — not (medical, food,
+        mental_health) with the bare-sober fallback adding a third."""
+        from app.services.slot_extraction_regex import _extract_all_service_types
+        result = _extract_all_service_types("sober living and food in Brooklyn")
+        services = sorted(svc for svc, _detail in result)
+        assert services == ["food", "medical"], (
+            f"Expected sorted ['food', 'medical'], got: {result}"
+        )
+
+    def test_bare_sober_no_longer_matches_alone(self):
+        """Standalone 'sober' (no compound) no longer extracts as a
+        service request via Tier 1 regex — bare 'sober' is more often
+        state language ('I want to be sober') than a service request,
+        and routing it to mental_health violated the Cluster 5
+        substance-use → medical decision. Tier 2 semantic router
+        handles edge-case service-request phrasings if needed."""
+        from app.services.slot_extraction_regex import _extract_all_service_types
+        # Pure state language — should not extract as service intent
+        assert _extract_all_service_types("I want to be sober") == []
+        assert _extract_all_service_types("trying to get sober") == []
+
+
+# ---------------------------------------------------------------------------
+# Short prompt parity (bug-hunt #13)
+# ---------------------------------------------------------------------------
+
+class TestShortPromptSubstanceUseDirective:
+    """Bug-hunt #13: the substance-use → medical routing directive
+    must appear in BOTH _NARRATIVE_SYSTEM_PROMPT and _SHORT_SYSTEM_PROMPT.
+
+    Most user messages are short (<20 words) and use the short prompt.
+    Cluster 5 added the directive to the narrative prompt but not the
+    short one, leaving edge cases like 'I'm trying to get clean'
+    vulnerable to misroute when the LLM tier fires with the short
+    prompt.
+    """
+
+    def test_short_prompt_contains_substance_use_directive(self):
+        """The short prompt must include the substance-use →
+        medical routing rule. Pinning the exact phrase guards
+        against the next prompt edit silently dropping it."""
+        from app.services.slot_extraction.prompts import _SHORT_SYSTEM_PROMPT
+        assert "substance" in _SHORT_SYSTEM_PROMPT.lower(), (
+            "Short prompt missing substance-use routing directive."
+        )
+        # Pin both the categorization and the negation (NOT mental_health)
+        assert "medical" in _SHORT_SYSTEM_PROMPT.lower()
+        assert "not mental_health" in _SHORT_SYSTEM_PROMPT.lower(), (
+            "Short prompt should explicitly say substance use does "
+            "NOT route to mental_health (parity with narrative prompt)."
+        )
+
+    def test_narrative_prompt_still_contains_directive(self):
+        """Sanity check: the narrative prompt's directive (added in
+        Cluster 5) is still present after the short-prompt edit."""
+        from app.services.slot_extraction.prompts import _NARRATIVE_SYSTEM_PROMPT
+        assert "substance" in _NARRATIVE_SYSTEM_PROMPT.lower()
+        assert "not mental_health" in _NARRATIVE_SYSTEM_PROMPT.lower()

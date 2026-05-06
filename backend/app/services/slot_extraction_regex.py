@@ -311,7 +311,20 @@ _WORD_BOUNDARY_KEYWORDS = {
     "esl": "other",            # collides with "diesel", "weasel"
     "ged": "other",            # collides with "aged", "managed", "changed"
     "syep": "employment",      # collides with nothing but 4 chars, be safe
-    "sober": "mental_health",  # collides with nothing but contextually useful
+    # NOTE: "sober" was removed (bug-hunt #10). It used to map to
+    # mental_health here as a fallback, but:
+    #   1. Substance-use compounds ("sober living", "sober house") live
+    #      in SERVICE_KEYWORDS["medical"] post-Cluster-5 routing fix.
+    #   2. The fallback didn't check matched_spans, so "I need sober
+    #      living" would extract twice: ("medical", "sober living") from
+    #      the main loop, then ("mental_health", ...) from this fallback
+    #      re-matching "sober" inside the already-matched span.
+    #   3. Cluster 5's design says substance-use routes to medical, NOT
+    #      mental_health — so even if bare "sober" matched alone (e.g.
+    #      "I want to be sober"), routing it to mental_health would be
+    #      the wrong category. Bare "sober" without a compound is more
+    #      often state language than a service request anyway; the
+    #      semantic router (Tier 2) handles edge cases.
     # --- REGEX_AUDIT: moved from SERVICE_KEYWORDS (substring collision risk) ---
     # These are legitimate service terms that collide as substrings of common
     # English words. Word-boundary matching prevents false positives while
