@@ -2655,7 +2655,7 @@ After the v2 fix on `shelter_queens_17`: main query returns 5 cards (Charles B. 
 |---|---|---|---|
 | `shelter_queens_17` | 30 cards / 4.36 / 3 CFs | 5 cards / 4.36 / 2 CFs | Eval-artifact CF gone; remaining 2 CFs are real bot gaps |
 | `food_brooklyn` | 4.45 / 0 CFs | 4.7 / 0 CFs | Stable / mild improvement |
-| `neighborhood_harlem_food` | 4.5 / 1 CF | 4.55 / 1 CF | Remaining CF is fixture-coverage limit (Foundation 8) |
+| `neighborhood_harlem_food` | 4.5 / 1 CF | 4.55 / 1 CF | Remaining CF is fixture-coverage limit (Fixture Foundation 8) |
 | `neighborhood_williamsburg_shelter` | 4.5 / 0 CFs | 4.64 / 0 CFs | Improved |
 | `neighborhood_flushing_health` | 4.5 / 0 CFs | 4.55 / 0 CFs | Stable |
 | `neighborhood_south_bronx` | 4.5 / 0 CFs | 4.73 / 0 CFs | Improved |
@@ -2673,17 +2673,17 @@ The dispatcher fix directly removes ~28-33 of R39's 57 CFs (location-mismatch + 
 - **Error Recovery**: ~4.75-4.85 (recovering toward R38's 4.82).
 - **Categories that regressed in R39** (`neighborhood_routing`, `referral`, `multi_intent`, `happy_path`, `no_result`) **all expected to recover** to their R38 levels.
 - **New findings expected**:
-  - Scenarios that depend on Covenant House / Ali Forney / DYCD will surface real fixture coverage gaps (Foundation 7 work).
-  - The `neighborhood_harlem_food`-class limitation persists — the fixture only knows borough granularity, not neighborhood proximity (Foundation 8 work).
+  - Scenarios that depend on Covenant House / Ali Forney / DYCD will surface real fixture coverage gaps (Fixture Foundation 7 work).
+  - The `neighborhood_harlem_food`-class limitation persists — the fixture only knows borough granularity, not neighborhood proximity (Fixture Foundation 8 work).
   - Tone and Dignity stay at ~3.95. The "functional but flat" gap is unchanged from R38; real-data swap doesn't address it.
 
 ## What's Next
 
 **R40 is the validation run** for Path C + Step 1 + the v2 dispatcher fix. STOP-dimension compliance for Phase 2 PII redaction will be re-evaluated against R40's clean signal.
 
-**Foundation 7** of the eval-quality plan: add a "must-include" supplemental fixture query to capture orgs the eval scenarios reference by name (Covenant House, Ali Forney, BRC, Project Renewal, Catholic Charities, Mount Sinai, Doe Fund, Make the Road). The fixture's recency-first rn≤5 cap excluded these, leaving population-fallback paths unable to surface real youth-shelter / LGBTQ-shelter resources during eval.
+**Fixture Foundation 7** (originally labeled "Foundation 7" in earlier write-ups; renamed to disambiguate from `EVAL_QUALITY_ENGINEERING_PLAN.md` F1–F7, which is a separate workstream): add a "must-include" supplemental fixture query to capture orgs the eval scenarios reference by name (Covenant House, Ali Forney, BRC, Project Renewal, Catholic Charities, Mount Sinai, Doe Fund, Make the Road). The fixture's recency-first rn≤5 cap excluded these, leaving population-fallback paths unable to surface real youth-shelter / LGBTQ-shelter resources during eval.
 
-**Foundation 8**: extend the dispatcher to honor age, gender, family_status, and proximity filters using the fixture's lat/lon and production's `NEIGHBORHOOD_CENTERS`. This would close the `neighborhood_harlem_food`-class fixture-coverage limitation and bring eligibility-filter scenarios to production parity.
+**Fixture Foundation 8** (same disambiguation): extend the dispatcher to honor age, gender, family_status, and proximity filters using the fixture's lat/lon and production's `NEIGHBORHOOD_CENTERS`. This would close the `neighborhood_harlem_food`-class fixture-coverage limitation and bring eligibility-filter scenarios to production parity.
 
 ---
 

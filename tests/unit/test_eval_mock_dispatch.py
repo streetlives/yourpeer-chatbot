@@ -287,11 +287,16 @@ class TestNeighborhoodProximity:
                 jamaica_dist = _haversine_meters(
                     jh_lat, jh_lon, jamaica_lat, jamaica_lon,
                 )
-                # If we got an in-radius match, dist <= 1600.
-                # If we got an out-of-radius fallback, dist <= jamaica_dist
-                # because we sorted by ascending distance and Jamaica
-                # is the farthest Queens neighborhood from JH.
-                # Either way: dist must be < jamaica_dist (strict).
+                # Under the current behavior:
+                #   - In-radius hit: dist <= 1600m (strict radius).
+                #   - Within-fallback hit: dist <= 5000m (hard cap;
+                #     see _NEIGHBORHOOD_FALLBACK_MAX_RADIUS_METERS).
+                #   - Beyond fallback: result is empty entirely.
+                # Jamaica is ~9km from Jackson Heights, beyond the
+                # 5km fallback cap, so it's excluded in all cases.
+                # The assertion (dist < jamaica_dist) holds either
+                # via the strict radius, the fallback cap, or the
+                # empty-result path (loop body doesn't execute).
                 assert dist < jamaica_dist, (
                     f"{service_type} in Jackson Heights returned a card "
                     f"at distance {dist:.0f}m (Jamaica is at "
@@ -416,6 +421,124 @@ class TestNeighborhoodProximity:
             service_type="food", location="chinatown", max_results=2,
         )
         assert result["result_count"] <= 2
+
+
+class TestNeighborhoodProximityHardCap:
+    """Tests for the bug-hunt #11 fix: the proximity filter's
+    no-strict-hit fallback used to return ALL rows in the borough
+    sorted by proximity, including 12+km outliers — surfacing rows
+    in completely different parts of the borough as if they matched
+    a neighborhood ask.
+
+    Production's ``ST_DWithin`` would return zero in that case,
+    triggering the relaxed-search path. The eval mock now caps
+    the fallback at ``_NEIGHBORHOOD_FALLBACK_MAX_RADIUS_METERS``
+    (5km) and returns empty when no rows are within that cap,
+    aligning with production's ST_DWithin semantics.
+
+    Tests target ``_filter_rows_by_neighborhood_proximity`` directly
+    rather than going through ``_mock_query_services``, so the
+    proximity logic is exercised in isolation from upstream
+    borough resolution and downstream eligibility filters.
+    """
+
+    # Far Rockaway is the canonical thin-coverage Queens neighborhood.
+    # Its lat/lon is ~40.6033, -73.7544. Most other Queens services
+    # are 10+km away (Jamaica, Long Island City, Astoria, Forest Hills),
+    # making it the natural test bed for the hard cap.
+    _FAR_ROCKAWAY = "Far Rockaway"
+
+    def _row(self, name: str, lat: float, lon: float) -> dict:
+        return {"service_name": name, "latitude": lat, "longitude": lon}
+
+    def test_strict_radius_hit_unchanged(self):
+        """Tier 2: a row inside the strict radius (1.6km) is returned
+        with ``narrowed=True``. This is the production-equivalent
+        path and must keep working after the hard-cap fix."""
+        rows = [
+            self._row("Far Rockaway Welcome", 40.6080, -73.7540),  # ~530m
+            self._row("Jamaica Family Services", 40.7022, -73.7888),  # ~11km
+        ]
+        result, narrowed = runner._filter_rows_by_neighborhood_proximity(
+            rows, self._FAR_ROCKAWAY,
+        )
+        assert narrowed is True
+        names = [r["service_name"] for r in result]
+        assert names == ["Far Rockaway Welcome"], (
+            f"Strict-radius branch should return only the in-radius row, "
+            f"got: {names}"
+        )
+
+    def test_no_strict_hit_within_fallback_radius_returned(self):
+        """Tier 3: no rows within strict radius BUT some within the
+        5km fallback cap — return those, sorted by distance, with
+        ``narrowed=False``. The False signal indicates the strict
+        constraint did not hold; rows are nevertheless reasonable
+        nearby alternatives."""
+        rows = [
+            # No row within strict 1.6km
+            self._row("Mid-Rockaway Center", 40.6310, -73.7440),  # ~3.2km
+            self._row("Edgemere Outpost", 40.6020, -73.7900),  # ~3.0km
+            self._row("Jamaica Family Services", 40.7022, -73.7888),  # ~11km
+        ]
+        result, narrowed = runner._filter_rows_by_neighborhood_proximity(
+            rows, self._FAR_ROCKAWAY,
+        )
+        assert narrowed is False
+        names = [r["service_name"] for r in result]
+        # Both rows within the 5km fallback should appear, sorted
+        # by distance. Jamaica (11km) must be excluded.
+        assert "Jamaica Family Services" not in names, (
+            f"Row beyond 5km fallback cap leaked through: {names}"
+        )
+        assert set(names) == {"Mid-Rockaway Center", "Edgemere Outpost"}, (
+            f"Both within-fallback rows should be returned, got: {names}"
+        )
+
+    def test_no_rows_within_fallback_returns_empty(self):
+        """Tier 4 (the bug-hunt #11 fix): no rows within either
+        strict or fallback radius → return empty. Previously the
+        function returned ALL rows sorted by distance, surfacing
+        12+km outliers (canonical case: Far Rockaway query, Jamaica
+        row at ~11km) as if they were nearby matches.
+
+        The empty return lets upstream no-results handling take
+        over, mirroring production's ST_DWithin behavior."""
+        rows = [
+            # Only outliers — every row > 5km from Far Rockaway center
+            self._row("Jamaica Family Services", 40.7022, -73.7888),  # ~11km
+            self._row("Long Island City Drop-in", 40.7468, -73.9407),  # ~21km
+            self._row("Astoria Hub", 40.7720, -73.9301),  # ~25km
+        ]
+        result, narrowed = runner._filter_rows_by_neighborhood_proximity(
+            rows, self._FAR_ROCKAWAY,
+        )
+        assert narrowed is False
+        assert result == [], (
+            f"All rows are >5km from Far Rockaway; should return empty. "
+            f"Got: {[r['service_name'] for r in result]}"
+        )
+
+    def test_fallback_radius_constant_is_5km(self):
+        """Pin the cap value. If a future change moves it (e.g. to
+        3km tighter or 7.5km looser), this test surfaces it
+        explicitly so the rationale comment block can be updated
+        to match."""
+        assert runner._NEIGHBORHOOD_FALLBACK_MAX_RADIUS_METERS == 5000
+
+    def test_borough_query_unaffected_by_hard_cap(self):
+        """Regression guard: the hard cap only affects neighborhood
+        queries. A borough query bypasses proximity entirely and
+        should still return all rows regardless of distance."""
+        rows = [
+            self._row("Jamaica Family Services", 40.7022, -73.7888),  # ~11km from FR
+            self._row("Astoria Hub", 40.7720, -73.9301),  # ~25km from FR
+        ]
+        result, narrowed = runner._filter_rows_by_neighborhood_proximity(
+            rows, "Queens",  # borough — no proximity filter
+        )
+        assert narrowed is False
+        assert len(result) == 2  # both rows pass through
 
 
 class TestHaversineMeters:

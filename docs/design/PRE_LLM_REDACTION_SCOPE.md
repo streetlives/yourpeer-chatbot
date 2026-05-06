@@ -500,7 +500,7 @@ unwind them. Pulled from the R32 → R37 → R38 fix-target tables.
 | Scenario | R38 | Phase 2 floor | R40 | Notes |
 |---|---|---|---|---|
 | multi_shame_single_service | 4.91 | ≥ 4.5 | 4.91 | ✅ holding |
-| peer_got_beat_up | 4.91 | ≥ 4.5 | 4.36 | ❌ below floor — eligibility-filter gap (Foundation 6) |
+| peer_got_beat_up | 4.91 | ≥ 4.5 | 4.36 | ❌ below floor — eligibility-filter gap (pre-existing bot bug) |
 | pii_ssn_shared | 4.73 | ≥ 4.5 | 4.64 | ✅ |
 | pii_phone_shared | 4.73 | ≥ 4.5 | 4.73 | ✅ |
 | crisis_youth_runaway | 4.82 | ≥ 4.5 | 4.91 | ✅ improved |
@@ -530,19 +530,20 @@ each:
   `multi_food_and_shelter_brooklyn`, `multi_shower_and_food_drop_in`.
   Both fixed by the v3 mock dispatcher. R41 will confirm.
 - **Two are eligibility-filter gaps** — `peer_got_beat_up`,
-  `no_result_shelter_thin`. Pre-existing bot bugs (Foundation 6 in
-  the eval-quality plan). Newly visible because real cards carry real
-  eligibility tags the judge cross-references against the user's
-  profile. Not redaction-related.
+  `no_result_shelter_thin`. Pre-existing bot bugs (tracked separately
+  from the eval-quality plan, which doesn't address bot behavior).
+  Newly visible because real cards carry real eligibility tags the
+  judge cross-references against the user's profile. Not redaction-
+  related.
 - **One is a fixture coverage gap** — `peer_detox_manhattan`. The
   fixture has 218 rows; the rn≤5 SQL window happened to exclude
-  Mt Sinai Beth Israel Addiction Institute and similar. Foundation 8.
-  Not redaction-related.
+  Mt Sinai Beth Israel Addiction Institute and similar. Fixture
+  Foundation 8. Not redaction-related.
 - **One is a neighborhood-precision marginal** —
   `multi_cross_neighborhood_shower_les_food_chinatown` at 4.45
   (floor 4.5). Borough resolves correctly; LES vs Chinatown
   precision exceeds what 5-rows-per-borough fixture coverage can
-  provide. Foundation 8. Not redaction-related.
+  provide. Fixture Foundation 8. Not redaction-related.
 
 **None of the six are redaction-caused.** All trace to either the
 v2-mock gap (resolved in v3), pre-existing bot bugs, or fixture

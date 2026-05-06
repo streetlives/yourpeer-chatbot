@@ -4037,10 +4037,10 @@ def _filter_rows_by_service_and_borough(
 # multi_asylum_seeker_food_legal (3.64).
 #
 # Earlier transcripts described this as "fixture-coverage limit
-# (Foundation 8)" — but the data was always there: 100% of fixture
-# rows have lat/lon, and production exposes NEIGHBORHOOD_CENTERS at
-# module level. The eval mock just wasn't using them. This fix closes
-# the gap.
+# (Fixture Foundation 8)" — but the data was always there: 100% of
+# fixture rows have lat/lon, and production exposes NEIGHBORHOOD_CENTERS
+# at module level. The eval mock just wasn't using them. This fix
+# closes the gap.
 
 
 def _haversine_meters(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
@@ -4064,38 +4064,70 @@ def _haversine_meters(lat1: float, lon1: float, lat2: float, lon2: float) -> flo
     return r_earth_m * c
 
 
+# Hard cap for the neighborhood-proximity fallback. When no rows are
+# within the 1.6km strict radius, the function previously returned ALL
+# rows in the borough sorted by proximity — including 12+km outliers
+# (the canonical case: Far Rockaway query returns Jamaica). Production's
+# ST_DWithin would return zero in that case, triggering the relaxed-
+# search path. The eval mock has no equivalent broadening signal, so a
+# 12.8km row would silently surface as if it were "near" the user's ask.
+#
+# 5km is a defensible "reasonable nearby" threshold — roughly the
+# diameter of a single NYC neighborhood district, so a row outside this
+# radius is in a meaningfully different part of the borough rather than
+# adjacent. Picked to be explicit rather than tuned: if real eval data
+# justifies a different number, this is the single place to change it.
+_NEIGHBORHOOD_FALLBACK_MAX_RADIUS_METERS = 5000
+
+
 def _filter_rows_by_neighborhood_proximity(
     rows: list[dict],
     location: str | None,
     radius_meters: float = DEFAULT_NEIGHBORHOOD_RADIUS_METERS,
+    fallback_max_radius_meters: float = _NEIGHBORHOOD_FALLBACK_MAX_RADIUS_METERS,
 ) -> tuple[list[dict], bool]:
-    """Filter rows to those within ``radius_meters`` of the
+    """Filter rows to those within a sensible distance of the
     neighborhood center, sorted by ascending distance.
 
     Mirrors production's ``ST_DWithin`` behavior in
-    ``rag/__init__.py:266`` for non-borough locations.
+    ``rag/__init__.py:266`` for non-borough locations, with an
+    eval-specific fallback for thin-coverage neighborhoods.
 
-    Resolution:
-      1. If ``location`` is a borough (or None / unknown), return rows
-         unchanged with ``narrowed=False``.
-      2. If ``location`` is a known neighborhood and at least one row
-         is within ``radius_meters`` of the center → return those
-         rows sorted by ascending distance, ``narrowed=True``.
-      3. If ``location`` is a known neighborhood but no rows are
-         within radius → return ALL rows sorted by ascending distance
-         from the center, ``narrowed=False``. This is the eval-side
-         relaxed-search analogue: production would return 0 results
-         and the bot would say "I broadened the search a bit," but
-         the eval prefers showing the user the closest available
-         options rather than empty. The borough filter has already
-         restricted to the correct borough at this point.
+    Resolution (three tiers):
 
-    The closest-match-when-no-radius-hit behavior matters because
-    fixture per-borough coverage is thin (5-15 rows per borough per
-    service_type). For a borough with no rows within 1.6km of the
-    requested neighborhood, returning the closest 5 rows gives the
-    bot something to work with and ranks them by proximity — better
-    than returning a random borough slice.
+      1. ``location`` is a borough (or None / unknown), or the
+         neighborhood doesn't resolve to a center point → return
+         rows unchanged with ``narrowed=False``. The caller's borough
+         filter is the only locality control.
+
+      2. At least one row is within ``radius_meters`` (default
+         1.6km) of the neighborhood center → return those rows
+         sorted by ascending distance, ``narrowed=True``. This is
+         the production-equivalent path.
+
+      3. No rows within strict radius BUT at least one row within
+         ``fallback_max_radius_meters`` (default 5km) → return those
+         rows sorted by ascending distance, ``narrowed=False``. The
+         falsy ``narrowed`` signal indicates the strict neighborhood
+         constraint did not hold; rows are still in a "reasonable
+         nearby" range. Production's relaxed-search would handle
+         this case by widening to all boroughs and re-ranking;
+         the eval mock lacks an equivalent broadening loop, so this
+         tier surfaces meaningfully-close rows without claiming they
+         match the user's neighborhood ask.
+
+      4. No rows within ``fallback_max_radius_meters`` → return
+         empty list, ``narrowed=False``. Caller can then proceed
+         with no-results handling (which mirrors production's
+         post-relaxation empty-results path).
+
+    The ``fallback_max_radius_meters`` cap exists to fix a real
+    bug where thin-coverage queries (Far Rockaway with no rows in
+    the strict radius) silently returned 12+km outliers (Jamaica)
+    sorted by proximity, with no signal to the caller that the
+    result was effectively borough-wide. See the constant
+    ``_NEIGHBORHOOD_FALLBACK_MAX_RADIUS_METERS`` for the cap and
+    its rationale.
     """
     if not location:
         return rows, False
@@ -4134,10 +4166,24 @@ def _filter_rows_by_neighborhood_proximity(
         in_radius.sort(key=lambda x: x[0])
         return [r for _, r in in_radius], True
 
-    # No rows within radius — sort all rows by proximity and return.
-    # Caller may still apply max_results to cap to closest N.
-    rows_with_dist.sort(key=lambda x: x[0])
-    return [r for _, r in rows_with_dist], False
+    # No rows within strict radius. Apply the hard cap before
+    # falling back to "closest available" — without this, the
+    # function previously returned 12+km outliers when the
+    # neighborhood had no nearby rows. See the constant docstring
+    # for the rationale on the cap value.
+    in_fallback = [
+        (d, r) for d, r in rows_with_dist
+        if d <= fallback_max_radius_meters
+    ]
+    if in_fallback:
+        in_fallback.sort(key=lambda x: x[0])
+        return [r for _, r in in_fallback], False
+
+    # No rows within fallback radius either. Return empty so that
+    # upstream no-results handling (and any borough-widening that
+    # the dispatcher applies) can take over, rather than silently
+    # surfacing a 12+km outlier as if it were a relevant match.
+    return [], False
 
 
 def _filter_rows_by_colocated(
@@ -4297,7 +4343,8 @@ def _filter_rows_by_service_detail(
 #   2. ``gender`` → SQL filter (FILTER_BY_GENDER_ELIGIBILITY) that excludes
 #      services whose ``eligibility.gender`` is set to a different value.
 #      Skipped when gender is lgbtq/transgender/nonbinary; replaced by
-#      lgbtq_boost ranking. See rag/__init__.py:147-162.
+#      lgbtq_boost ranking that floats affirming services to the top
+#      without excluding anything. See rag/__init__.py:284-305.
 #
 #   3. ``age`` (with population/gender) adds safety_extras to the taxonomy
 #      list — youth/senior/veterans/lgbtq specific shelters.
@@ -4309,6 +4356,21 @@ def _filter_rows_by_service_detail(
 # men-only homeless beds), so this filter mostly serves to *exclude* clearly
 # inappropriate matches rather than to *include* on-target ones.
 #
+# **Intentional divergence from production for LGBTQ/trans/nonbinary
+# users.** Production skips the eligibility-table filter entirely for
+# these gender values, relying on lgbtq_boost ranking instead. The eval
+# mock CANNOT do the equivalent — there's no eligibility table in the
+# fixture to skip — so it instead applies the same service_name-based
+# exclusion to LGBTQ users as it does to male/female users, filtering
+# out any service whose name explicitly encodes a binary-gender
+# restriction (e.g., "Overnight Men Sign-Up", "Women's Shelter").
+# This is a stricter behavior than production's at the fixture level,
+# but it correctly captures the misgendering-risk concern that
+# production handles via the SQL eligibility table being absent of
+# strict gender restrictions on most affirming services. If the
+# fixture is ever extended with proper eligibility data, this branch
+# in _filter_rows_by_eligibility should be revisited.
+#
 # (1) and (3) work via taxonomy filtering on the ``service_taxonomies``
 # field, which IS in the fixture.
 #
@@ -4316,8 +4378,11 @@ def _filter_rows_by_service_detail(
 # zero are tagged "Families" and only 3 are tagged with the parent
 # "Shelter" alone. When family_status=with_children fires the narrowing,
 # we may return just the 3 parent-tagged rows or fewer per borough.
-# Tracked as Foundation 8 — the next fixture refresh should ensure
-# Families/families-affirming services are represented per borough.
+# Tracked as the fixture-filter-dispatcher workstream (referred to as
+# "Foundation 8" in run write-ups; not the same as Foundation 8 in
+# EVAL_QUALITY_ENGINEERING_PLAN.md, which only defines F1-F7) — the
+# next fixture refresh should ensure Families/families-affirming
+# services are represented per borough.
 
 # Taxonomy lists for the shelter narrowing logic. Mirrors
 # rag/__init__.py:218-228 narrowing rules.
@@ -4456,7 +4521,19 @@ def _filter_rows_by_eligibility(
         rows = [r for r in rows if not _is_gender_explicit_men_only(r)]
     elif gender in ("lgbtq", "transgender", "nonbinary"):
         # LGBTQ/trans/nonbinary: filter out services with strict
-        # gender-explicit names. Misgendering risk on these.
+        # gender-explicit names (misgendering risk).
+        #
+        # NOTE: This intentionally diverges from production. Production
+        # skips the SQL eligibility filter entirely for these gender
+        # values and relies on lgbtq_boost ranking instead — see
+        # rag/__init__.py:284-305 and the comment block above this
+        # function. The eval mock can't replicate that approach
+        # because the fixture doesn't carry eligibility data, so we
+        # apply the same service_name pattern exclusion as for
+        # male/female users. The result is stricter than production
+        # at the fixture level but correctly excludes misgendering
+        # matches — see FEATURES.md "Gender & LGBTQ identity filtering"
+        # for the user-facing behavior contract.
         rows = [
             r for r in rows
             if not (
@@ -4553,7 +4630,10 @@ def _mock_query_services(*args, **kwargs) -> dict:
         - all other kwargs (urgency, weekday, etc.) accepted but
           IGNORED - production filters by them but the eval fixture
           doesn't carry the data needed to honor them. Tracked as
-          Foundation 8 of the eval-quality plan.
+          Fixture Foundation 8 (the fixture-engineering workstream;
+          not the eval-quality plan, which only defines F1–F7 about
+          judge calibration / cross-run history / outcome metrics —
+          see docs/design/EVAL_QUALITY_ENGINEERING_PLAN.md).
 
     Sentinels for tests that explicitly want particular outcomes:
         location=="__nowhere__"    -> empty results
@@ -5461,11 +5541,10 @@ def generate_report(results: list, baseline_id: str = "R38") -> dict:
     # Capture the pre-LLM redaction flag state at report time. Diffing
     # two reports later is much less ambiguous when each one says
     # whether redaction was on. See PRE_LLM_REDACTION_SCOPE.md Phase 2.
-    try:
-        from app.services.chatbot.context import _REDACT_BEFORE_LLM
-        redact_state = bool(_REDACT_BEFORE_LLM)
-    except Exception:
-        redact_state = None
+    # `_REDACT_BEFORE_LLM` is imported at the top of this module
+    # (line ~143). If that import had failed, module load would have
+    # crashed before reaching here — no defensive try block needed.
+    redact_state = bool(_REDACT_BEFORE_LLM)
 
     return {
         "timestamp": datetime.now().isoformat(),

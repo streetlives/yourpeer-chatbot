@@ -1,4 +1,14 @@
-# Foundation 8: Fixture Refresh Runbook
+# Fixture Foundation 8: Fixture Refresh Runbook
+
+> **Note on label:** This is the eighth foundation in a separate
+> **fixture-engineering** workstream — distinct from the Foundations
+> defined in `docs/design/EVAL_QUALITY_ENGINEERING_PLAN.md`, which
+> only enumerates F1–F7 (all about eval quality: cross-run history,
+> calibration, triangulation, model-version pinning, production-to-
+> eval bridge, automated lifecycle, outcome measurement). The
+> "Fixture Foundation N" labels were originally written as plain
+> "Foundation N" in earlier write-ups; the prefix was added during
+> the May 6 doc cleanup to prevent confusion.
 
 **Last refresh:** May 5, 2026 — produced 277 rows, all required pins ✅, all cohort thresholds met.
 **Audience:** Streetlives data team or whoever has DB read access for fixture refresh.

@@ -8,6 +8,14 @@
 
 ---
 
+> **A note on Foundation numbering.** This plan defines its own Foundations 1–7, all about **eval quality** — cross-run history, judge calibration, triangulation, model-version pinning, production-to-eval bridge, automated lifecycle, and outcome measurement. No Foundation 8 exists in this plan.
+>
+> Other documents in the repo (notably `docs/ops/EVAL_RESULTS_R28-R41.md`, `scripts/fixture/REFRESH_RUNBOOK.md`, `tests/eval/eval_llm_judge.py` comments, and `docs/design/PRE_LLM_REDACTION_SCOPE.md`) reference "Foundation 7" and "Foundation 8" in a parallel **fixture-engineering** workstream — must-include partner pinning and dispatcher eligibility filters respectively. Those numbers are not part of this plan and the workstreams should not be conflated. References that conflate them (e.g., `PRE_LLM_REDACTION_SCOPE.md` line 533 calling eligibility-filter gaps "Foundation 6 in the eval-quality plan" — Foundation 6 here is the automated lifecycle health report, not anything bot-specific) are documentation drift, not a real cross-reference.
+>
+> When a future PR cleans this up, the right shape is to rename the fixture series to non-conflicting labels (e.g. "Fixture Pin", "Fixture Filter Dispatch") rather than renumber this plan. The plan's F1–F7 are referenced by external eval architecture docs and run write-ups; those references are correct and should remain stable.
+
+---
+
 ## Why this plan exists, and why v1 wasn't enough
 
 The v1 plan (April 21) named five threats to eval trust: judge noise, scenario drift, coverage gaps, slow feedback loop, and scenarios that confirm rather than test. That framing was correct and remains the right diagnosis. What v1 got wrong was treating the threats as a **scenario-level engineering problem** — six bug-fix patches, twelve scenarios to retire, eighteen new scenarios to author — when the actual problem is **infrastructural and methodological**.
