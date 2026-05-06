@@ -143,6 +143,44 @@ _ROUGH_SLEEPER_RE = re.compile(
 )
 
 # ---------------------------------------------------------------------------
+# Newcomer to NYC (just arrived, asking for shelter)
+# ---------------------------------------------------------------------------
+
+# Distinct from "rough sleeper" — a newcomer may not be sleeping outside
+# yet but has the same orientation gap: NYC has a right-to-shelter law
+# (unique among major US cities) and 311 can connect to intake. The
+# rough_sleeper regex requires "I'm sleeping outside / nowhere to go"
+# disclosure phrasing; a newcomer asking "where can I sleep tonight"
+# matches none of those patterns. Without a separate detector, the
+# scenario (natural_new_to_nyc, R41 failing) gets a transactional
+# shelter search with none of the orientation context that a brand-new
+# arrival needs — judge dimensions tone=3, safety_crisis=3, dignity=3.
+#
+# Match shape: present-tense arrival language ("just got to NYC",
+# "just arrived", "new to the city") that pairs with a shelter request
+# in the same turn (caller gates on slots, see _is_newcomer_to_nyc).
+# Conservative — past-tense ("I moved here last year") is not a
+# newcomer signal; the slot gate further requires high urgency and
+# shelter intent so generic "I'm new to NYC, what's there to do" won't
+# fire.
+_NEWCOMER_TO_NYC_RE = re.compile(
+    r"\b("
+    # Just arrived
+    r"just (?:got|arrived|came) (?:to|in|here|in to)\s*(?:new york|nyc|the city)?|"
+    r"just (?:landed|got off the bus|got off a bus|made it) (?:in|to|here)?|"
+    r"first day in (?:new york|nyc|the city)|"
+    r"got (?:to|into) (?:new york|nyc|the city) (?:today|tonight|this morning|yesterday)|"
+    # Newness disclosure
+    r"new (?:to|in) (?:new york|nyc|the city|town)|"
+    r"i'?m new (?:to|in|here)|"
+    # Don't know NYC
+    r"don'?t know (?:new york|nyc|the city|this city|the area)|"
+    r"never been (?:to|in) (?:new york|nyc) before"
+    r")\b",
+    re.IGNORECASE,
+)
+
+# ---------------------------------------------------------------------------
 # Substance use disclosure (shelter context)
 # ---------------------------------------------------------------------------
 
@@ -337,6 +375,81 @@ def _rough_sleeper_acknowledgment(slots: dict, redacted_message: str) -> str:
     )
 
 
+def _is_newcomer_to_nyc(slots: dict, redacted_message: str) -> bool:
+    """True when the user has just arrived in NYC AND is asking about
+    shelter with urgency.
+
+    Three conditions, all required:
+    - Newcomer phrasing in the message (regex on redacted_message —
+      newcomer phrases survive PII redaction).
+    - ``service_type == "shelter"`` (or shelter is queued in
+      additional services).
+    - ``urgency == "high"`` — a casual "I'm new to NYC, what's good
+      around here" should not fire this; the trigger is for someone
+      who needs shelter tonight as a brand-new arrival.
+
+    Distinct from `_is_rough_sleeper`: a newcomer may not be sleeping
+    outside yet but needs the same orientation (right-to-shelter law,
+    311 intake, family vs. single intake distinction). The two
+    conditions can co-occur — the combined acknowledgment ordering
+    surfaces newcomer info first as the more specific context.
+    """
+    if not redacted_message:
+        return False
+    if slots.get("urgency") != "high":
+        return False
+    # Service-type gate — shelter primary OR shelter queued
+    is_shelter = slots.get("service_type") == "shelter"
+    if not is_shelter:
+        for queue_key in ("additional_services", "_queued_services"):
+            for svc in slots.get(queue_key) or []:
+                if len(svc) >= 1 and svc[0] == "shelter":
+                    is_shelter = True
+                    break
+            if is_shelter:
+                break
+    if not is_shelter:
+        return False
+    redacted_message = _normalize_apostrophes(redacted_message)
+    return bool(_NEWCOMER_TO_NYC_RE.search(redacted_message))
+
+
+def _newcomer_to_nyc_acknowledgment(
+    slots: dict, redacted_message: str
+) -> str:
+    """Surface NYC's right-to-shelter + 311 intake for a newcomer
+    needing shelter tonight.
+
+    NYC is the only major US city with a legal right to shelter,
+    enforceable through DHS intake. Newcomers don't know this — and
+    without it, "where can I sleep tonight" gets answered with
+    transactional results that miss the systemic option. PATH (for
+    families) and the single-adult intake centers are the entry points;
+    311 is the live-help connector to either.
+
+    Returns empty string when the trigger conditions aren't met.
+    """
+    if not _is_newcomer_to_nyc(slots, redacted_message):
+        return ""
+    # Tailor the intake pointer to family status when known. PATH is
+    # the family-only intake; single adults go through different
+    # intake centers. 311 connects to either, so we lead with 311 and
+    # only call out PATH when family_status indicates children.
+    if slots.get("family_status") == "with_children":
+        return (
+            "Welcome to NYC — a quick orientation: NYC has a legal right "
+            "to shelter, so no one with children should be turned away "
+            "tonight. The family intake point is PATH (151 East 151st "
+            "Street, Bronx, open 24/7) — call 311 to be connected. "
+            "Let me also look for what's near you.\n\n"
+        )
+    return (
+        "Welcome to NYC — a quick orientation: NYC has a legal right to "
+        "shelter, so you have the right to a bed tonight. Call 311 to be "
+        "connected to intake, and let me also look for what's near you.\n\n"
+    )
+
+
 def _is_substance_use_shelter(slots: dict, redacted_message: str) -> bool:
     """True when the user is asking about shelter AND has disclosed
     substance use OR has named the harm-reduction shelter framing.
@@ -417,8 +530,14 @@ def _combined_contextual_acknowledgments(
        the bot launches into resources or slot-filling.
     2. PATH intake (if applicable) — most directive and most
        time-critical (family + tonight).
-    3. Rough sleeper outreach (if applicable) — also time-critical.
-    4. Substance-use shelter framing (if applicable) — informational.
+    3. Newcomer-to-NYC orientation (if applicable) — also
+       time-critical and provides the right-to-shelter framing the
+       newcomer doesn't have yet. Placed before rough_sleeper because
+       a newcomer may also be unsheltered, in which case the
+       orientation context is the prerequisite for the outreach
+       resources.
+    4. Rough sleeper outreach (if applicable) — also time-critical.
+    5. Substance-use shelter framing (if applicable) — informational.
 
     Each helper is independently empty-string-safe, so the
     concatenation is always safe to call. Order matters when
@@ -427,12 +546,23 @@ def _combined_contextual_acknowledgments(
 
     Note: the existing ``_immigration_acknowledgment`` is NOT folded
     in here — it's already wired into the orchestrator's prefix
-    chain and we're not moving it. This helper covers the four new
+    chain and we're not moving it. This helper covers the new
     prefixes only.
+
+    Note on PATH/newcomer overlap: a family-with-children newcomer
+    triggers BOTH _path_intake_acknowledgment and
+    _newcomer_to_nyc_acknowledgment. The newcomer ack itself includes
+    a tailored PATH pointer in its family branch, and the PATH ack
+    fires first in the chain. This produces a slight duplication of
+    the PATH address — acceptable as defense-in-depth (the user
+    sees the actionable address twice rather than missing it once)
+    and individually each ack is two sentences, so the combined
+    output remains short.
     """
     return (
         _personal_story_acknowledgment(slots, redacted_message)
         + _path_intake_acknowledgment(slots, redacted_message)
+        + _newcomer_to_nyc_acknowledgment(slots, redacted_message)
         + _rough_sleeper_acknowledgment(slots, redacted_message)
         + _substance_use_shelter_acknowledgment(slots, redacted_message)
     )

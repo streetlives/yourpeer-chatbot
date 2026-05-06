@@ -108,49 +108,68 @@ class TestTaxonomyNarrowingPersonalCare:
 
 
 class TestTaxonomyNarrowingSubstanceUse:
-    """Substance use sub-types narrow mental_health to treatment taxonomies."""
+    """Substance use sub-types narrow medical to treatment taxonomies.
+
+    May 5 routing fix: substance-use intent now routes to
+    service_type='medical' rather than 'mental_health'. The
+    _DETAIL_TO_TAXONOMY_NARROWING dict is keyed on service_detail
+    (not service_type), so narrowing works regardless of which
+    template is invoked. We exercise both medical (the canonical
+    routing) and mental_health (the safety-net path — see
+    test_narrowing_works_under_either_template at the end of the
+    class) to confirm narrowing fires consistently.
+    """
 
     def test_detox(self):
-        p = _query("mental_health", service_detail="detox")
+        p = _query("medical", service_detail="detox")
         assert set(p["taxonomy_names"]) == {"substance use treatment", "residential recovery"}
 
     def test_substance_use_treatment(self):
-        p = _query("mental_health", service_detail="substance use treatment")
+        p = _query("medical", service_detail="substance use treatment")
         assert "substance use treatment" in p["taxonomy_names"]
 
     def test_substance_abuse_services(self):
-        p = _query("mental_health", service_detail="substance abuse services")
+        p = _query("medical", service_detail="substance abuse services")
         assert "substance use treatment" in p["taxonomy_names"]
 
     def test_addiction_services(self):
-        p = _query("mental_health", service_detail="addiction services")
+        p = _query("medical", service_detail="addiction services")
         assert "substance use treatment" in p["taxonomy_names"]
 
     def test_rehab_services(self):
-        p = _query("mental_health", service_detail="rehab services")
+        p = _query("medical", service_detail="rehab services")
         assert "substance use treatment" in p["taxonomy_names"]
 
     def test_inpatient(self):
-        p = _query("mental_health", service_detail="inpatient treatment")
+        p = _query("medical", service_detail="inpatient treatment")
         assert set(p["taxonomy_names"]) == {"substance use treatment", "residential recovery"}
 
     def test_outpatient(self):
-        p = _query("mental_health", service_detail="outpatient treatment")
+        p = _query("medical", service_detail="outpatient treatment")
         assert p["taxonomy_names"] == ["substance use treatment"]
 
     def test_sober_living(self):
-        p = _query("mental_health", service_detail="sober living")
+        p = _query("medical", service_detail="sober living")
         # "supportive housing" removed April 16, 2026 — DB verified 0 services tagged.
         assert set(p["taxonomy_names"]) == {"residential recovery"}
 
     def test_halfway_houses(self):
-        p = _query("mental_health", service_detail="halfway houses")
+        p = _query("medical", service_detail="halfway houses")
         # "supportive housing" removed April 16, 2026 — DB verified 0 services tagged.
         assert set(p["taxonomy_names"]) == {"residential recovery"}
 
     def test_recovery_services(self):
-        p = _query("mental_health", service_detail="recovery services")
+        p = _query("medical", service_detail="recovery services")
         assert "support groups" in p["taxonomy_names"]
+
+    def test_narrowing_works_under_either_template(self):
+        """Defense-in-depth: if a stale code path or upstream regression
+        causes substance-use intent to mis-route to mental_health, the
+        detail-based narrowing should STILL produce correct taxonomies.
+        The narrowing dict is keyed on service_detail, not service_type."""
+        p_medical = _query("medical", service_detail="detox")
+        p_mental = _query("mental_health", service_detail="detox")
+        assert p_medical["taxonomy_names"] == p_mental["taxonomy_names"]
 
 
 class TestTaxonomyNarrowingDefaults:
@@ -609,8 +628,9 @@ class TestSlotExtractorDetox:
     """End-to-end: user message → extract_slots → service_detail → narrowing."""
 
     def test_detox_keyword(self):
+        # Substance-use intent routes to medical (May 5 routing fix).
         slots = extract_slots("I need to detox from alcohol")
-        assert slots["service_type"] == "mental_health"
+        assert slots["service_type"] == "medical"
         assert slots["service_detail"] == "detox"
 
     def test_detoxification_keyword(self):
@@ -655,13 +675,19 @@ class TestSampleQueries:
     """Verify slot extraction + narrowing for Cornell team sample queries."""
 
     def test_q8_detox_manhattan(self):
-        """'I need to detox from Alcohol and Opiates. Where can I go in Manhattan?'"""
+        """'I need to detox from Alcohol and Opiates. Where can I go in Manhattan?'
+
+        Cornell sample query — surfaced as a routing bug in R42:
+        bot was returning generic mental health (geriatric clinics,
+        crisis counseling) for users disclosing alcohol+opiate
+        dependence. May 5 fix: route to service_type=medical.
+        """
         slots = extract_slots("I need to detox from Alcohol and Opiates. Where can I go in Manhattan?")
-        assert slots["service_type"] == "mental_health"
+        assert slots["service_type"] == "medical"
         assert slots["service_detail"] == "detox"
         assert slots["location"] is not None
 
-        p = _query("mental_health", service_detail="detox", location=slots["location"])
+        p = _query("medical", service_detail="detox", location=slots["location"])
         assert set(p["taxonomy_names"]) == {"substance use treatment", "residential recovery"}
 
     def test_q2_immigration_manhattan(self):

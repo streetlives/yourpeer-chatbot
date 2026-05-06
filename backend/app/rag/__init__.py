@@ -25,6 +25,162 @@ from app.rag.query_executor import (
 from app.rag.query_templates import TEMPLATES
 
 
+# ---------------------------------------------------------------------------
+# Service-detail narrowing dictionaries (module-level, public for eval reuse)
+# ---------------------------------------------------------------------------
+# Two strategies, both keyed on the slot extractor's `service_detail` string:
+#
+#   - _DETAIL_TO_TAXONOMY_NARROWING  → swap taxonomy_names for the sub-list.
+#       Used for categories with distinct sub-taxonomies (food→soup_kitchen
+#       vs food_pantry; substance use→treatment + residential_recovery).
+#       Strict: matched rows are tagged with one of the listed taxonomies.
+#
+#   - _DETAIL_DESCRIPTION_FILTERS    → add a description regex pattern.
+#       Used for sub-types that share a parent taxonomy and can only be
+#       distinguished by description text (English classes, dental care,
+#       eviction prevention, AA meetings, etc.). Looser: regex match
+#       against service_description.
+#
+# These were previously inlined inside ``prepare_query_params`` (lines 293
+# and 342). Lifted to module level on May 5, 2026 so the eval mock
+# dispatcher can import them directly and apply the same narrowing
+# production applies — closing eval-fidelity Finding 5 from the May 5
+# audit. Performance side-benefit: dicts are now built once at module
+# import rather than on every prepare_query_params call.
+
+_DETAIL_TO_TAXONOMY_NARROWING = {
+    # Food sub-types (YourPeer supports soup-kitchen vs pantry filter)
+    "soup kitchens": ["soup kitchen", "mobile soup kitchen"],
+    "food pantries": ["food pantry", "mobile pantry"],
+    "groceries": ["food pantry", "mobile pantry", "mobile market", "farmer's markets"],
+    # Personal care sub-types (YourPeer supports per-amenity filter)
+    "showers": ["shower"],
+    "laundry": ["laundry"],
+    "haircuts": ["haircut"],
+    "toiletries": ["toiletries"],
+    "restrooms": ["restrooms"],
+    # Mental health — substance use sub-types
+    # Without these, "detox" returns ALL mental health services
+    # (counseling, support groups, etc.) instead of just treatment.
+    "detox": ["substance use treatment", "residential recovery"],
+    "substance use treatment": ["substance use treatment", "residential recovery"],
+    "substance abuse services": ["substance use treatment", "residential recovery"],
+    "addiction services": ["substance use treatment", "residential recovery"],
+    "rehab services": ["substance use treatment", "residential recovery"],
+    "inpatient treatment": ["substance use treatment", "residential recovery"],
+    "outpatient treatment": ["substance use treatment"],
+    # "supportive housing" removed from sober living / halfway houses —
+    # DB verified April 16, 2026: 0 services tagged with Supportive Housing.
+    "sober living": ["residential recovery"],
+    "halfway houses": ["residential recovery"],
+    "recovery services": ["substance use treatment", "residential recovery", "support groups"],
+}
+
+_DETAIL_DESCRIPTION_FILTERS = {
+    # ── "other" sub-types ──
+    "English classes": r"ESL|ESOL|english class|learn.*english",
+    "GED programs": r"GED|high school equiv|HSE|diploma|equivalency",
+    "adult education": r"adult education|adult literacy|continuing education",
+    "computer classes": r"computer|digital literacy|computer skills|computer training",
+    "digital literacy": r"computer|digital literacy|computer skills",
+    "disability services": r"disability|disabled|\mSSI\M|\mSSDI\M|accessible|special needs",
+    "financial services": r"financial|money management|budget|credit|debt|financial literacy",
+    "financial literacy": r"financial literacy|financial education|money management|budget",
+    "budgeting help": r"budget|financial|money management|savings",
+    "senior services": r"senior|older adult|aging|elder|60\+|65\+|over 60",
+    "re-entry services": r"reentry|re-entry|parole|probation|incarcerat|released|formerly",
+    "anger management": r"anger management|violence prevention|conflict resolution",
+    "parenting classes": r"parenting|parent class|parent support|fatherhood|motherhood",
+    "baby supplies": r"diaper|baby|infant|stroller|car seat|formula",
+    "transportation help": r"access.a.ride|metrocard|metro card|transit|transportation",
+    "insurance enrollment": r"insurance|medicaid enroll|medicare enroll|health insurance",
+    "health insurance enrollment": r"health insurance|insurance enroll|medicaid|marketplace",
+    "LGBTQ services": r"LGBTQ|queer|transgender|gay|lesbian|bisexual|nonbinary",
+    "LGBTQ support": r"LGBTQ|queer|transgender|gay|lesbian|bisexual|nonbinary",
+    "DACA services": r"DACA|deferred action|dreamer",
+    "accessibility services": r"accessibility|accessible|wheelchair|disability|ADA",
+    # other — benefits & financial (previously unhandled)
+    "Access-A-Ride help": r"access.a.ride|paratransit|disability.*transport",
+    "EBT / food stamps": r"EBT|food stamp|SNAP|electronic benefit",
+    "Medicaid enrollment": r"medicaid|health insurance|enroll",
+    "Social Security": r"social security|\mSSA\M|\mSSI\M|\mSSDI\M|disability benefit",
+    "benefits enrollment": r"benefit|enroll|eligib|public assist|apply",
+    "cash assistance": r"cash assist|public assist|TANF|welfare|emergency.*cash",
+    "financial advisors": r"financial advis|financial counsel|money manage|budget",
+    "food stamps / SNAP": r"food stamp|SNAP|EBT|electronic benefit",
+    "money management": r"money manage|budget|financial|savings|debt",
+    "public assistance": r"public assist|welfare|benefit|TANF|cash assist",
+    "SYEP programs": r"SYEP|summer youth|summer employment|youth employment",
+    # ID-services sub-types — added with the IDNYC routing fix
+    # (peer_free_id_manhattan). These match Streetlives services that
+    # help users obtain ID documents. "IDNYC" is NYC's free city ID
+    # program specifically; "ID services" is the broader category
+    # (state ID, replacement IDs, identification help); "birth
+    # certificate" is a separate vital record. PG word-boundary
+    # anchors (\m...\M) on bare "ID" prevent substring matches
+    # against "Medicaid", "ride", "video", etc. (\b is the backspace
+    # character in PG regex, not a word boundary — see
+    # TestWordBoundaryCorrectness.)
+    "IDNYC": r"IDNYC|NYC.?ID|municipal.?ID|city.?ID",
+    "ID services": r"\mID\M|identification|state.?ID|driver.?license|non.?driver",
+    "birth certificate": r"birth certificate|vital record|certificate of birth",
+    # ── health_care sub-types ──
+    "dental care": r"dental|dentist|oral health|tooth|teeth",
+    "vision care": r"vision|eye|optometr|ophthalmol|glasses|optical",
+    "urgent care": r"urgent care|walk.in clinic|immediate care",
+    "prenatal care": r"prenatal|maternity|pregnan|obstetric|OB.GYN",
+    "diabetes / insulin care": r"diabet|insulin|blood sugar|endocrin|A1C",
+    "HIV services": r"HIV|AIDS|antiretroviral|PrEP|\mPEP\M",
+    "harm reduction services": r"harm reduction|needle|syringe|naloxone|narcan|overdose",
+    # health_care — previously unhandled
+    "HIV testing": r"HIV.*test|HIV.*screen|rapid.*test.*HIV",
+    "STD testing": r"STD|STI|sexual.*health|sexually transmitted",
+    "STI testing": r"STI|STD|sexual.*health|sexually transmitted",
+    "PrEP services": r"PrEP|pre.exposure|HIV prevent|truvada|descovy",
+    "allergy / EpiPen care": r"allerg|epipen|anaphyla",
+    "asthma care": r"asthma|inhaler|respiratory|pulmon|breathing",
+    "diabetes care": r"diabet|insulin|blood sugar|endocrin|A1C",
+    # "dialysis services" removed — DB verified April 16, 2026: 0 matches.
+    # No service description mentions dialysis, kidney, or renal.
+    "hepatitis services": r"hepatitis|\mhep\M|liver",
+    "hepatitis C services": r"hepatitis.*C|hep.*C|HCV",
+    "maternity services": r"matern|pregnan|prenatal|postpartum|obstetric",
+    "postpartum care": r"postpartum|after.*birth|newborn|maternal",
+    "needle exchange": r"needle|syringe|harm reduction|safe.*inject",
+    "syringe exchange": r"syringe|needle|harm reduction|safe.*inject",
+    "vaccinations": r"vaccin|immuniz|flu.*shot|COVID.*shot|booster",
+    # ── legal sub-types ──
+    "immigration services": r"immigra|asylum|refugee|undocument|visa|green card|USCIS|naturali|citizen|deporta|removal|\mICE\M",
+    "asylum services": r"asylum|refugee|persecution|fear|credible fear|withholding",
+    "eviction help": r"evict|tenant|landlord|housing court|rental|lease",
+    "domestic violence services": r"domestic violence|\mDV\M|intimate partner|protective order|abuse|safety plan",
+    # legal — previously unhandled
+    "abuse counseling": r"abuse|domestic violence|\mDV\M|survivor|violence.*counsel",
+    "citizenship services": r"citizen|naturali|civics|passport|N-400",
+    "naturalization services": r"naturali|citizen|civics|N-400|oath",
+    "order of protection": r"order of protection|protective order|restraining order|\mOOP\M",
+    # ── mental_health sub-types (previously unhandled) ──
+    "AA meetings": r"\mAA\M|alcoholics anonymous|12.step|twelve.step|sobriety",
+    "NA meetings": r"\mNA\M|narcotics anonymous|12.step|twelve.step|recovery.*meeting",
+    "counseling": r"counsel|therap|talk.*someone|mental health.*support",
+    "therapy": r"therap|counsel|psycho|CBT|DBT|mental health",
+    "treatment centers": r"treatment center|treatment facility|rehab|recovery center",
+    "treatment programs": r"treatment program|recovery program|rehab program",
+    # ── housing program sub-types (routed via "other" — matches YourPeer) ──
+    "Housing Connect": r"Housing Connect|housing lottery|affordable.*apply",
+    "NYCHA housing": r"NYCHA|public housing|housing authority",
+    "Section 8 vouchers": r"section 8|housing voucher|rental assist|\mHCV\M",
+    "affordable housing": r"affordable housing|low.income housing|subsidiz|below market",
+    "eviction prevention": r"eviction prevent|anti.eviction|stay.*home|keep.*housed",
+    "homeless prevention programs": r"homeless prevent|prevention|diversion",
+    "housing assistance": r"housing assist|housing help|housing support|find.*housing",
+    "housing lottery": r"housing lottery|Housing Connect|affordable.*apply",
+    "housing programs": r"housing program|housing service|housing support",
+    "housing vouchers": r"housing voucher|section 8|rental voucher|\mHCV\M",
+    "rental assistance": r"rental assist|rent help|rent subsid|emergency rent|\mERAP\M|one shot",
+}
+
+
 def query_services(
     service_type: str,
     location: str = None,
@@ -290,34 +446,6 @@ def query_services(
 
     if service_detail:
         # 4a. Taxonomy narrowing for categories with distinct sub-taxonomies
-        _DETAIL_TO_TAXONOMY_NARROWING = {
-            # Food sub-types (YourPeer supports soup-kitchen vs pantry filter)
-            "soup kitchens": ["soup kitchen", "mobile soup kitchen"],
-            "food pantries": ["food pantry", "mobile pantry"],
-            "groceries": ["food pantry", "mobile pantry", "mobile market", "farmer's markets"],
-            # Personal care sub-types (YourPeer supports per-amenity filter)
-            "showers": ["shower"],
-            "laundry": ["laundry"],
-            "haircuts": ["haircut"],
-            "toiletries": ["toiletries"],
-            "restrooms": ["restrooms"],
-            # Mental health — substance use sub-types
-            # Without these, "detox" returns ALL mental health services
-            # (counseling, support groups, etc.) instead of just treatment.
-            "detox": ["substance use treatment", "residential recovery"],
-            "substance use treatment": ["substance use treatment", "residential recovery"],
-            "substance abuse services": ["substance use treatment", "residential recovery"],
-            "addiction services": ["substance use treatment", "residential recovery"],
-            "rehab services": ["substance use treatment", "residential recovery"],
-            "inpatient treatment": ["substance use treatment", "residential recovery"],
-            "outpatient treatment": ["substance use treatment"],
-            # "supportive housing" removed from sober living / halfway houses —
-            # DB verified April 16, 2026: 0 services tagged with Supportive Housing.
-            "sober living": ["residential recovery"],
-            "halfway houses": ["residential recovery"],
-            "recovery services": ["substance use treatment", "residential recovery", "support groups"],
-        }
-
         narrowed_taxonomies = _DETAIL_TO_TAXONOMY_NARROWING.get(service_detail)
         if narrowed_taxonomies:
             user_params["taxonomy_names"] = narrowed_taxonomies
@@ -339,96 +467,6 @@ def query_services(
         # legal services also have sub-types (dental, immigration) that
         # share a parent taxonomy ("Health", "Legal") and can only be
         # narrowed by description.
-        _DETAIL_DESCRIPTION_FILTERS = {
-            # ── "other" sub-types ──
-            "English classes": r"ESL|ESOL|english class|learn.*english",
-            "GED programs": r"GED|high school equiv|HSE|diploma|equivalency",
-            "adult education": r"adult education|adult literacy|continuing education",
-            "computer classes": r"computer|digital literacy|computer skills|computer training",
-            "digital literacy": r"computer|digital literacy|computer skills",
-            "disability services": r"disability|disabled|\mSSI\M|\mSSDI\M|accessible|special needs",
-            "financial services": r"financial|money management|budget|credit|debt|financial literacy",
-            "financial literacy": r"financial literacy|financial education|money management|budget",
-            "budgeting help": r"budget|financial|money management|savings",
-            "senior services": r"senior|older adult|aging|elder|60\+|65\+|over 60",
-            "re-entry services": r"reentry|re-entry|parole|probation|incarcerat|released|formerly",
-            "anger management": r"anger management|violence prevention|conflict resolution",
-            "parenting classes": r"parenting|parent class|parent support|fatherhood|motherhood",
-            "baby supplies": r"diaper|baby|infant|stroller|car seat|formula",
-            "transportation help": r"access.a.ride|metrocard|metro card|transit|transportation",
-            "insurance enrollment": r"insurance|medicaid enroll|medicare enroll|health insurance",
-            "health insurance enrollment": r"health insurance|insurance enroll|medicaid|marketplace",
-            "LGBTQ services": r"LGBTQ|queer|transgender|gay|lesbian|bisexual|nonbinary",
-            "LGBTQ support": r"LGBTQ|queer|transgender|gay|lesbian|bisexual|nonbinary",
-            "DACA services": r"DACA|deferred action|dreamer",
-            "accessibility services": r"accessibility|accessible|wheelchair|disability|ADA",
-            # other — benefits & financial (previously unhandled)
-            "Access-A-Ride help": r"access.a.ride|paratransit|disability.*transport",
-            "EBT / food stamps": r"EBT|food stamp|SNAP|electronic benefit",
-            "Medicaid enrollment": r"medicaid|health insurance|enroll",
-            "Social Security": r"social security|\mSSA\M|\mSSI\M|\mSSDI\M|disability benefit",
-            "benefits enrollment": r"benefit|enroll|eligib|public assist|apply",
-            "cash assistance": r"cash assist|public assist|TANF|welfare|emergency.*cash",
-            "financial advisors": r"financial advis|financial counsel|money manage|budget",
-            "food stamps / SNAP": r"food stamp|SNAP|EBT|electronic benefit",
-            "money management": r"money manage|budget|financial|savings|debt",
-            "public assistance": r"public assist|welfare|benefit|TANF|cash assist",
-            "SYEP programs": r"SYEP|summer youth|summer employment|youth employment",
-            # ── health_care sub-types ──
-            "dental care": r"dental|dentist|oral health|tooth|teeth",
-            "vision care": r"vision|eye|optometr|ophthalmol|glasses|optical",
-            "urgent care": r"urgent care|walk.in clinic|immediate care",
-            "prenatal care": r"prenatal|maternity|pregnan|obstetric|OB.GYN",
-            "diabetes / insulin care": r"diabet|insulin|blood sugar|endocrin|A1C",
-            "HIV services": r"HIV|AIDS|antiretroviral|PrEP|\mPEP\M",
-            "harm reduction services": r"harm reduction|needle|syringe|naloxone|narcan|overdose",
-            # health_care — previously unhandled
-            "HIV testing": r"HIV.*test|HIV.*screen|rapid.*test.*HIV",
-            "STD testing": r"STD|STI|sexual.*health|sexually transmitted",
-            "STI testing": r"STI|STD|sexual.*health|sexually transmitted",
-            "PrEP services": r"PrEP|pre.exposure|HIV prevent|truvada|descovy",
-            "allergy / EpiPen care": r"allerg|epipen|anaphyla",
-            "asthma care": r"asthma|inhaler|respiratory|pulmon|breathing",
-            "diabetes care": r"diabet|insulin|blood sugar|endocrin|A1C",
-            # "dialysis services" removed — DB verified April 16, 2026: 0 matches.
-            # No service description mentions dialysis, kidney, or renal.
-            "hepatitis services": r"hepatitis|\mhep\M|liver",
-            "hepatitis C services": r"hepatitis.*C|hep.*C|HCV",
-            "maternity services": r"matern|pregnan|prenatal|postpartum|obstetric",
-            "postpartum care": r"postpartum|after.*birth|newborn|maternal",
-            "needle exchange": r"needle|syringe|harm reduction|safe.*inject",
-            "syringe exchange": r"syringe|needle|harm reduction|safe.*inject",
-            "vaccinations": r"vaccin|immuniz|flu.*shot|COVID.*shot|booster",
-            # ── legal sub-types ──
-            "immigration services": r"immigra|asylum|refugee|undocument|visa|green card|USCIS|naturali|citizen|deporta|removal|\mICE\M",
-            "asylum services": r"asylum|refugee|persecution|fear|credible fear|withholding",
-            "eviction help": r"evict|tenant|landlord|housing court|rental|lease",
-            "domestic violence services": r"domestic violence|\mDV\M|intimate partner|protective order|abuse|safety plan",
-            # legal — previously unhandled
-            "abuse counseling": r"abuse|domestic violence|\mDV\M|survivor|violence.*counsel",
-            "citizenship services": r"citizen|naturali|civics|passport|N-400",
-            "naturalization services": r"naturali|citizen|civics|N-400|oath",
-            "order of protection": r"order of protection|protective order|restraining order|\mOOP\M",
-            # ── mental_health sub-types (previously unhandled) ──
-            "AA meetings": r"\mAA\M|alcoholics anonymous|12.step|twelve.step|sobriety",
-            "NA meetings": r"\mNA\M|narcotics anonymous|12.step|twelve.step|recovery.*meeting",
-            "counseling": r"counsel|therap|talk.*someone|mental health.*support",
-            "therapy": r"therap|counsel|psycho|CBT|DBT|mental health",
-            "treatment centers": r"treatment center|treatment facility|rehab|recovery center",
-            "treatment programs": r"treatment program|recovery program|rehab program",
-            # ── housing program sub-types (routed via "other" — matches YourPeer) ──
-            "Housing Connect": r"Housing Connect|housing lottery|affordable.*apply",
-            "NYCHA housing": r"NYCHA|public housing|housing authority",
-            "Section 8 vouchers": r"section 8|housing voucher|rental assist|\mHCV\M",
-            "affordable housing": r"affordable housing|low.income housing|subsidiz|below market",
-            "eviction prevention": r"eviction prevent|anti.eviction|stay.*home|keep.*housed",
-            "homeless prevention programs": r"homeless prevent|prevention|diversion",
-            "housing assistance": r"housing assist|housing help|housing support|find.*housing",
-            "housing lottery": r"housing lottery|Housing Connect|affordable.*apply",
-            "housing programs": r"housing program|housing service|housing support",
-            "housing vouchers": r"housing voucher|section 8|rental voucher|\mHCV\M",
-            "rental assistance": r"rental assist|rent help|rent subsid|emergency rent|\mERAP\M|one shot",
-        }
         if not narrowed_taxonomies:
             pattern = _DETAIL_DESCRIPTION_FILTERS.get(service_detail)
             if pattern:

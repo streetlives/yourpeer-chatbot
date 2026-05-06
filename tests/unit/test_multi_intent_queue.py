@@ -245,6 +245,118 @@ class TestQueueOfferLocationDisplay:
         )
 
 
+class TestQueueOfferDepthTransparency:
+    """When the user queued multiple services, only ONE is offered
+    as a follow-up at a time (the existing per-item offer pattern is
+    correct — it gives the user a clean yes/no per service).
+
+    Pre-fix: the user (and the eval judge) saw the one-item offer and
+    read it as if remaining items were silently dropped. The slots
+    correctly persisted the rest in ``_queued_services``, but nothing
+    in the bot's text surfaced that.
+
+    Post-fix: when more than one item remains queued, the offer
+    message includes a parenthetical of what's queued behind it.
+
+    Surfaced by ``multi_three_services_legal_benefits_food`` in the
+    R42-borderline run (judge CF: "food stamps/SNAP intent appears
+    dropped from the follow-up queue").
+
+    These tests target ``_apply_queue_offer`` directly via
+    monkey-patched ``save_session_slots`` so the behavior is
+    isolated from session persistence.
+    """
+
+    def _exercise(self, queued, services_list_count=1, location="manhattan"):
+        """Helper: call _apply_queue_offer with the given queue
+        and a stub session-saver. Returns (augmented_response, qr)."""
+        from app.services.chatbot import execution as exe
+        slots = {
+            "_queued_services": list(queued),
+            "location": location,
+        }
+        services_list = [{"name": f"mock-{i}"} for i in range(services_list_count)]
+        # Stub save_session_slots
+        original = exe.save_session_slots
+        exe.save_session_slots = lambda *a, **k: None
+        try:
+            return exe._apply_queue_offer(
+                "test-sid", slots, services_list, "I found 1 option(s) for you:",
+            )
+        finally:
+            exe.save_session_slots = original
+
+    def test_two_queued_shows_one_pending_after(self):
+        """Most common case from the eval: 3 services requested, 1
+        delivered, 2 queued. Show the second queued item in the
+        parenthetical so the user knows it's still pending."""
+        augmented, _qr = self._exercise([
+            ("legal", "asylum services", None),
+            ("other", "food stamps / SNAP", None),
+        ])
+        assert "asylum services" in augmented
+        assert "(food stamps / SNAP after that)" in augmented, (
+            f"Multi-queue offer should surface what's still queued. "
+            f"Got: {augmented!r}"
+        )
+
+    def test_single_queued_no_tail_message(self):
+        """Single-queued case is the original behavior — no tail
+        parenthetical needed because there's nothing to be
+        transparent about."""
+        augmented, _qr = self._exercise([
+            ("legal", "asylum services", None),
+        ])
+        assert "asylum services" in augmented
+        # No "after that" parenthetical when the queue ends here
+        assert "after that" not in augmented
+
+    def test_three_or_more_queued_shows_count(self):
+        """When 3+ items are still queued, surface the count of
+        what's beyond the next-up item: '(food and 2 more after
+        that)' rather than naming each."""
+        augmented, _qr = self._exercise([
+            ("legal", None, None),
+            ("food", None, None),
+            ("clothing", None, None),
+            ("personal_care", None, None),
+        ])
+        # Next-up: legal. Behind it: food, clothing, personal_care.
+        assert "legal help" in augmented
+        # Tail mentions the next-after-that item by name and a count
+        # of what's after it.
+        assert "food and 2 more after that" in augmented, (
+            f"4+-queue offer should show next-up + count. "
+            f"Got: {augmented!r}"
+        )
+
+    def test_tail_uses_service_label_not_taxonomy(self):
+        """The tail item label uses the user-facing service label
+        (_SERVICE_LABELS), not the raw service-type string."""
+        augmented, _qr = self._exercise([
+            ("food", None, None),
+            # Raw service_type is 'personal_care'; user-facing label
+            # in _SERVICE_LABELS is "showers / personal care".
+            ("personal_care", None, None),
+        ])
+        # Should use the human label, not the raw type
+        assert "showers / personal care after that" in augmented, (
+            f"Tail should use service label. Got: {augmented!r}"
+        )
+        assert "personal_care after that" not in augmented
+
+    def test_tail_uses_detail_when_present(self):
+        """When a queued item has an explicit service_detail (e.g.
+        'asylum services' rather than just 'legal'), the tail uses
+        the detail — same convention as the primary offer label."""
+        augmented, _qr = self._exercise([
+            ("legal", None, None),
+            ("other", "food stamps / SNAP", None),
+        ])
+        # Next-up is legal (no detail), tail item has detail
+        assert "(food stamps / SNAP after that)" in augmented
+
+
 class TestQueueYesPromotesQueuedService:
     """Bug 3: typed 'yes' to queue offer must promote the queued service
     to primary and execute its search. Pre-fix, yes fell through to

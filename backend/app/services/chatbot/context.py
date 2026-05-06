@@ -38,6 +38,39 @@ else:
 
 
 # ---------------------------------------------------------------------------
+# PRE-LLM REDACTION GATE
+# ---------------------------------------------------------------------------
+# When true, the user's *current-turn* message is redacted of PII before
+# being sent to any third-party LLM (Anthropic) API call. Conversation
+# history sent on follow-up turns is already redacted server-side; this
+# closes the remaining gap on the current turn.
+#
+# Defaults to False during initial rollout so the OFF-path is bit-for-bit
+# identical to current main. Phase 2 of the rollout (see
+# docs/design/PRE_LLM_REDACTION_SCOPE.md) runs the eval suite both ways
+# and gates the flag flip on results holding or improving. Phase 3 sets
+# this to true in production. Phase 4 removes the flag.
+#
+# Plumbed through every call site listed in the scope doc:
+#   * orchestrator -> _run_llm_gate -> slot_extraction.extract
+#   * orchestrator -> detect_crisis (Stage 2 LLM)
+#   * orchestrator -> service-flow slot_extraction.extract
+#   * post_results -> _classify_post_results_llm
+#   * post_results -> _extract_keywords_llm
+#   * handlers/general -> _fallback_response -> claude_reply
+#   * handlers/meta -> _handle_bot_capability_question -> claude_reply
+_REDACT_BEFORE_LLM = os.getenv("REDACT_BEFORE_LLM", "false").lower() in (
+    "true", "1", "yes",
+)
+
+if _REDACT_BEFORE_LLM:
+    logger.info(
+        "Pre-LLM redaction enabled — current-turn user messages will be "
+        "PII-redacted before reaching Anthropic"
+    )
+
+
+# ---------------------------------------------------------------------------
 # MESSAGE CONTEXT — shared state between classification and handlers
 # ---------------------------------------------------------------------------
 # Built by the pipeline module from the classification stage. Passed to

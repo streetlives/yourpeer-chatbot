@@ -200,13 +200,53 @@ python tests/eval/eval_llm_judge.py --category crisis
 # Run a random sample of N scenarios
 python tests/eval/eval_llm_judge.py --scenarios 10
 
-# Save the full report as JSON (for programmatic analysis)
+# Save the full report as JSON to a custom path (in addition to the auto-archived copy in eval_results/runs/, see below)
 python tests/eval/eval_llm_judge.py --output eval_report.json
+
+# Re-run only the scenarios that failed (avg < 4.0) in a prior run.
+# Useful after a targeted fix to verify recovery without paying for the full suite.
+python tests/eval/eval_llm_judge.py \
+    --subset failing \
+    --subset-from eval_results/runs/20260505T120000_redact_on/
+
+# 'borderline' uses avg < 4.5 — useful after a tone/dignity change to confirm
+# at-risk scenarios held or improved.
+python tests/eval/eval_llm_judge.py \
+    --subset borderline \
+    --subset-from eval_results/runs/20260505T120000_redact_on/
+
+# --subset is combinable with --category to narrow further.
+python tests/eval/eval_llm_judge.py \
+    --subset failing \
+    --subset-from eval_results/runs/20260505T120000_redact_on/ \
+    --category multi_intent
 ```
+
+### Output — where runs are archived
+
+Every eval run, regardless of whether `--output` was passed, is archived to a timestamped directory under `eval_results/runs/`:
+
+```
+eval_results/runs/<timestamp>[_redact_on]/
+  scenarios.jsonl   per-scenario JSON, appended after each scenario completes,
+                    flushed every time. Recoverable mid-run.
+  report.json       final aggregated report (atomic write at end of run).
+  report.txt        captured print_report output (atomic write at end of run).
+```
+
+The timestamp directory is created automatically — you don't need to manage it. If the run is killed mid-way (`Ctrl+C`, OOM kill, network blip), the `scenarios.jsonl` still has every completed scenario on disk; only `report.json` and `report.txt` are missing. The `--subset-from` flag accepts either form.
+
+`--subset-from` accepts three path shapes:
+
+1. **A `runs/<timestamp>/` directory** (recommended — most ergonomic, tab-completes naturally). The runner auto-resolves to `report.json` if present, falling back to `scenarios.jsonl` for killed-mid-run cases.
+2. **A `report.json` file** directly. Same as the legacy `--output` behavior.
+3. **A `scenarios.jsonl` file** directly. Useful when a run was killed before the aggregated report was written.
+
+If you also pass `--output PATH`, the report is additionally copied to `PATH` after the run completes. This is useful for keeping a stable filename (`r42_full.json`) alongside the timestamped archive.
 
 ### What to do with the results
 
-After a run completes, the script prints a summary to the console and optionally writes a JSON report. To create a formatted eval report (the kind stored in `docs/ops/EVAL_RESULTS.md`), compare the new results to the previous run's data and document:
+After a run completes, the script prints a summary to the console and optionally writes a JSON report. To create a formatted eval report (the kind stored in `docs/ops/EVAL_RESULTS_R28-R41.md` — the historical Sonnet-era runs are in `docs/ops/EVAL_RESULTS_R1-R27.md`), compare the new results to the previous run's data and document:
 
 - Overall average and delta
 - Passing count and delta
@@ -215,7 +255,7 @@ After a run completes, the script prints a summary to the console and optionally
 - Dimension score changes >0.05
 - Category average changes >0.05
 
-The `docs/ops/EVAL_RESULTS.md` file contains the full history of all runs. New runs are appended to the bottom of that file.
+The `docs/ops/EVAL_RESULTS_R28-R41.md` file contains the current Opus-era run history (Runs 28 onwards). New runs are appended to the bottom of that file. The `docs/ops/EVAL_RESULTS_R1-R27.md` file holds the historical Sonnet-era archive and is no longer appended to.
 
 ### Cost breakdown
 
@@ -242,7 +282,8 @@ These assumptions have NOT been validated and should be reviewed:
 | What | Where |
 |---|---|
 | The eval runner (scenarios + judge + reporter) | `tests/eval/eval_llm_judge.py` |
-| Full run history with commentary | `docs/ops/EVAL_RESULTS.md` |
+| Per-run archive (one directory per run, timestamped) | `eval_results/runs/<timestamp>/` |
+| Full run history with commentary | `docs/ops/EVAL_RESULTS_R28-R41.md` (current) and `docs/ops/EVAL_RESULTS_R1-R27.md` (historical) |
 | Dimension weights | `DIMENSION_WEIGHTS` dict in `eval_llm_judge.py` |
 | Scoring rubric (judge prompt) | The `JUDGE_SYSTEM_PROMPT` string in `eval_llm_judge.py` |
 | Scenario definitions | The `SCENARIOS` list in `eval_llm_judge.py` |

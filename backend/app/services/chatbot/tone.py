@@ -53,6 +53,190 @@ _SENSITIVE_CONTEXT_RE = re.compile(
     r"just got out of jail|just got out of prison|domestic violence)\b", re.I,
 )
 
+# Substance-use disclosure: phrases users use to disclose alcohol or
+# drug dependence. Triggers a warm acknowledgment + safety addendum
+# when paired with a service-flow turn (the user is asking for detox /
+# rehab / treatment, not in immediate crisis). The cluster_5 routing
+# fix ensures these queries reach the substance-use treatment results;
+# this layer adds the dignifying acknowledgment + medical-urgency note
+# (alcohol withdrawal can be life-threatening; opiate withdrawal carries
+# overdose risk on relapse — SAMHSA helpline 1-800-662-4357).
+_SUBSTANCE_USE_DISCLOSURE_PHRASES = (
+    "detox", "detoxification",
+    "addiction", "addicted",
+    "alcoholic", "alcoholism",
+    "drinking too much", "drinking a lot", "been drinking",
+    "drink too much", "drink a lot",
+    "struggle with drinking", "struggling with drinking",
+    "using drugs", "use drugs", "using again",
+    "opiate", "opiates", "opioid", "opioids",
+    "heroin", "fentanyl",
+    "dependent on", "depend on alcohol", "depend on drugs",
+    "withdrawal",
+    "get clean", "stay clean", "sober",
+    "rehab", "recovery program",
+    "substance abuse", "substance use",
+)
+
+# Patterns that NEGATE the substance-use disclosure trigger even when a
+# keyword from _SUBSTANCE_USE_DISCLOSURE_PHRASES matched. Each fires
+# against the lowercased message; any match suppresses the trigger.
+#
+# Four classes of false positive observed in the bug-hunt audit:
+#
+# 1. Long-term recovery (the user is in stable recovery, NOT actively
+#    seeking detox): "I'm 5 years sober", "10 months clean."
+# 2. Third-party requests (someone OTHER than the user is the person
+#    with the issue): "my son is addicted", "for my daughter."
+# 3. Professional / informational lookup (clinician or staff member
+#    looking up an address, not seeking treatment): "address of Mt
+#    Sinai detox", "where do I refer patients."
+# 4. Non-substance addictions (the keyword "addiction" / "addicted"
+#    matched, but the addiction is to a non-substance behavior):
+#    "gambling addiction", "shopping addiction", "porn addiction."
+#
+# False negatives from these patterns are acceptable in either
+# direction — a missed disclosure falls through to the existing
+# emotional / shame / baseline-warmth paths, which are still
+# trauma-informed. A false POSITIVE adds an unsolicited SAMHSA
+# helpline + medical-supervision note that's incorrect for the
+# user's situation, which is the harm the bug-hunt flagged.
+_SUBSTANCE_USE_EXCLUSIONS = (
+    # Long-term recovery: explicit duration of sobriety / cleanness
+    re.compile(
+        r"\b\d+\s*(?:year|yr|month|day|week)s?\s*"
+        r"(?:sober|clean|in recovery|of recovery)\b",
+        re.I,
+    ),
+    re.compile(
+        r"\b(?:sober|clean)\s*(?:for|since)\s*\d+\s*"
+        r"(?:year|yr|month|day|week)",
+        re.I,
+    ),
+    # Third-party: another person is the disclosed user
+    re.compile(
+        r"\bmy\s+(?:son|daughter|husband|wife|partner|boyfriend|"
+        r"girlfriend|spouse|brother|sister|mom|dad|mother|father|"
+        r"kid|child|nephew|niece|cousin|friend|family\s*member|"
+        r"loved\s*one|relative)\b",
+        re.I,
+    ),
+    re.compile(
+        r"\bfor\s+(?:my\s+)?(?:son|daughter|client|patient|friend|"
+        r"relative|partner|spouse|kid|child|loved\s*one|"
+        r"family\s*member|someone)\b",
+        re.I,
+    ),
+    # NOTE: The bare third-party-pronoun pattern
+    # ``\b(?:he|she|they)\s+(?:is|are|has|have|needs?)\b`` was REMOVED
+    # in the bug-1/2/3 follow-up. It produced false negatives on
+    # legitimate first-person disclosures that mentioned a third party
+    # incidentally — e.g. "I'm an alcoholic. She is supportive." —
+    # because the pronoun + verb pattern has no connection to substance
+    # content. The remaining ``my X`` / ``for X`` patterns cover the
+    # intended third-party cases without this scattershot. If a future
+    # eval surfaces a case like "she needs detox" leaking through, the
+    # right fix is a tighter pronoun pattern that connects pronoun to
+    # substance content (e.g. ``(?:he|she|they)\s+(?:is|has|needs)\s+
+    # (?:addicted|alcoholic|in recovery|detox|rehab|treatment)``),
+    # not the broad form that was here.
+    # Professional / informational lookup
+    re.compile(
+        r"\b(?:address|phone(?:\s*number)?|location|directions?|"
+        r"hours?|contact|website)\s+(?:of|for|to)\b",
+        re.I,
+    ),
+    re.compile(r"\b(?:how|where)\s+do\s+i\s+refer\b", re.I),
+    re.compile(r"\bfor\s+(?:my\s+)?(?:patient|client)s?\b", re.I),
+    re.compile(r"\b(?:patient|client)\s+(?:lookup|info|information)\b", re.I),
+    # Non-substance addictions: the keyword "addict(ion|ed)" matched,
+    # but the addiction is named as something other than a substance.
+    re.compile(
+        r"\b(?:gambling|shopping|porn|food|phone|screen|sex|"
+        r"video\s*game|gaming|internet|social\s*media|spending|"
+        r"work|exercise)\s+(?:addict|addiction|addicted|problem)\b",
+        re.I,
+    ),
+    re.compile(
+        r"\baddict(?:ion|ed)\s+to\s+(?:gambling|shopping|porn|food|"
+        r"phone|screen|sex|video\s*game|gaming|internet|social\s*media|"
+        r"spending|work|exercise)\b",
+        re.I,
+    ),
+)
+
+# Unambiguous first-person disclosure phrases. When ANY of these match,
+# the user is unambiguously disclosing their OWN substance use, even
+# if a third-party exclusion (``my husband``, ``my partner``) also
+# matches. This handles two real cases:
+#
+# 1. Multi-party disclosure: "My husband and I both drink too much,
+#    we need help" — without the override, ``my husband`` excludes
+#    even though the user is one of the parties.
+#
+# 2. Collateral mention: "I'm an alcoholic, my wife is worried about
+#    me, need treatment" — first clause is explicit first-person, but
+#    ``my wife`` would otherwise exclude.
+#
+# The override is INTENTIONALLY more conservative than the trigger
+# itself — only fires on phrases that are unambiguously first-person
+# AND substance-related, so a generic "I need help" doesn't bypass
+# the third-party exclusions.
+_FIRST_PERSON_OVERRIDE = re.compile(
+    r"\b("
+    # Singular first-person markers
+    r"i'?m\s+(?:an?\s+)?(?:alcoholic|addict|addicted|in recovery)|"
+    r"i\s+am\s+(?:an?\s+)?(?:alcoholic|addict|addicted|in recovery)|"
+    r"i'?ve\s+been\s+(?:drinking|using)|"
+    r"i\s+(?:need|want)\s+(?:to\s+)?(?:detox|get\s+(?:into\s+)?rehab|"
+    r"go\s+to\s+rehab|treatment\s+for|a\s+treatment\s+program)|"
+    r"i\s+(?:have|got)\s+(?:an?\s+)?addiction|"
+    r"i'?m\s+(?:struggling|trying\s+to\s+get\s+clean|"
+    r"trying\s+to\s+stay\s+sober)|"
+    r"my\s+(?:drinking|using|addiction)|"
+    # First-person-plural markers (multi-party disclosures where the
+    # user is one of the parties). Constrained to substance-specific
+    # phrasings — "we need help" alone is too generic to override
+    # third-party exclusions. Verb forms include drink|drinks|drinking
+    # because the trigger phrase set carries both "drink too much" and
+    # "drinking too much".
+    r"we'?re\s+(?:both\s+|all\s+)?(?:struggling|using|drink(?:ing|s)?|"
+    r"addicted|alcoholic|in recovery)|"
+    r"we\s+are\s+(?:both\s+|all\s+)?(?:struggling|using|drink(?:ing|s)?|"
+    r"addicted|alcoholic|in recovery)|"
+    r"we\s+(?:both\s+|all\s+)?(?:need|want)\s+(?:to\s+)?"
+    r"(?:detox|get\s+(?:into\s+)?rehab|go\s+to\s+rehab|"
+    r"a\s+treatment\s+program|treatment\s+for)|"
+    # Inclusion phrasings: "X and I both" / "X and I are both"
+    r"and\s+i\s+(?:are\s+)?both\s+(?:struggling|using|drink(?:ing|s)?|"
+    r"alcoholic|addicted|in\s+recovery)"
+    r")\b",
+    re.I,
+)
+
+# Alcohol / opiate disclosure is a SUBSET of substance-use disclosure
+# that warrants more specific safety language. Alcohol withdrawal can
+# be life-threatening (delirium tremens, seizures); opiate withdrawal
+# carries elevated overdose risk on relapse because tolerance drops
+# during abstinence. The medical-supervision note in the addendum is
+# correct and important for these substances. For users disclosing
+# OTHER substances (cocaine, meth, marijuana, benzos) or non-specific
+# addiction, the alcohol/opiate-specific text is mistuned — those
+# cases get the generic safety addendum instead.
+#
+# This is a regex (not a phrase tuple) because we want word-boundary
+# matching: "opiate" should match in "opiate addiction" but not as an
+# accidental substring of some unrelated word.
+_ALCOHOL_OPIATE_PATTERN = re.compile(
+    r"\b("
+    r"alcohol|alcoholic|alcoholism|drinking|"
+    r"opiate|opiates|opioid|opioids|"
+    r"heroin|fentanyl|methadone|suboxone|oxy(?:codone|contin)?|"
+    r"vicodin|percocet|hydrocodone|morphine"
+    r")\b",
+    re.I,
+)
+
 
 def _compute_tone_prefix(
     message: str,
@@ -94,6 +278,19 @@ def _compute_tone_prefix(
         and any(s in msg_lower for s in _MEDICATION_DEPLETION)
         and any(s in msg_lower for s in _MEDICATION_WORDS)
     )
+    is_substance_use_disclosure = (
+        is_service_flow
+        and any(s in msg_lower for s in _SUBSTANCE_USE_DISCLOSURE_PHRASES)
+        and (
+            # Override: unambiguous first-person disclosure phrases
+            # bypass third-party / non-substance exclusions. Handles
+            # multi-party cases ("my partner and I both drink") and
+            # collateral mentions ("I'm an alcoholic, my wife is
+            # worried about me").
+            _FIRST_PERSON_OVERRIDE.search(msg_lower)
+            or not any(p.search(msg_lower) for p in _SUBSTANCE_USE_EXCLUSIONS)
+        )
+    )
 
     prefix = ""
     emotional_context: str | None = None
@@ -104,6 +301,25 @@ def _compute_tone_prefix(
             "these services, and there's no shame in it. "
         )
         emotional_context = "shame"
+    elif is_substance_use_disclosure:
+        # Strengths-based acknowledgment for substance-use disclosure.
+        # The downstream caller adds a safety addendum to the results
+        # message (SAMHSA helpline + medical-supervision note) when
+        # emotional_context starts with "substance_use_disclosure".
+        #
+        # Subtype split: alcohol/opiate disclosures get medical-
+        # supervision language because withdrawal from those is
+        # specifically dangerous. Other substance disclosures get
+        # generic safety language without the alcohol/opiate-specific
+        # claims (see execution.py for the addendum text branch).
+        prefix = (
+            "Reaching out for help with this is a real step forward. "
+            "Let me find what's available. "
+        )
+        if _ALCOHOL_OPIATE_PATTERN.search(msg_lower):
+            emotional_context = "substance_use_disclosure_alcohol_opiate"
+        else:
+            emotional_context = "substance_use_disclosure_other"
     elif is_medical_urgent:
         prefix = "That sounds urgent — let me help you find care right away. "
         emotional_context = "medical_urgent"

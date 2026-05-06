@@ -1685,10 +1685,17 @@ class TestDBVerifiedTaxonomyParentage:
     def test_substance_use_treatment_is_health_child(self):
         """Substance Use Treatment (11 services) is parented under Health.
 
-        DB verified: parent_name = 'Health'. Present in both medical and
-        mental_health templates (intentional overlap — a user asking
-        'doctor for my addiction' finds it via medical, 'help with drugs'
-        finds it via mental_health).
+        DB verified: parent_name = 'Health'. Present in both medical
+        and mental_health templates as defense-in-depth — if upstream
+        slot extraction misroutes substance-use intent (a known May 5
+        bug, since fixed), the SQL query layer would still surface
+        the right rows.
+
+        Note (May 5): the canonical routing for substance-use intent
+        is service_type='medical' — see slot_extraction_regex.py and
+        the TestSubstanceTreatment class in test_service_keywords.py.
+        The mental_health template's overlap on this taxonomy is a
+        safety net for the misroute case, not the primary path.
         """
         medical_names = set(TEMPLATES["medical"]["default_params"]["taxonomy_names"])
         mental_names = set(TEMPLATES["mental_health"]["default_params"]["taxonomy_names"])

@@ -136,15 +136,29 @@ SERVICE_KEYWORDS = {
         # Chronic conditions / medications (Run 24 eval gaps)
         "insulin", "diabetic", "diabetes", "inhaler", "asthma",
         "dialysis", "blood sugar", "epipen",
+        # Substance use / addiction / detox (May 5 routing fix).
+        # All "Substance Use Treatment" rows in the Streetlives DB are
+        # classified as bot_service_type='medical' (confirmed by R42
+        # peer_detox_manhattan: fixture has 0 substance-use rows under
+        # mental_health). The medical query template includes
+        # "substance use treatment" in its taxonomy_names list, so
+        # routing to medical surfaces the right rows AND produces a
+        # better confirmation message ("I'll search for medical care"
+        # vs. the previous "mental health" framing, which felt off
+        # for someone seeking detox). Mental-health-only queries
+        # (counseling, depression, therapy) still route to mental_health.
+        "substance abuse", "addiction", "rehab", "recovery",
+        "detox", "detoxification",
+        "aa meeting", "na meeting", "narcotics anonymous", "alcoholics anonymous",
+        "substance use treatment", "treatment program", "treatment center",
+        "inpatient", "outpatient", "sober living", "sober house",
+        "halfway house", "residential treatment",
     ],
 
     # --- Mental Health (taxonomy: Mental Health) ---
     "mental_health": [
         "mental health", "counseling", "counselor", "therapist", "therapy",
         "depression", "anxiety", "trauma", "ptsd",
-        "substance abuse", "addiction", "rehab", "recovery",
-        "detox", "detoxification",
-        "aa meeting", "na meeting", "narcotics anonymous", "alcoholics anonymous",
         "support group", "emotional support", "psychiatric",
         "psychiatrist", "crisis counseling",
         "grief", "grieving",
@@ -152,11 +166,9 @@ SERVICE_KEYWORDS = {
         # and "peer support" removed — they are emotional expressions or
         # escalation signals, not mental health service requests. Keeping
         # them here caused "I'm struggling and need shelter" to misclassify.
-        # Substance use (Phase 1 audit — "substance use treatment" is exact
-        # taxonomy name in DB, 6 services. These terms had 0% regex coverage)
-        "substance use treatment", "treatment program", "treatment center",
-        "inpatient", "outpatient", "sober living", "sober house",
-        "halfway house", "residential treatment",
+        # Substance use keywords moved to "medical" on May 5 — see the
+        # comment block in the medical section above. Don't add detox /
+        # addiction / rehab / substance-use terms here.
         # Anger management (Phase 1 audit — 11 services)
         "anger management",
     ],
@@ -221,6 +233,11 @@ SERVICE_KEYWORDS = {
         # "mail" moved to _WORD_BOUNDARY_KEYWORDS — "email"/"gmail" collision (REGEX_AUDIT)
         "mailing address", "storage", "locker",
         "welfare", "cash assistance", "state id", "nyc id",
+        # "free id" — NYC's IDNYC program is the canonical free ID
+        # service. Listed here (not just in _NOTABLE_SUB_TYPES) so the
+        # longest-keyword-wins matcher prefers it over the bare "id"
+        # word-boundary match.
+        "free id",
         "metro card", "charger", "charging station",
         # "transit" moved to _WORD_BOUNDARY_KEYWORDS — "transition" collision (REGEX_AUDIT)
         # NYC-specific (P3 audit)
@@ -294,7 +311,20 @@ _WORD_BOUNDARY_KEYWORDS = {
     "esl": "other",            # collides with "diesel", "weasel"
     "ged": "other",            # collides with "aged", "managed", "changed"
     "syep": "employment",      # collides with nothing but 4 chars, be safe
-    "sober": "mental_health",  # collides with nothing but contextually useful
+    # NOTE: "sober" was removed (bug-hunt #10). It used to map to
+    # mental_health here as a fallback, but:
+    #   1. Substance-use compounds ("sober living", "sober house") live
+    #      in SERVICE_KEYWORDS["medical"] post-Cluster-5 routing fix.
+    #   2. The fallback didn't check matched_spans, so "I need sober
+    #      living" would extract twice: ("medical", "sober living") from
+    #      the main loop, then ("mental_health", ...) from this fallback
+    #      re-matching "sober" inside the already-matched span.
+    #   3. Cluster 5's design says substance-use routes to medical, NOT
+    #      mental_health — so even if bare "sober" matched alone (e.g.
+    #      "I want to be sober"), routing it to mental_health would be
+    #      the wrong category. Bare "sober" without a compound is more
+    #      often state language than a service request anyway; the
+    #      semantic router (Tier 2) handles edge cases.
     # --- REGEX_AUDIT: moved from SERVICE_KEYWORDS (substring collision risk) ---
     # These are legitimate service terms that collide as substrings of common
     # English words. Word-boundary matching prevents false positives while
@@ -518,6 +548,19 @@ _NOTABLE_SUB_TYPES = {
     "access-a-ride": "Access-A-Ride help",
     "lgbtq services": "LGBTQ services",
     "lgbtq support": "LGBTQ support",
+    # ID services (peer_free_id_manhattan fix). Without these, "free ID" /
+    # "need an id" / "state id" extract as service_type=other with detail=None,
+    # which triggers an LLM fallback that historically snapped a bare "ID"
+    # output to "Medicaid enrollment" via incidental substring overlap
+    # (medicaID). See _validate_service_detail length-gate hardening for
+    # the second half of this fix.
+    "identification": "ID services",
+    "need an id": "ID services",
+    "state id": "ID services",
+    "replacement id": "ID services",
+    "birth certificate": "birth certificate",
+    "free id": "IDNYC",
+    "nyc id": "IDNYC",
     # Word-boundary keywords (Phase 4) — these need sub-type labels
     # so service_detail is set and narrowing/description filter triggers.
     "esl": "English classes",
@@ -530,6 +573,11 @@ _NOTABLE_SUB_TYPES = {
     "sober": "sober living",
     "parole": "re-entry services",
     "probation": "re-entry services",
+    # "id" is a _WORD_BOUNDARY_KEYWORDS entry — when it matches alone
+    # (e.g., "I need an ID"), give it a canonical detail. Without this
+    # entry _WORD_BOUNDARY_PATTERNS would set service_detail=None on a
+    # bare "id" match, which used to trigger the LLM-snap-to-Medicaid bug.
+    "id": "ID services",
 }
 
 # ---------------------------------------------------------------------------

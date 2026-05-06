@@ -225,7 +225,11 @@ def _classify_action(text: str) -> str | None:
 # TONE CLASSIFICATION
 # ---------------------------------------------------------------------------
 
-def _classify_tone(text: str, crisis_result=_CRISIS_NOT_CHECKED) -> str | None:
+def _classify_tone(
+    text: str,
+    crisis_result=_CRISIS_NOT_CHECKED,
+    redacted_text: str | None = None,
+) -> str | None:
     """Classify a message's emotional tone (how the user FEELS).
 
     No service-word gating — always runs. The caller decides how to
@@ -238,6 +242,15 @@ def _classify_tone(text: str, crisis_result=_CRISIS_NOT_CHECKED) -> str | None:
             no crisis). When omitted, _classify_tone calls detect_crisis
             itself. This avoids a redundant Sonnet LLM call when the
             caller has already checked.
+        redacted_text: PII-redacted form of ``text``. Only used when this
+            function calls ``detect_crisis()`` internally (i.e., when
+            ``crisis_result`` is the sentinel) AND ``_REDACT_BEFORE_LLM``
+            is on. Pre-LLM redaction (Phase 1): closes the leak surface
+            where a sentinel-call from the orchestrator would otherwise
+            send raw text to the crisis Stage 2 LLM. Local tone
+            classification (frustrated/emotional/confused/urgent) keeps
+            using ``text`` because those paths are pure regex and don't
+            leak. Default ``None`` preserves pre-Phase-1 behavior.
 
     Returns one of: "crisis", "emotional", "frustrated", "confused",
     "urgent", or None.
@@ -262,7 +275,18 @@ def _classify_tone(text: str, crisis_result=_CRISIS_NOT_CHECKED) -> str | None:
 
     # Crisis — highest priority (uses original text, NOT normalized)
     if crisis_result is _CRISIS_NOT_CHECKED:
-        crisis_result = detect_crisis(text)
+        # Pre-LLM redaction (Phase 1): use redacted_text for the LLM
+        # crisis call when available and the flag is on. Stage 1 (regex)
+        # is unaffected — the phrase list doesn't overlap with PII
+        # placeholders. The ``or text`` fallback preserves bit-for-bit
+        # behavior when redacted_text is None (default).
+        from app.services.chatbot.context import _REDACT_BEFORE_LLM
+        _crisis_input = (
+            redacted_text
+            if (_REDACT_BEFORE_LLM and redacted_text is not None)
+            else text
+        )
+        crisis_result = detect_crisis(_crisis_input)
     if crisis_result is not None:
         return "crisis"
 

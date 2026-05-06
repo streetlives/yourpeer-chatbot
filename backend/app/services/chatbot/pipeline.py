@@ -12,7 +12,7 @@ from app.services.session_store import save_session_slots
 from app.services.slot_extraction_regex import NEAR_ME_SENTINEL, extract_slots
 from app.services import slot_extraction
 
-from .context import _USE_LLM
+from .context import _USE_LLM, _REDACT_BEFORE_LLM
 
 
 # Phase 4 (April 2026): the gap-filler at `_run_llm_gate` now routes
@@ -70,6 +70,37 @@ def _redact_with_safety_warning(message: str) -> tuple[str, str, list]:
     return redacted_message, warning_prefix, pii_detections
 
 
+def _apply_pii_warning(pii_warning: str, response: dict | None) -> dict | None:
+    """Prepend the PII safety warning to a handler's response, if applicable.
+
+    Used by the orchestrator to wrap every category-specific handler's
+    return value, so that warnings fire regardless of which path the
+    user's message took. Before May 2026 the warning was prepended only
+    on the late service-flow path (line ~637 of orchestrator.py), which
+    meant a user sharing PII in turn 3 (e.g. "can you call them at
+    212-555-1212" after results were delivered) would route through
+    ``_handle_post_results_interaction`` and never see the warning.
+
+    Idempotent: if the response's text already starts with the warning
+    (because the late service-flow path already prepended it), this
+    function returns the response unchanged. Safe to wrap every return
+    site without worrying about double-warnings.
+
+    Returns ``None`` if ``response`` was ``None`` (handlers signal
+    "fall through to next dispatch step" by returning None).
+    """
+    if response is None:
+        return None
+    if not pii_warning:
+        return response
+    text = response.get("response", "")
+    if text.startswith(pii_warning):
+        # Already prepended (late service-flow path).
+        return response
+    response["response"] = pii_warning + text
+    return response
+
+
 def _run_early_extraction(message: str, session_id: str) -> tuple[dict, str | None]:
     """Regex slot extraction + semantic-router fallback.
 
@@ -117,6 +148,7 @@ def _run_llm_gate(
     action_pre: str | None,
     regex_tone_pre: str | None,
     extraction_source: str | None,
+    redacted_message: str | None = None,
 ) -> tuple[bool, str | None, str | None, str | None, str | None, dict | None]:
     """Unified LLM classification gate.
 
@@ -134,6 +166,17 @@ def _run_llm_gate(
     (notably the orchestrator's service branch) can skip a redundant
     second call on the same message. ``None`` when the gate condition
     didn't fire OR when the call raised.
+
+    PII redaction:
+        ``message`` is the raw user text; ``redacted_message`` (when
+        provided) is the same text with PII placeholders. Local
+        decisions (gate condition, length check) use ``message`` so
+        redaction can never mask the gate from firing on a substantive
+        message; the actual LLM payload uses ``redacted_message`` when
+        ``_REDACT_BEFORE_LLM`` is true. When ``redacted_message`` is
+        None or the flag is false, ``message`` is sent as-is — bit-for-
+        bit identical to pre-Phase-1 behavior. See
+        docs/design/PRE_LLM_REDACTION_SCOPE.md.
     """
     needs_unified = (
         _USE_LLM
@@ -144,6 +187,18 @@ def _run_llm_gate(
     )
     if not needs_unified:
         return has_service_intent, action_pre, extraction_source, None, None, None
+
+    # Pick the payload sent to Anthropic. Defaults to raw ``message`` for
+    # backward compatibility — only the Phase 3 production env-var flip
+    # plus a non-None redacted_message switches this. The gate condition
+    # above (length, action_pre, etc.) was already evaluated on the raw
+    # message, so this can only change the LLM input, not whether the
+    # gate fires.
+    llm_payload = (
+        redacted_message
+        if (_REDACT_BEFORE_LLM and redacted_message is not None)
+        else message
+    )
 
     llm_tone = None
     llm_action = None
@@ -156,7 +211,7 @@ def _run_llm_gate(
         # `early_extracted.service_type is None`, so when the result has
         # a service_type, the LLM contributed it.
         unified = slot_extraction.extract(
-            message,
+            llm_payload,
             regex_result=early_extracted,
             api_key_available=True,
             extraction_source=extraction_source,

@@ -16,9 +16,11 @@ from app.services.chatbot.contextual_acknowledgments import (
     _PERSONAL_STORY_MIN_WORDS,
     _combined_contextual_acknowledgments,
     _is_family_with_children_urgent_shelter,
+    _is_newcomer_to_nyc,
     _is_personal_story,
     _is_rough_sleeper,
     _is_substance_use_shelter,
+    _newcomer_to_nyc_acknowledgment,
     _path_intake_acknowledgment,
     _personal_story_acknowledgment,
     _rough_sleeper_acknowledgment,
@@ -56,6 +58,12 @@ FAMILY_PATH_MSG = "I have two kids and we need somewhere to sleep tonight and fo
 
 # peer_young_mom_multiple_needs turn 1
 YOUNG_MOM_MSG = "19-year-old mom with a baby, need shelter, diapers, food, and basic healthcare right now."
+
+# natural_new_to_nyc turn 1
+NEWCOMER_TO_NYC = (
+    "I just got to New York at Port Authority. I don't know the city "
+    "at all. Where can I sleep tonight?"
+)
 
 
 # ===========================================================================
@@ -359,6 +367,178 @@ class TestRoughSleeperAcknowledgmentText:
 
     def test_empty_when_signal_absent(self):
         assert _rough_sleeper_acknowledgment({}, "I need food in Brooklyn") == ""
+
+
+# ===========================================================================
+# Newcomer-to-NYC acknowledgment
+# ===========================================================================
+
+
+class TestNewcomerToNycDetection:
+    def _slots(self, **overrides):
+        base = {
+            "service_type": "shelter",
+            "urgency": "high",
+        }
+        base.update(overrides)
+        return base
+
+    def test_fires_on_eval_scenario(self):
+        """Pin: natural_new_to_nyc turn 1 with the slots the bot
+        will have extracted by the time the acknowledgment runs."""
+        assert _is_newcomer_to_nyc(self._slots(), NEWCOMER_TO_NYC) is True
+
+    @pytest.mark.parametrize("msg", [
+        "I just got to NYC, where can I sleep tonight",
+        "I just arrived in New York and need a bed",
+        "I just landed in the city, I have nowhere to go",
+        "First day in NYC, need shelter tonight",
+        "I'm new to NYC and need help",
+        "I'm new in town, where do I sleep",
+        "Got to New York this morning, need a place to sleep",
+        "I don't know NYC at all, where can I sleep",
+        "Never been to New York before, need shelter",
+    ])
+    def test_fires_on_distinctive_phrasings(self, msg):
+        assert _is_newcomer_to_nyc(self._slots(), msg) is True, (
+            f"Should fire on: {msg!r}"
+        )
+
+    @pytest.mark.parametrize("msg", [
+        # Past-tense — moved here, not "just" arrived
+        "I moved to New York last year, need shelter tonight",
+        "I came to NYC five years ago, looking for a place tonight",
+        "I lived in NYC before, just need a bed",
+        # No newness signal at all
+        "I need shelter in Manhattan tonight",
+        "I'm looking for shelter near Times Square",
+        # "Been in NYC" is the opposite of newness
+        "I have been in NYC for a while, where can I sleep",
+    ])
+    def test_does_not_fire_on_non_distinctive(self, msg):
+        assert _is_newcomer_to_nyc(self._slots(), msg) is False, (
+            f"Should NOT fire on: {msg!r}"
+        )
+
+    def test_no_fire_without_urgency(self):
+        """Mutant kill: equality check on urgency='high'.
+
+        A casual "I'm new to NYC, what's around" with no urgency
+        should not fire — the orientation message presumes the user
+        needs help tonight."""
+        assert _is_newcomer_to_nyc(
+            self._slots(urgency=None), NEWCOMER_TO_NYC
+        ) is False
+
+    def test_no_fire_with_medium_urgency(self):
+        """Mutant kill: 'high' specifically, not just truthy."""
+        assert _is_newcomer_to_nyc(
+            self._slots(urgency="medium"), NEWCOMER_TO_NYC
+        ) is False
+
+    def test_no_fire_with_food_service_type(self):
+        """Newcomer asking for food gets a different acknowledgment
+        path. Right-to-shelter is shelter-specific."""
+        assert _is_newcomer_to_nyc(
+            self._slots(service_type="food"), NEWCOMER_TO_NYC
+        ) is False
+
+    def test_fires_when_shelter_is_queued_not_primary(self):
+        """Multi-intent case: food primary, shelter queued — fires
+        because the user does need shelter, even if it's queued."""
+        slots = self._slots(
+            service_type="food",
+            additional_services=[("shelter", None, None)],
+        )
+        assert _is_newcomer_to_nyc(slots, NEWCOMER_TO_NYC) is True
+
+    def test_fires_when_shelter_is_in_queued_services_key(self):
+        """Same case but using the runtime _queued_services slot
+        name (which the orchestrator uses post-merge)."""
+        slots = self._slots(
+            service_type="food",
+            _queued_services=[("shelter", None, None)],
+        )
+        assert _is_newcomer_to_nyc(slots, NEWCOMER_TO_NYC) is True
+
+    def test_no_fire_when_neither_primary_nor_queued_is_shelter(self):
+        slots = self._slots(
+            service_type="food",
+            additional_services=[("clothing", None, None)],
+        )
+        assert _is_newcomer_to_nyc(slots, NEWCOMER_TO_NYC) is False
+
+    def test_fires_with_curly_apostrophes(self):
+        """Bug-2 regression guard. ``i'?m new`` uses straight
+        apostrophe in the regex; iOS/Android autocorrect produces
+        curly (U+2019). Without normalization this would slip past
+        the i'm-prefixed alternations."""
+        msg = "I\u2019m new to NYC and need shelter tonight"  # curly
+        assert "\u2019" in msg
+        assert _is_newcomer_to_nyc(self._slots(), msg) is True
+
+    def test_returns_false_on_empty(self):
+        assert _is_newcomer_to_nyc(self._slots(), "") is False
+        assert _is_newcomer_to_nyc(self._slots(), None) is False
+
+
+class TestNewcomerToNycAcknowledgmentText:
+    def _slots(self, **overrides):
+        base = {"service_type": "shelter", "urgency": "high"}
+        base.update(overrides)
+        return base
+
+    def test_mentions_311(self):
+        out = _newcomer_to_nyc_acknowledgment(self._slots(), NEWCOMER_TO_NYC)
+        assert "311" in out
+
+    def test_mentions_right_to_shelter(self):
+        """NYC's legal right-to-shelter is the systemic option that
+        newcomers don't know about — surface it explicitly."""
+        out = _newcomer_to_nyc_acknowledgment(self._slots(), NEWCOMER_TO_NYC)
+        assert "right to shelter" in out.lower()
+
+    def test_default_branch_does_not_mention_path(self):
+        """PATH is family-only intake. Single-adult newcomers get
+        311 + right-to-shelter without the PATH pointer."""
+        out = _newcomer_to_nyc_acknowledgment(self._slots(), NEWCOMER_TO_NYC)
+        assert "PATH" not in out
+
+    def test_family_branch_mentions_path(self):
+        """Family newcomers get the PATH-specific intake pointer."""
+        out = _newcomer_to_nyc_acknowledgment(
+            self._slots(family_status="with_children"), NEWCOMER_TO_NYC
+        )
+        assert "PATH" in out
+
+    def test_family_branch_mentions_bronx_address(self):
+        """Surface the specific PATH intake address so the user has
+        actionable information."""
+        out = _newcomer_to_nyc_acknowledgment(
+            self._slots(family_status="with_children"), NEWCOMER_TO_NYC
+        )
+        assert "Bronx" in out
+        assert "151" in out  # 151 East 151st Street
+
+    def test_ends_with_paragraph_break(self):
+        """Acknowledgment is concatenated with downstream output;
+        the trailing \\n\\n separates it visually."""
+        out = _newcomer_to_nyc_acknowledgment(self._slots(), NEWCOMER_TO_NYC)
+        assert out.endswith("\n\n")
+
+    def test_empty_when_signal_absent(self):
+        """Generic shelter request with no newcomer phrasing returns
+        empty so the dispatcher can fall through to other acks."""
+        assert _newcomer_to_nyc_acknowledgment(
+            self._slots(), "I need shelter in Manhattan"
+        ) == ""
+
+    def test_empty_when_slots_dont_match(self):
+        """Newcomer phrasing without urgency/shelter slots returns
+        empty — the slot gate guards both the detection and the text."""
+        assert _newcomer_to_nyc_acknowledgment(
+            {"service_type": "food"}, NEWCOMER_TO_NYC
+        ) == ""
 
 
 # ===========================================================================

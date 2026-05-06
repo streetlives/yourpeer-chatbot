@@ -122,9 +122,41 @@ def _validate_service_detail(llm_value: Optional[str]) -> Optional[str]:
     # prefer the LONGEST canonical — longer matches are more specific
     # and typically the intended meaning (e.g. "care" → "urgent care"
     # rather than matching an arbitrary first-found canonical).
+    #
+    # WORD-BOUNDARY GATE on the `llm_norm in canonical` direction:
+    # short LLM outputs match too many canonicals incidentally when
+    # plain `in` is used. The peer_free_id_manhattan regression showed
+    # `"id"` snapping to `"Medicaid enrollment"` because "id" is a
+    # substring of "medicaid". Same hazard for "rent" → "parenting
+    # classes" (paRENTing), "tax" → many, etc. Requiring the LLM
+    # value to appear at a word boundary inside the canonical
+    # eliminates the mid-word coincidence class without losing
+    # legitimate matches like "PrEP" → "PrEP services" or
+    # "food stamp" → "food stamps / SNAP". The reverse direction
+    # (`canonical in llm_norm`) is unaffected — a canonical being a
+    # substring of a longer LLM output is genuinely informative
+    # (e.g., LLM emits "getting a detox", canonical "detox" matches).
+    def _llm_at_word_boundary_in(canonical_norm: str) -> bool:
+        if not llm_norm:
+            return False
+        # Cheap word-boundary check without regex overhead: scan for
+        # llm_norm and verify the surrounding chars aren't alphanumeric.
+        idx = canonical_norm.find(llm_norm)
+        while idx != -1:
+            before_ok = idx == 0 or not canonical_norm[idx - 1].isalnum()
+            after_idx = idx + len(llm_norm)
+            after_ok = (
+                after_idx == len(canonical_norm)
+                or not canonical_norm[after_idx].isalnum()
+            )
+            if before_ok and after_ok:
+                return True
+            idx = canonical_norm.find(llm_norm, idx + 1)
+        return False
+
     substring_matches = [
         c for c in canonical_values
-        if llm_norm in _normalize_for_match(c)
+        if _llm_at_word_boundary_in(_normalize_for_match(c))
         or _normalize_for_match(c) in llm_norm
     ]
     if substring_matches:

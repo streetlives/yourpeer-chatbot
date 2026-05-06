@@ -835,6 +835,148 @@ class TestConfirmationPrefixIntegrity:
         assert "LGBTQ" not in msg
 
 
+class TestConfirmationPrefixMultiService:
+    """Multi-service confirmations no longer attach the population
+    prefix to the joined service label.
+
+    Pre-fix behavior produced phrases like
+    'immigration-friendly food, asylum services, and food stamps /
+    SNAP in Jackson Heights' — where 'immigration-friendly food' reads
+    as a coupled noun phrase. Food pantries don't carry immigration
+    eligibility filters; the prefix is a population-affordance, not a
+    service-taxonomy modifier.
+
+    Post-fix: multi-service confirmations render the affordance as a
+    separate trailing sentence, e.g.
+    '... — sound good? I'll prioritize immigration-friendly options
+    where available.'
+
+    Single-service confirmations are unchanged (covered by the
+    pre-existing TestConfirmationPrefixIntegrity tests above and by
+    test_immigration_friendly above).
+
+    The eval scenario that surfaced this is
+    multi_three_services_legal_benefits_food, which scored 3.91 with
+    a CF on the 'immigration-friendly food' phrasing in the R42-
+    borderline subset run.
+    """
+
+    def _slots(self, **overrides):
+        base = {
+            "service_type": "food",
+            "location": "Jackson Heights",
+            "_populations": ["immigration"],
+            "_queued_services": [
+                ("legal", "asylum services", None),
+                ("other", "food stamps / SNAP", None),
+            ],
+        }
+        base.update(overrides)
+        return base
+
+    def test_does_not_couple_prefix_to_first_service(self):
+        """The pre-fix bug: 'immigration-friendly food, asylum
+        services, and food stamps' parses as 'immigration-friendly
+        food' being a coupled noun phrase. Post-fix the joined
+        service label is bare, with no friendly modifier in front."""
+        msg = _build_confirmation_message(self._slots())
+        # The bug-producing phrase must not appear.
+        assert "immigration-friendly food," not in msg
+        assert "immigration-friendly food " not in msg
+        # The bare joined label is what should be in the noun phrase.
+        assert "look for food, asylum services, and food stamps" in msg
+
+    def test_renders_affordance_as_trailing_sentence(self):
+        """The affirmation surfaces as its own sentence after the
+        confirm prompt — preserves the population acknowledgment
+        without the noun-phrase ambiguity."""
+        msg = _build_confirmation_message(self._slots())
+        # Trailing affordance sentence present
+        assert "I'll prioritize immigration-friendly options" in msg
+        # And it comes after the 'sound good?' close, not before
+        assert msg.index("sound good?") < msg.index(
+            "I'll prioritize immigration-friendly options"
+        )
+
+    def test_multi_service_lgbtq_uses_trailing(self):
+        """Same pattern for LGBTQ multi-service: 'LGBTQ-friendly
+        shelter, food, and clothing' would couple LGBTQ-friendly
+        only to shelter visually."""
+        slots = self._slots(
+            service_type="shelter",
+            _populations=["lgbtq"],
+            _queued_services=[
+                ("food", None, None),
+                ("clothing", None, None),
+            ],
+        )
+        msg = _build_confirmation_message(slots)
+        assert "LGBTQ-friendly shelter," not in msg
+        assert "LGBTQ-friendly shelter " not in msg
+        assert "I'll prioritize LGBTQ-friendly options" in msg
+
+    def test_multi_service_veteran_uses_trailing(self):
+        """Same pattern for veteran multi-service."""
+        slots = self._slots(
+            service_type="shelter",
+            _populations=["veteran"],
+            _queued_services=[
+                ("food", None, None),
+                ("medical", None, None),
+            ],
+        )
+        msg = _build_confirmation_message(slots)
+        assert "veteran-friendly shelter," not in msg
+        assert "I'll prioritize veteran-friendly options" in msg
+
+    def test_multi_service_disabled_renders_accessible(self):
+        """The 'accessible' affordance lacks the '-friendly' suffix,
+        so it gets a slightly different trailing-sentence render.
+        Verify this branch works."""
+        slots = self._slots(
+            service_type="food",
+            _populations=["disabled"],
+        )
+        msg = _build_confirmation_message(slots)
+        # Should not couple "accessible" to the food noun phrase
+        assert "accessible food," not in msg
+        # Trailing render
+        assert "I'll prioritize accessible options" in msg
+
+    def test_single_service_path_unchanged(self):
+        """Regression guard: single-service immigration still attaches
+        prefix to the service label. This is the existing behavior
+        covered by test_immigration_friendly above; pinning here
+        explicitly to catch any drift if the multi-service branch
+        leaked into the single-service path."""
+        slots = {
+            "service_type": "legal",
+            "location": "Queens",
+            "_populations": ["immigration"],
+        }
+        msg = _build_confirmation_message(slots)
+        # Single-service still uses the prepended-prefix form
+        assert "immigration-friendly legal help" in msg
+        # And does NOT use the trailing-sentence form (would be redundant)
+        assert "I'll prioritize" not in msg
+
+    def test_no_population_no_trailing_sentence(self):
+        """Regression guard: when no population is set, no trailing
+        sentence appears regardless of multi-service join."""
+        slots = {
+            "service_type": "food",
+            "location": "Brooklyn",
+            "_queued_services": [
+                ("clothing", None, None),
+                ("personal_care", None, None),
+            ],
+        }
+        msg = _build_confirmation_message(slots)
+        assert "I'll prioritize" not in msg
+        # _SERVICE_LABELS["personal_care"] = "showers / personal care"
+        assert "look for food, clothing, and showers / personal care in Brooklyn" in msg
+
+
 # -----------------------------------------------------------------------
 # LLM EXTRACT_SLOTS_SMART POPULATION MERGE
 # -----------------------------------------------------------------------

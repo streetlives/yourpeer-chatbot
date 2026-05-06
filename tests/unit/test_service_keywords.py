@@ -59,32 +59,48 @@ class TestHIVHarmReduction:
 
 
 class TestSubstanceTreatment:
-    """6 services with exact taxonomy name 'Substance Use Treatment'."""
+    """6+ services with exact taxonomy name 'Substance Use Treatment'.
+
+    Substance-use intent routes to service_type='medical', not
+    'mental_health'. Rationale (May 5 routing fix):
+      - All 'Substance Use Treatment' rows in the Streetlives DB are
+        classified as bot_service_type='medical' (the SQL classification
+        CASE evaluates the medical branch first).
+      - The medical query template includes 'substance use treatment'
+        in its taxonomy_names list, so a service_type=medical query
+        surfaces the right rows.
+      - 'Medical care for detox' is a more dignifying confirmation
+        frame than 'Mental health' for someone seeking detox — it
+        treats addiction as a medical condition rather than a
+        psychological one.
+    Mental-health-only intent (counseling, therapy, depression, anxiety)
+    still routes to mental_health.
+    """
 
     def test_substance_use_treatment(self):
         r = extract_slots("I need substance use treatment")
-        assert r["service_type"] == "mental_health"
+        assert r["service_type"] == "medical"
         assert r["service_detail"] == "substance use treatment"
 
     def test_treatment_program(self):
         r = extract_slots("I need a treatment program")
-        assert r["service_type"] == "mental_health"
+        assert r["service_type"] == "medical"
 
     def test_inpatient(self):
         r = extract_slots("I need inpatient treatment")
-        assert r["service_type"] == "mental_health"
+        assert r["service_type"] == "medical"
 
     def test_outpatient(self):
         r = extract_slots("I need outpatient treatment")
-        assert r["service_type"] == "mental_health"
+        assert r["service_type"] == "medical"
 
     def test_sober_living(self):
         r = extract_slots("I need sober living")
-        assert r["service_type"] == "mental_health"
+        assert r["service_type"] == "medical"
 
     def test_halfway_house(self):
         r = extract_slots("looking for a halfway house")
-        assert r["service_type"] == "mental_health"
+        assert r["service_type"] == "medical"
 
     def test_anger_management(self):
         r = extract_slots("I need anger management")
@@ -396,8 +412,14 @@ class TestPeerNavigatorSampleQueries:
         assert r["service_type"] == "other"
 
     def test_detox_manhattan(self):
+        # Substance-use intent (detox) routes to medical, not mental_health.
+        # See TestSubstanceTreatment for full rationale. This is the
+        # Cornell sample query that R42 surfaced as a routing bug —
+        # bot was returning generic mental health results for users
+        # disclosing alcohol+opiate dependence.
         r = extract_slots("I need to detox from Alcohol and Opiates. Where can I go in Manhattan?")
-        assert r["service_type"] == "mental_health"
+        assert r["service_type"] == "medical"
+        assert r["service_detail"] == "detox"
         assert r["location"] == "manhattan"
 
     def test_dv_with_toddler(self):

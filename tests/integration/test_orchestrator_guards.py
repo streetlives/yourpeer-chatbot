@@ -105,7 +105,13 @@ def stub_pipeline(monkeypatch):
     def _classify_action(message):
         return ctrl.action
 
-    def _classify_tone(message, crisis_result=None):
+    def _classify_tone(message, crisis_result=None, **_kwargs):
+        # **_kwargs absorbs the orchestrator's ``redacted_text=...`` kwarg
+        # threaded through in the Phase 1 pre-LLM redaction work
+        # (PRE_LLM_REDACTION_SCOPE.md). The stub doesn't care about
+        # redaction since it's a fixed-return mock; the **_kwargs lets
+        # this fixture stay backward-compatible without each test having
+        # to know about the threaded parameter.
         return ctrl.tone
 
     def _detect_crisis(message, skip_llm=False):
