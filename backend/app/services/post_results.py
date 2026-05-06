@@ -369,8 +369,25 @@ def _extract_raw_phrase(message: str) -> str:
              → "adult families intake"
     Example: "Not the DHS ones"
              → "DHS"
+    Example: "Only the adult families intake is relevant. Can you locate
+              more like that?"
+             → "adult families intake"
+
+    Multi-sentence handling: when the user assembles the filter request
+    as a statement plus a follow-up question ("X is relevant. Can you
+    find more?"), only the first sentence carries the filter concept.
+    The trailing-filler regex anchors with `$`, so without splitting
+    sentences the trailing "is relevant" wouldn't match (it's mid-text,
+    not end-of-text), and the entire two-sentence message would be
+    echoed back to the user as a filter label. See peer_dv_post_results_-
+    refinement regression in R40/R41.
     """
-    stripped = _STRIP_INTENT_RE.sub("", message.strip())
+    # Take only the first sentence — anything after a sentence-ending
+    # punctuation followed by whitespace is a follow-up, not part of
+    # the filter concept.
+    first_sentence = re.split(r"[.?!]+\s+", message.strip(), maxsplit=1)[0]
+
+    stripped = _STRIP_INTENT_RE.sub("", first_sentence.strip())
     # Remove trailing filler: "is relevant", "is important", etc.
     stripped = re.sub(
         r"\s*(?:is|are)\s+(?:relevant|important|what i need|good)\.?\s*$",

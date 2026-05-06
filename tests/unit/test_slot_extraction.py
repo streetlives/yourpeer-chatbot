@@ -162,6 +162,89 @@ class TestServiceDetailValidatorBoundary:
         assert result is not None
 
 
+class TestServiceDetailWordBoundaryGate:
+    """Word-boundary gate on the substring matcher.
+
+    Regression test for peer_free_id_manhattan: bare LLM outputs like
+    "id", "rent", "tax" used to incidentally snap to canonicals where
+    the substring appeared mid-word ("Medicaid", "parenting classes",
+    "tax prep"). The validator now requires LLM-norm to appear at a
+    word boundary inside the canonical (the `canonical in llm_norm`
+    direction is unaffected).
+    """
+
+    def test_id_does_not_snap_to_medicaid(self):
+        # The original bug: "id" was substring-matching "medicaid"
+        # because of incidental letter overlap. With ID/IDNYC now in
+        # the canonical set AND the word-boundary gate, "id" snaps to
+        # the correct canonical ("ID services" or "IDNYC") — never to
+        # Medicaid.
+        result = _validate_service_detail("id")
+        assert result != "Medicaid enrollment"
+        assert result in ("ID services", "IDNYC")
+
+    def test_rent_does_not_snap_to_parenting(self):
+        # Mid-word substring: "rent" appears inside "parenting" but
+        # is not a real word match. Validator should drop.
+        assert _validate_service_detail("rent") is None
+
+    def test_short_hazard_words_dropped(self):
+        # Same bug class as "id" and "rent": short tokens that appear
+        # incidentally inside longer canonical words.
+        for hazard in ("tax", "gym", "hat"):
+            assert _validate_service_detail(hazard) is None, (
+                f"{hazard!r} unexpectedly snapped"
+            )
+
+    def test_legitimate_short_abbreviations_still_snap(self):
+        # The canonical-in-llm direction is unaffected by the gate, and
+        # canonicals like "PrEP services" / "DACA services" still match
+        # when the LLM emits the abbreviation.
+        assert _validate_service_detail("PrEP") == "PrEP services"
+        assert _validate_service_detail("DACA") == "DACA services"
+        assert _validate_service_detail("SNAP") == "food stamps / SNAP"
+        assert _validate_service_detail("IDNYC") == "IDNYC"
+
+    def test_word_boundary_at_hyphen(self):
+        # "Ride" is a separate word in "Access-A-Ride help". The
+        # word-boundary check should treat hyphens as boundaries.
+        assert _validate_service_detail("ride") == "Access-A-Ride help"
+
+
+class TestIDServicesRegexExtraction:
+    """Regex side of the peer_free_id_manhattan fix.
+
+    Without entries in `_NOTABLE_SUB_TYPES`, "free ID" / "state id" /
+    "need an id" extracted as service_type=other with detail=None,
+    which left the LLM tier to fill in the gap — and the validator's
+    fuzzy match used to land on "Medicaid enrollment" via incidental
+    substring overlap. Adding canonicals fixes both halves.
+    """
+
+    def test_free_id_extracts_with_detail(self):
+        from app.services.slot_extraction_regex import extract_slots
+        slots = extract_slots("can I get a free ID somewhere in Manhattan")
+        assert slots["service_type"] == "other"
+        assert slots["service_detail"] == "IDNYC"
+
+    def test_bare_id_word_boundary_extracts_with_detail(self):
+        from app.services.slot_extraction_regex import extract_slots
+        slots = extract_slots("I need an ID")
+        assert slots["service_type"] == "other"
+        assert slots["service_detail"] == "ID services"
+
+    def test_state_id_extracts_with_detail(self):
+        from app.services.slot_extraction_regex import extract_slots
+        slots = extract_slots("where can I get a state id in the Bronx")
+        assert slots["service_type"] == "other"
+        assert slots["service_detail"] == "ID services"
+
+    def test_birth_certificate_extracts_with_detail(self):
+        from app.services.slot_extraction_regex import extract_slots
+        slots = extract_slots("I need a birth certificate")
+        assert slots["service_type"] == "other"
+        assert slots["service_detail"] == "birth certificate"
+
 class TestTrustModel1OrgName:
     """Trust Model 1 sub-case: regex wins, LLM goes through fuzzy-match."""
 

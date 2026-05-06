@@ -61,6 +61,48 @@ class TestExtractRawPhrase:
         result = _extract_raw_phrase("only the")
         assert len(result) > 0  # should not be empty
 
+    def test_multi_sentence_takes_first_only(self):
+        # Regression test for peer_dv_post_results_refinement (R40/R41).
+        # The trailing-filler regex anchors with `$`, so without
+        # splitting sentences first the trailing "is relevant" doesn't
+        # strip when followed by another sentence — the entire two-
+        # sentence message gets echoed back to the user as a filter
+        # label ("adult families intake is relevant. Can you locate
+        # more like that?").
+        from app.services.post_results import _extract_raw_phrase
+        result = _extract_raw_phrase(
+            "Only the adult families intake is relevant. "
+            "Can you locate more like that?"
+        )
+        assert result == "adult families intake"
+
+    def test_multi_sentence_with_question_followup(self):
+        from app.services.post_results import _extract_raw_phrase
+        result = _extract_raw_phrase(
+            "Only the adult families intake. Can you find more?"
+        )
+        assert result == "adult families intake"
+
+    def test_multi_sentence_with_exclamation(self):
+        from app.services.post_results import _extract_raw_phrase
+        # Exclamation also counts as sentence boundary
+        result = _extract_raw_phrase(
+            "Just the women's shelters! Anything else nearby?"
+        )
+        assert result == "women's"
+
+    def test_single_sentence_unchanged_by_split_logic(self):
+        # The sentence-split shouldn't fragment ordinary single-sentence
+        # filter requests. Verify common shapes still extract correctly.
+        from app.services.post_results import _extract_raw_phrase
+        assert _extract_raw_phrase(
+            "Only the adult families intake is relevant"
+        ) == "adult families intake"
+        assert _extract_raw_phrase("Not the DHS ones") == "DHS"
+        assert _extract_raw_phrase(
+            "Exclude the veterans shelter"
+        ) == "veterans"
+
 
 class TestExtractKeywords:
     """Unit tests for _extract_keywords."""

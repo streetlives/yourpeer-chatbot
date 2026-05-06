@@ -233,6 +233,11 @@ SERVICE_KEYWORDS = {
         # "mail" moved to _WORD_BOUNDARY_KEYWORDS — "email"/"gmail" collision (REGEX_AUDIT)
         "mailing address", "storage", "locker",
         "welfare", "cash assistance", "state id", "nyc id",
+        # "free id" — NYC's IDNYC program is the canonical free ID
+        # service. Listed here (not just in _NOTABLE_SUB_TYPES) so the
+        # longest-keyword-wins matcher prefers it over the bare "id"
+        # word-boundary match.
+        "free id",
         "metro card", "charger", "charging station",
         # "transit" moved to _WORD_BOUNDARY_KEYWORDS — "transition" collision (REGEX_AUDIT)
         # NYC-specific (P3 audit)
@@ -530,6 +535,19 @@ _NOTABLE_SUB_TYPES = {
     "access-a-ride": "Access-A-Ride help",
     "lgbtq services": "LGBTQ services",
     "lgbtq support": "LGBTQ support",
+    # ID services (peer_free_id_manhattan fix). Without these, "free ID" /
+    # "need an id" / "state id" extract as service_type=other with detail=None,
+    # which triggers an LLM fallback that historically snapped a bare "ID"
+    # output to "Medicaid enrollment" via incidental substring overlap
+    # (medicaID). See _validate_service_detail length-gate hardening for
+    # the second half of this fix.
+    "identification": "ID services",
+    "need an id": "ID services",
+    "state id": "ID services",
+    "replacement id": "ID services",
+    "birth certificate": "birth certificate",
+    "free id": "IDNYC",
+    "nyc id": "IDNYC",
     # Word-boundary keywords (Phase 4) — these need sub-type labels
     # so service_detail is set and narrowing/description filter triggers.
     "esl": "English classes",
@@ -542,6 +560,11 @@ _NOTABLE_SUB_TYPES = {
     "sober": "sober living",
     "parole": "re-entry services",
     "probation": "re-entry services",
+    # "id" is a _WORD_BOUNDARY_KEYWORDS entry — when it matches alone
+    # (e.g., "I need an ID"), give it a canonical detail. Without this
+    # entry _WORD_BOUNDARY_PATTERNS would set service_detail=None on a
+    # bare "id" match, which used to trigger the LLM-snap-to-Medicaid bug.
+    "id": "ID services",
 }
 
 # ---------------------------------------------------------------------------
