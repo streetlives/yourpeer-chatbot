@@ -68,16 +68,45 @@ def _handle_general_conversation(ctx: MessageContext):
     merged = ctx.require_merged()
     is_casual_chat = bool(_CASUAL_CHAT_RE.search(ctx.message))
     is_service_request_pattern = bool(_SERVICE_NEED_RE.search(ctx.message))
+
+    # Detect the low-confidence-"other" routing signal directly from the
+    # merged slot shape rather than relying on `ctx.confidence == "low"`,
+    # which is overloaded — the routing layer also stamps `confidence=
+    # "low"` on its true-fallback branch (no signal at all, e.g. "tell me
+    # more about that"). The trio below specifically identifies the case
+    # where `_compute_routing_category` routed here because the LLM gate
+    # snapped to `service_type=other` with no detail because regex AND
+    # semantic both missed.
+    is_low_confidence_other = (
+        ctx.confidence == "low"
+        and merged.get("service_type") == "other"
+        and not merged.get("service_detail")
+    )
+
     has_unrecognized_need = (
-        is_service_request_pattern
-        and not merged.get("service_type")
+        (is_service_request_pattern or is_low_confidence_other)
         and not is_casual_chat
+        and (
+            not merged.get("service_type")
+            or is_low_confidence_other
+        )
     )
 
     if (has_unrecognized_need
             or (merged.get("location")
                 and not merged.get("service_type")
                 and len(merged.get("transcript", [])) >= 2)):
+        # Clear the LLM-snapped "other" classification so a follow-up
+        # "yes" doesn't confirm against it. The user's request didn't
+        # match a real service category — keeping `service_type=other`
+        # in session state would let the post-pending-confirmation
+        # handler treat the next "yes" as accepting an "other" search.
+        # Location is preserved so the tier-1 redirect can name it
+        # ("services in Staten Island — things like food, shelter…").
+        if is_low_confidence_other:
+            merged.pop("service_type", None)
+            merged.pop("_pending_confirmation", None)
+
         # Track repeated unrecognized requests for response variation
         unrec_count = merged.get("_unrecognized_count", 0) + 1
         merged["_unrecognized_count"] = unrec_count

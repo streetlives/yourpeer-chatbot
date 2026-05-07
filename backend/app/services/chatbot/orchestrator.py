@@ -665,8 +665,35 @@ def generate_reply(
     if _prefix_prepend:
         _tone_prefix = _prefix_prepend + _tone_prefix
 
+    # Block confirmation when the LLM gate snapped to "other" with no
+    # detail because regex AND semantic both missed — in that case the
+    # routing layer has already classified this as a low-confidence
+    # unrecognized request (category="general") and we're headed to
+    # `_handle_general_conversation`'s tiered redirect. Without this
+    # guard, the confirmation message ("I'll look for other services
+    # in Staten Island — sound good?") fires for the helicopter-ride
+    # case before the redirect ever runs. See
+    # `TestUnrecognizedServiceLLMGateGuard` in
+    # tests/integration/test_multi_turn_and_context.py.
+    #
+    # We check the trio directly rather than gating on
+    # `category == "service"` — that would over-block, since a follow-up
+    # turn supplying a missing slot (e.g. "East Harlem" after "diabetic
+    # and out of insulin") doesn't trigger the LLM gate (too short) and
+    # falls into category="general" even though merged has enough info
+    # to legitimately confirm.
+    _is_low_confidence_other_routing = (
+        _extraction_source == "llm_gate"
+        and merged.get("service_type") == "other"
+        and not merged.get("service_detail")
+    )
+
     # If enough detail → CONFIRMATION step
-    if (is_enough_to_answer(merged) or _geolocation_ready) and has_new_slots:
+    if (
+        (is_enough_to_answer(merged) or _geolocation_ready)
+        and has_new_slots
+        and not _is_low_confidence_other_routing
+    ):
         merged["_pending_confirmation"] = True
         merged.pop("_queue_offer_pending", None)
         merged.pop("_queued_services_original", None)

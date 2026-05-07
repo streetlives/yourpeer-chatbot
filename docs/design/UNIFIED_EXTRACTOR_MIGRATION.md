@@ -2,7 +2,7 @@
 
 <!-- drift:ignore-file: this doc is about the deletion of llm_slot_extractor.py and llm_classifier.py — references to those files are intentional. -->
 
-**Status:** Phase 4 SHIPPED — Stages 1 (gap-filler migration) + 2 (flag removal) + 4a (legacy test deletion) + 3 (legacy module deletion) all merged. Stage 4b (test file split) is optional and deferred.
+**Status:** ✅ IMPLEMENTED — Phase 4 SHIPPED — Stages 1 (gap-filler migration) + 2 (flag removal) + 4a (legacy test deletion) + 3 (legacy module deletion) all merged. Stage 4b (test file split) is optional and remains deferred — see Phase 5 retrospective. Phase 5 (cleanup + retrospective) closed out 2026-05-07.
 **Owner:** Raleigh
 **Created:** 2026-04-22
 **Approved:** 2026-04-23 — schema decisions (`org_name` keep + fuzzy validator; `service_detail` Option A extend + canonical-form validator; `additional_services` extended to `[{type, detail?, location?}]`); priority-hierarchy consolidation (food ≥ mental_health); 2-hour / ~$50 parallel-run eval budget.
@@ -328,21 +328,214 @@ Total deletion: 80 tests (4,190 → 4,110). All coverage preserved in the unifie
 
 Exit criterion (full Phase 4 complete): all tests green including the 56-asserts firewall in `test_service_data_llm_firewall.py`; one full eval run passes.
 
-### Phase 5 — Cleanup + retrospective (~0.5 days)
+### Phase 5 — Cleanup + retrospective (COMPLETE, 2026-05-07)
 
-- Update this doc's status to "Implemented".
-- Note any deviations from the plan.
-- Short retrospective: what the parallel-run showed, surprises, recommendations for future similar refactors. The rev-15 Phase 2 Validation Findings section is the seed for this.
+The migration is closed out. The unified extractor lives at
+`backend/app/services/slot_extraction/`; the legacy `llm_slot_extractor.py`
+and `llm_classifier.py` are gone; the `_USE_UNIFIED_EXTRACTOR` flag is
+deleted; the gap-filler call site at `pipeline.py:_run_llm_gate` runs
+through the unified path. Test count at end-of-migration: 3,494 unit
++ 611 integration + 5 live skipped = 4,110 (R37-era; the suite has
+grown organically since to 4,616 as of May 7 with unrelated work).
+
+Status flipped to "Implemented" in the banner above. The rest of this
+section is the retrospective.
+
+#### Deviations from the original plan
+
+The four phases shipped largely as designed, but five concrete things
+diverged from the plan and are worth documenting for the next similar
+refactor:
+
+1. **`pipeline.py:_run_llm_gate` was migrated in Phase 4, not Phase 3.**
+   The original plan had Phase 3 flip the flag default and Phase 4
+   delete legacy modules. In practice the gap-filler call site reads
+   `tone` and `action` keys that the unified extractor didn't produce,
+   so migrating it before Phase 4 would have lost the gap-fill signal.
+   Resolution: split Phase 4 into stages, with Stage 1 explicitly
+   migrating the gap-filler after extending the unified schema with
+   advisory `tone` / `action` outputs. The schema extension wasn't in
+   the original Phase 0 design — it surfaced when Stage 1 was scoped.
+
+2. **Trust Model 3 gained a third tier.** The original design had
+   sets-DISAGREE resolution as "LLM wins" (the R36 Ext-2b default).
+   Stage 3 of Phase 4 introduced `semantic > LLM > regex` for
+   `service_type` when the regex result came from the semantic router.
+   This restored part of the legacy `extract_slots_smart` regex-override
+   behavior — but only for the semantic case, on the per-slot basis
+   that the test `test_extract_merge_semantic_source_per_slot_trust_contract`
+   pins. It's a real evolution of the trust model, not a bug-fix
+   patch on Trust Model 3 as designed.
+
+3. **Stage 1 was supposed to be a 1:1 swap. It introduced five bugs.**
+   Documented in detail in the rev-17 banner. The bugs were a `_populations`
+   enrichment that wasn't in the legacy code path, two `any()`
+   comprehensions over slot keys that mis-counted tone/action as "new
+   slots," a session-leak from tone/action persisting across turns, a
+   sibling of that bug in `handlers/confirmation.py:712`, and an
+   `_is_empty_llm_result` fallback path that lost LLM-side tone/action
+   classification. None of these were caught by the existing test
+   suite — the call shape wasn't exercised in any test that ran with
+   the migration changes applied.
+
+4. **Pre-Stage-3 legacy-coverage audit caught two regressions in
+   `_normalize_tool_output` vs. legacy `_validate_result`.** Bug #1:
+   age values went through unchecked in the unified path (`age=-5`,
+   `age=250`, `age="17"` all passed; legacy did range-check + string-
+   coercion). Bug #2: string-valued enum fields weren't lowercased or
+   whitespace-stripped before the merge layer's enum filter ran, so
+   LLM-uppercase or padded values were silently dropped by
+   `_filter_valid_service_types`. Both fixed with `_coerce_age` and
+   `_normalize_string_field` helpers in `dispatch.py`; 29 ported tests
+   in `TestNormalizeToolOutputValidation` lock in the contract. The
+   audit also surfaced eight ported narrative tests, one tone-skip
+   gate test, and five live API tests that are skipped in CI.
+
+5. **Stage 4b stays deferred.** The plan called for splitting
+   `test_slot_extraction.py` into three concern-shaped files
+   (`test_slot_extraction_dispatch.py`, `_merge.py`, `_prompts.py`)
+   "when the file's size becomes a real friction point." The file
+   was 215 tests / 4,000+ lines at plan time. It is now 269 tests /
+   3,648 lines — line density went up rather than down, suggesting
+   the tests themselves became more compact rather than the file
+   sprawling. Navigation, imports, and CI runtime are all still
+   fine. **Deferring indefinitely; revisit when someone genuinely
+   struggles to find a test.** If a future contributor does the
+   split, the rev-17 banner's three-way carve is a reasonable
+   starting point but may not reflect the organic structure that
+   has emerged — a pre-split read-through to confirm the carve is
+   warranted.
+
+#### What the parallel-run showed
+
+The R36 parallel-run was the load-bearing validation event for this
+migration. Headline numbers (167 scenarios, both flag states):
+
+| Path    | Passing      | Critical failures | Overall |
+|---------|--------------|-------------------|---------|
+| Legacy  | 167/171 (97.7%) | 22             | 4.56    |
+| Unified | 159/171 (93.0%) | 25             | 4.55    |
+
+The two paths were essentially equivalent on aggregate scoring but
+had different *shapes* of failure. The migration's primary target
+scenario — `multi_cross_borough_food_brooklyn_shelter_manhattan` —
+recovered from 2.82 (R35 legacy) to 4.73 (unified). Of the 8
+scenarios that flipped passing→failing under the unified path, all
+were addressed by the rev-15 cross-borough carve-out and primary-
+location binding fixes documented in the "Phase 2 Validation Findings"
+section above. The post-rev-15 mini-eval rerun showed 12/15 passing
+on the unified path with zero new regressions vs. the rev-14
+unified baseline.
+
+R37 (the first full eval after rev 15, 171 scenarios, flag on)
+landed at 167/171 passing (97.7%), 4.59 overall, 19 critical
+failures — beating R36 Legacy on every headline metric. That's the
+number that gave Phase 3 (flag-default flip) confidence to ship.
+
+#### Surprises
+
+Three things genuinely surprised us, in the sense of "not in the
+risk register at plan time":
+
+1. **The mini-eval was running without the flag set for ~a month.**
+   Between rev 14 (Phase 2 wiring) and rev 15 (Phase 2 validation
+   findings), every Ext-2b delta we measured was actually measuring
+   legacy-path behavior, because `scripts/mini_eval_r36_regressions.py`
+   was being invoked without `USE_UNIFIED_EXTRACTOR=1` set. The
+   script silently fell back to `extract_slots_smart`. The unified
+   path was effectively un-validated end-to-end for that month. The
+   unit suite was green throughout because the cross-borough
+   integration tests in `test_multi_intent_queue.py` exercise
+   `extract_slots()` (regex only), not the full `extract() → merge()`
+   pipeline. No test composed regex output with a realistic LLM
+   response shape and disagreeing primaries. The bugs were unreachable
+   from the unit suite.
+
+2. **A "1:1 swap" had non-trivial behavior shifts.** Stage 1 was
+   scoped as "migrate the gap-filler from `classify_unified` to
+   `slot_extraction.extract`" — a wire-swap, not a redesign. Five
+   bugs surfaced in the self-review pass that came after the swap
+   was nominally complete. The lesson is that even refactors that
+   *look* like 1:1 swaps benefit from a structured self-review
+   pass before declaring done — the diff between two interfaces
+   that look equivalent at the type level often hides subtle
+   semantic differences.
+
+3. **Legacy code was doing more than its docs claimed.** The
+   pre-Stage-3 legacy-coverage audit found that `_validate_result`
+   in the legacy LLM classifier did age range-checking, string
+   coercion, and case/whitespace normalization on enum fields —
+   none of which was documented as a contract. The unified
+   extractor's `_normalize_tool_output` was scoped to the documented
+   behavior and missed all three. Reading the legacy code carefully
+   before deleting it caught two real bugs in the migration. This
+   pattern (pre-deletion legacy-coverage audit) was successful and
+   should be standard for future migrations of this shape.
+
+#### Recommendations for future similar refactors
+
+The "what to add to the test suite" section under "Phase 2 Validation
+Findings" lists three concrete patterns that would have caught the
+rev-15 bugs earlier. Restated here as forward-looking recommendations,
+plus two more drawn from the surprises above:
+
+1. **Per-slot primary-disagreement coverage.** For every slot-merge
+   function, test the case where regex wins primary and where LLM
+   wins primary, and assert the slot value tracks whichever side
+   won. The `TestPrimaryLocationBinding` suite covers `location`;
+   analogous coverage should be added for `service_detail`, `_gender`,
+   and any slot whose value is bound to a specific extractor's primary.
+
+2. **Full-pipeline integration tests with mocked LLM.** Each
+   regex-only test that exercises `extract_slots()` should have a
+   parallel test that runs through `extract() → merge()` with a
+   mocked LLM response shape. The mock's primary should sometimes
+   agree with regex and sometimes disagree.
+
+3. **Flag-state equivalence tests for any feature-flagged migration.**
+   A small suite that runs a curated set of scenarios under both
+   states of the flag and asserts equivalent behavior. This would
+   have surfaced the silent-fallback bug in week 1 instead of
+   week 4.
+
+4. **Self-review pass before declaring a "1:1 swap" complete.** Even
+   when the migration looks like a wire-swap, schedule a structured
+   self-review of the swap diff before claiming done. Stage 1 found
+   five bugs this way; none of them would have been caught by the
+   existing unit suite running on the swap branch.
+
+5. **Pre-deletion legacy-coverage audit before removing old code.**
+   Read the legacy implementation line-by-line against the new one
+   and explicitly list every behavior the legacy version provides
+   that the new version doesn't. Add tests to lock in the contract.
+   The pre-Stage-3 audit caught two real bugs that no existing
+   tests would have surfaced.
+
+#### Cross-link
+
+The pre-LLM redaction project (`docs/design/PRE_LLM_REDACTION_SCOPE.md`)
+shipped its Phase 4 close-out the same week (May 7, 2026). Several
+patterns from this migration carried forward there: structured phase
+gating with explicit go/no-go criteria, a shadow-mode eval comparison
+before the production switchover, and a feature-flag-then-removal
+shape. The pre-deletion legacy-coverage audit recommendation above
+maps onto its analogous "comprehensive call-site test in Phase 1"
+guarantee. Two migrations of similar shape, both closed in the
+same week.
 
 ## Risks
 
-| Risk | Likelihood | Impact | Mitigation |
-|---|---|---|---|
-| Flag-flip surfaces a code path not exercised by R37 in production traffic | Low | Medium | R37 covered 171 scenarios across 20 categories with 0 errors; opt-out remains available via `USE_UNIFIED_EXTRACTOR=0` for emergency rollback. Monitor production for unexpected slot-extraction errors in the first week. |
-| Phase 4 deletion of `classify_unified` removes the gap-fill `tone`/`action` signal that pipeline.py:149 currently uses | Medium | Medium | Phase 4 must explicitly decide: delete `_run_llm_gate` if regex + early-extraction is sufficient, OR add `tone`/`action` to `slot_extraction.extract()` output and migrate the call site. Don't delete `classify_unified` without resolving this. |
-| Phase 4 test consolidation accidentally drops one of the 38 firewall asserts | Medium | High | Phase 4 PR should diff `test_service_data_llm_firewall.py` line by line against the pre-deletion version; require a passing run before merge |
-| Future migrations repeat the rev-14 wiring gap | Medium | High | Adopt flag-state equivalence tests (see "What to add to the test suite" above) — should land before the next feature-flagged migration |
-| Unrelated change touches extraction during Phase 4 | Medium | High | Coordinate merge timing; complete Phase 4 in one week of focused work |
+As of close-out, every risk in this register has a known outcome.
+The original wording is preserved; the Outcome column is the
+post-migration verdict.
+
+| Risk | Likelihood | Impact | Mitigation | Outcome |
+|---|---|---|---|---|
+| Flag-flip surfaces a code path not exercised by R37 in production traffic | Low | Medium | R37 covered 171 scenarios across 20 categories with 0 errors; opt-out remains available via `USE_UNIFIED_EXTRACTOR=0` for emergency rollback. Monitor production for unexpected slot-extraction errors in the first week. | ✅ Did not materialize. No production rollback was needed. The flag was deleted entirely in Phase 4 Stage 2 (2026-04-25). |
+| Phase 4 deletion of `classify_unified` removes the gap-fill `tone`/`action` signal that pipeline.py:149 currently uses | Medium | Medium | Phase 4 must explicitly decide: delete `_run_llm_gate` if regex + early-extraction is sufficient, OR add `tone`/`action` to `slot_extraction.extract()` output and migrate the call site. Don't delete `classify_unified` without resolving this. | ✅ Resolved by Stage 1: tone/action added to the unified extractor's tool schema as advisory outputs, gap-filler migrated. Five subsidiary bugs found in Stage 1 self-review (see Phase 5 retrospective). |
+| Phase 4 test consolidation accidentally drops one of the 38 firewall asserts | Medium | High | Phase 4 PR should diff `test_service_data_llm_firewall.py` line by line against the pre-deletion version; require a passing run before merge | ✅ All 56 firewall asserts preserved (the count grew from 38 → 56 between the doc-write and Stage 3 as new assertions were added). Stage 3 remapped imports without dropping any. |
+| Future migrations repeat the rev-14 wiring gap | Medium | High | Adopt flag-state equivalence tests (see "What to add to the test suite" above) — should land before the next feature-flagged migration | 🟡 Not yet implemented as a standing test pattern. Carried forward as recommendation #3 in the Phase 5 retrospective. |
+| Unrelated change touches extraction during Phase 4 | Medium | High | Coordinate merge timing; complete Phase 4 in one week of focused work | ✅ Did not occur. Phase 4 ran 2026-04-25 → 2026-04-29 with no concurrent extraction work. |
 
 ## What doesn't change
 
@@ -361,10 +554,44 @@ Exit criterion (full Phase 4 complete): all tests green including the 56-asserts
 
 ## Open questions
 
-1. Should `_contradiction` and `_is_additive` move from Trust Model 5 (regex-only) to Trust Model 2 (LLM-semantic) or 4 (union)? Haiku could plausibly detect both. Revisit after Phase 3 production data — if eval shows regex missing these signals on novel phrasings, promote to union and re-test.
-2. Should narrative mode move to Sonnet for better urgency-hierarchy reasoning? Current code uses Haiku for both paths. Hypothesis: long narratives with implicit urgency benefit from Sonnet's deeper reasoning; cost is ~3× higher per narrative call. If `wa_tell_my_story`-style scenarios still underperform after Phase 3, this is the lever.
-3. Is the `_is_narrative` ≥ 20-word threshold still right? It predates Haiku 4.5. Both paths use the same model today, so the tuning question is now prompt cost (narrative ~700 tokens vs short ~200) and reasoning quality, not model selection. Don't change as part of this migration; measure after Phase 3 and file follow-up.
-4. The post-pending-confirmation call site (`handlers/confirmation.py`) runs extraction on messages typed at a confirmation prompt — typically short, contradiction-bearing, or filler. Should it use a narrower extractor (contradiction detection + single-slot extraction) rather than the full unified `extract()`? Out of scope for this migration; likely yes in a future iteration.
+As of close-out, the dispositions below reflect what's known after
+Phase 3 production data and the R37–R41 eval runs.
+
+1. **Should `_contradiction` and `_is_additive` move from Trust Model 5
+   (regex-only) to Trust Model 2 (LLM-semantic) or 4 (union)?** Haiku
+   could plausibly detect both. Original guidance was "revisit after
+   Phase 3 production data — if eval shows regex missing these signals
+   on novel phrasings, promote to union and re-test."
+   **Disposition (May 2026):** No promotion needed. R37–R41 eval runs
+   show regex catching contradiction reliably across the scenario suite.
+   `multiturn_change_mind` (the load-bearing contradiction-detection
+   scenario) has held at 4.18–4.36 across the Opus era. Closed.
+
+2. **Should narrative mode move to Sonnet for better urgency-hierarchy
+   reasoning?** Hypothesis was that long narratives with implicit
+   urgency benefit from Sonnet's deeper reasoning; cost is ~3× higher
+   per narrative call. Trigger was `wa_tell_my_story`-style scenarios
+   underperforming after Phase 3.
+   **Disposition (May 2026):** Not pursued. `wa_tell_my_story` scored
+   3.91 in R30 and 4.55 in R41 — the gap closed via prompt improvements
+   and slot-extraction polish, not model upgrades. Haiku 4.5 on both
+   paths remains the cost-effective choice. Closed.
+
+3. **Is the `_is_narrative` ≥ 20-word threshold still right?** Both
+   paths use the same model today; the tuning question is prompt
+   cost (narrative ~700 tokens vs short ~200) and reasoning quality.
+   **Disposition (May 2026):** Threshold has not been revisited. No
+   eval-surface signal that the boundary is wrong. Filed as an open
+   question for whoever next does extraction tuning; no urgency.
+
+4. **Should the post-pending-confirmation call site
+   (`handlers/confirmation.py`) use a narrower extractor?** Messages
+   typed at a confirmation prompt are typically short, contradiction-
+   bearing, or filler.
+   **Disposition (May 2026):** Still open. Likely yes in a future
+   iteration. Out of scope for this migration; would be its own
+   small project (~1-2 days). Documented in
+   `docs/design/STREETLIVES_DATA_GOTCHAS.md` if/when filed.
 
 **Resolved in rev 15:**
 

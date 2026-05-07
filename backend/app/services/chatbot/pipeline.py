@@ -313,6 +313,33 @@ def _compute_routing_category(
             category = "bot_question"
         elif action == "escalation" and not early_extracted.get("location"):
             category = "escalation"
+        elif (
+            extraction_source == "llm_gate"
+            and early_extracted.get("service_type") == "other"
+            and not early_extracted.get("service_detail")
+        ):
+            # Low-confidence "other" with no detail — the LLM was reaching
+            # because regex AND semantic both missed, and even within the
+            # catchall the LLM couldn't narrow to a known sub-type. Route
+            # to the general handler's tiered redirect rather than
+            # dispatching a search that will surface plausible-but-
+            # irrelevant cards from the "other" taxonomy bucket (food
+            # stamps offices, ID services, etc. for a "helicopter ride"
+            # request).
+            #
+            # Eval target: adversarial_unrecognized_service (R28: 2.91,
+            # R32: 4.36, R41: 3.73 — score has tracked fixture state
+            # rather than bot behavior because there's no behavioral
+            # guard until this branch). adversarial_nonsense_service
+            # likely benefits too.
+            #
+            # Conservative gate by design: requires extraction_source
+            # to be "llm_gate" specifically, so any of the 99 "other"
+            # keywords matched by regex (benefits, ebt, free phone,
+            # wifi, voter registration, tax prep, etc.) bypass this
+            # branch and proceed to service search as before.
+            category = "general"
+            confidence = "low"
         else:
             category = "service"
     elif action == "help":

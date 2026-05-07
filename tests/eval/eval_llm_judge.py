@@ -6295,8 +6295,6 @@ def main():
     # If --output PATH is also passed, the report.json is additionally
     # copied to PATH (with auto-mkdir of its parent).
     run_id = datetime.now().strftime("%Y%m%dT%H%M%S")
-    if args.redact_before_llm:
-        run_id += "_redact_on"
     run_dir = os.path.join("eval_results", "runs", run_id)
     os.makedirs(run_dir, exist_ok=True)
     jsonl_path = os.path.join(run_dir, "scenarios.jsonl")
