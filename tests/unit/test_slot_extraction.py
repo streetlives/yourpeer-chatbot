@@ -2839,6 +2839,183 @@ class TestPromptSanity:
         assert "empty object {}" in _SHORT_SYSTEM_PROMPT
         assert "LATEST user message" in _SHORT_SYSTEM_PROMPT
 
+    # -----------------------------------------------------------------
+    # Pattern B fixes (May 2026): 3+ service extraction + DV next-steps
+    # -----------------------------------------------------------------
+    # Pre-Pattern-B prompts had ZERO examples showing 3 or more
+    # services in additional_services. Every example was 1 primary +
+    # 1 additional. The peer_young_mom_multiple_needs eval scenario
+    # (4 distinct needs: shelter + diapers + food + healthcare) was
+    # silently truncating to 1 additional, dropping 2 of the 3
+    # downstream queue searches.
+    #
+    # Pattern B adds explicit 3+ service examples to BOTH prompts and
+    # a DV-context example for "next steps" → legal that's narrowly
+    # scoped to avoid over-firing on the generic phrase. The tests
+    # below check prompt CONTENT, not live LLM behavior — live
+    # validation is in `tests/integration/test_slot_extraction_live.py`
+    # plus the eval suite (`peer_young_mom_multiple_needs`,
+    # `peer_escaped_abuse_child_next_steps`).
+
+    def test_short_prompt_has_3_plus_service_example(self):
+        """B-1: short prompt must show at least one example with 3+
+        entries in additional_services, otherwise the LLM has no
+        in-context evidence that arrays larger than 1 are allowed.
+
+        Specifically checks for the young-mom shape (4 needs: shelter,
+        diapers, food, healthcare → 1 primary + 3 additional) AND
+        teaches `clothing` as the canonical mapping for diapers
+        (DB-verified routing, May 2026)."""
+        # Section header introduces the 3+ pattern.
+        assert "3+ services" in _SHORT_SYSTEM_PROMPT, (
+            "Short prompt must have an explicit '3+ services' section "
+            "to teach the LLM that arrays > 1 are valid."
+        )
+        # Worked example uses the young-mom shape.
+        assert "19-year-old mom with a baby" in _SHORT_SYSTEM_PROMPT, (
+            "Short prompt missing the canonical 3+ extraction example "
+            "(19-year-old mom with shelter + diapers + food + "
+            "healthcare)."
+        )
+        # Diapers must route to clothing, not food. This is the
+        # routing decision documented in slot_extraction_regex.py
+        # SERVICE_KEYWORDS (May 2026 diapers fix).
+        assert (
+            "Diapers route to clothing" in _SHORT_SYSTEM_PROMPT
+            or "diapers route to clothing" in _SHORT_SYSTEM_PROMPT.lower()
+        ), (
+            "Short prompt must teach diapers → clothing routing in the "
+            "3+ example. Without it, the LLM may guess food (WIC) "
+            "based on parent-direct service-name patterns."
+        )
+
+    def test_narrative_prompt_has_3_plus_service_example(self):
+        """B-1: narrative prompt (≥ _NARRATIVE_THRESHOLD words) needs
+        the same 3+ teaching as the short prompt. Long messages are
+        actually MORE likely to list 3+ needs (a user with the
+        bandwidth to write a paragraph often has multiple needs to
+        articulate), so missing the example is more dangerous here."""
+        assert "3 OR MORE" in _NARRATIVE_SYSTEM_PROMPT, (
+            "Narrative prompt must explicitly teach the 3+ extraction "
+            "pattern (preferred phrasing: '3 OR MORE distinct service "
+            "needs'). Without it, the LLM defaults to the 1+1 pattern "
+            "every other example demonstrates."
+        )
+        assert "19-year-old mom with a baby" in _NARRATIVE_SYSTEM_PROMPT, (
+            "Narrative prompt missing the canonical 3+ extraction "
+            "example. Both prompts should carry this since users may "
+            "phrase their needs above OR below the narrative threshold."
+        )
+        assert (
+            "do not collapse" in _NARRATIVE_SYSTEM_PROMPT.lower()
+            or "do not summarize" in _NARRATIVE_SYSTEM_PROMPT.lower()
+            or "do not drop" in _NARRATIVE_SYSTEM_PROMPT.lower()
+        ), (
+            "Narrative prompt should explicitly tell the LLM not to "
+            "collapse / summarize / drop additional services. The "
+            "default LLM tendency on long messages is to summarize "
+            "(\"sounds like you need housing\" → primary shelter only); "
+            "this directive counteracts that."
+        )
+
+    def test_dv_next_steps_example_in_both_prompts(self):
+        """B-2: 'next steps' is too generic to extract globally as
+        legal — it's a discourse marker in many non-DV contexts ('what
+        are the next steps for my application'). Adding it as a
+        SERVICE_KEYWORDS entry would over-fire.
+
+        The fix is contextual: in DV-escape framing, 'next steps'
+        reliably means legal advocacy / order of protection / case
+        management. The prompt teaches the LLM to make this
+        contextual extraction via a worked example, NOT via a global
+        keyword.
+
+        Both prompts must carry the example because the
+        peer_escaped_abuse_child_next_steps message ('Escaped abuse
+        with my child, safe for the moment, need help with shelter
+        and next steps') is 16 words — under the narrative threshold —
+        but easily reframable into a longer narrative form."""
+        for prompt_name, prompt in [
+            ("SHORT", _SHORT_SYSTEM_PROMPT),
+            ("NARRATIVE", _NARRATIVE_SYSTEM_PROMPT),
+        ]:
+            assert "Escaped abuse" in prompt, (
+                f"{prompt_name} prompt missing the DV-escape worked "
+                f"example for 'next steps' → legal."
+            )
+            assert "next steps" in prompt, (
+                f"{prompt_name} prompt missing the literal phrase "
+                f"'next steps' that the example teaches."
+            )
+            # Must include the contextual scoping — 'next steps' is
+            # only legal in DV context, not globally. Without this
+            # caveat the LLM would over-extract on routine queries.
+            assert (
+                ("Outside DV context" in prompt)
+                or ("OUTSIDE DV context" in prompt)
+                or ("outside DV context" in prompt.lower())
+            ), (
+                f"{prompt_name} prompt missing the contextual scoping "
+                f"caveat. The 'next steps' → legal extraction must be "
+                f"narrowed to DV-escape context, otherwise the LLM "
+                f"will over-extract on common discourse phrasing."
+            )
+
+    def test_pattern_b_examples_use_canonical_service_types(self):
+        """The 3+ and DV examples added in Pattern B must use only
+        service_type values that exist in _SERVICE_TYPE_ENUM. A typo
+        in an example (e.g., `medical_care` vs `medical`) would teach
+        the LLM the wrong canonical and fail validation downstream.
+
+        The SHORT and NARRATIVE prompts use different example shapes
+        (the short prompt has TWO 3+ examples; the narrative has one
+        focused on the canonical young-mom shape), so the expected
+        type set differs."""
+        canonical_types = set(_SERVICE_TYPE_ENUM)
+
+        # Service types referenced in the new Pattern B examples,
+        # per prompt. Both prompts share the young-mom 4-need example
+        # (shelter, clothing, food, medical) and the DV next-steps
+        # example (shelter, legal). The SHORT prompt has an
+        # additional 3-need example using personal_care.
+        expected_per_prompt = {
+            "SHORT": {
+                "shelter", "clothing", "food", "medical",
+                "personal_care", "legal",
+            },
+            "NARRATIVE": {
+                "shelter", "clothing", "food", "medical", "legal",
+            },
+        }
+
+        # Sanity: all expected types are valid canonicals.
+        all_expected = expected_per_prompt["SHORT"] | expected_per_prompt["NARRATIVE"]
+        unknown = all_expected - canonical_types
+        assert not unknown, (
+            f"Pattern B test references unknown service_type(s): "
+            f"{unknown}. Either the test or _SERVICE_TYPE_ENUM is "
+            f"out of date."
+        )
+
+        # Each expected type must appear in the matching prompt as
+        # a lowercase quoted value (single- or double-quoted form;
+        # the prompts mix styles: 'shelter' for service_type
+        # assignments, "shelter" for JSON fragments).
+        for prompt_name, prompt in [
+            ("SHORT", _SHORT_SYSTEM_PROMPT),
+            ("NARRATIVE", _NARRATIVE_SYSTEM_PROMPT),
+        ]:
+            for st in expected_per_prompt[prompt_name]:
+                single_q = f"'{st}'" in prompt
+                double_q = f'"{st}"' in prompt
+                assert single_q or double_q, (
+                    f"{prompt_name} prompt is missing reference to "
+                    f"service_type '{st}' as a quoted example value. "
+                    f"Pattern B examples must use canonical lowercase "
+                    f"values from _SERVICE_TYPE_ENUM (either "
+                    f"single- or double-quoted form)."
+                )
+
 
 # ---------------------------------------------------------------------------
 # HELPERS

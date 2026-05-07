@@ -3280,13 +3280,20 @@ SCENARIOS = [
             "crisis_category": "domestic_violence",
             "family_status": "with_children",
             "should_reach_confirmation": True,
+            "should_handle_additional_service": True,
             "notes": "Crisis step-down should fire (DV + service intent). "
                      "Response should acknowledge 'safe for the moment' — "
                      "tone should validate safety rather than escalate urgency. "
                      "Results should include Covenant House, Safe Horizon, "
                      "and/or Family Justice Center (FJC) Manhattan. 'Next "
-                     "steps' implies legal needs — system could queue legal "
-                     "as additional service.",
+                     "steps' should extract as additional_services=[{type: "
+                     "legal}] in DV context (Pattern B fix, May 2026 — "
+                     "the SHORT/NARRATIVE prompts now carry an explicit "
+                     "DV-escape worked example). Outside DV context, 'next "
+                     "steps' is too generic to extract; the prompt scoping "
+                     "is intentionally narrow to avoid over-firing on "
+                     "routine queries like 'what are the next steps for "
+                     "my application'.",
         },
     },
 
