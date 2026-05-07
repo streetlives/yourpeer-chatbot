@@ -46,7 +46,7 @@ The shape of v2 is therefore different: **fewer workstreams, each addressing a s
 
 Before proposing changes, the current state of the eval system:
 
-**Scenario set.** 182 scenarios after this PR (175 from R38 + 7 redaction-targeting added in Phase 2). Largest categories: `multi_intent` (34), `natural_language` (28), `happy_path` (19), `edge_case` (17), `crisis` (14), `privacy` (10). Smallest: `staten_island` (2), `schedule` (2), `referral` (1).
+**Scenario set.** 184 scenarios as of May 6, 2026: 175 from R38, plus 7 redaction-targeting added in Phase 2 of `PRE_LLM_REDACTION_SCOPE.md`, plus 2 cluster-targeting added in PR #87 (`multiturn_substance_disclosure_then_food_no_carryover` for the cross-turn substance-use addendum gate, `multi_cross_borough_three_services_queue_depth` for the queue-depth transparency fix). Largest categories: `multi_intent` (35), `natural_language` (28), `happy_path` (19), `edge_case` (17), `crisis` (14), `privacy` (10). Smallest: `staten_island` (2), `schedule` (2), `referral` (1).
 
 **Judge.** Claude Opus 4.6 (`claude-opus-4-6`), temperature 0, single call per conversation, returns 11-dimension JSON with critical_failures list. Pointwise scoring only — no pairwise, no multi-sample, no self-consistency check.
 
@@ -186,7 +186,7 @@ The eval scenario set is hand-authored, drawn from Cornell sample queries, lived
 
 1. **Sampled production transcripts.** Once per week or per N production conversations, sample a small set (e.g., 10) and run them through the *judge alone* (not the simulator, since the conversation actually happened). This produces per-dimension scores on real user interactions. Compare to scenario distribution: does the production score distribution look like the scenario score distribution? If production tone runs significantly worse than scenario tone, our scenarios are missing something.
 
-2. **Anonymization is required.** This requires production transcripts to be PII-redacted (already shipping in Phase 1 of `PRE_LLM_REDACTION_SCOPE.md`) and stored at all (decision pending in `Streetlives Feedback Pilot Engineering Design Document.docx`). **This Foundation is gated on a product/policy decision, not an engineering one.**
+2. **Anonymization is required.** This requires production transcripts to be PII-redacted and stored at all (decision pending in `Streetlives Feedback Pilot Engineering Design Document.docx`). The PII-redaction prerequisite specifically gates on **Phase 3** of `PRE_LLM_REDACTION_SCOPE.md` (the production env-var flip that turns `REDACT_BEFORE_LLM=true` on for live traffic), not Phase 1 (which only landed plumbing behind a flag-defaults-OFF). Phase 3 is currently blocked on full-R41 confirmation; once it ships, the post-flip transcripts route through the redactor before reaching Anthropic's API. **This Foundation is gated on a product/policy decision, not an engineering one.**
 
 3. **Failure-mode harvesting.** When production conversations get a low judge score, surface them as candidate new scenarios. The "production-to-eval pipeline" is what every modern LLM observability platform now ships (Confident AI, Arize, etc.). It doesn't have to be sophisticated — even "judge low-scored production conversations and have a human decide if they should become scenarios" is a giant step over the current "scenario authors imagine what users say."
 
