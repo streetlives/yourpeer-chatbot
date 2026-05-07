@@ -7,7 +7,6 @@
 **Related:** Transition-event bundle pattern design doc (companion document for one of the patterns surfaced in this audit).
 
 ---
-
 ## Executive summary
 
 This audit identifies **eight pattern-level opportunities** in the YourPeer chatbot codebase where the current architecture forces per-scenario patches when the underlying need is structural. Each pattern has the same shape: there's a class of behavior the bot should handle uniformly, the current code handles each instance separately with hand-coded logic, and the cost of adding the next instance is roughly the same as the previous one. A pattern-level fix changes that — adding the next instance becomes data-table work, not engineering work.

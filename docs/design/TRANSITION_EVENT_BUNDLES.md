@@ -472,11 +472,15 @@ For each phase, success requires all of:
 ## Schema and code touch points
 
 ### New files
-
+<!-- drift:ignore: future planned files that don't exist yet -->
 - `backend/app/services/transition_detection.py` — 3-tier detection (regex/semantic/llm)
+<!-- drift:ignore: deletion-of-files historical references -->
 - `backend/app/data/transitions.json` — detection rules + acknowledgments
+<!-- drift:ignore: deletion-of-files historical references -->
 - `backend/app/data/transition_resources.json` — curated population-specific cards
+<!-- drift:ignore: deletion-of-files historical references -->
 - `tests/unit/test_transition_detection.py`
+<!-- drift:ignore: deletion-of-files historical references -->
 - `tests/integration/test_transition_flow.py`
 
 ### Existing files modified

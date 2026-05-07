@@ -242,7 +242,7 @@ Every API request to `/locations` passes `occasion=COVID19`. This is a legacy pa
 ### The `Pagination-Count` header has an off-by-one bug
 
 YourPeer's `fetchLocationsData` includes the comment:
-> FIXME: I think there's a bug where it's returning the wrong number of pages, so decrement by 1 here
+> I think there's a bug where it's returning the wrong number of pages, so decrement by 1 here
 
 When using `Pagination-Count`, decrement. Don't trust the raw value. (Source: `streetlives-api-service.ts`)
 
@@ -361,7 +361,7 @@ The user's stated need ("next steps" → legal/advocacy in DV context) is silent
 
 **Why this matters:** for DV survivors, "what now" after escaping is overwhelmingly a legal/advocacy question (order of protection, custody, housing-program enrollment, immigration relief). The Family Justice Centers exist for exactly this need. Dropping the legal queue in the crisis path is a routing failure that affects the population most needing the breadth.
 
-**Status:** filed as Gap 2 of Pattern B follow-up. Not addressed in the prompt-only Pattern B fix; needs dispatch-layer work in the relevant crisis handler(s) to consult `additional_services` and offer them post-results. Same shape probably affects suicide_self_harm + service_type combinations and the other 5 crisis categories — needs an audit, not just a single-handler fix.
+**Status:** filed as Gap 2 of Pattern B follow-up. Not addressed in the prompt-only Pattern B fix; needs dispatch-layer work in the relevant crisis handler(s) to consult `additional_services` and offer them post-results. Same shape probably affects suicide_self_harm + service_type combinations and the other 8 crisis categories — needs an audit, not just a single-handler fix.
 
 (Source: `scenarios.jsonl` from probe run 2026-05-07; `peer_escaped_abuse_child_next_steps`)
 
