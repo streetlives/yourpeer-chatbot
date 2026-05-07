@@ -9,7 +9,7 @@
 
 A conversational interface that helps people experiencing homelessness find free services in New York City — food, shelter, clothing, showers, health care, legal help, and more.
 
-Built by [Streetlives](https://www.streetlives.nyc/) x Cornell Tech (PiTech prgram) as a front-end to the [YourPeer](https://yourpeer.nyc/) service directory.
+Built by [Streetlives](https://www.streetlives.nyc/) x Cornell Tech (PiTech prgram) as a front-end AI chatbot to the [YourPeer](https://yourpeer.nyc/) service directory.
 
 ## How It Works
 
@@ -60,7 +60,7 @@ See [SETUP.md](docs/SETUP.md) for detailed instructions including prerequisites,
 
 ```
 User → Chat UI → FastAPI → Classifier → Slot Extraction → Confirmation → Query Templates → Streetlives DB
-          ↑                      ↓            ↓                  ↓               ↓                     ↓
+          ↑                      ↓             ↓                  ↓               ↓                    ↓
    Quick-reply           Crisis Detection  3-tier cascade:   PII Redaction   User confirms       Service Cards
    buttons               (regex + Sonnet)  1. Regex keywords      ↓         or changes slots           ↓
                         → Step-down when   2. Semantic embed  Session Store                      YourPeer links
@@ -70,7 +70,7 @@ User → Chat UI → FastAPI → Classifier → Slot Extraction → Confirmation
                         Escalation                         semantic find nothing,
                         Frustration (AVR)                  returns service_type +
                         Emotional (AVR)                   tone + action in one call)
-                        Bot identity                             ↓
+                        Bot identity                              ↓
                         Confused/overwhelmed               Claude Haiku (fallback
                         Confirmation                      for general conversation
                         handling                           and DB failures only)

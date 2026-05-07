@@ -6022,6 +6022,51 @@ def _load_scored_from_jsonl(jsonl_path):
     return out
 
 
+def _parse_scenario_id_arg(raw_values):
+    """Parse the ``--scenario-id`` flag into a deduped list of IDs.
+
+    Accepts both repeated flag invocations and comma-separated values
+    within a single invocation. Examples:
+
+    - ``--scenario-id foo``                            → ``["foo"]``
+    - ``--scenario-id foo,bar``                        → ``["foo", "bar"]``
+    - ``--scenario-id foo --scenario-id bar``          → ``["foo", "bar"]``
+    - ``--scenario-id foo,bar --scenario-id baz``      → ``["foo", "bar", "baz"]``
+    - ``--scenario-id "foo, bar"``                     → ``["foo", "bar"]``  (whitespace ok)
+    - ``--scenario-id foo --scenario-id foo``          → ``["foo"]``  (deduped)
+
+    Order is preserved on first occurrence; later duplicates are
+    silently dropped (the caller usually wants ``foo,bar`` and
+    ``bar,foo`` to behave identically once dedup runs).
+
+    Empty tokens (e.g. trailing commas) are filtered out so a typo
+    like ``--scenario-id foo,`` doesn't try to look up a zero-length
+    ID.
+
+    Parameters
+    ----------
+    raw_values : list[str] or None
+        The argparse output from ``action="append"``. ``None`` when the
+        flag wasn't passed at all; an empty list is treated the same way.
+
+    Returns
+    -------
+    list[str]
+        Zero or more scenario IDs in the order they were first seen.
+    """
+    if not raw_values:
+        return []
+    seen = set()
+    out = []
+    for raw in raw_values:
+        for token in raw.split(","):
+            sid = token.strip()
+            if sid and sid not in seen:
+                seen.add(sid)
+                out.append(sid)
+    return out
+
+
 def _apply_subset_filter(all_scenarios, subset, subset_from, threshold_override):
     """Filter `all_scenarios` to those that scored below a threshold in a prior run.
 
@@ -6102,8 +6147,17 @@ def main():
                         help="Only run scenarios in this category")
     parser.add_argument("--output", type=str, default=None,
                         help="Save JSON report to this file")
-    parser.add_argument("--scenario-id", type=str, default=None,
-                        help="Run a single scenario by ID")
+    parser.add_argument("--scenario-id", action="append", default=None,
+                        metavar="ID",
+                        help="Run one or more scenarios by ID. Accepts a "
+                             "single ID, a comma-separated list, or the flag "
+                             "repeated. Examples: "
+                             "'--scenario-id foo', "
+                             "'--scenario-id foo,bar', "
+                             "'--scenario-id foo --scenario-id bar'. "
+                             "Overrides --subset and --category. Whitespace "
+                             "around commas is tolerated; duplicates are "
+                             "silently deduped.")
     parser.add_argument("--subset", choices=["all", "failing", "borderline"],
                         default="all",
                         help="Filter to scenarios that scored below a "
@@ -6212,11 +6266,25 @@ def main():
 
     # Select scenarios
     scenarios = SCENARIOS
-    if args.scenario_id:
-        # Single-scenario debug mode — overrides subset and category
-        scenarios = [s for s in scenarios if s["id"] == args.scenario_id]
-        if not scenarios:
-            print(f"ERROR: No scenario with ID '{args.scenario_id}'")
+    requested_ids = _parse_scenario_id_arg(args.scenario_id)
+    if requested_ids:
+        # One or more IDs requested — overrides subset and category.
+        # Build the result list in the user's input order so a probe
+        # batch reports in the same order as the command line.
+        by_id = {s["id"]: s for s in scenarios}
+        scenarios = [by_id[sid] for sid in requested_ids if sid in by_id]
+        missing = [sid for sid in requested_ids if sid not in by_id]
+        if missing:
+            print(f"ERROR: {len(missing)} scenario ID(s) not found: "
+                  f"{', '.join(missing)}",
+                  file=sys.stderr)
+            if scenarios:
+                # Don't silently run a partial batch — make the user
+                # decide whether to proceed without the missing IDs.
+                print(f"  ({len(scenarios)} of {len(requested_ids)} "
+                      f"requested IDs were resolved. Re-run with the "
+                      f"corrected IDs, or drop the missing ones.)",
+                      file=sys.stderr)
             sys.exit(1)
     else:
         # Subset filter applied first (data-driven from a prior report)

@@ -10,7 +10,7 @@ The YourPeer chatbot helps people experiencing homelessness in New York City fin
 
 The process works in three steps. First, the system simulates a realistic conversation with the chatbot using a scripted scenario (e.g., "21, LGBTQ, in Soho, need a bed tonight"). Second, an AI judge reads the full transcript and scores it across multiple quality dimensions. Third, the scores are aggregated into a report showing what improved, what regressed, and where the gaps remain.
 
-Each eval run tests the chatbot against the same 171 scenarios spanning 20 categories. Because the scenarios are fixed, scores are comparable across runs — a drop in score means the chatbot got worse at something specific, not that the test changed.
+Each eval run tests the chatbot against the same 184 scenarios spanning 20 categories. Because the scenarios are fixed, scores are comparable across runs — a drop in score means the chatbot got worse at something specific, not that the test changed.
 
 ---
 
@@ -78,7 +78,7 @@ These measure the quality of the interaction flow.
 
 ### Passing threshold
 
-A scenario passes if its average score across all 11 dimensions is **≥4.0**. This means a scenario can have one dimension at 3 and still pass if other dimensions compensate. The passing rate (e.g., "164/171 = 95.9%") is the primary headline metric.
+A scenario passes if its average score across all 11 dimensions is **≥4.0**. This means a scenario can have one dimension at 3 and still pass if other dimensions compensate. The passing rate (e.g., "176/184 = 95.7%") is the primary headline metric.
 
 ### Weighted vs. unweighted scores
 
@@ -92,7 +92,7 @@ The judge also flags specific critical failures — concrete things that went wr
 
 ## The 20 scenario categories
 
-The 171 scenarios are organized into 20 categories. Each category tests a different aspect of the chatbot:
+The 184 scenarios are organized into 20 categories. Each category tests a different aspect of the chatbot:
 
 | Category | Count | What it tests |
 |---|---|---|
@@ -147,7 +147,7 @@ Even at temperature=0, the Opus judge produces slightly different scores across 
 
 Individual scenario scores can swing ±0.3–0.5 between runs with zero code changes. The scenario `adversarial_unrecognized_service` has historically swung from 2.91 to 4.64 across consecutive runs. This means a single-run score drop of 0.3 on a scenario is not necessarily a regression — it may be noise.
 
-How we manage this: dimension averages across 171 scenarios are much more stable (±0.05). The overall average rarely moves more than ±0.02 from noise alone. When a scenario scores near the 4.0 threshold (3.8–4.2), its pass/fail status can flip between runs. The engineering plan includes variance tracking to automatically flag high-variance scenarios and multi-run averaging for borderline cases.
+How we manage this: dimension averages across 184 scenarios are much more stable (±0.05). The overall average rarely moves more than ±0.02 from noise alone. When a scenario scores near the 4.0 threshold (3.8–4.2), its pass/fail status can flip between runs. The engineering plan includes variance tracking to automatically flag high-variance scenarios and multi-run averaging for borderline cases.
 
 **Rule of thumb:** if a single scenario regressed by 0.3 or less, check whether it has a history of variance before investigating. If the overall average or a dimension average regressed by 0.05+, that's a real signal worth investigating.
 
@@ -188,11 +188,26 @@ You need an `ANTHROPIC_API_KEY` environment variable set with a valid Anthropic 
 ### Commands
 
 ```bash
-# Run all 171 scenarios (~$15-25, 30-60 minutes)
+# Run all 184 scenarios (~$15-25, 30-60 minutes)
 ANTHROPIC_API_KEY=sk-... python tests/eval/eval_llm_judge.py
 
 # Run a single scenario (~$0.10, under 1 minute) — ideal for testing a change
 python tests/eval/eval_llm_judge.py --scenario-id food_brooklyn
+
+# Run multiple scenarios in one batch — comma-separated or repeated flag.
+# Useful for probing a small set after a fix without paying for the full suite.
+# Cost scales linearly: ~$0.10 per scenario, runs sequentially.
+python tests/eval/eval_llm_judge.py \
+    --scenario-id food_brooklyn,shower_manhattan,shelter_queens_17
+
+# Equivalent — repeated flag form, easier to read in shell history.
+python tests/eval/eval_llm_judge.py \
+    --scenario-id food_brooklyn \
+    --scenario-id shower_manhattan \
+    --scenario-id shelter_queens_17
+
+# A typo in any ID exits with a non-zero status and lists the missing IDs,
+# rather than silently running a partial batch.
 
 # Run only scenarios in a specific category
 python tests/eval/eval_llm_judge.py --category crisis
@@ -259,9 +274,9 @@ The `docs/ops/EVAL_RESULTS_R28-R41.md` file contains the current Opus-era run hi
 
 ### Cost breakdown
 
-Each full eval run (171 scenarios) costs approximately $15–25 in Anthropic API credits. The cost is dominated by Opus judge output tokens ($75/M tokens). Each scenario involves 2–4 turns of Haiku conversation (cheap), optionally 1–2 turns of Sonnet user simulation (moderate), and one Opus judge call scoring all 11 dimensions (expensive).
+Each full eval run (184 scenarios) costs approximately $15–25 in Anthropic API credits. The cost is dominated by Opus judge output tokens ($75/M tokens). Each scenario involves 2–4 turns of Haiku conversation (cheap), optionally 1–2 turns of Sonnet user simulation (moderate), and one Opus judge call scoring all 11 dimensions (expensive).
 
-Single-scenario runs cost ~$0.10 and complete in under a minute. Category-scoped runs (e.g., `--category crisis` with 13 scenarios) cost ~$2–3 and take 5–10 minutes.
+Single-scenario runs cost ~$0.10 and complete in under a minute. Multi-scenario probe runs (passing N IDs to `--scenario-id`) scale linearly — N × $0.10 and N × ~30 seconds, since scenarios run sequentially. A 7-scenario probe batch is ~$0.70 and takes 2–4 minutes. Category-scoped runs (e.g., `--category crisis` with 13 scenarios) cost ~$2–3 and take 5–10 minutes.
 
 ---
 
@@ -271,7 +286,7 @@ These assumptions have NOT been validated and should be reviewed:
 
 1. **Opus judge scoring correlates with real user perception.** Human calibration of 20–30 scenarios with 2–3 annotators would validate this. This is the most important open assumption — every engineering decision driven by eval scores depends on it.
 
-2. **The 171 scenarios adequately represent real usage.** The scenario set was built from Cornell sample queries, outreach worker experience, lived-experience peer input, and design-doc user journeys. Real production traffic may surface patterns not covered.
+2. **The 184 scenarios adequately represent real usage.** The scenario set was built from Cornell sample queries, outreach worker experience, lived-experience peer input, and design-doc user journeys. Real production traffic may surface patterns not covered.
 
 3. **The strict tone/dignity rubric is appropriately calibrated.** The rubric intentionally scores neutral tone as 3 (adequate, not good). If human annotators consistently rate the same scenarios higher, the rubric may be too strict. If they rate them lower, the rubric is too lenient.
 
