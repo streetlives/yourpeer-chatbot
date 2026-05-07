@@ -96,7 +96,17 @@ class MessageContext:
     category: str             # routing key ("crisis", "service", "greeting", etc.)
     action: str               # classified action ("confirm_yes", "reset", etc.)
     tone: Optional[str]       # emotional tone ("crisis", "emotional", "frustrated", etc.)
-    confidence: str           # "high" | "semantic" | "medium" | "low"
+    confidence: str           # ordinal: "high" | "semantic" | "medium" | "low"
+    # Categorical reason that disambiguates ``confidence``. Useful when a
+    # consumer needs to know WHY confidence is what it is, beyond the
+    # ordinal. Two distinct cases produce ``confidence == "low"``:
+    # (a) the LLM gate snapped to ``service_type="other"`` with no detail
+    # because regex/semantic both missed (``confidence_reason="llm_reaching_other"``)
+    # and (b) nothing classified at all (``confidence_reason="no_signal"``).
+    # Routing decisions that depend on which case fired should match on
+    # this field instead of re-deriving from slot shape. See pipeline.py
+    # ``_compute_routing_category`` for the full list of values.
+    confidence_reason: str    # "regex_match" | "semantic_match" | "llm_match" | "llm_reaching_other" | "no_signal" | "non_service_route"
     extraction_source: Optional[str]  # "regex" | "semantic" | "llm_gate" | None
     # --- Extracted slots from this message ---
     early_extracted: dict     # raw extraction result (service_type, location, age, etc.)

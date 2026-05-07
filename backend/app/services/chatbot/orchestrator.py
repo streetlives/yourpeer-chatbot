@@ -214,7 +214,7 @@ def generate_reply(
     # depends only on tone/action/has_service_intent/early_extracted/
     # extraction_source/message, all finalized by this point.
     action = _action_pre
-    category, _confidence = _compute_routing_category(
+    category, _confidence, _confidence_reason = _compute_routing_category(
         tone=tone,
         action=action,
         has_service_intent=has_service_intent,
@@ -265,6 +265,7 @@ def generate_reply(
         action=action,
         tone=tone,
         confidence=_confidence,
+        confidence_reason=_confidence_reason,
         extraction_source=_extraction_source,
         early_extracted=early_extracted,
         has_service_intent=has_service_intent,
@@ -676,17 +677,12 @@ def generate_reply(
     # `TestUnrecognizedServiceLLMGateGuard` in
     # tests/integration/test_multi_turn_and_context.py.
     #
-    # We check the trio directly rather than gating on
-    # `category == "service"` — that would over-block, since a follow-up
-    # turn supplying a missing slot (e.g. "East Harlem" after "diabetic
-    # and out of insulin") doesn't trigger the LLM gate (too short) and
-    # falls into category="general" even though merged has enough info
-    # to legitimately confirm.
-    _is_low_confidence_other_routing = (
-        _extraction_source == "llm_gate"
-        and merged.get("service_type") == "other"
-        and not merged.get("service_detail")
-    )
+    # Pre-refactor (May 2026): this used to check the trio
+    # ``(extraction_source == "llm_gate", service_type == "other",
+    # not service_detail)`` inline at three call sites. The reason
+    # field collapses that into one named state. See
+    # ``ARCH_NOTES.md`` "Confidence reason refactor".
+    _is_low_confidence_other_routing = _confidence_reason == "llm_reaching_other"
 
     # If enough detail → CONFIRMATION step
     if (
