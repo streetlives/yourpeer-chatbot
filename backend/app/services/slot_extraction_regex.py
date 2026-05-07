@@ -87,6 +87,20 @@ SERVICE_KEYWORDS = {
         # "pants" moved to _WORD_BOUNDARY_KEYWORDS — "participants" collision (REGEX_AUDIT)
         "sweater", "sweatshirt", "hoodie", "gloves",
         "winter gear", "sneakers",
+        # Baby supplies — DB-verified routing destination (May 6, 2026).
+        # Most diaper-distributing services are tagged "Clothing › Baby
+        # Supplies" (Mercy House Baby Supplies, Emergency Diaper Distribution,
+        # Baby Closet, Community Closet); others are tagged "Personal Care ›
+        # Baby". None are tagged Food. The previous "other" routing surfaced
+        # the right services via the wide `other` taxonomy net but framed
+        # the user's need as "other services," which read as dismissive
+        # ("you want diapers? here, see our Other Services."). Routing
+        # through clothing + the "baby supplies" sub-detail narrowing
+        # surfaces the same services with a more dignifying framing.
+        # Pairs with _DETAIL_TO_TAXONOMY_NARROWING["baby supplies"] in
+        # backend/app/rag/__init__.py and _NOTABLE_SUB_TYPES["stroller"]/
+        # ["car seat"] below.
+        "diapers", "baby supplies", "stroller", "car seat",
         # Clothing occasion phrases — multi-word entries that MUST beat the
         # single-word "interview" (employment keyword) in longest-first sort.
         # "interview clothes" (17 chars) > "interview" (9 chars) → matches
@@ -281,8 +295,13 @@ SERVICE_KEYWORDS = {
         "queer services", "queer community",
         # Parenting
         "parenting class", "parenting support", "parenting program",
-        # Baby supplies (moved from food — diapers aren't food)
-        "diapers", "baby supplies", "stroller", "car seat",
+        # Baby supplies moved to "clothing" bucket on May 6, 2026 after DB
+        # data inspection confirmed all diaper-distributing services tag
+        # under Clothing › Baby Supplies or Personal Care › Baby — never
+        # under any "Other service" taxonomy. See SERVICE_KEYWORDS["clothing"]
+        # for the migrated entries and rationale, and
+        # _DETAIL_TO_TAXONOMY_NARROWING for the leaf-taxonomy narrowing
+        # that pairs with the move.
         # Disability (additional terms — "disability" already above)
         "disabled", "disability benefits", "disability services",
         "accessible services",
@@ -540,6 +559,8 @@ _NOTABLE_SUB_TYPES = {
     "parenting class": "parenting classes",
     "baby supplies": "baby supplies",
     "diapers": "baby supplies",
+    "stroller": "baby supplies",
+    "car seat": "baby supplies",
     "disability services": "disability services",
     "accessible services": "accessibility services",
     "health insurance": "health insurance enrollment",

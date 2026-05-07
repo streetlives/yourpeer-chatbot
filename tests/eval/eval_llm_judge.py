@@ -3179,10 +3179,11 @@ SCENARIOS = [
         "name": "19-year-old mom — shelter, diapers, food, healthcare",
         "category": "multi_intent",
         "description": "Young mother with a baby needing four services at once: "
-                       "shelter, diapers (food/WIC), food, and basic healthcare. "
-                       "Tests multi-service extraction with 3+ services. System "
-                       "should extract shelter as primary (most urgent), queue "
-                       "food and medical, and note family_status=with_children.",
+                       "shelter, diapers (clothing/baby supplies), food, and "
+                       "basic healthcare. Tests multi-service extraction with "
+                       "3+ services. System should extract shelter as primary "
+                       "(most urgent), queue clothing (for diapers), food, "
+                       "and medical, and note family_status=with_children.",
         "user_turns": [
             "19-year-old mom with a baby, need shelter, diapers, food, "
             "and basic healthcare right now.",
@@ -3197,10 +3198,22 @@ SCENARIOS = [
             "urgency": "high",
             "should_reach_confirmation": True,
             "should_handle_additional_service": True,
-            "notes": "Should extract shelter as primary, food and medical as "
-                     "additional. 'Diapers' maps to food (WIC). Results should "
-                     "include Covenant House and/or PATH. After shelter results, "
-                     "should offer food search, then medical.",
+            "notes": "Should extract shelter as primary, with clothing "
+                     "(detail=baby supplies, for diapers), food, and "
+                     "medical as additional services — three distinct "
+                     "queries, three distinct DB taxonomy slices. "
+                     "Diapers route to clothing (DB-verified May 6, 2026: "
+                     "diaper-distributing services tag under Clothing › "
+                     "Baby Supplies most commonly, Personal Care › Baby "
+                     "second; never tagged Food). WIC is a separate "
+                     "benefit-enrollment service the user did not ask "
+                     "for — don't conflate with diapers. Shelter results "
+                     "should include Covenant House and/or PATH. After "
+                     "shelter results, the queue should offer baby "
+                     "supplies (Mercy House Baby Supplies, Diaper "
+                     "Distribution, etc.) → food → medical, in that "
+                     "order, with depth-transparency text ('and N more "
+                     "after that') per PR #87 Cluster 6.",
         },
     },
     {

@@ -345,15 +345,38 @@ class TestVernacular:
 class TestReclassifications:
     """Items moved between categories."""
 
-    def test_diapers_now_other(self):
-        """Diapers moved from food → other (baby supplies)."""
+    def test_diapers_now_clothing(self):
+        """Diapers route to clothing (May 6, 2026 routing fix).
+
+        DB inspection confirmed all diaper-distributing services tag
+        under Clothing › Baby Supplies (most common) or Personal Care ›
+        Baby (second most common). The previous "other" routing
+        surfaced the right services via the wide `other` taxonomy net
+        but framed the user's need as "other services," which read as
+        dismissive. See _DETAIL_TO_TAXONOMY_NARROWING["baby supplies"]
+        for the leaf-taxonomy narrowing that pairs with this routing.
+        """
         r = extract_slots("I need diapers")
-        assert r["service_type"] == "other"
+        assert r["service_type"] == "clothing"
         assert r["service_detail"] == "baby supplies"
 
     def test_baby_supplies(self):
         r = extract_slots("I need baby supplies")
-        assert r["service_type"] == "other"
+        assert r["service_type"] == "clothing"
+        assert r["service_detail"] == "baby supplies"
+
+    def test_stroller_routes_to_clothing(self):
+        """Stroller routes to clothing with service_detail="baby
+        supplies" so the leaf-taxonomy narrowing fires."""
+        r = extract_slots("I need a stroller")
+        assert r["service_type"] == "clothing"
+        assert r["service_detail"] == "baby supplies"
+
+    def test_car_seat_routes_to_clothing(self):
+        """Car seat routes the same way as diapers/stroller."""
+        r = extract_slots("I need a car seat for my baby")
+        assert r["service_type"] == "clothing"
+        assert r["service_detail"] == "baby supplies"
 
     def test_baby_formula_still_food(self):
         """Baby formula stays in food (it IS food)."""

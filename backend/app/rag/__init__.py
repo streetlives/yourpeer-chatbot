@@ -74,6 +74,21 @@ _DETAIL_TO_TAXONOMY_NARROWING = {
     "sober living": ["residential recovery"],
     "halfway houses": ["residential recovery"],
     "recovery services": ["substance use treatment", "residential recovery", "support groups"],
+    # Baby supplies — DB-verified leaf taxonomies (May 6, 2026 inspection).
+    # Diaper-distributing services tag under one of two leaves:
+    #   - "Baby Supplies" (parent: Clothing): Mercy House Baby Supplies × 3,
+    #     Emergency Diaper Distribution, Community Closet, etc.
+    #   - "Baby" (parent: Personal Care): Resource Center Diaper Distribution,
+    #     Bushwick "Diapers and Baby Food".
+    # FILTER_BY_TAXONOMY_NAME_IN does not walk parent_id → must list the
+    # leaf names explicitly. The keyword routing in slot_extraction_regex.py
+    # routes diapers/baby supplies/stroller/car seat to service_type=clothing
+    # with service_detail="baby supplies", which triggers this narrowing
+    # and surfaces both Clothing-parented and Personal-Care-parented
+    # services in a single search. The "Clothing" taxonomy itself is
+    # excluded from this narrowing because it would over-broaden — every
+    # generic clothing pantry would surface for a "diapers" query.
+    "baby supplies": ["baby supplies", "baby"],
 }
 
 _DETAIL_DESCRIPTION_FILTERS = {
