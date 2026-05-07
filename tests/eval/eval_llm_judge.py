@@ -72,13 +72,6 @@ Usage:
     ANTHROPIC_API_KEY=sk-... python tests/eval_llm_judge.py \\
         --subset failing --subset-from eval_results/runs/20260505T120000_redact_on/ \\
         --category multi_intent
-
-    # Phase 2 of PRE_LLM_REDACTION_SCOPE.md: run the suite with the
-    # REDACT_BEFORE_LLM feature flag on, so user text is PII-redacted
-    # before reaching Anthropic. Diff the resulting JSON against the
-    # R38 baseline to check the floors in the scope doc.
-    ANTHROPIC_API_KEY=sk-... python tests/eval_llm_judge.py \\
-        --redact-before-llm --output eval_results/pre_llm_redact_on.json
 """
 
 import sys
@@ -108,47 +101,15 @@ from unittest.mock import patch
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../..", "backend"))
 
 
-# --- Pre-LLM redaction flag, early-set ---
-# `--redact-before-llm` flips REDACT_BEFORE_LLM=true for this run. It
-# MUST be applied BEFORE the `from app.*` import below — `context.py`
-# reads the env var at module-load time and caches the result, so
-# setting it inside main() (after argparse) is too late to affect any
-# already-imported module.
-#
-# We do an early argparse peek using parse_known_args so we get
-# proper handling of --redact-before-llm, --redact-before-llm=true,
-# and similar forms — and so a literal substring match in some
-# unrelated argument (e.g. a path that contains the flag name)
-# doesn't false-trigger. The flag is re-declared in argparse below
-# for --help visibility.
-def _early_redact_flag_check() -> bool:
-    """Detect --redact-before-llm in argv without disturbing later parsing."""
-    early_parser = argparse.ArgumentParser(add_help=False)
-    early_parser.add_argument("--redact-before-llm", action="store_true")
-    try:
-        ns, _ = early_parser.parse_known_args()
-    except SystemExit:
-        # parse_known_args shouldn't exit on --help (we have add_help=False)
-        # or on unknown args. If something exotic happens, fall back to
-        # the literal substring check rather than crashing the import.
-        return "--redact-before-llm" in sys.argv
-    return bool(ns.redact_before_llm)
-
-
-if _early_redact_flag_check():
-    os.environ["REDACT_BEFORE_LLM"] = "true"
-
-# These imports are intentionally NOT at the top of the file. The
-# Phase 2 PII redaction flag (`_REDACT_BEFORE_LLM`) is bound at
-# module-load time when `app.services.chatbot.context` is imported,
-# from `os.environ["REDACT_BEFORE_LLM"]`. The early argv peek above
-# sets that env var BEFORE these imports run. Reversing the order
-# would freeze redaction OFF regardless of CLI flags, breaking
-# Phase 2 of PRE_LLM_REDACTION_SCOPE.md.
-from app.services.chatbot import generate_reply  # noqa: E402  -- see comment above
+# Pre-LLM redaction was made mandatory in Phase 4 (May 2026) — every
+# Anthropic-touching call site now redacts unconditionally. The
+# `--redact-before-llm` CLI flag and `REDACT_BEFORE_LLM` env var that
+# previously gated this are no longer accepted. The
+# `redact_before_llm: True` field is still emitted in `report.json` as
+# a constant for back-compat with downstream report-readers.
+from app.services.chatbot import generate_reply  # noqa: E402
 from app.services.session_store import clear_session  # noqa: E402
 from app.privacy.pii_redactor import redact_pii  # noqa: E402
-from app.services.chatbot.context import _REDACT_BEFORE_LLM  # noqa: E402
 
 # Suppress noisy logs during eval
 logging.basicConfig(level=logging.WARNING)
@@ -5717,13 +5678,12 @@ def generate_report(results: list, baseline_id: str = "R38") -> dict:
             sum(scores) / len(scores), 2
         )
 
-    # Capture the pre-LLM redaction flag state at report time. Diffing
-    # two reports later is much less ambiguous when each one says
-    # whether redaction was on. See PRE_LLM_REDACTION_SCOPE.md Phase 2.
-    # `_REDACT_BEFORE_LLM` is imported at the top of this module
-    # (line ~143). If that import had failed, module load would have
-    # crashed before reaching here — no defensive try block needed.
-    redact_state = bool(_REDACT_BEFORE_LLM)
+    # Capture the pre-LLM redaction state at report time. Pre-LLM redaction
+    # was made mandatory in Phase 4 (May 2026); this field is now always
+    # True. Retained in the report schema for back-compat with downstream
+    # report-readers (the dashboard, EVAL_RESULTS_R28-R41.md generator,
+    # report-diff scripts) that look for it.
+    redact_state = True
 
     return {
         "timestamp": datetime.now().isoformat(),
@@ -6209,17 +6169,6 @@ def main():
                         help="Override the default --subset threshold "
                              "(failing=4.0, borderline=4.5).")
     parser.add_argument(
-        "--redact-before-llm",
-        action="store_true",
-        help="Set REDACT_BEFORE_LLM=true for this run, so the current "
-             "user message is PII-redacted before being sent to "
-             "Anthropic. Phase 2 of PRE_LLM_REDACTION_SCOPE.md. The "
-             "env var is actually set earlier (before any app.* "
-             "import) by an explicit sys.argv peek; this argparse "
-             "entry is for --help visibility and clean argv "
-             "consumption.",
-    )
-    parser.add_argument(
         "--baseline",
         choices=sorted(BASELINES.keys()),
         default="R38",
@@ -6269,16 +6218,10 @@ def main():
 
     client = anthropic.Anthropic(api_key=api_key)
 
-    # Surface the pre-LLM redaction flag state in run output. Reading
-    # the cached value from context.py rather than args.redact_before_llm
-    # so this reflects what actually took effect (env var vs. CLI flag
-    # vs. default). If someone exports REDACT_BEFORE_LLM=true in their
-    # shell and runs without the CLI flag, this still prints "ON".
-    # (`_REDACT_BEFORE_LLM` is imported at the top of this file.)
-    if _REDACT_BEFORE_LLM:
-        print("  Pre-LLM redaction: ON (REDACT_BEFORE_LLM=true)")
-    else:
-        print("  Pre-LLM redaction: OFF (default)")
+    # Pre-LLM redaction is now mandatory (Phase 4 close-out). Print this
+    # for run-output traceability — older log readers may still scan for
+    # the line.
+    print("  Pre-LLM redaction: ON (mandatory since Phase 4)")
 
     # --- Pre-warm the semantic router (Tier 2) ---
     # The model (~80 MB) downloads on first use. Without pre-warming,

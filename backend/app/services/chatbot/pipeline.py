@@ -12,7 +12,7 @@ from app.services.session_store import save_session_slots
 from app.services.slot_extraction_regex import NEAR_ME_SENTINEL, extract_slots
 from app.services import slot_extraction
 
-from .context import _USE_LLM, _REDACT_BEFORE_LLM
+from .context import _USE_LLM
 
 
 # Phase 4 (April 2026): the gap-filler at `_run_llm_gate` now routes
@@ -172,11 +172,12 @@ def _run_llm_gate(
         provided) is the same text with PII placeholders. Local
         decisions (gate condition, length check) use ``message`` so
         redaction can never mask the gate from firing on a substantive
-        message; the actual LLM payload uses ``redacted_message`` when
-        ``_REDACT_BEFORE_LLM`` is true. When ``redacted_message`` is
-        None or the flag is false, ``message`` is sent as-is — bit-for-
-        bit identical to pre-Phase-1 behavior. See
-        docs/design/PRE_LLM_REDACTION_SCOPE.md.
+        message; the actual LLM payload uses ``redacted_message`` whenever
+        it's available. Pre-LLM redaction was made mandatory in Phase 4
+        (May 2026) — the flag was removed; redacted is now the only path.
+        ``redacted_message=None`` falls back to ``message`` only as a
+        defensive guard for callers that don't have access to the
+        redacted form. See docs/design/PRE_LLM_REDACTION_SCOPE.md.
     """
     needs_unified = (
         _USE_LLM
@@ -188,17 +189,12 @@ def _run_llm_gate(
     if not needs_unified:
         return has_service_intent, action_pre, extraction_source, None, None, None
 
-    # Pick the payload sent to Anthropic. Defaults to raw ``message`` for
-    # backward compatibility — only the Phase 3 production env-var flip
-    # plus a non-None redacted_message switches this. The gate condition
-    # above (length, action_pre, etc.) was already evaluated on the raw
-    # message, so this can only change the LLM input, not whether the
-    # gate fires.
-    llm_payload = (
-        redacted_message
-        if (_REDACT_BEFORE_LLM and redacted_message is not None)
-        else message
-    )
+    # Pick the payload sent to Anthropic. Phase 4 close-out: redacted text is
+    # mandatory at every LLM call site, so this is no longer flag-gated. The
+    # gate condition above (length, action_pre, etc.) was already evaluated
+    # on the raw message, so this only changes the LLM input, not whether
+    # the gate fires.
+    llm_payload = redacted_message if redacted_message is not None else message
 
     llm_tone = None
     llm_action = None

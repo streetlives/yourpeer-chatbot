@@ -41,7 +41,7 @@ from app.services.slot_extraction_regex import (
 )
 from app.services import slot_extraction
 
-from .context import MessageContext, _USE_LLM, _REDACT_BEFORE_LLM, _empty_reply
+from .context import MessageContext, _USE_LLM, _empty_reply
 from .handlers import (
     _handle_bot_capability_question,
     _handle_bot_identity,
@@ -191,11 +191,12 @@ def generate_reply(
     # input. Phase 2 eval explicitly verifies that crisis-detection
     # scenarios still pass with redacted input — see
     # ``pre_llm_redact_crisis_indirect`` in eval_llm_judge.py.
-    _crisis_input = (
-        redacted_message
-        if (_REDACT_BEFORE_LLM and redacted_message is not None)
-        else message
-    )
+    # Phase 4: pre-LLM redaction is mandatory — the flag has been removed.
+    # `redacted_message` is the only path; the `is not None` guard remains
+    # because the kwarg signature still permits None for callers who don't
+    # need the redacted form (no current callers rely on this, but the
+    # defensive guard preserves call-site flexibility for future ones).
+    _crisis_input = redacted_message if redacted_message is not None else message
     _crisis_result = detect_crisis(_crisis_input, skip_llm=_is_safe_short)
 
     if _crisis_result is not None:
@@ -582,14 +583,13 @@ def generate_reply(
             # follow-up). When the source is "regex" or None, merge
             # behaves as before.
             #
-            # Pre-LLM redaction (Phase 1): swap to redacted_message
-            # when the flag is on. The conversation_history kwarg below
-            # already passes server-stored redacted text — only the
-            # current-turn message needs the swap to fully close the
-            # leak surface for slot extraction. See
+            # Phase 4 close-out (May 2026): pre-LLM redaction is mandatory,
+            # so this no longer branches on a flag — it sends redacted text
+            # whenever it's available. The conversation_history kwarg below
+            # already passes server-stored redacted text. See
             # docs/design/PRE_LLM_REDACTION_SCOPE.md.
             extracted = slot_extraction.extract(
-                redacted_message if _REDACT_BEFORE_LLM else message,
+                redacted_message if redacted_message is not None else message,
                 early_extracted,
                 conversation_history=existing.get("transcript", []),
                 api_key_available=True,  # gated by _USE_LLM above

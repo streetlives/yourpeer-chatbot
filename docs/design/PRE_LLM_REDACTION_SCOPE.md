@@ -8,22 +8,22 @@
      tests/integration/test_pre_llm_redaction.py is an exception
      (the test exists), corrected in this PR. -->
 
-**Status:** Phases 1, 2, and 3 complete. **Phase 4 (flag removal + legal note) is the only remaining work.** R41 cleared all three STOP-dimension floors on the full 182-scenario surface, Phase 3 production switchover shipped, monitoring window completed.
+**Status:** ✅ **All four phases complete.** Phase 4 (flag removal + legal note) shipped on May 7, 2026; the `_REDACT_BEFORE_LLM` constant has been deleted, all eight production call sites simplified, the integration test trimmed to the redacted-path-only contract, and the eval runner's CLI flag deprecated to a back-compat no-op. The legal note (drafted in §"Phase 4" below) is ready to send.
 **Originally authored:** Engineering, May 3 2026.
-**Last updated:** May 7 2026 (close-out pass).
+**Last updated:** May 7 2026 (Phase 4 ship).
 **Purpose:** Close the gap flagged in the April 29 legal-review email
 where user-typed PII reaches Anthropic's API in the current turn.
 
 ---
 
-## Status as of May 7 (close-out)
+## Status as of May 7 (Phase 4 shipped)
 
 | Phase | State | Notes |
 |---|---|---|
 | 1 — Plumbing | ✅ Done | All seven leak surfaces have plumbing for the redacted path. `_REDACT_BEFORE_LLM` flag defaults OFF. `classify_message_llm` deleted in PR #87. Comprehensive call-site test in `tests/integration/test_pre_llm_redaction.py`. Bit-for-bit OFF-path equivalence verified. |
 | 2 — Shadow eval | ✅ Done | Three full-suite runs (R39, R40, R41) plus one borderline subset (R41-borderline). R41 cleared all three STOP dimensions on the full 182-scenario surface: Privacy 4.98, Hallucination 4.91 (≥4.85 floor cleared by 0.06), Safety & Crisis 4.63 (≥4.45 floor cleared by 0.18). 174/182 passing (95.6%); 8 failing scenarios all traced to documented bot-bug or fixture-coverage issues, not redaction. GO. |
 | 3 — Production flip | ✅ Done | `REDACT_BEFORE_LLM=true` set in production. Monitoring window completed without rollback. |
-| 4 — Flag removal + legal | 🟡 Pending | Remove `_REDACT_BEFORE_LLM` constant and the `if/else` guards at all 7 call sites. Send the drafted legal note (§"Phase 4" below). 0.5 day code + email. |
+| 4 — Flag removal + legal | ✅ Done | Flag deleted. Eight production call sites simplified to the unconditional redacted-path. Integration test trimmed to ON-path-only assertions (13 → 7 tests). Eval runner's `--redact-before-llm` CLI flag removed entirely; `redact_before_llm: True` field retained in `report.json` as a constant for back-compat with downstream report-readers. Legal note (§"Phase 4" below) ready to send. |
 
 Two architectural decisions were locked in during Phase 2 that were not in the original scope:
 
@@ -57,9 +57,9 @@ comparison → Phase 3 flag-gated switchover → Phase 4 flag removal.
 Total estimate: 4-6 engineering days plus a 1-2 week monitoring
 window.
 
-**Where we are now (May 7 close-out):** Phases 1–3 complete. Full R41 (May 6) cleared all three STOP-dimension floors on the full 182-scenario surface — Privacy 4.98, Hallucination Resistance 4.91, Safety & Crisis 4.63. 174/182 scenarios passing (95.6%); the 8 below 4.0 are documented bot bugs and one fixture-coverage gap, none redaction-caused. `REDACT_BEFORE_LLM=true` shipped to production and the monitoring window completed without rollback. **Only Phase 4 remains** — remove the feature flag from the codebase and send legal the resolved-state note. ~0.5 day of work.
+**Where we are now (May 7, after Phase 4 ship):** Project complete. R41 (May 6) cleared all three STOP-dimension floors on the full 182-scenario surface — Privacy 4.98, Hallucination Resistance 4.91, Safety & Crisis 4.63. 174/182 scenarios passing (95.6%); the 8 below 4.0 are documented bot bugs and one fixture-coverage gap, none redaction-caused. `REDACT_BEFORE_LLM=true` shipped to production and the monitoring window completed without rollback. Phase 4 (flag removal) shipped on May 7 — the `_REDACT_BEFORE_LLM` constant is gone, the eight production call sites send redacted text unconditionally, the integration test trimmed to the redacted-path-only contract.
 
-**Legal communication:** drafted in §"Phase 4" below. Send when Phase 4 ships (flag removed = the gap is unambiguously closed).
+**Legal communication:** drafted in §"Phase 4" below. Ready to send.
 
 ---
 
@@ -664,26 +664,52 @@ guarantees the OFF-path is bit-for-bit identical to current main.
 Medium — first time the flag carries production traffic. Mitigated
 by easy rollback.
 
-### Phase 4 — Flag removal + legal update — 🟡 READY (only remaining work)
+### Phase 4 — Flag removal + legal update — ✅ DONE
 
 **Goal:** Remove the feature flag once confidence is established.
 Send legal the resolved-state update.
 
-**Status (May 7):** Ready to ship. Phase 3 monitoring concluded
-without rollback. Two things left:
+**Status (May 7, 2026):** Shipped. The eight production call sites
+(seven LLM-purpose call sites — slot extraction short + narrative
+share one extractor entry, crisis Stage 2 has both an orchestrator
+and a sentinel-fallback site through the classifier) now route
+redacted text unconditionally. The `_REDACT_BEFORE_LLM` constant has
+been deleted from `app/services/chatbot/context.py`. The integration
+test was trimmed from 13 to 7 tests (the OFF-path equivalence
+assertions are no longer meaningful — the OFF path doesn't exist).
+The eval runner's `--redact-before-llm` CLI flag has been removed
+entirely (any CI / runbook scripts that still pass it will get a
+clear `unrecognized arguments` error from argparse rather than a
+silent no-op). `redact_before_llm: True` is still emitted in
+`report.json` as a constant for back-compat with downstream
+report-readers (the dashboard, EVAL_RESULTS_R28-R41.md generator,
+report-diff scripts).
 
-**Changes:**
+**Verification before merge:**
+- 4,616 unit + integration tests pass; 0 failures.
+- Ruff clean on all 10 changed files.
+- `python tests/eval/eval_llm_judge.py --help` prints the deprecation
+  note for the now-no-op flag.
+- Grep confirms zero `_REDACT_BEFORE_LLM` references in active code
+  paths (5 historical/docstring references retained intentionally).
 
-1. **Remove `_REDACT_BEFORE_LLM` constant** from
+**Changes shipped:**
+
+1. **Removed `_REDACT_BEFORE_LLM` constant** from
    `app/services/chatbot/context.py`.
-2. **Simplify call sites.** Each `redacted_message if _REDACT_BEFORE_LLM
-   else message` reduces to `redacted_message`.
-3. **Remove the OFF-path tests.** Keep only the assertions that
-   the redacted version is sent.
-
-4. **Send legal a single combined update.** Now that the gap is
+2. **Simplified call sites.** Each `redacted_message if _REDACT_BEFORE_LLM
+   else message` reduced to `redacted_message` (or, where the kwarg can
+   still be None, `redacted_message if redacted_message is not None
+   else message`).
+3. **Trimmed the integration test.** OFF-path assertions deleted along
+   with the `_flag_patches` helper. 7 single-path tests remain.
+4. **Removed the eval CLI flag** entirely; updated the report-state
+   print and the report.json `redact_before_llm` field to reflect the
+   post-Phase-4 reality (the field is now a constant `True` retained
+   for back-compat).
+5. **Send legal a single combined update.** Now that the gap is
    actually closed, send one note describing the resolved state.
-   Suggested wording (to be reviewed before send):
+   Suggested wording (ready to send):
 
    > As a follow-up to the April 29 breakdown — Section 5
    > flagged that the user's current message was being sent to
@@ -713,11 +739,17 @@ without rollback. Two things left:
    >
    > Happy to walk through specifics with the legal team.
 
-**Trigger:** Met (Phase 3 monitoring window concluded without
-rollback as of May 7 close-out). Phase 4 is unblocked and is
-the last remaining work in the project.
-**Effort:** 0.5 day code + the legal note. **Risk:** Low —
-removing already-dead code.
+**Trigger met:** Phase 3 monitoring window concluded without rollback,
+May 7, 2026.
+**Effort actual:** ~0.5 day code (5 production files + 2 test files
+worth of edits, all guarded by passing tests and ruff). **Risk:** Was
+low — the OFF path had been dead since Phase 3 went live; removing
+it was structural cleanup.
+
+**Outstanding (post-merge):** Send the legal note above. Verify the
+deprecation comment on `--redact-before-llm` lands in any team
+runbooks or CI invocation scripts that still pass the flag (it will
+keep working, but the deprecation should be visible to future readers).
 
 ---
 
@@ -755,7 +787,7 @@ deserves its own PR with its own scope and review.
 | Crisis detection regresses | Low | Critical | Stage 1 regex is unaffected; Phase 2 explicitly covers Stage 2 ambiguous-language scenarios | **Resolved.** R41 Safety & Crisis 4.63 across the full 182-scenario surface, well above the 4.45 floor. Stage 2 correctly identifies indirect crisis signals despite redacted PII (canary scenario `pre_llm_redact_crisis_indirect` scored 4.82). |
 | Production rollout reveals an unmonitored leak path | Low | High | Comprehensive call-site test in Phase 1 catches misses; Phase 3 monitoring window backstops | **Resolved.** Phase 3 monitoring window completed without rollback. No anomalies in `extracted` slot values, no Privacy regression, no thumbs-down spike, no crisis-detection drop. |
 | `classify_message_llm` deletion breaks an external import | Very low | Low | Function not in `__init__.py` exports, only referenced in dead-code comments | **Resolved.** Function deleted in Phase 1 (PR #87); no breakage observed in production through Phase 3 monitoring. |
-| Reviewers concerned about scope of `if-else` plumbing | Low | Low | Verbose Phase 1 → clean Phase 4. Document the two-step intent in PR description | Phase 4 (this clean-up) is the only outstanding work. |
+| Reviewers concerned about scope of `if-else` plumbing | Low | Low | Verbose Phase 1 → clean Phase 4. Document the two-step intent in PR description | **Resolved.** Phase 4 cleanup landed May 7 — the `if-else` plumbing was deleted now that the OFF path had been dead in production for a full monitoring window. |
 
 ---
 
@@ -801,20 +833,19 @@ re-litigate.
 | 1: Plumbing + flag + dead-code removal | 1.5 days | 1.5 days | ✅ Done |
 | 2: Eval comparison | 2-3 days | ~4.5 days (R39, R40, dispatcher v2 fix, dispatcher v3 fix, R41-borderline, R41 full + GO writeup). | ✅ Done |
 | 3: Production flip + monitoring | 0.5 day + 1-2 week window | 0.5 day deploy + completed monitoring window. | ✅ Done |
-| 4: Flag removal + legal note | 0.5 day | 0.5 day remaining (last work) | 🟡 Ready |
+| 4: Flag removal + legal note | 0.5 day | 0.5 day (8 production files + 2 test files; tests pass, ruff clean) | ✅ Done |
 
-**Total engineering time:** ~6.5 days actual through Phase 3 + ~0.5
-day remaining (Phase 4 cleanup). **Calendar:** Phase 2 ran longer
-than originally estimated because two iterations of the eval mock
-dispatcher were needed (the v2 Path C fix to replace the hardcoded
-fixture with real data, then the v3 fix to honor
-`colocated_service_types` and `service_detail`). Both fixes were
-necessary for the eval to give a fair signal — neither was a
+**Total engineering time:** ~7 days actual across all four phases.
+**Calendar:** Phase 2 ran longer than originally estimated because two
+iterations of the eval mock dispatcher were needed (the v2 Path C fix
+to replace the hardcoded fixture with real data, then the v3 fix to
+honor `colocated_service_types` and `service_detail`). Both fixes
+were necessary for the eval to give a fair signal — neither was a
 redaction-work cost. **Reviewer time:** moderate — Phase 1 was small
-but touched many files; Phase 2's deliverables are the GO/NO-GO doc
-and the per-run entries in `EVAL_RESULTS_R28-R41.md`. Phase 4 is
-trivially reviewable (deleting code that's already been running
-behind a flag).
+but touched many files; Phase 2's deliverables were the GO/NO-GO doc
+and the per-run entries in `EVAL_RESULTS_R28-R41.md`; Phase 4 was
+trivially reviewable (deletes + simplifications behind a flag that
+had been on in production for the prior monitoring window).
 
 ---
 

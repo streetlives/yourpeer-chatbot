@@ -20,7 +20,7 @@ from app.services.responses import _fallback_response
 from app.services.session_store import save_session_slots
 from app.services.slot_extraction_regex import NEAR_ME_SENTINEL
 
-from ..context import MessageContext, _REDACT_BEFORE_LLM, _empty_reply
+from ..context import MessageContext, _empty_reply
 from ..logging import _log_turn
 
 
@@ -124,15 +124,15 @@ def _handle_general_conversation(ctx: MessageContext):
         idx = len(merged.get("transcript", [])) % len(_CASUAL_RESPONSES)
         response = _CASUAL_RESPONSES[idx]
     else:
-        # Pre-LLM redaction (Phase 1): swap to ctx.redacted_message when
-        # the flag is on. _fallback_response embeds the input verbatim
+        # Phase 4 close-out (May 2026): pre-LLM redaction is mandatory.
+        # ``ctx.redacted_message`` is always populated and is the only path
+        # to Anthropic. ``_fallback_response`` embeds the input verbatim
         # into the conversational prompt sent to Anthropic
         # (responses._build_conversational_prompt -> claude_reply).
         # Local fallback paths (the static error string in
         # _fallback_response's except branch) don't depend on the input.
         # See PRE_LLM_REDACTION_SCOPE.md.
-        _fallback_input = ctx.redacted_message if _REDACT_BEFORE_LLM else ctx.message
-        response = _fallback_response(_fallback_input, merged)
+        response = _fallback_response(ctx.redacted_message, merged)
         # Cultural humility: when the bot can't understand what the user
         # needs (low confidence), acknowledge the limitation rather than
         # pretending the generic response is adequate.

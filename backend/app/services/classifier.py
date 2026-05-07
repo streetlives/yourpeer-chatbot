@@ -242,15 +242,17 @@ def _classify_tone(
             no crisis). When omitted, _classify_tone calls detect_crisis
             itself. This avoids a redundant Sonnet LLM call when the
             caller has already checked.
-        redacted_text: PII-redacted form of ``text``. Only used when this
+        redacted_text: PII-redacted form of ``text``. Used when this
             function calls ``detect_crisis()`` internally (i.e., when
-            ``crisis_result`` is the sentinel) AND ``_REDACT_BEFORE_LLM``
-            is on. Pre-LLM redaction (Phase 1): closes the leak surface
-            where a sentinel-call from the orchestrator would otherwise
-            send raw text to the crisis Stage 2 LLM. Local tone
+            ``crisis_result`` is the sentinel). Pre-LLM redaction is
+            mandatory at every Anthropic-touching call site since the
+            Phase 4 close-out (May 2026); the previous
+            ``_REDACT_BEFORE_LLM`` flag has been removed. Local tone
             classification (frustrated/emotional/confused/urgent) keeps
             using ``text`` because those paths are pure regex and don't
-            leak. Default ``None`` preserves pre-Phase-1 behavior.
+            leak. Default ``None`` falls back to ``text`` as a defensive
+            guard for callers that don't have access to the redacted
+            form.
 
     Returns one of: "crisis", "emotional", "frustrated", "confused",
     "urgent", or None.
@@ -275,17 +277,13 @@ def _classify_tone(
 
     # Crisis — highest priority (uses original text, NOT normalized)
     if crisis_result is _CRISIS_NOT_CHECKED:
-        # Pre-LLM redaction (Phase 1): use redacted_text for the LLM
-        # crisis call when available and the flag is on. Stage 1 (regex)
-        # is unaffected — the phrase list doesn't overlap with PII
-        # placeholders. The ``or text`` fallback preserves bit-for-bit
-        # behavior when redacted_text is None (default).
-        from app.services.chatbot.context import _REDACT_BEFORE_LLM
-        _crisis_input = (
-            redacted_text
-            if (_REDACT_BEFORE_LLM and redacted_text is not None)
-            else text
-        )
+        # Phase 4 close-out (May 2026): pre-LLM redaction is mandatory.
+        # The Stage 2 LLM crisis call always sees redacted text when it's
+        # available. Stage 1 (regex) is unaffected — the phrase list
+        # doesn't overlap with PII placeholders. The ``or text`` fallback
+        # preserves behavior when redacted_text is None (callers that
+        # don't have the redacted form).
+        _crisis_input = redacted_text if redacted_text is not None else text
         crisis_result = detect_crisis(_crisis_input)
     if crisis_result is not None:
         return "crisis"
