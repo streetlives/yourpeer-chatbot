@@ -45,7 +45,7 @@ Excluding either from the shelter default list will silently drop important loca
 
 ### `Health` has only 4 children
 
-The Health subtree is structurally simple compared to its size: General Health (57), Mental Health (128), Substance Use Treatment (12), Support Groups (8). Notably, **577 services are tagged at the Health parent directly**, more than the 205 in named children combined. This may indicate widespread tagging debt at the Health leaves; a Q7-style word-frequency analysis on Health parent-direct service names would clarify. (Source: `TAXONOMY_AUDIT_MAY2026.md` §II)
+The Health subtree is structurally simple compared to its size: General Health (57), Mental Health (128), Substance Use Treatment (12), Support Groups (8). Notably, **577 services are tagged at the Health parent directly**, more than the 205 in named children combined. This is the same pattern as the `Other service` parent-direct tagging-debt cluster (1,105 services) and may indicate widespread under-tagging at Health leaves. **Deferred follow-up:** a word-frequency analysis on the 577 Health parent-direct service names would reveal the latent sub-clusters (clinic types, urgent-care, dental, vision, etc.) and quantify the tagging-debt size. Not blocking for current chatbot work — `service_type=medical` already routes to the full Health subtree (parent + 4 children), so these 577 are findable today; the analysis matters before any future medical sub-narrowing. (Source: `TAXONOMY_AUDIT_MAY2026.md` §II + Appendix C Q4)
 
 ### `Shelter` has 20 children but most are tiny
 
@@ -194,6 +194,19 @@ Roughly 40-80% of services have any walk-in schedule data; nearly zero have it f
 
 ## V. Streetlives API — query mechanics
 
+### `service_at_location` (singular) is canonical; `services_at_locations` (plural) is empty legacy
+
+The DB has TWO tables that look like they could be the join between services and locations:
+
+- `service_at_location` (singular) — **3,445 rows. Canonical. Use this one.**
+- `services_at_locations` (plural) — **0 rows. Legacy cruft. Do not use.**
+
+A query against the plural form returns no rows but no error — silently empty result sets. This is the kind of mistake that costs a new maintainer an afternoon of debugging "where is the data?" before they think to check whether they're hitting the right table. Always verify the singular form when writing new SQL.
+
+(This same singular/plural pattern exists for `service_taxonomy` (singular, canonical) vs. `service_taxonomies` (plural, **does not exist** — querying it raises `relation does not exist`, which at least fails loudly. The locations join is the silent one.)
+
+**Recommendation**: this should also be noted in the Streetlives onboarding wiki at the top of any "DB schema overview" section.
+
 ### The API filters by exact `taxonomyId` match — no subtree expansion
 
 When you send `&taxonomyId=<parent_uuid>`, you get only services tagged AT that parent. Services tagged at children are NOT included automatically. Subtree expansion is the **caller's responsibility**.
@@ -329,6 +342,28 @@ See `audits/REGEX_AUDIT.md` for the full collision-risk analysis and remediation
 Senior services, disability services, and LGBTQ non-shelter services are all tagged in `SERVICE_KEYWORDS["other"]` today. Conceptually they are population dimensions, not service categories. Section VI of `TAXONOMY_AUDIT_MAY2026.md` recommends extracting them as a separate slot.
 
 This is the recommendation — current code does NOT do this yet. (Source: `TAXONOMY_AUDIT_MAY2026.md` §VI)
+
+### Crisis handlers silently drop `additional_services` from the LLM extraction
+
+**Confirmed via Pattern B probe, May 2026.** When the crisis_detector fires (DV, suicide, trafficking, etc.), the dispatch path routes through dedicated crisis handlers in `services/chatbot/handlers/`. These handlers respond with the appropriate hotlines and offer to search for the primary service_type, but they **do not consult or surface `additional_services`** from the same LLM extraction.
+
+Concrete example from the probe:
+
+> User: "Escaped abuse with my child, safe for the moment, need help with shelter and next steps."
+>
+> LLM extraction (Pattern B fix landing correctly): `{service_type: shelter, additional_services: [{type: legal}], crisis_category: domestic_violence, family_status: with_children}`
+>
+> Bot turn 2: "I'm sorry you're going through this... I can also help you find shelter in your area — would you like me to search?"
+>
+> Bot turn 6 (after results): "I found 4 option(s) for you:" — followed by quick replies "New search" / "Peer navigator." **Legal queue never offered.**
+
+The user's stated need ("next steps" → legal/advocacy in DV context) is silently dropped. Compare to the standard non-crisis flow, which carries additional_services through to a "I can also search for X next" follow-up.
+
+**Why this matters:** for DV survivors, "what now" after escaping is overwhelmingly a legal/advocacy question (order of protection, custody, housing-program enrollment, immigration relief). The Family Justice Centers exist for exactly this need. Dropping the legal queue in the crisis path is a routing failure that affects the population most needing the breadth.
+
+**Status:** filed as Gap 2 of Pattern B follow-up. Not addressed in the prompt-only Pattern B fix; needs dispatch-layer work in the relevant crisis handler(s) to consult `additional_services` and offer them post-results. Same shape probably affects suicide_self_harm + service_type combinations and the other 5 crisis categories — needs an audit, not just a single-handler fix.
+
+(Source: `scenarios.jsonl` from probe run 2026-05-07; `peer_escaped_abuse_child_next_steps`)
 
 ### Unvalidated business rules
 
