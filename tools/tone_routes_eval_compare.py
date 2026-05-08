@@ -18,9 +18,18 @@ This is the precondition for the full 100-message labeling experiment.
 It tells you whether the layer adds value on inputs the team already
 cares about, before investing in human labeling.
 
+The --chunk flag splits messages into clauses (sentence-bounded plus
+commas/semicolons plus coordinating conjunctions) and takes the MAX
+similarity across chunks. This addresses the dilution problem: a
+message like "I'm ashamed to be asking but I need food in the Bronx"
+embeds the whole thing into a vague distress signal at low confidence,
+but chunking surfaces "I'm ashamed to be asking" as its own clause
+which embeds near shame canonicals at high confidence.
+
 Usage (from repo root with chatbot venv active):
     python tools/tone_routes_eval_compare.py
-    python tools/tone_routes_eval_compare.py --all-turns
+    python tools/tone_routes_eval_compare.py --chunk
+    python tools/tone_routes_eval_compare.py --chunk --all-turns
     python tools/tone_routes_eval_compare.py --threshold 0.60
     python tools/tone_routes_eval_compare.py --json out.json
 """
@@ -30,6 +39,7 @@ import argparse
 import ast
 import importlib.util
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -50,6 +60,34 @@ PER_ROUTE_THRESHOLDS = {
     # statements, past-experience). Lower threshold + lexicon hybrid.
     "distrust": 0.55,
 }
+
+# -- Chunking ------------------------------------------------------------------
+
+# Splits on sentence terminators (.!?), comma/semicolon, and
+# coordinating conjunctions at word boundaries. Conjunctions: but, and,
+# or, because, so, yet. The case-insensitive match handles "But"/"And"
+# at sentence starts when split on the period before them.
+_CHUNK_SPLIT_PATTERN = re.compile(
+    r'[.!?,;]+\s*|\s+(?:but|and|or|because|so|yet)\s+',
+    flags=re.IGNORECASE,
+)
+
+
+def split_into_chunks(text: str, min_tokens: int = 3) -> list[str]:
+    """Split a message into clause-level chunks.
+
+    Returns chunks that have >= min_tokens whitespace-delimited tokens
+    after stripping. Empty list when the message is too short to split
+    meaningfully — caller should treat as "skip semantic on this message"
+    rather than fall back to whole-message embedding (short messages
+    pick up noise classifications, not signal).
+    """
+    raw = _CHUNK_SPLIT_PATTERN.split(text)
+    return [
+        c.strip()
+        for c in raw
+        if c and c.strip() and len(c.strip().split()) >= min_tokens
+    ]
 
 # -- Scenario extraction -------------------------------------------------------
 
@@ -140,25 +178,59 @@ def semantic_classify(
     model,
     default_threshold: float,
     per_route_thresholds: dict[str, float],
-) -> tuple[str | None, float, list[tuple[str, float]]]:
-    """Return (best_category_above_threshold, top1_similarity, top3_pairs).
+    chunk: bool = False,
+    min_chunk_tokens: int = 3,
+) -> tuple[str | None, float, list[tuple[str, float]], str | None, list[str]]:
+    """Return (best_category_above_threshold, top1_similarity, top3_pairs,
+    winning_chunk, all_chunks).
 
-    Matches the production router's logic: the score for each route is
-    the MAX cosine similarity over all utterances in that route, not
-    the centroid similarity. (Centroid would smooth out outliers we
-    actually want to fire on.)
+    Matches the production router's logic for the per-canonical max:
+    each route's score is the MAX cosine similarity over all utterances
+    in that route, not the centroid similarity. With chunk=True, an
+    additional outer max is taken over message clauses, and the chunk
+    that produced the winning category is returned for diagnostics.
+
+    When chunk=True and the message is too short to split (no chunks
+    survive the min_tokens filter), returns category=None — short
+    messages picked up noise classifications in the v1 run, so we
+    treat them as "skip semantic" rather than falling back to the
+    full message.
+
+    winning_chunk is the chunk text that produced the top-1 category's
+    score (whether or not that score crossed the threshold). When
+    chunk=False, winning_chunk is the full message.
     """
-    msg_emb = model.encode([text], normalize_embeddings=True)[0]
+    if chunk:
+        chunks = split_into_chunks(text, min_chunk_tokens)
+        if not chunks:
+            # Short message — don't classify
+            return None, 0.0, [], None, []
+        texts = chunks
+    else:
+        texts = [text]
+        chunks = []
+
+    embs = model.encode(texts, normalize_embeddings=True)  # (n_texts, dim)
+
     sims: dict[str, float] = {}
-    for cat, embs in route_embeddings.items():
-        sims[cat] = float(np.max(embs @ msg_emb))
+    best_chunk_per_cat: dict[str, str] = {}
+    for cat, route_emb in route_embeddings.items():
+        # Cosine similarity matrix: (n_texts, n_canonicals)
+        sim_matrix = embs @ route_emb.T
+        # Max over the whole matrix (best chunk × best canonical)
+        flat_max_idx = int(np.argmax(sim_matrix))
+        chunk_idx = flat_max_idx // sim_matrix.shape[1]
+        sims[cat] = float(sim_matrix.flat[flat_max_idx])
+        best_chunk_per_cat[cat] = texts[chunk_idx]
+
     sorted_cats = sorted(sims.items(), key=lambda x: -x[1])
     top3 = sorted_cats[:3]
     best_cat, best_sim = sorted_cats[0]
+    winning_chunk = best_chunk_per_cat[best_cat]
     threshold = per_route_thresholds.get(best_cat, default_threshold)
     if best_sim >= threshold:
-        return best_cat, best_sim, top3
-    return None, best_sim, top3
+        return best_cat, best_sim, top3, winning_chunk, chunks
+    return None, best_sim, top3, winning_chunk, chunks
 
 
 # -- Comparison and categorization ---------------------------------------------
@@ -196,6 +268,11 @@ def print_section(title: str, items: list[dict], max_n: int | None = None) -> No
         msg_short = (r["text"][:120] + "…") if len(r["text"]) > 120 else r["text"]
         print(f"  [{r['id']} cat={r['category']} turn={r['turn_idx']}]")
         print(f"    msg: {msg_short!r}")
+        # Surface winning chunk if it differs from full message
+        # (only meaningful when --chunk was used and chunking occurred)
+        wc = r.get("winning_chunk")
+        if wc and wc != r["text"] and r.get("n_chunks", 0) > 1:
+            print(f"    chunk that fired: {wc!r}")
         print(f"    lex={r['lex_coarse']}/{r['lex_specific']}  |  sem={sem_str}")
         print()
 
@@ -208,6 +285,14 @@ def main() -> int:
                         help="Include every user turn (default: first only)")
     parser.add_argument("--threshold", type=float, default=DEFAULT_THRESHOLD,
                         help=f"Default semantic threshold (default {DEFAULT_THRESHOLD})")
+    parser.add_argument("--chunk", action="store_true",
+                        help="Split messages into clauses and take max similarity "
+                             "across chunks (addresses signal dilution from "
+                             "multi-content messages)")
+    parser.add_argument("--min-chunk-tokens", type=int, default=3,
+                        help="Minimum tokens per chunk (default 3); messages "
+                             "with no chunks meeting this minimum get skipped "
+                             "by semantic classification")
     parser.add_argument("--draft", type=Path, default=DRAFT_PATH,
                         help="Path to tone_routes_draft.py")
     parser.add_argument("--eval", type=Path, default=EVAL_PATH,
@@ -256,7 +341,9 @@ def main() -> int:
                 "text": t,
             })
     print(f"Comparing {len(messages)} messages "
-          f"({'all turns' if args.all_turns else 'first turn only'})")
+          f"({'all turns' if args.all_turns else 'first turn only'}, "
+          f"{'chunked' if args.chunk else 'full-message'} embedding"
+          f"{f', min_tokens={args.min_chunk_tokens}' if args.chunk else ''})")
 
     # Run both classifiers on each
     results = []
@@ -265,8 +352,10 @@ def main() -> int:
             lex_coarse, lex_specific = lexicon_classify(m["text"])
         except Exception as e:
             lex_coarse, lex_specific = "ERROR", str(e)[:50]
-        sem_cat, sem_conf, top3 = semantic_classify(
-            m["text"], route_embeddings, model, args.threshold, PER_ROUTE_THRESHOLDS,
+        sem_cat, sem_conf, top3, winning_chunk, chunks = semantic_classify(
+            m["text"], route_embeddings, model,
+            args.threshold, PER_ROUTE_THRESHOLDS,
+            chunk=args.chunk, min_chunk_tokens=args.min_chunk_tokens,
         )
         bucket = categorize(lex_coarse, lex_specific, sem_cat)
         results.append({
@@ -276,6 +365,8 @@ def main() -> int:
             "sem_cat": sem_cat,
             "sem_conf": round(sem_conf, 3),
             "top3": [(c, round(s, 3)) for c, s in top3],
+            "winning_chunk": winning_chunk,
+            "n_chunks": len(chunks),
             "bucket": bucket,
         })
 
