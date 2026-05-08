@@ -281,6 +281,22 @@ def get_stats() -> dict:
         sid = t.get("session_id", "")
         sess_cats.setdefault(sid, set()).add(t.get("category", ""))
 
+    # Crisis category breakdown — aggregated from the crisis_category
+    # field on each crisis_detected event. The crisis_detector emits
+    # one of 8 canonical categories (suicide_self_harm, medical_emergency,
+    # domestic_violence, youth_runaway, assault_victim, safety_concern,
+    # trafficking, violence) plus a fallback "safety_concern" when the
+    # LLM stage misses or the category field is missing.
+    #
+    # Sparse representation: only categories that fired during this
+    # period appear in the dict, matching the convention of
+    # category_distribution / service_type_distribution. Frontends that
+    # want a fixed-axis chart can union with their own canonical list.
+    crises_by_category: dict[str, int] = {}
+    for c in crises:
+        cat = c.get("crisis_category") or "uncategorized"
+        crises_by_category[cat] = crises_by_category.get(cat, 0) + 1
+
     # Distributions
     cat_dist: dict[str, int] = {}
     svc_dist: dict[str, int] = {}
@@ -378,6 +394,9 @@ def get_stats() -> dict:
         "total_turns": len(turns),
         "total_queries": len(queries),
         "total_crises": len(crises),
+        # Crisis breakdown by category, populated from each crisis_detected
+        # event's crisis_category field. See the aggregation block above.
+        "crises_by_category": crises_by_category,
         "total_resets": len(resets),
         "unique_sessions": len(all_sessions),
         "total_escalations": len(esc_sessions),

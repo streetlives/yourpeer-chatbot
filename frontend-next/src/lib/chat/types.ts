@@ -190,6 +190,19 @@ export interface AdminStats {
   total_turns: number;
   total_queries: number;
   total_crises: number;
+  /**
+   * Sparse breakdown of crisis events by category (8 canonical categories
+   * plus an "uncategorized" fallback). Sums to `total_crises`. Categories
+   * not seen during the period are absent — matches the convention of
+   * `category_distribution` and `service_type_distribution`.
+   *
+   * Backend source: `crisis_detector._CRISIS_CATEGORIES` defines the 8
+   * canonical categories (suicide_self_harm, medical_emergency,
+   * domestic_violence, youth_runaway, assault_victim, safety_concern,
+   * trafficking, violence). Aggregated in `audit_log.get_stats()` from
+   * each `crisis_detected` event's `crisis_category` field.
+   */
+  crises_by_category: Record<string, number>;
   total_escalations: number;
   total_resets: number;
   service_intent_sessions: number;
