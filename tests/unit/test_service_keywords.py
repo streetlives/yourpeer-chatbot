@@ -498,12 +498,29 @@ class TestYourPeerAlignment:
 
     def test_schedule_weekday_isodow(self):
         """holiday_schedules uses 1-7 (ISODOW), not 0-6.
-        The join must NOT subtract 1 from ISODOW."""
+        The join must NOT subtract 1 from ISODOW.
+
+        As of May 2026 the JOIN evaluates ISODOW against
+        ``CURRENT_TIMESTAMP AT TIME ZONE 'America/New_York'`` (instead of
+        ``CURRENT_DATE``) so the weekday is picked in NYC time. The
+        no-subtraction guarantee is the same; only the source expression
+        changed. See ``docs/audits/SCHEDULE_TZ_FIX.md``.
+        """
         from app.rag.query_templates import build_query
         sql, _ = build_query("food", {"borough": "Manhattan"})
-        assert "ISODOW FROM CURRENT_DATE)::int - 1" not in sql
-        # Verify ISODOW is used without subtraction
-        assert "ISODOW FROM CURRENT_DATE)::int" in sql
+        # The buggy form would subtract 1 from the ISODOW result.
+        assert "::int - 1" not in sql, (
+            "ISODOW must NOT be decremented — holiday_schedules uses "
+            "1=Mon..7=Sun (matches PostgreSQL ISODOW directly)."
+        )
+        # Verify ISODOW is used (now sourced from NYC-time CURRENT_TIMESTAMP
+        # rather than DB-tz CURRENT_DATE).
+        assert "ISODOW FROM (CURRENT_TIMESTAMP AT TIME ZONE 'America/New_York')" in sql, (
+            "Today's weekday must be evaluated in NYC time so a "
+            "Tuesday-evening NYC user sees Tuesday's hours rather than "
+            "Wednesday's. See SCHEDULE_TZ_FIX."
+        )
+        assert ")::int" in sql, "ISODOW result should be cast to int"
 
 
 

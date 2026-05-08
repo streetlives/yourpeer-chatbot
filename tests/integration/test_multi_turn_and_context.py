@@ -763,12 +763,15 @@ class TestNegativePreferenceSafetyAndExpansion:
        Crisis-adjacent phrasings ("I'm not safe", "got attacked") fire
        crisis detection and route before this handler runs — no overlap.
 
-    2. **Borough-expansion offer in tier 1.** When the user's location/
-       service combo supports nearby boroughs (via the existing
-       ``_NEARBY_BOROUGHS_BY_SERVICE`` data and a neighborhood→borough
-       resolver), tier 1 mentions them in prose and offers up to 2
+    2. **Borough-expansion offer in tier 1.** When the user's location
+       resolves to a borough, tier 1 mentions geographically nearby
+       boroughs (via ``_GEOGRAPHIC_NEIGHBORS_BY_BOROUGH`` and a
+       neighborhood→borough resolver) in prose and offers up to 2
        ``🗺️ Try {Borough}`` quick replies. Tier 2 and tier 3 stay
-       escalation-focused.
+       escalation-focused. Borough ranking is geographic
+       (centroid-to-centroid), not service-density-based — the
+       no-results path uses density via ``_NEARBY_BOROUGHS_BY_SERVICE``,
+       but a user who rejected results expects geographic neighbors.
 
     Tests cover the four corner cases (safety×expansion ∈ 2×2) plus
     tier 2/3 escalation behavior and over-fire negatives.
@@ -817,14 +820,17 @@ class TestNegativePreferenceSafetyAndExpansion:
             f"acknowledgment; got: {resp!r}"
         )
 
-        # Borough-expansion prose: Harlem→Manhattan, food expansion is
-        # ["Brooklyn", "Queens"] per _NEARBY_BOROUGHS_BY_SERVICE.
+        # Borough-expansion prose: Harlem→Manhattan, geographic
+        # neighbors are ["Bronx", "Brooklyn"] per
+        # _GEOGRAPHIC_NEIGHBORS_BY_BOROUGH (7.0 mi and 7.4 mi
+        # respectively, vs Queens at ~10 mi).
         assert "broaden the search" in resp_lower, (
             f"Tier-1 with location should offer expansion in prose; "
             f"got: {resp!r}"
         )
-        assert ("brooklyn" in resp_lower or "queens" in resp_lower), (
-            f"Tier-1 expansion should name a nearby borough; got: {resp!r}"
+        assert ("bronx" in resp_lower or "brooklyn" in resp_lower), (
+            f"Tier-1 expansion should name a geographically nearby "
+            f"borough (Bronx or Brooklyn for Manhattan); got: {resp!r}"
         )
 
         # Borough-expansion quick replies present, in priority position.
@@ -901,7 +907,8 @@ class TestNegativePreferenceSafetyAndExpansion:
             f"got: {r['response']!r}"
         )
 
-        # Expansion still fires (Brooklyn food → Queens, Bronx).
+        # Expansion still fires (Brooklyn → Manhattan, Queens
+        # geographically: 7.4 mi, 8.5 mi).
         assert "broaden the search" in resp, (
             f"Expansion should fire for known location; got: {r['response']!r}"
         )

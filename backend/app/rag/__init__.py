@@ -23,6 +23,7 @@ from app.rag.query_executor import (
     DEFAULT_NEIGHBORHOOD_RADIUS_METERS,
 )
 from app.rag.query_templates import TEMPLATES
+from app.services.slot_extraction_regex import CITYWIDE_SENTINEL
 
 
 # ---------------------------------------------------------------------------
@@ -269,11 +270,35 @@ def query_services(
             }
         user_params = {}
 
-    # Direct browser geolocation: use lat/lng for proximity search
+    # Direct browser geolocation: use lat/lng for proximity search.
+    # When location is CITYWIDE_SENTINEL AND lat/lon are present, the
+    # geolocation path takes precedence (proximity search is more useful
+    # than an unranked citywide list). When citywide is set without GPS,
+    # we fall through to the citywide branch below.
     if latitude is not None and longitude is not None:
         user_params["lat"] = latitude
         user_params["lon"] = longitude
         user_params["radius_meters"] = DEFAULT_NEIGHBORHOOD_RADIUS_METERS
+    elif location == CITYWIDE_SENTINEL:
+        # Citywide search: union of all 5 boroughs' city lists. Skips
+        # the borough/neighborhood resolution entirely. The SQL layer's
+        # FILTER_BY_CITY_IN_BOROUGH (`pa.city = ANY(:city_list)`) handles
+        # the result set; default freshness ordering applies because no
+        # lat/lon are set.
+        all_cities: list[str] = []
+        for borough in ("Manhattan", "Brooklyn", "Queens", "Bronx", "Staten Island"):
+            all_cities.extend(get_borough_city_names(borough))
+        # Dedupe while preserving order. Some city values appear under
+        # multiple boroughs in the alias map (rare but possible); keep
+        # the first occurrence to match how get_borough_city_names is
+        # documented to return per-borough lists.
+        seen: set[str] = set()
+        deduped: list[str] = []
+        for c in all_cities:
+            if c not in seen:
+                seen.add(c)
+                deduped.append(c)
+        user_params["city_list"] = deduped
     elif location:
         normalized_city = normalize_location(location)
         user_location_is_borough = is_borough(location)

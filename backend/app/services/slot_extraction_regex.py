@@ -407,6 +407,46 @@ _NEAR_ME_PHRASES = [
 NEAR_ME_SENTINEL = "__near_me__"
 
 
+# Phrases that mean "anywhere in NYC" — broad city-level intent rather
+# than a specific borough or neighborhood. When detected (and no
+# specific location is mentioned elsewhere in the message), we store
+# CITYWIDE_SENTINEL; the query layer treats this as a citywide search
+# across all 5 boroughs. If browser geolocation is also active, the
+# SQL layer's existing distance-band ordering kicks in automatically
+# (no additional logic needed — proximity ordering activates whenever
+# lat/lon are passed to build_query).
+#
+# Sorted longest-first so "new york city" matches before "new york",
+# "all of nyc" before "nyc", etc. — same convention as _KNOWN_LOCATIONS.
+_CITYWIDE_PHRASES = [
+    # Multi-word (longest first)
+    "anywhere in the city",
+    "anywhere in nyc",
+    "all five boroughs",
+    "all 5 boroughs",
+    "any of the boroughs",
+    "all of new york",
+    "across new york",
+    "new york city",
+    "all of nyc",
+    "across nyc",
+    "any borough",
+    "the city",
+    "all nyc",
+    # Single-word
+    "nyc",
+    "n.y.c",
+    "new york",
+    "ny",
+]
+
+# Sentinel value stored when user expresses citywide intent without
+# specifying a borough. Treated as "search all five boroughs" by the
+# query layer; geolocation (if active) automatically applies distance
+# ordering to the citywide result set.
+CITYWIDE_SENTINEL = "__citywide__"
+
+
 # TODO: Current implementation assumes a single service intent.
 # This will fail for multi-intent queries (e.g., "food and housing").
 # Consider returning a list of services instead of a single value.
@@ -1032,6 +1072,29 @@ def _extract_location(text: str) -> Optional[str]:
             if not has_real_location_after:
                 return NEAR_ME_SENTINEL
 
+    # Citywide phrases — "NYC", "the city", "all five boroughs", etc.
+    # Same "real location after" override as near-me: a more specific
+    # mention later in the same message wins ("food in NYC, Brooklyn
+    # specifically" → Brooklyn). Without this check, the fallback regex
+    # below would capture "NYC"/"New York" as a freeform location string
+    # that doesn't match any borough at the DB layer (returning 0
+    # results), or bare mentions like "the city" would extract None and
+    # silently re-prompt the user for a borough.
+    for phrase in _CITYWIDE_PHRASES:
+        # Use word-boundary match so "ny" doesn't fire on "any" / "many"
+        # / "anyone" — these would otherwise be catastrophic false
+        # positives. The other phrases are long enough that substring
+        # match is fine, but apply the rule uniformly.
+        pattern = r"\b" + re.escape(phrase) + r"\b"
+        match = re.search(pattern, lower)
+        if match:
+            remainder = lower[match.end():]
+            has_real_location_after = any(
+                loc in remainder for loc in _KNOWN_LOCATIONS
+            )
+            if not has_real_location_after:
+                return CITYWIDE_SENTINEL
+
     # Preposition + known location: "in Brooklyn", "near Queens",
     # "around Harlem", "by Midtown", "from the Bronx"
     # First, try to match a preposition followed by a KNOWN location.
@@ -1071,6 +1134,16 @@ def _extract_location(text: str) -> Optional[str]:
             # (verified: none conflict with _KNOWN_LOCATIONS)
             "name", "distance", "rating", "category", "phone",
             "date", "open", "close", "email", "text",
+            # Citywide-phrase first-tokens. When the citywide check above
+            # is overridden by a more-specific location ("in NYC,
+            # Brooklyn"), the fallback regex would otherwise capture
+            # "NYC" as a freeform location and short-circuit the
+            # bare-mention check that finds Brooklyn. Filtering these
+            # first-tokens lets the bare-mention pass below find the
+            # real location. ("new" filters "New York"; "anywhere"
+            # filters "anywhere in NYC"; etc.)
+            "nyc", "ny", "n.y.c", "new",
+            "anywhere", "across",
         ]
         if candidate_lower.split()[0] not in non_locations:
             return candidate
@@ -1930,13 +2003,24 @@ def merge_slots(existing: dict, new_values: dict) -> dict:
             continue
         if value not in (None, "", []):
             # If user provides a real location, replace a previous "near me"
-            if key == "location" and value != NEAR_ME_SENTINEL:
+            # or citywide sentinel.
+            if (
+                key == "location"
+                and value not in (NEAR_ME_SENTINEL, CITYWIDE_SENTINEL)
+            ):
                 merged[key] = value
             elif key == "location" and value == NEAR_ME_SENTINEL:
                 # Always store the sentinel — the user explicitly said "near me",
                 # "close by", etc. This should override a stale location from a
                 # previous search. If we kept the old location, the user's
                 # explicit request for proximity search would be silently ignored.
+                merged[key] = value
+            elif key == "location" and value == CITYWIDE_SENTINEL:
+                # Same logic as NEAR_ME_SENTINEL — when the user explicitly
+                # broadens to a citywide search ("anywhere in NYC", "all five
+                # boroughs"), override any prior borough-specific value.
+                # Without this, "Manhattan" set in turn 1 would silently
+                # constrain a turn-2 "anywhere in NYC" follow-up.
                 merged[key] = value
             else:
                 merged[key] = value
@@ -1959,7 +2043,11 @@ def is_enough_to_answer(slots: dict) -> bool:
     # Org name search: org_name alone is sufficient (location optional)
     if slots.get("org_name"):
         return True
-    # Service type search: need service type + a real location
+    # Service type search: need service type + a real location.
+    # CITYWIDE_SENTINEL counts as a real location — it's an explicit
+    # citywide-search intent that the query layer handles by unioning
+    # all 5 boroughs. NEAR_ME_SENTINEL does NOT count by itself; it
+    # needs either GPS coords or a follow-up borough.
     has_service = bool(slots.get("service_type"))
     has_location = bool(
         slots.get("location")
@@ -1976,7 +2064,8 @@ def next_follow_up_question(slots: dict) -> str:
     if not slots.get("location") or slots.get("location") == NEAR_ME_SENTINEL:
         return (
             "What neighborhood or borough are you in? "
-            "This helps me find what's closest to you."
+            "This helps me find what's closest to you. "
+            "If you want results from anywhere in NYC, just tell me \"all NYC\"."
         )
 
     if slots.get("service_type") == "shelter" and not slots.get("age"):
