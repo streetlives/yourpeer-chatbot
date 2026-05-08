@@ -12,7 +12,7 @@ from app.services.session_store import save_session_slots
 from app.services.slot_extraction_regex import NEAR_ME_SENTINEL, extract_slots
 from app.services import slot_extraction
 
-from .context import _USE_LLM, _REDACT_BEFORE_LLM
+from .context import _USE_LLM
 
 
 # Phase 4 (April 2026): the gap-filler at `_run_llm_gate` now routes
@@ -172,11 +172,12 @@ def _run_llm_gate(
         provided) is the same text with PII placeholders. Local
         decisions (gate condition, length check) use ``message`` so
         redaction can never mask the gate from firing on a substantive
-        message; the actual LLM payload uses ``redacted_message`` when
-        ``_REDACT_BEFORE_LLM`` is true. When ``redacted_message`` is
-        None or the flag is false, ``message`` is sent as-is — bit-for-
-        bit identical to pre-Phase-1 behavior. See
-        docs/design/PRE_LLM_REDACTION_SCOPE.md.
+        message; the actual LLM payload uses ``redacted_message`` whenever
+        it's available. Pre-LLM redaction was made mandatory in Phase 4
+        (May 2026) — the flag was removed; redacted is now the only path.
+        ``redacted_message=None`` falls back to ``message`` only as a
+        defensive guard for callers that don't have access to the
+        redacted form. See docs/design/PRE_LLM_REDACTION_SCOPE.md.
     """
     needs_unified = (
         _USE_LLM
@@ -188,17 +189,12 @@ def _run_llm_gate(
     if not needs_unified:
         return has_service_intent, action_pre, extraction_source, None, None, None
 
-    # Pick the payload sent to Anthropic. Defaults to raw ``message`` for
-    # backward compatibility — only the Phase 3 production env-var flip
-    # plus a non-None redacted_message switches this. The gate condition
-    # above (length, action_pre, etc.) was already evaluated on the raw
-    # message, so this can only change the LLM input, not whether the
-    # gate fires.
-    llm_payload = (
-        redacted_message
-        if (_REDACT_BEFORE_LLM and redacted_message is not None)
-        else message
-    )
+    # Pick the payload sent to Anthropic. Phase 4 close-out: redacted text is
+    # mandatory at every LLM call site, so this is no longer flag-gated. The
+    # gate condition above (length, action_pre, etc.) was already evaluated
+    # on the raw message, so this only changes the LLM input, not whether
+    # the gate fires.
+    llm_payload = redacted_message if redacted_message is not None else message
 
     llm_tone = None
     llm_action = None
@@ -272,8 +268,8 @@ def _compute_routing_category(
     early_extracted: dict,
     extraction_source: str | None,
     message: str,
-) -> tuple[str, str]:
-    """Combine tone + action + intent signals into a routing category + confidence.
+) -> tuple[str, str, str]:
+    """Combine tone + action + intent signals into a routing category, confidence, and reason.
 
     **The branch ORDER encodes precedence rules** and is guarded by
     ``tests/unit/test_routing_category_order.py``. Do not reorder without
@@ -282,22 +278,56 @@ def _compute_routing_category(
     disambiguation (confirm_* before has_service_intent so pending
     confirmations aren't bypassed by a trailing service keyword).
 
-    Returns (category, confidence) where confidence is one of
-    "high" / "semantic" / "medium" / "low".
+    Returns ``(category, confidence, confidence_reason)``:
+
+    - ``confidence`` is an ORDINAL signal-strength indicator:
+      ``"high"`` > ``"semantic"`` > ``"medium"`` > ``"low"``. Use it for
+      ordinal checks like ``ctx.confidence in ("medium", "low")`` —
+      e.g., to decide whether to show a "Not what I meant" affordance.
+
+    - ``confidence_reason`` is a CATEGORICAL discriminator naming WHY
+      confidence is what it is. Use it for behavior decisions that depend
+      on the specific failure mode — e.g., "the LLM was reaching for
+      ``other``" requires a different response than "no signal at all,"
+      even though both produce ``confidence == "low"``. Valid values:
+
+        * ``"regex_match"``         — extraction_source == "regex"
+        * ``"semantic_match"``      — extraction_source == "semantic"
+        * ``"llm_match"``           — LLM gate produced usable extraction
+        * ``"llm_reaching_other"``  — LLM gate snapped to ``other`` with
+                                      no detail; redirect to general
+                                      handler (see ``has_service_intent``
+                                      branch below)
+        * ``"no_signal"``           — nothing classified; fallback else
+        * ``"non_service_route"``   — non-service category (greeting,
+                                      reset, bot_question, etc.)
+
+    Why two fields instead of one: ``confidence`` was previously
+    overloaded — both "LLM was reaching" and "no signal at all" landed
+    on ``"low"``, forcing downstream handlers to re-derive WHICH case
+    fired by inspecting slot shape. Splitting the categorical concern
+    into ``confidence_reason`` lets each consumer pick its scale (ordinal
+    or categorical) without re-deriving state. See ``ARCH_NOTES.md``
+    "Confidence reason refactor (May 2026)" for the full rationale.
     """
-    # Confidence reflects how the service_type was determined:
+    # Default mapping based on extraction source. Both fields are set
+    # together to keep telemetry consistent with categorical routing.
     #   "high"     — regex keyword match (deterministic)
-    #   "semantic" — semantic embedding match (Tier 2, high but not deterministic)
+    #   "semantic" — semantic embedding match (Tier 2)
     #   "medium"   — LLM classification (unified gate or fallback)
-    #   "low"      — no classification succeeded, using fallback
+    #   "high"     — non-service routes (greeting, reset, etc.)
     if extraction_source == "regex":
         confidence = "high"
+        confidence_reason = "regex_match"
     elif extraction_source == "semantic":
         confidence = "semantic"
+        confidence_reason = "semantic_match"
     elif extraction_source == "llm_gate":
         confidence = "medium"
+        confidence_reason = "llm_match"
     else:
-        confidence = "high"  # default for non-service routes (greeting, reset, etc.)
+        confidence = "high"  # default for non-service routes
+        confidence_reason = "non_service_route"
 
     if tone == "crisis":
         category = "crisis"
@@ -317,6 +347,40 @@ def _compute_routing_category(
             category = "bot_question"
         elif action == "escalation" and not early_extracted.get("location"):
             category = "escalation"
+        elif (
+            extraction_source == "llm_gate"
+            and early_extracted.get("service_type") == "other"
+            and not early_extracted.get("service_detail")
+        ):
+            # Low-confidence "other" with no detail — the LLM was reaching
+            # because regex AND semantic both missed, and even within the
+            # catchall the LLM couldn't narrow to a known sub-type. Route
+            # to the general handler's tiered redirect rather than
+            # dispatching a search that will surface plausible-but-
+            # irrelevant cards from the "other" taxonomy bucket (food
+            # stamps offices, ID services, etc. for a "helicopter ride"
+            # request).
+            #
+            # Eval target: adversarial_unrecognized_service (R28: 2.91,
+            # R32: 4.36, R41: 3.73 — score has tracked fixture state
+            # rather than bot behavior because there's no behavioral
+            # guard until this branch). adversarial_nonsense_service
+            # likely benefits too.
+            #
+            # Conservative gate by design: requires extraction_source
+            # to be "llm_gate" specifically, so any of the 99 "other"
+            # keywords matched by regex (benefits, ebt, free phone,
+            # wifi, voter registration, tax prep, etc.) bypass this
+            # branch and proceed to service search as before.
+            #
+            # ``confidence_reason="llm_reaching_other"`` lets the
+            # confirmation gate in orchestrator.py and the handler in
+            # general.py both check a single named state instead of
+            # re-deriving the trio (extraction_source + service_type +
+            # not service_detail) at three call sites.
+            category = "general"
+            confidence = "low"
+            confidence_reason = "llm_reaching_other"
         else:
             category = "service"
     elif action == "help":
@@ -350,8 +414,9 @@ def _compute_routing_category(
         # ``general`` default. See ``PHASE_AC_AFTERMATH.md`` `LLM-3`.
         category = "general"
         confidence = "low"
+        confidence_reason = "no_signal"
 
-    return category, confidence
+    return category, confidence, confidence_reason
 
 
 def _apply_session_geo(

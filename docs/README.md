@@ -41,6 +41,7 @@ Reference material for people working on a specific feature. Each file describes
 | [POPULATION_FALLBACK_SPEC.md](design/POPULATION_FALLBACK_SPEC.md) | Citywide fallback for rare populations (LGBTQ YA, youth, senior, veteran) |
 | [BUCKETED_DISTANCE_SORT_SPEC.md](design/BUCKETED_DISTANCE_SORT_SPEC.md) | Four-band distance sort — trading precision for perceived fairness |
 | [FRESHNESS_TIER_SPEC.md](design/FRESHNESS_TIER_SPEC.md) | Three-tier freshness ranking: recent → stale → unknown |
+| [STREETLIVES_DATA_GOTCHAS.md](design/STREETLIVES_DATA_GOTCHAS.md) | Catalog of non-intuitive Streetlives DB structures, API quirks, YourPeer frontend bugs, and chatbot routing assumptions. Living reference; consult before writing query templates or routing logic. |
  
 ## `audits/` — point-in-time analyses
  

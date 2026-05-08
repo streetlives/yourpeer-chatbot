@@ -20,7 +20,7 @@ from app.services.responses import _fallback_response
 from app.services.session_store import save_session_slots
 from app.services.slot_extraction_regex import NEAR_ME_SENTINEL
 
-from ..context import MessageContext, _REDACT_BEFORE_LLM, _empty_reply
+from ..context import MessageContext, _empty_reply
 from ..logging import _log_turn
 
 
@@ -68,16 +68,44 @@ def _handle_general_conversation(ctx: MessageContext):
     merged = ctx.require_merged()
     is_casual_chat = bool(_CASUAL_CHAT_RE.search(ctx.message))
     is_service_request_pattern = bool(_SERVICE_NEED_RE.search(ctx.message))
+
+    # Routing signal: the LLM gate snapped to ``service_type="other"``
+    # with no detail because regex AND semantic both missed. The router
+    # routed us here (category="general") with this exact reason so we
+    # can fire the tiered redirect instead of dispatching a search that
+    # would surface plausible-but-irrelevant cards from the "other"
+    # taxonomy bucket.
+    #
+    # Pre-refactor (May 2026) this checked the trio
+    # ``(ctx.confidence == "low", merged.get("service_type") == "other",
+    # not merged.get("service_detail"))``. The reason field replaces
+    # that — see ``_compute_routing_category`` in pipeline.py.
+    is_llm_reaching_other = ctx.confidence_reason == "llm_reaching_other"
+
     has_unrecognized_need = (
-        is_service_request_pattern
-        and not merged.get("service_type")
+        (is_service_request_pattern or is_llm_reaching_other)
         and not is_casual_chat
+        and (
+            not merged.get("service_type")
+            or is_llm_reaching_other
+        )
     )
 
     if (has_unrecognized_need
             or (merged.get("location")
                 and not merged.get("service_type")
                 and len(merged.get("transcript", [])) >= 2)):
+        # Clear the LLM-snapped "other" classification so a follow-up
+        # "yes" doesn't confirm against it. The user's request didn't
+        # match a real service category — keeping `service_type=other`
+        # in session state would let the post-pending-confirmation
+        # handler treat the next "yes" as accepting an "other" search.
+        # Location is preserved so the tier-1 redirect can name it
+        # ("services in Staten Island — things like food, shelter…").
+        if is_llm_reaching_other:
+            merged.pop("service_type", None)
+            merged.pop("_pending_confirmation", None)
+
         # Track repeated unrecognized requests for response variation
         unrec_count = merged.get("_unrecognized_count", 0) + 1
         merged["_unrecognized_count"] = unrec_count
@@ -124,19 +152,23 @@ def _handle_general_conversation(ctx: MessageContext):
         idx = len(merged.get("transcript", [])) % len(_CASUAL_RESPONSES)
         response = _CASUAL_RESPONSES[idx]
     else:
-        # Pre-LLM redaction (Phase 1): swap to ctx.redacted_message when
-        # the flag is on. _fallback_response embeds the input verbatim
+        # Phase 4 close-out (May 2026): pre-LLM redaction is mandatory.
+        # ``ctx.redacted_message`` is always populated and is the only path
+        # to Anthropic. ``_fallback_response`` embeds the input verbatim
         # into the conversational prompt sent to Anthropic
         # (responses._build_conversational_prompt -> claude_reply).
         # Local fallback paths (the static error string in
         # _fallback_response's except branch) don't depend on the input.
         # See PRE_LLM_REDACTION_SCOPE.md.
-        _fallback_input = ctx.redacted_message if _REDACT_BEFORE_LLM else ctx.message
-        response = _fallback_response(_fallback_input, merged)
+        response = _fallback_response(ctx.redacted_message, merged)
         # Cultural humility: when the bot can't understand what the user
-        # needs (low confidence), acknowledge the limitation rather than
-        # pretending the generic response is adequate.
-        if ctx.confidence == "low" and not merged.get("service_type"):
+        # needs (no signal at all), acknowledge the limitation rather
+        # than pretending the generic response is adequate. Using the
+        # ``no_signal`` reason rather than ordinal confidence so this
+        # only fires for the genuine "we couldn't classify anything"
+        # case, not the LLM-reaching-other case (which already routed
+        # to the unrecognized-need redirect above).
+        if ctx.confidence_reason == "no_signal" and not merged.get("service_type"):
             response += (
                 "\n\nIf I'm missing something important about what you need, "
                 "a peer navigator can help — they're real people who know "
@@ -147,6 +179,9 @@ def _handle_general_conversation(ctx: MessageContext):
     general_qr = []
     if not has_service_intent and len(merged.get("transcript", [])) <= 1 and not is_casual_chat:
         general_qr = list(_WELCOME_QUICK_REPLIES)
+    # Ordinal check: any signal weaker than "high" gets the "Not what I
+    # meant" affordance. This is the legitimate ordinal use of the
+    # confidence field — different concern from the categorical reason.
     if ctx.confidence in ("medium", "low"):
         general_qr.append({"label": "❌ Not what I meant", "value": "not what I meant"})
     result = _empty_reply(
@@ -154,5 +189,7 @@ def _handle_general_conversation(ctx: MessageContext):
         quick_replies=general_qr,
     )
     _log_turn(ctx.session_id, ctx.redacted_message, result, "general",
-              request_id=ctx.request_id, tone=ctx.tone, confidence=ctx.confidence)
+              request_id=ctx.request_id, tone=ctx.tone,
+              confidence=ctx.confidence,
+              confidence_reason=ctx.confidence_reason)
     return result

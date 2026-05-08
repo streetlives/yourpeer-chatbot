@@ -41,7 +41,7 @@ from app.services.slot_extraction_regex import (
 )
 from app.services import slot_extraction
 
-from .context import MessageContext, _USE_LLM, _REDACT_BEFORE_LLM, _empty_reply
+from .context import MessageContext, _USE_LLM, _empty_reply
 from .handlers import (
     _handle_bot_capability_question,
     _handle_bot_identity,
@@ -191,11 +191,12 @@ def generate_reply(
     # input. Phase 2 eval explicitly verifies that crisis-detection
     # scenarios still pass with redacted input — see
     # ``pre_llm_redact_crisis_indirect`` in eval_llm_judge.py.
-    _crisis_input = (
-        redacted_message
-        if (_REDACT_BEFORE_LLM and redacted_message is not None)
-        else message
-    )
+    # Phase 4: pre-LLM redaction is mandatory — the flag has been removed.
+    # `redacted_message` is the only path; the `is not None` guard remains
+    # because the kwarg signature still permits None for callers who don't
+    # need the redacted form (no current callers rely on this, but the
+    # defensive guard preserves call-site flexibility for future ones).
+    _crisis_input = redacted_message if redacted_message is not None else message
     _crisis_result = detect_crisis(_crisis_input, skip_llm=_is_safe_short)
 
     if _crisis_result is not None:
@@ -213,7 +214,7 @@ def generate_reply(
     # depends only on tone/action/has_service_intent/early_extracted/
     # extraction_source/message, all finalized by this point.
     action = _action_pre
-    category, _confidence = _compute_routing_category(
+    category, _confidence, _confidence_reason = _compute_routing_category(
         tone=tone,
         action=action,
         has_service_intent=has_service_intent,
@@ -264,6 +265,7 @@ def generate_reply(
         action=action,
         tone=tone,
         confidence=_confidence,
+        confidence_reason=_confidence_reason,
         extraction_source=_extraction_source,
         early_extracted=early_extracted,
         has_service_intent=has_service_intent,
@@ -582,14 +584,13 @@ def generate_reply(
             # follow-up). When the source is "regex" or None, merge
             # behaves as before.
             #
-            # Pre-LLM redaction (Phase 1): swap to redacted_message
-            # when the flag is on. The conversation_history kwarg below
-            # already passes server-stored redacted text — only the
-            # current-turn message needs the swap to fully close the
-            # leak surface for slot extraction. See
+            # Phase 4 close-out (May 2026): pre-LLM redaction is mandatory,
+            # so this no longer branches on a flag — it sends redacted text
+            # whenever it's available. The conversation_history kwarg below
+            # already passes server-stored redacted text. See
             # docs/design/PRE_LLM_REDACTION_SCOPE.md.
             extracted = slot_extraction.extract(
-                redacted_message if _REDACT_BEFORE_LLM else message,
+                redacted_message if redacted_message is not None else message,
                 early_extracted,
                 conversation_history=existing.get("transcript", []),
                 api_key_available=True,  # gated by _USE_LLM above
@@ -665,8 +666,30 @@ def generate_reply(
     if _prefix_prepend:
         _tone_prefix = _prefix_prepend + _tone_prefix
 
+    # Block confirmation when the LLM gate snapped to "other" with no
+    # detail because regex AND semantic both missed — in that case the
+    # routing layer has already classified this as a low-confidence
+    # unrecognized request (category="general") and we're headed to
+    # `_handle_general_conversation`'s tiered redirect. Without this
+    # guard, the confirmation message ("I'll look for other services
+    # in Staten Island — sound good?") fires for the helicopter-ride
+    # case before the redirect ever runs. See
+    # `TestUnrecognizedServiceLLMGateGuard` in
+    # tests/integration/test_multi_turn_and_context.py.
+    #
+    # Pre-refactor (May 2026): this used to check the trio
+    # ``(extraction_source == "llm_gate", service_type == "other",
+    # not service_detail)`` inline at three call sites. The reason
+    # field collapses that into one named state. See
+    # ``ARCH_NOTES.md`` "Confidence reason refactor".
+    _is_low_confidence_other_routing = _confidence_reason == "llm_reaching_other"
+
     # If enough detail → CONFIRMATION step
-    if (is_enough_to_answer(merged) or _geolocation_ready) and has_new_slots:
+    if (
+        (is_enough_to_answer(merged) or _geolocation_ready)
+        and has_new_slots
+        and not _is_low_confidence_other_routing
+    ):
         merged["_pending_confirmation"] = True
         merged.pop("_queue_offer_pending", None)
         merged.pop("_queued_services_original", None)

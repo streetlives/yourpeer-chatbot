@@ -72,13 +72,6 @@ Usage:
     ANTHROPIC_API_KEY=sk-... python tests/eval_llm_judge.py \\
         --subset failing --subset-from eval_results/runs/20260505T120000_redact_on/ \\
         --category multi_intent
-
-    # Phase 2 of PRE_LLM_REDACTION_SCOPE.md: run the suite with the
-    # REDACT_BEFORE_LLM feature flag on, so user text is PII-redacted
-    # before reaching Anthropic. Diff the resulting JSON against the
-    # R38 baseline to check the floors in the scope doc.
-    ANTHROPIC_API_KEY=sk-... python tests/eval_llm_judge.py \\
-        --redact-before-llm --output eval_results/pre_llm_redact_on.json
 """
 
 import sys
@@ -108,47 +101,15 @@ from unittest.mock import patch
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../..", "backend"))
 
 
-# --- Pre-LLM redaction flag, early-set ---
-# `--redact-before-llm` flips REDACT_BEFORE_LLM=true for this run. It
-# MUST be applied BEFORE the `from app.*` import below — `context.py`
-# reads the env var at module-load time and caches the result, so
-# setting it inside main() (after argparse) is too late to affect any
-# already-imported module.
-#
-# We do an early argparse peek using parse_known_args so we get
-# proper handling of --redact-before-llm, --redact-before-llm=true,
-# and similar forms — and so a literal substring match in some
-# unrelated argument (e.g. a path that contains the flag name)
-# doesn't false-trigger. The flag is re-declared in argparse below
-# for --help visibility.
-def _early_redact_flag_check() -> bool:
-    """Detect --redact-before-llm in argv without disturbing later parsing."""
-    early_parser = argparse.ArgumentParser(add_help=False)
-    early_parser.add_argument("--redact-before-llm", action="store_true")
-    try:
-        ns, _ = early_parser.parse_known_args()
-    except SystemExit:
-        # parse_known_args shouldn't exit on --help (we have add_help=False)
-        # or on unknown args. If something exotic happens, fall back to
-        # the literal substring check rather than crashing the import.
-        return "--redact-before-llm" in sys.argv
-    return bool(ns.redact_before_llm)
-
-
-if _early_redact_flag_check():
-    os.environ["REDACT_BEFORE_LLM"] = "true"
-
-# These imports are intentionally NOT at the top of the file. The
-# Phase 2 PII redaction flag (`_REDACT_BEFORE_LLM`) is bound at
-# module-load time when `app.services.chatbot.context` is imported,
-# from `os.environ["REDACT_BEFORE_LLM"]`. The early argv peek above
-# sets that env var BEFORE these imports run. Reversing the order
-# would freeze redaction OFF regardless of CLI flags, breaking
-# Phase 2 of PRE_LLM_REDACTION_SCOPE.md.
-from app.services.chatbot import generate_reply  # noqa: E402  -- see comment above
+# Pre-LLM redaction was made mandatory in Phase 4 (May 2026) — every
+# Anthropic-touching call site now redacts unconditionally. The
+# `--redact-before-llm` CLI flag and `REDACT_BEFORE_LLM` env var that
+# previously gated this are no longer accepted. The
+# `redact_before_llm: True` field is still emitted in `report.json` as
+# a constant for back-compat with downstream report-readers.
+from app.services.chatbot import generate_reply  # noqa: E402
 from app.services.session_store import clear_session  # noqa: E402
 from app.privacy.pii_redactor import redact_pii  # noqa: E402
-from app.services.chatbot.context import _REDACT_BEFORE_LLM  # noqa: E402
 
 # Suppress noisy logs during eval
 logging.basicConfig(level=logging.WARNING)
@@ -3179,10 +3140,11 @@ SCENARIOS = [
         "name": "19-year-old mom — shelter, diapers, food, healthcare",
         "category": "multi_intent",
         "description": "Young mother with a baby needing four services at once: "
-                       "shelter, diapers (food/WIC), food, and basic healthcare. "
-                       "Tests multi-service extraction with 3+ services. System "
-                       "should extract shelter as primary (most urgent), queue "
-                       "food and medical, and note family_status=with_children.",
+                       "shelter, diapers (clothing/baby supplies), food, and "
+                       "basic healthcare. Tests multi-service extraction with "
+                       "3+ services. System should extract shelter as primary "
+                       "(most urgent), queue clothing (for diapers), food, "
+                       "and medical, and note family_status=with_children.",
         "user_turns": [
             "19-year-old mom with a baby, need shelter, diapers, food, "
             "and basic healthcare right now.",
@@ -3197,10 +3159,34 @@ SCENARIOS = [
             "urgency": "high",
             "should_reach_confirmation": True,
             "should_handle_additional_service": True,
-            "notes": "Should extract shelter as primary, food and medical as "
-                     "additional. 'Diapers' maps to food (WIC). Results should "
-                     "include Covenant House and/or PATH. After shelter results, "
-                     "should offer food search, then medical.",
+            "notes": "Should extract shelter as primary, with clothing "
+                     "(detail=baby supplies, for diapers), food, and "
+                     "medical as additional services. Pattern B fix "
+                     "(May 2026) confirmed extraction is working — "
+                     "all four services land in the LLM output. "
+                     "Diapers route to clothing (DB-verified May 6, 2026: "
+                     "diaper-distributing services tag under Clothing › "
+                     "Baby Supplies most commonly, Personal Care › Baby "
+                     "second; never tagged Food). WIC is a separate "
+                     "benefit-enrollment service the user did not ask "
+                     "for — don't conflate with diapers. "
+                     "DISPATCH PREFERENCE: when a single location offers "
+                     "ALL requested services (shelter + clothing + food "
+                     "+ medical), co-located search is the CORRECT "
+                     "behavior — the user has a baby in tow and 'go to "
+                     "one place' materially beats 'navigate four queued "
+                     "follow-up offers.' Co-located results in this "
+                     "scenario should NOT be penalized as 'merged into "
+                     "one search'; that framing prioritizes process "
+                     "purity over user welfare. The queue path is "
+                     "correct only when no single location matches "
+                     "all needs (then fall back to "
+                     "shelter-primary → baby supplies → food → "
+                     "medical with depth-transparency text per PR #87 "
+                     "Cluster 6). Expected results: locations offering "
+                     "shelter + healthcare + food + clothing for "
+                     "families (e.g., Covenant House, PATH-routed "
+                     "family shelters with co-located services).",
         },
     },
     {
@@ -3267,13 +3253,20 @@ SCENARIOS = [
             "crisis_category": "domestic_violence",
             "family_status": "with_children",
             "should_reach_confirmation": True,
+            "should_handle_additional_service": True,
             "notes": "Crisis step-down should fire (DV + service intent). "
                      "Response should acknowledge 'safe for the moment' — "
                      "tone should validate safety rather than escalate urgency. "
                      "Results should include Covenant House, Safe Horizon, "
                      "and/or Family Justice Center (FJC) Manhattan. 'Next "
-                     "steps' implies legal needs — system could queue legal "
-                     "as additional service.",
+                     "steps' should extract as additional_services=[{type: "
+                     "legal}] in DV context (Pattern B fix, May 2026 — "
+                     "the SHORT/NARRATIVE prompts now carry an explicit "
+                     "DV-escape worked example). Outside DV context, 'next "
+                     "steps' is too generic to extract; the prompt scoping "
+                     "is intentionally narrow to avoid over-firing on "
+                     "routine queries like 'what are the next steps for "
+                     "my application'.",
         },
     },
 
@@ -5685,13 +5678,12 @@ def generate_report(results: list, baseline_id: str = "R38") -> dict:
             sum(scores) / len(scores), 2
         )
 
-    # Capture the pre-LLM redaction flag state at report time. Diffing
-    # two reports later is much less ambiguous when each one says
-    # whether redaction was on. See PRE_LLM_REDACTION_SCOPE.md Phase 2.
-    # `_REDACT_BEFORE_LLM` is imported at the top of this module
-    # (line ~143). If that import had failed, module load would have
-    # crashed before reaching here — no defensive try block needed.
-    redact_state = bool(_REDACT_BEFORE_LLM)
+    # Capture the pre-LLM redaction state at report time. Pre-LLM redaction
+    # was made mandatory in Phase 4 (May 2026); this field is now always
+    # True. Retained in the report schema for back-compat with downstream
+    # report-readers (the dashboard, EVAL_RESULTS_R28-R41.md generator,
+    # report-diff scripts) that look for it.
+    redact_state = True
 
     return {
         "timestamp": datetime.now().isoformat(),
@@ -6022,6 +6014,51 @@ def _load_scored_from_jsonl(jsonl_path):
     return out
 
 
+def _parse_scenario_id_arg(raw_values):
+    """Parse the ``--scenario-id`` flag into a deduped list of IDs.
+
+    Accepts both repeated flag invocations and comma-separated values
+    within a single invocation. Examples:
+
+    - ``--scenario-id foo``                            → ``["foo"]``
+    - ``--scenario-id foo,bar``                        → ``["foo", "bar"]``
+    - ``--scenario-id foo --scenario-id bar``          → ``["foo", "bar"]``
+    - ``--scenario-id foo,bar --scenario-id baz``      → ``["foo", "bar", "baz"]``
+    - ``--scenario-id "foo, bar"``                     → ``["foo", "bar"]``  (whitespace ok)
+    - ``--scenario-id foo --scenario-id foo``          → ``["foo"]``  (deduped)
+
+    Order is preserved on first occurrence; later duplicates are
+    silently dropped (the caller usually wants ``foo,bar`` and
+    ``bar,foo`` to behave identically once dedup runs).
+
+    Empty tokens (e.g. trailing commas) are filtered out so a typo
+    like ``--scenario-id foo,`` doesn't try to look up a zero-length
+    ID.
+
+    Parameters
+    ----------
+    raw_values : list[str] or None
+        The argparse output from ``action="append"``. ``None`` when the
+        flag wasn't passed at all; an empty list is treated the same way.
+
+    Returns
+    -------
+    list[str]
+        Zero or more scenario IDs in the order they were first seen.
+    """
+    if not raw_values:
+        return []
+    seen = set()
+    out = []
+    for raw in raw_values:
+        for token in raw.split(","):
+            sid = token.strip()
+            if sid and sid not in seen:
+                seen.add(sid)
+                out.append(sid)
+    return out
+
+
 def _apply_subset_filter(all_scenarios, subset, subset_from, threshold_override):
     """Filter `all_scenarios` to those that scored below a threshold in a prior run.
 
@@ -6102,8 +6139,17 @@ def main():
                         help="Only run scenarios in this category")
     parser.add_argument("--output", type=str, default=None,
                         help="Save JSON report to this file")
-    parser.add_argument("--scenario-id", type=str, default=None,
-                        help="Run a single scenario by ID")
+    parser.add_argument("--scenario-id", action="append", default=None,
+                        metavar="ID",
+                        help="Run one or more scenarios by ID. Accepts a "
+                             "single ID, a comma-separated list, or the flag "
+                             "repeated. Examples: "
+                             "'--scenario-id foo', "
+                             "'--scenario-id foo,bar', "
+                             "'--scenario-id foo --scenario-id bar'. "
+                             "Overrides --subset and --category. Whitespace "
+                             "around commas is tolerated; duplicates are "
+                             "silently deduped.")
     parser.add_argument("--subset", choices=["all", "failing", "borderline"],
                         default="all",
                         help="Filter to scenarios that scored below a "
@@ -6122,17 +6168,6 @@ def main():
                         metavar="FLOAT",
                         help="Override the default --subset threshold "
                              "(failing=4.0, borderline=4.5).")
-    parser.add_argument(
-        "--redact-before-llm",
-        action="store_true",
-        help="Set REDACT_BEFORE_LLM=true for this run, so the current "
-             "user message is PII-redacted before being sent to "
-             "Anthropic. Phase 2 of PRE_LLM_REDACTION_SCOPE.md. The "
-             "env var is actually set earlier (before any app.* "
-             "import) by an explicit sys.argv peek; this argparse "
-             "entry is for --help visibility and clean argv "
-             "consumption.",
-    )
     parser.add_argument(
         "--baseline",
         choices=sorted(BASELINES.keys()),
@@ -6183,16 +6218,10 @@ def main():
 
     client = anthropic.Anthropic(api_key=api_key)
 
-    # Surface the pre-LLM redaction flag state in run output. Reading
-    # the cached value from context.py rather than args.redact_before_llm
-    # so this reflects what actually took effect (env var vs. CLI flag
-    # vs. default). If someone exports REDACT_BEFORE_LLM=true in their
-    # shell and runs without the CLI flag, this still prints "ON".
-    # (`_REDACT_BEFORE_LLM` is imported at the top of this file.)
-    if _REDACT_BEFORE_LLM:
-        print("  Pre-LLM redaction: ON (REDACT_BEFORE_LLM=true)")
-    else:
-        print("  Pre-LLM redaction: OFF (default)")
+    # Pre-LLM redaction is now mandatory (Phase 4 close-out). Print this
+    # for run-output traceability — older log readers may still scan for
+    # the line.
+    print("  Pre-LLM redaction: ON (mandatory since Phase 4)")
 
     # --- Pre-warm the semantic router (Tier 2) ---
     # The model (~80 MB) downloads on first use. Without pre-warming,
@@ -6212,11 +6241,25 @@ def main():
 
     # Select scenarios
     scenarios = SCENARIOS
-    if args.scenario_id:
-        # Single-scenario debug mode — overrides subset and category
-        scenarios = [s for s in scenarios if s["id"] == args.scenario_id]
-        if not scenarios:
-            print(f"ERROR: No scenario with ID '{args.scenario_id}'")
+    requested_ids = _parse_scenario_id_arg(args.scenario_id)
+    if requested_ids:
+        # One or more IDs requested — overrides subset and category.
+        # Build the result list in the user's input order so a probe
+        # batch reports in the same order as the command line.
+        by_id = {s["id"]: s for s in scenarios}
+        scenarios = [by_id[sid] for sid in requested_ids if sid in by_id]
+        missing = [sid for sid in requested_ids if sid not in by_id]
+        if missing:
+            print(f"ERROR: {len(missing)} scenario ID(s) not found: "
+                  f"{', '.join(missing)}",
+                  file=sys.stderr)
+            if scenarios:
+                # Don't silently run a partial batch — make the user
+                # decide whether to proceed without the missing IDs.
+                print(f"  ({len(scenarios)} of {len(requested_ids)} "
+                      f"requested IDs were resolved. Re-run with the "
+                      f"corrected IDs, or drop the missing ones.)",
+                      file=sys.stderr)
             sys.exit(1)
     else:
         # Subset filter applied first (data-driven from a prior report)
@@ -6252,8 +6295,6 @@ def main():
     # If --output PATH is also passed, the report.json is additionally
     # copied to PATH (with auto-mkdir of its parent).
     run_id = datetime.now().strftime("%Y%m%dT%H%M%S")
-    if args.redact_before_llm:
-        run_id += "_redact_on"
     run_dir = os.path.join("eval_results", "runs", run_id)
     os.makedirs(run_dir, exist_ok=True)
     jsonl_path = os.path.join(run_dir, "scenarios.jsonl")

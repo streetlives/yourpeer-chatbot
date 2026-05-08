@@ -88,10 +88,16 @@ def _assert_location_unknown_offers_picker(result, variant):
 #   tests in ``test_chatbot_extracted_helpers.py::
 #   TestHandleDemographicSkip`` cover the curly-apostrophe path.
 # - ``contextual_acknowledgments._is_personal_story`` and friends: the
-#   ``_combined_contextual_acknowledgments`` entry point isn't currently
-#   wired into the orchestrator's response chain (the docstring claims
-#   it is, but no callers exist outside the module — track as a
-#   separate finding).
+#   ``_combined_contextual_acknowledgments`` entry point IS wired into
+#   the orchestrator's response chain — see ``orchestrator.py``'s
+#   ``_prefix_prepend`` assembly, which contributes to ``_tone_prefix``
+#   for confirmation and follow-up responses. No fuzz scenario exists
+#   here yet because the four message-inspecting sub-detectors
+#   (``_is_personal_story``, ``_is_rough_sleeper``,
+#   ``_is_newcomer_to_nyc``, ``_is_substance_use_shelter``) all call
+#   ``normalize_apostrophes`` on the redacted message before
+#   phrase-matching, so curly-apostrophe coverage is by-construction.
+#   If future detectors skip that step, add scenarios here.
 #
 # When new handlers that normalize apostrophes are added, this list is
 # the place to add a fuzz scenario for them. Rule of thumb: if your

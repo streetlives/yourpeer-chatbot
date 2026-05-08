@@ -536,15 +536,17 @@ def classify_post_results_question(
         {"type": "unknown_about_results"}
 
     PII redaction:
-        Local regex/pattern-matching paths use ``message`` (raw); only
-        the two LLM calls (``_classify_post_results_llm`` and the
-        downstream ``_extract_keywords_llm`` invoked from
-        ``answer_from_results``) swap to ``redacted_message`` when
-        ``_REDACT_BEFORE_LLM`` is on. Same philosophy as the
-        orchestrator's gate: local decisions on raw text so redaction
-        can never mask routing; LLM payloads use redacted to keep PII
-        out of Anthropic. ``redacted_message=None`` (the default)
-        preserves pre-Phase-1 behavior bit-for-bit.
+        Local regex/pattern-matching paths use ``message`` (raw); the
+        two LLM calls (``_classify_post_results_llm`` and the downstream
+        ``_extract_keywords_llm`` invoked from ``answer_from_results``)
+        receive ``redacted_message``. Same philosophy as the
+        orchestrator: local decisions on raw text so redaction can never
+        mask routing; LLM payloads use redacted to keep PII out of
+        Anthropic. Pre-LLM redaction was made mandatory in Phase 4 (May
+        2026); the prior ``_REDACT_BEFORE_LLM`` flag has been removed.
+        ``redacted_message=None`` (the default) falls back to ``message``
+        only as a defensive guard for callers that don't have access to
+        the redacted form.
     """
     # Pick the source for raw_phrase extraction. _extract_raw_phrase is
     # local regex (no LLM call) but its output is later passed to
@@ -552,12 +554,7 @@ def classify_post_results_question(
     # to be PII-free at extraction time, not just at LLM-call time.
     # Doing the swap here keeps every downstream consumer (the filter
     # handler, future analytics on filter_event records) consistent.
-    from app.services.chatbot.context import _REDACT_BEFORE_LLM
-    _raw_phrase_source = (
-        redacted_message
-        if (_REDACT_BEFORE_LLM and redacted_message is not None)
-        else message
-    )
+    _raw_phrase_source = redacted_message if redacted_message is not None else message
 
     lower = message.lower().strip()
 
@@ -734,17 +731,12 @@ def classify_post_results_question(
     # Only fires when there's enough content to be ambiguous (4+ words)
     # and the message wasn't already handled by the patterns above.
     if len(message.split()) >= 3:
-        # Pre-LLM redaction (Phase 1): pass redacted text to the LLM
-        # call when the flag is on. Local _extract_raw_phrase below
-        # still operates on raw — it's a regex helper that doesn't
-        # leave our infrastructure, and downstream LLM use of its
-        # output is gated separately in _extract_keywords_llm.
-        from app.services.chatbot.context import _REDACT_BEFORE_LLM
-        llm_input = (
-            redacted_message
-            if (_REDACT_BEFORE_LLM and redacted_message is not None)
-            else message
-        )
+        # Phase 4 close-out (May 2026): pre-LLM redaction is mandatory.
+        # The LLM call below sees redacted text; local _extract_raw_phrase
+        # below still operates on raw — it's a regex helper that doesn't
+        # leave our infrastructure, and downstream LLM use of its output
+        # is gated separately in _extract_keywords_llm.
+        llm_input = redacted_message if redacted_message is not None else message
         llm_intent = _classify_post_results_llm(llm_input)
         if llm_intent == "refine":
             return {"type": "filter_subcategory", "raw_phrase": _extract_raw_phrase(_raw_phrase_source)}

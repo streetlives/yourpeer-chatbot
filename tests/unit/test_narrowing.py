@@ -269,7 +269,10 @@ class TestDescriptionFilterOther:
         ("financial services", "financial"),
         ("senior services", "senior"),
         ("re-entry services", "reentry"),
-        ("baby supplies", "diaper"),
+        # "baby supplies" — moved to TestBabySuppliesNarrowing below.
+        # Routes to service_type=clothing now (May 6, 2026), and the
+        # query path is narrowing-based (taxonomy_names) rather than
+        # description-pattern based.
         ("LGBTQ services", "LGBTQ"),
         ("food stamps / SNAP", "food stamp"),
         ("Medicaid enrollment", "medicaid"),
@@ -281,6 +284,45 @@ class TestDescriptionFilterOther:
         p = _query("other", service_detail=detail)
         assert "description_pattern" in p, f"No description_pattern for '{detail}'"
         assert expected_word.lower() in p["description_pattern"].lower()
+
+
+class TestBabySuppliesNarrowing:
+    """Baby-supplies routing uses _DETAIL_TO_TAXONOMY_NARROWING, not the
+    description-pattern path.
+
+    Diaper-distributing services have leaf taxonomies "Baby Supplies"
+    (under Clothing parent) and "Baby" (under Personal Care parent),
+    per DB inspection May 6, 2026. The strict taxonomy filter
+    (FILTER_BY_TAXONOMY_NAME_IN) doesn't walk parent_id, so the
+    narrowing must list the leaf names explicitly. Pairs with
+    SERVICE_KEYWORDS["clothing"] additions in slot_extraction_regex.py.
+    """
+
+    def test_baby_supplies_narrows_taxonomies(self):
+        """When clothing + baby supplies, taxonomy_names becomes the
+        narrowed leaf set (overriding the default clothing taxonomies)."""
+        p = _query("clothing", service_detail="baby supplies")
+        assert "taxonomy_names" in p
+        assert set(p["taxonomy_names"]) == {"baby supplies", "baby"}
+
+    def test_baby_supplies_skips_description_filter(self):
+        """When narrowing fires, no description_pattern is added —
+        the leaf taxonomies are specific enough on their own and a
+        regex-on-top would over-restrict."""
+        p = _query("clothing", service_detail="baby supplies")
+        assert "description_pattern" not in p, (
+            "Narrowing path should NOT add a description_pattern — "
+            "the taxonomy filter is already specific. See the "
+            "_skip_description_filter flag in prepare_query_params."
+        )
+
+    def test_baby_supplies_with_other_template_also_narrows(self):
+        """Defensive: even if some path passes service_type=other with
+        detail=baby supplies (e.g. an old session slot from before the
+        routing change), the narrowing still fires and the right
+        services surface. Backward-compatible."""
+        p = _query("other", service_detail="baby supplies")
+        assert set(p["taxonomy_names"]) == {"baby supplies", "baby"}
 
 
 class TestDescriptionFilterHousing:

@@ -80,6 +80,7 @@ def test_routing_category_sequence_is_preserved(chatbot_source: str) -> None:
         "action",               # bot_identity / bot_question / greeting / thanks
         '"bot_question"',       # has_service_intent + action == bot_question
         '"escalation"',         # has_service_intent + action == escalation (no location)
+        '"general"',            # has_service_intent + low-confidence "other" with no detail (LLM was reaching)
         '"service"',            # has_service_intent default
         '"help"',               # action == help
         '"escalation"',         # action == escalation

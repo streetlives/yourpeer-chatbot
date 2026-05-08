@@ -22,8 +22,18 @@ def _log_turn(
     request_id: str | None = None,
     tone=None,
     confidence: str = "high",
+    confidence_reason: str | None = None,
 ) -> None:
-    """Log a conversation turn to the audit log."""
+    """Log a conversation turn to the audit log.
+
+    ``confidence`` is the ordinal signal-strength indicator
+    (``"high" | "semantic" | "medium" | "low"``); ``confidence_reason``
+    is the categorical discriminator (``"regex_match" |
+    "semantic_match" | "llm_match" | "llm_reaching_other" | "no_signal"
+    | "non_service_route"``). See ``_compute_routing_category`` in
+    ``pipeline.py``. Both flow into the audit event so downstream
+    analytics can graph them independently.
+    """
     try:
         bot_response_redacted, _ = redact_pii(result.get("response", ""))
         log_conversation_turn(
@@ -38,6 +48,7 @@ def _log_turn(
             request_id=request_id,
             tone=tone,
             confidence=confidence,
+            confidence_reason=confidence_reason,
         )
     except Exception as e:
         logger.error(f"Failed to log conversation turn: {e}")

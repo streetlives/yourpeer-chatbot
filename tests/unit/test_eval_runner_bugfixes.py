@@ -197,35 +197,6 @@ def test_print_report_shows_baseline_native_denominator(capsys):
 
 
 # ---------------------------------------------------------------------------
-# Bug 17: Early redact-flag peek uses proper argparse, not substring
-# ---------------------------------------------------------------------------
-
-def test_early_redact_flag_check_recognizes_flag():
-    """The bare flag triggers."""
-    with patch.object(sys, "argv", ["eval_llm_judge.py", "--redact-before-llm"]):
-        assert runner._early_redact_flag_check() is True
-
-
-def test_early_redact_flag_check_does_not_trigger_on_substring():
-    """A path or argument *containing* the literal string '--redact-before-llm'
-    should NOT trigger. The pre-fix substring check had this false positive."""
-    with patch.object(sys, "argv", [
-        "eval_llm_judge.py",
-        "--scenario-id",
-        "weird_path/file_about_--redact-before-llm_in_name.json",
-    ]):
-        # argparse handles this correctly — the flag is positional argument
-        # to --scenario-id, not a flag itself.
-        assert runner._early_redact_flag_check() is False
-
-
-def test_early_redact_flag_check_returns_false_when_absent():
-    """Default OFF when no flag."""
-    with patch.object(sys, "argv", ["eval_llm_judge.py"]):
-        assert runner._early_redact_flag_check() is False
-
-
-# ---------------------------------------------------------------------------
 # Bug 9: services_count drives simulator stop-condition, not string match
 # ---------------------------------------------------------------------------
 

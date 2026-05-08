@@ -38,18 +38,13 @@ else:
 
 
 # ---------------------------------------------------------------------------
-# PRE-LLM REDACTION GATE
+# PRE-LLM REDACTION (Phase 4 close-out — May 2026)
 # ---------------------------------------------------------------------------
-# When true, the user's *current-turn* message is redacted of PII before
-# being sent to any third-party LLM (Anthropic) API call. Conversation
-# history sent on follow-up turns is already redacted server-side; this
-# closes the remaining gap on the current turn.
-#
-# Defaults to False during initial rollout so the OFF-path is bit-for-bit
-# identical to current main. Phase 2 of the rollout (see
-# docs/design/PRE_LLM_REDACTION_SCOPE.md) runs the eval suite both ways
-# and gates the flag flip on results holding or improving. Phase 3 sets
-# this to true in production. Phase 4 removes the flag.
+# Every Anthropic-touching call site receives PII-redacted user text. The
+# `_REDACT_BEFORE_LLM` flag that gated this during Phases 1–3 was removed
+# in Phase 4 — there is no opt-out. The seven LLM call sites that the
+# Phase 1 plumbing covered are still listed in the scope doc and their
+# inline comments; the gating is just gone.
 #
 # Plumbed through every call site listed in the scope doc:
 #   * orchestrator -> _run_llm_gate -> slot_extraction.extract
@@ -59,15 +54,8 @@ else:
 #   * post_results -> _extract_keywords_llm
 #   * handlers/general -> _fallback_response -> claude_reply
 #   * handlers/meta -> _handle_bot_capability_question -> claude_reply
-_REDACT_BEFORE_LLM = os.getenv("REDACT_BEFORE_LLM", "false").lower() in (
-    "true", "1", "yes",
-)
-
-if _REDACT_BEFORE_LLM:
-    logger.info(
-        "Pre-LLM redaction enabled — current-turn user messages will be "
-        "PII-redacted before reaching Anthropic"
-    )
+#
+# See docs/design/PRE_LLM_REDACTION_SCOPE.md.
 
 
 # ---------------------------------------------------------------------------
@@ -108,7 +96,17 @@ class MessageContext:
     category: str             # routing key ("crisis", "service", "greeting", etc.)
     action: str               # classified action ("confirm_yes", "reset", etc.)
     tone: Optional[str]       # emotional tone ("crisis", "emotional", "frustrated", etc.)
-    confidence: str           # "high" | "semantic" | "medium" | "low"
+    confidence: str           # ordinal: "high" | "semantic" | "medium" | "low"
+    # Categorical reason that disambiguates ``confidence``. Useful when a
+    # consumer needs to know WHY confidence is what it is, beyond the
+    # ordinal. Two distinct cases produce ``confidence == "low"``:
+    # (a) the LLM gate snapped to ``service_type="other"`` with no detail
+    # because regex/semantic both missed (``confidence_reason="llm_reaching_other"``)
+    # and (b) nothing classified at all (``confidence_reason="no_signal"``).
+    # Routing decisions that depend on which case fired should match on
+    # this field instead of re-deriving from slot shape. See pipeline.py
+    # ``_compute_routing_category`` for the full list of values.
+    confidence_reason: str    # "regex_match" | "semantic_match" | "llm_match" | "llm_reaching_other" | "no_signal" | "non_service_route"
     extraction_source: Optional[str]  # "regex" | "semantic" | "llm_gate" | None
     # --- Extracted slots from this message ---
     early_extracted: dict     # raw extraction result (service_type, location, age, etc.)

@@ -1,23 +1,27 @@
-"""Comprehensive Phase 1 verification for the pre-LLM redaction work.
+"""Comprehensive verification that the pre-LLM redaction work shipped.
 
 Every Anthropic-touching call site listed in PRE_LLM_REDACTION_SCOPE.md
-must, when ``REDACT_BEFORE_LLM=true``, send the *redacted* version of
-the user message — never the raw text. Conversely, with the flag off
-(default), every site must continue to send raw text bit-for-bit
-identical to pre-Phase-1 behavior.
+sends the *redacted* version of the user message, never the raw text.
+Pre-LLM redaction was made mandatory in Phase 4 (May 2026) — the
+``_REDACT_BEFORE_LLM`` flag that gated this during Phases 1–3 has been
+removed; redacted is the only path.
 
-This test pins both halves of that contract. It is the definitive
-"no leaks anywhere" check: if a future PR introduces a new LLM call
-site or refactors an existing one without threading the flag through,
-one of these tests will fail.
+This test pins that contract. It is the definitive "no leaks anywhere"
+check: if a future PR introduces a new LLM call site that fails to
+thread ``redacted_message`` through, one of these tests will fail.
 
 Structure
 =========
 
-Each leak surface gets two tests:
+Each leak surface gets one test:
 
-    test_<surface>_off_sends_raw      # flag default (False) — raw goes through
-    test_<surface>_on_sends_redacted  # flag patched True  — redacted goes through
+    test_<surface>_uses_redacted    # asserts redacted text reaches the LLM
+
+These tests previously also asserted bit-for-bit equivalence of the
+flag-OFF path (ensuring no behavior change before Phase 3 shipped).
+Those assertions were retired in Phase 4 along with the flag itself —
+they were a back-compat guarantee, and the back-compat path no longer
+exists.
 
 Mocking strategy
 ================
@@ -94,27 +98,6 @@ def _make_text_response(text: str) -> MagicMock:
     return response
 
 
-def _flag_patches(redact_on: bool):
-    """Returns the list of context-manager patches to toggle
-    ``_REDACT_BEFORE_LLM`` consistently at every import site.
-
-    Module-level imports re-bind the symbol into each importing
-    module's namespace, so patching ``context._REDACT_BEFORE_LLM``
-    alone is insufficient — ``orchestrator``, ``pipeline``, and the
-    two ``handlers/*`` modules all need their local binding patched
-    too. ``post_results`` does function-local imports so the
-    ``context``-level patch reaches it implicitly.
-    """
-    targets = [
-        "app.services.chatbot.context._REDACT_BEFORE_LLM",
-        "app.services.chatbot.pipeline._REDACT_BEFORE_LLM",
-        "app.services.chatbot.orchestrator._REDACT_BEFORE_LLM",
-        "app.services.chatbot.handlers.general._REDACT_BEFORE_LLM",
-        "app.services.chatbot.handlers.meta._REDACT_BEFORE_LLM",
-    ]
-    return [patch(t, redact_on) for t in targets]
-
-
 # ---------------------------------------------------------------------------
 # Surface 1+2: slot extraction (gate path AND service-flow path)
 # ---------------------------------------------------------------------------
@@ -125,13 +108,8 @@ def _flag_patches(redact_on: bool):
 # at the dispatch seam catches both.
 
 
-@pytest.mark.parametrize("redact_on,expect_pii,reject_marker", [
-    (False, True, False),   # flag off: raw text reaches LLM, no [PHONE] marker
-    (True, False, True),    # flag on: redacted text reaches LLM, [PHONE] marker present
-])
-def test_slot_extraction_payload_respects_flag(redact_on, expect_pii, reject_marker):
-    """Slot extraction (gate AND service-flow) must use redacted text under
-    the flag and raw text without it.
+def test_slot_extraction_payload_uses_redacted():
+    """Slot extraction (gate AND service-flow) sends redacted text to the LLM.
 
     Both surfaces share a code path through ``slot_extraction.extract``,
     so this single test covers items 1 and 2 from the leak-surface table.
@@ -158,11 +136,10 @@ def test_slot_extraction_payload_respects_flag(redact_on, expect_pii, reject_mar
         patch("app.services.chatbot.execution.query_services", return_value=[]),
         patch("app.services.chatbot.orchestrator.detect_crisis", return_value=None),
         patch("app.services.classifier.detect_crisis", return_value=None),
-    ] + _flag_patches(redact_on)
+    ]
 
     with patches[0], patches[1], patches[2], patches[3], patches[4], \
-            patches[5], patches[6], patches[7], patches[8], patches[9], \
-            patches[10], patches[11], patches[12], patches[13]:
+            patches[5], patches[6], patches[7], patches[8]:
         generate_reply(RAW_MESSAGE_WITH_PII, session_id=sid)
 
     # Assert at least one call carried our message and inspect what
@@ -194,21 +171,14 @@ def test_slot_extraction_payload_respects_flag(redact_on, expect_pii, reject_mar
 
     combined = "\n".join(sent_text_blobs)
 
-    if expect_pii:
-        assert PII_FRAGMENT in combined, (
-            f"With flag OFF, slot-extraction LLM call should have received "
-            f"raw PII text {PII_FRAGMENT!r}. Got:\n{combined!r}"
-        )
-    else:
-        assert PII_FRAGMENT not in combined, (
-            f"With flag ON, slot-extraction LLM call must NOT contain raw "
-            f"PII fragment {PII_FRAGMENT!r}. Leak detected:\n{combined!r}"
-        )
-    if reject_marker:
-        assert REDACTED_MARKER in combined, (
-            f"With flag ON, slot-extraction LLM call should have received "
-            f"the redacted placeholder {REDACTED_MARKER!r}. Got:\n{combined!r}"
-        )
+    assert PII_FRAGMENT not in combined, (
+        f"Slot-extraction LLM call must NOT contain raw PII fragment "
+        f"{PII_FRAGMENT!r}. Leak detected:\n{combined!r}"
+    )
+    assert REDACTED_MARKER in combined, (
+        f"Slot-extraction LLM call should have received the redacted "
+        f"placeholder {REDACTED_MARKER!r}. Got:\n{combined!r}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -224,13 +194,8 @@ def test_slot_extraction_payload_respects_flag(redact_on, expect_pii, reject_mar
 # confirm what reaches the underlying LLM client.
 
 
-@pytest.mark.parametrize("redact_on,expect_pii", [
-    (False, True),
-    (True, False),
-])
-def test_crisis_stage2_payload_respects_flag(redact_on, expect_pii):
-    """Crisis detection's Stage 2 LLM call must use redacted text under the
-    flag (and raw without it)."""
+def test_crisis_stage2_payload_uses_redacted():
+    """Crisis detection's Stage 2 LLM call sends redacted text."""
     from app.services.chatbot import generate_reply
 
     sid = f"test-crisis-{uuid4().hex[:8]}"
@@ -263,12 +228,10 @@ def test_crisis_stage2_payload_respects_flag(redact_on, expect_pii):
         patch("app.services.chatbot.execution.query_services", return_value=[]),
         patch("app.services.chatbot.handlers.meta.claude_reply", return_value="ok"),
         patch("app.services.responses.claude_reply", return_value="ok"),
-    ] + _flag_patches(redact_on)
+    ]
 
-    # 7 base + 5 flag = 12 patches, indices 0..11
     with patches[0], patches[1], patches[2], patches[3], patches[4], \
-            patches[5], patches[6], patches[7], patches[8], patches[9], \
-            patches[10], patches[11]:
+            patches[5], patches[6]:
         generate_reply(crisis_ambiguous, session_id=sid)
 
     # Find the crisis-Stage-2 call. The test mocks every LLM client at
@@ -295,16 +258,10 @@ def test_crisis_stage2_payload_respects_flag(redact_on, expect_pii):
             "becomes persistent."
         )
 
-    if expect_pii:
-        assert PII_FRAGMENT in combined, (
-            f"With flag OFF, crisis Stage 2 LLM should have received raw "
-            f"PII text. Got:\n{combined!r}"
-        )
-    else:
-        assert PII_FRAGMENT not in combined, (
-            f"With flag ON, crisis Stage 2 LLM must NOT contain raw PII. "
-            f"Leak detected:\n{combined!r}"
-        )
+    assert PII_FRAGMENT not in combined, (
+        f"Crisis Stage 2 LLM must NOT contain raw PII. "
+        f"Leak detected:\n{combined!r}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -316,13 +273,8 @@ def test_crisis_stage2_payload_respects_flag(redact_on, expect_pii):
 # ``classify_post_results_question`` -> ``_classify_post_results_llm``.
 
 
-@pytest.mark.parametrize("redact_on,expect_pii", [
-    (False, True),
-    (True, False),
-])
-def test_post_results_classify_payload_respects_flag(redact_on, expect_pii):
-    """The post-results LLM classifier must use redacted text under the
-    flag.
+def test_post_results_classify_payload_uses_redacted():
+    """The post-results LLM classifier sends redacted text.
 
     Direct-call version: invokes ``classify_post_results_question``
     directly with controlled raw + redacted inputs, so the test does
@@ -347,10 +299,7 @@ def test_post_results_classify_payload_respects_flag(redact_on, expect_pii):
     raw_phrase = "wondering if anything fits a 212-555-1234 type problem"
     redacted_phrase = "wondering if anything fits a [PHONE] type problem"
 
-    flag_patches = _flag_patches(redact_on)
-    with patch("app.llm.claude_client.get_client", return_value=mock_client), \
-         flag_patches[0], flag_patches[1], flag_patches[2], \
-         flag_patches[3], flag_patches[4]:
+    with patch("app.llm.claude_client.get_client", return_value=mock_client):
         classify_post_results_question(raw_phrase, redacted_message=redacted_phrase)
 
     sent_text_blobs = []
@@ -370,49 +319,38 @@ def test_post_results_classify_payload_respects_flag(redact_on, expect_pii):
 
     combined = "\n".join(sent_text_blobs)
 
-    if expect_pii:
-        assert PII_FRAGMENT in combined, (
-            f"With flag OFF, post-results classifier should have received "
-            f"raw PII text. Got:\n{combined!r}"
-        )
-    else:
-        assert PII_FRAGMENT not in combined, (
-            f"With flag ON, post-results classifier must NOT contain raw "
-            f"PII. Leak detected:\n{combined!r}"
-        )
+    assert PII_FRAGMENT not in combined, (
+        f"Post-results classifier must NOT contain raw PII. "
+        f"Leak detected:\n{combined!r}"
+    )
 
 
 # ---------------------------------------------------------------------------
 # Surface 5: post_results — _extract_keywords_llm
 # ---------------------------------------------------------------------------
 # Reached via the filter handler when ``_extract_keywords_llm`` is
-# called with a ``raw_phrase`` derived from the user message. The
-# fix routes ``_extract_raw_phrase`` over the redacted version under
-# the flag, so the leak surface is closed at the keyword-derivation
-# step rather than the LLM call alone.
+# called with a ``raw_phrase`` derived from the user message. Pre-LLM
+# redaction (made mandatory in Phase 4) routes ``_extract_raw_phrase``
+# over the redacted version, so the leak surface is closed at the
+# keyword-derivation step rather than the LLM call alone.
 
 
-@pytest.mark.parametrize("redact_on,expect_pii", [
-    (False, True),
-    (True, False),
-])
-def test_post_results_keyword_extract_payload_respects_flag(redact_on, expect_pii):
-    """The post-results LLM keyword extractor must derive its raw_phrase
-    from redacted text under the flag, so PII never reaches Anthropic
-    via this path.
+def test_post_results_keyword_extract_payload_uses_redacted():
+    """The post-results LLM keyword extractor derives its raw_phrase
+    from redacted text, so PII never reaches Anthropic via this path.
 
     Direct-call version: this surface is closed by the
     ``_raw_phrase_source`` picker in ``classify_post_results_question``
-    — when the flag is on, ``_extract_raw_phrase`` operates on the
-    redacted message, so the ``raw_phrase`` field of the
-    ``filter_subcategory`` intent dict is already PII-free before it
-    flows downstream to ``_handle_filter_subcategory`` ->
-    ``_extract_keywords_llm``. We verify the contract at the intent-
-    dict boundary rather than mocking through to ``_extract_keywords_llm``,
-    because (a) ``_extract_keywords_llm`` is a passive embedder that
-    can't possibly leak more than ``raw_phrase`` already contains, and
-    (b) testing the boundary makes the contract reusable for any
-    future caller of ``_extract_keywords_llm``.
+    — ``_extract_raw_phrase`` operates on the redacted message, so the
+    ``raw_phrase`` field of the ``filter_subcategory`` intent dict is
+    already PII-free before it flows downstream to
+    ``_handle_filter_subcategory`` -> ``_extract_keywords_llm``. We
+    verify the contract at the intent-dict boundary rather than mocking
+    through to ``_extract_keywords_llm``, because (a)
+    ``_extract_keywords_llm`` is a passive embedder that can't possibly
+    leak more than ``raw_phrase`` already contains, and (b) testing the
+    boundary makes the contract reusable for any future caller of
+    ``_extract_keywords_llm``.
     """
     from app.services.post_results import classify_post_results_question
 
@@ -425,12 +363,9 @@ def test_post_results_keyword_extract_payload_respects_flag(redact_on, expect_pi
     raw_phrase = "ones that allow walk-ins for 212-555-1234"
     redacted_phrase = "ones that allow walk-ins for [PHONE]"
 
-    flag_patches = _flag_patches(redact_on)
-    with flag_patches[0], flag_patches[1], flag_patches[2], \
-         flag_patches[3], flag_patches[4]:
-        result = classify_post_results_question(
-            raw_phrase, redacted_message=redacted_phrase
-        )
+    result = classify_post_results_question(
+        raw_phrase, redacted_message=redacted_phrase
+    )
 
     assert result is not None and result.get("type") == "filter_subcategory", (
         f"Expected filter_subcategory intent for `ones that...` phrasing, "
@@ -439,23 +374,15 @@ def test_post_results_keyword_extract_payload_respects_flag(redact_on, expect_pi
     )
     extracted_raw_phrase = result.get("raw_phrase", "")
 
-    if expect_pii:
-        assert PII_FRAGMENT in extracted_raw_phrase, (
-            f"With flag OFF, the intent dict's raw_phrase field should "
-            f"contain raw PII (since _extract_keywords_llm will receive "
-            f"it verbatim). Got: {extracted_raw_phrase!r}"
-        )
-    else:
-        assert PII_FRAGMENT not in extracted_raw_phrase, (
-            f"With flag ON, the intent dict's raw_phrase must NOT "
-            f"contain raw PII — _extract_keywords_llm receives this "
-            f"value verbatim, so any PII here leaks to Anthropic. "
-            f"Got: {extracted_raw_phrase!r}"
-        )
-        assert REDACTED_MARKER in extracted_raw_phrase, (
-            f"With flag ON, raw_phrase should contain the redacted "
-            f"placeholder. Got: {extracted_raw_phrase!r}"
-        )
+    assert PII_FRAGMENT not in extracted_raw_phrase, (
+        f"The intent dict's raw_phrase must NOT contain raw PII — "
+        f"_extract_keywords_llm receives this value verbatim, so any PII "
+        f"here leaks to Anthropic. Got: {extracted_raw_phrase!r}"
+    )
+    assert REDACTED_MARKER in extracted_raw_phrase, (
+        f"raw_phrase should contain the redacted placeholder. "
+        f"Got: {extracted_raw_phrase!r}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -467,13 +394,9 @@ def test_post_results_keyword_extract_payload_respects_flag(redact_on, expect_pi
 # it via claude_reply.
 
 
-@pytest.mark.parametrize("redact_on,expect_pii", [
-    (False, True),
-    (True, False),
-])
-def test_conversational_fallback_payload_respects_flag(redact_on, expect_pii):
+def test_conversational_fallback_payload_uses_redacted():
     """The conversational fallback (claude_reply via _fallback_response)
-    must use redacted text under the flag.
+    sends redacted text.
 
     Direct-call version: invokes ``_handle_general_conversation(ctx)``
     with a hand-built ``MessageContext`` so the test does not depend
@@ -505,10 +428,7 @@ def test_conversational_fallback_payload_respects_flag(redact_on, expect_pii):
         confidence="high",  # so the low-confidence navigator suffix doesn't fire
     )
 
-    flag_patches = _flag_patches(redact_on)
-    with patch("app.services.responses.claude_reply", side_effect=_capture), \
-         flag_patches[0], flag_patches[1], flag_patches[2], \
-         flag_patches[3], flag_patches[4]:
+    with patch("app.services.responses.claude_reply", side_effect=_capture):
         _handle_general_conversation(ctx)
 
     assert captured_prompts, (
@@ -519,16 +439,10 @@ def test_conversational_fallback_payload_respects_flag(redact_on, expect_pii):
 
     combined = "\n".join(captured_prompts)
 
-    if expect_pii:
-        assert PII_FRAGMENT in combined, (
-            f"With flag OFF, conversational fallback should have "
-            f"received raw PII text. Got:\n{combined!r}"
-        )
-    else:
-        assert PII_FRAGMENT not in combined, (
-            f"With flag ON, conversational fallback must NOT contain "
-            f"raw PII. Leak detected:\n{combined!r}"
-        )
+    assert PII_FRAGMENT not in combined, (
+        f"Conversational fallback must NOT contain raw PII. "
+        f"Leak detected:\n{combined!r}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -540,17 +454,13 @@ def test_conversational_fallback_payload_respects_flag(redact_on, expect_pii):
 # routes to claude_reply with a prompt that embeds the user's question.
 
 
-@pytest.mark.parametrize("redact_on,expect_pii", [
-    (False, True),
-    (True, False),
-])
-def test_bot_question_fallback_payload_respects_flag(redact_on, expect_pii):
-    """The bot-question LLM fallback must use redacted text under the flag.
+def test_bot_question_fallback_payload_uses_redacted():
+    """The bot-question LLM fallback sends redacted text.
 
     Direct-call version: invokes ``_handle_bot_capability_question(ctx)``
     with a hand-built ``MessageContext``. ``answer_question`` is patched
     to return None so the static-answer branch falls through to the LLM
-    branch where the redaction swap lives.
+    branch.
     """
     from app.services.chatbot.handlers.meta import _handle_bot_capability_question
     from conftest import make_ctx
@@ -571,12 +481,9 @@ def test_bot_question_fallback_payload_respects_flag(redact_on, expect_pii):
         category="bot_question",
     )
 
-    flag_patches = _flag_patches(redact_on)
     with patch("app.services.bot_knowledge.answer_question", return_value=None), \
          patch("app.services.chatbot.handlers.meta._USE_LLM", True), \
-         patch("app.services.chatbot.handlers.meta.claude_reply", side_effect=_capture), \
-         flag_patches[0], flag_patches[1], flag_patches[2], \
-         flag_patches[3], flag_patches[4]:
+         patch("app.services.chatbot.handlers.meta.claude_reply", side_effect=_capture):
         _handle_bot_capability_question(ctx)
 
     assert captured_prompts, (
@@ -587,16 +494,10 @@ def test_bot_question_fallback_payload_respects_flag(redact_on, expect_pii):
 
     combined = "\n".join(captured_prompts)
 
-    if expect_pii:
-        assert PII_FRAGMENT in combined, (
-            f"With flag OFF, bot-question fallback should have "
-            f"received raw PII text. Got:\n{combined!r}"
-        )
-    else:
-        assert PII_FRAGMENT not in combined, (
-            f"With flag ON, bot-question fallback must NOT contain raw "
-            f"PII. Leak detected:\n{combined!r}"
-        )
+    assert PII_FRAGMENT not in combined, (
+        f"Bot-question fallback must NOT contain raw PII. "
+        f"Leak detected:\n{combined!r}"
+    )
 
 
 # ---------------------------------------------------------------------------

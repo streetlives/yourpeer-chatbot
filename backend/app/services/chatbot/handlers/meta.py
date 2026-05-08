@@ -28,7 +28,7 @@ from app.services.responses import (
 from app.services.session_store import clear_session, save_session_slots
 from app.services.audit_log import log_session_reset
 
-from ..context import MessageContext, _USE_LLM, _REDACT_BEFORE_LLM, _empty_reply
+from ..context import MessageContext, _USE_LLM, _empty_reply
 from ..logging import _log_turn
 from ..session_helpers import has_user_content
 
@@ -125,14 +125,14 @@ def _handle_bot_capability_question(ctx: MessageContext):
         response = static_answer
     elif _USE_LLM:
         try:
-            # Pre-LLM redaction (Phase 1): swap to redacted_message when
-            # the flag is on. _build_bot_question_prompt embeds the
-            # message verbatim into the prompt sent to Anthropic
-            # (ends with "User question: {user_message}"). The static
-            # answer_question above and _static_bot_answer below are
-            # local pattern-match — they don't leak and keep using raw.
-            _llm_input = ctx.redacted_message if _REDACT_BEFORE_LLM else ctx.message
-            prompt = _build_bot_question_prompt(_llm_input, slots=ctx.existing)
+            # Phase 4 close-out (May 2026): pre-LLM redaction is mandatory.
+            # ``ctx.redacted_message`` is always populated.
+            # ``_build_bot_question_prompt`` embeds the message verbatim into
+            # the prompt sent to Anthropic (ends with "User question:
+            # {user_message}"). The static answer_question above and
+            # _static_bot_answer below are local pattern-match — they don't
+            # leak and keep using raw.
+            prompt = _build_bot_question_prompt(ctx.redacted_message, slots=ctx.existing)
             response = claude_reply(prompt)
         except Exception as e:
             logger.error(f"Bot question LLM response failed: {e}")

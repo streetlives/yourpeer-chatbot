@@ -237,11 +237,10 @@ def classify_message_llm(text: str) -> str | None:
     symbol would break those tests' patch targets without changing
     their intent.
 
-    Calling this function in new code is a privacy regression: it
-    sends raw user text to Anthropic, bypassing the
-    ``_REDACT_BEFORE_LLM`` gate covered by every other LLM call site.
-    Future developers should not reach for this function. The
-    RuntimeError makes that loud at call time. See
+    Calling this function in new code is a privacy regression: it would
+    send raw user text to Anthropic, bypassing the redaction that every
+    other LLM call site applies. Future developers should not reach for
+    this function. The RuntimeError makes that loud at call time. See
     docs/design/PRE_LLM_REDACTION_SCOPE.md.
     """
     raise RuntimeError(
@@ -249,8 +248,8 @@ def classify_message_llm(text: str) -> str | None:
         "It was a relic of the LLM-3 routing-category fallback that was removed "
         "from the orchestrator. If you need to classify a message, use the "
         "regex/semantic/LLM-gate pipeline in app.services.chatbot.pipeline "
-        "(which routes user text through the pre-LLM redactor when "
-        "REDACT_BEFORE_LLM=true). See docs/design/PRE_LLM_REDACTION_SCOPE.md."
+        "(which routes user text through the PII redactor before any "
+        "Anthropic call). See docs/design/PRE_LLM_REDACTION_SCOPE.md."
     )
 
 

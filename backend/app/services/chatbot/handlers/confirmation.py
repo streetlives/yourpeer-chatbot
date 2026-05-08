@@ -17,6 +17,7 @@ from app.services.confirmation import (
     _build_confirmation_message,
     _confirmation_quick_replies,
     _follow_up_quick_replies,
+    _get_nearby_boroughs,
 )
 from app.services.phrase_lists import _SERVICE_LABELS, _WELCOME_QUICK_REPLIES
 from app.services.responses import _ESCALATION_RESPONSE
@@ -29,6 +30,10 @@ from app.services.slot_extraction_regex import (
     next_follow_up_question,
 )
 from app.services import slot_extraction
+from app.rag.query_executor import (
+    normalize_location as _normalize_location,
+    _stated_borough_from_city,
+)
 from app.utils.text_normalize import normalize_apostrophes
 
 from ..context import _USE_LLM, _empty_reply
@@ -224,25 +229,189 @@ def _handle_correction(ctx):
     return result
 
 
+# ---------------------------------------------------------------------------
+# Negative-preference helpers (safety acknowledgment + borough expansion)
+# ---------------------------------------------------------------------------
+#
+# These two helpers feed ``_handle_negative_preference`` below. They are
+# private to this module — the rest of the codebase does not consume them.
+
+# Past-tense recall phrases. The user is recounting a previous service
+# experience that felt unsafe — distinct from present-tense or imminent
+# safety signals ("I'm not safe", "I'm in danger", "got attacked"), which
+# are caught by ``crisis_detector._SAFETY_CONCERN_PHRASES`` and
+# ``_ASSAULT_VICTIM_PHRASES`` and route through crisis BEFORE this
+# handler runs. The recall phrases below intentionally do NOT overlap
+# with crisis lists — they capture the gap where the user is describing
+# a remembered experience to explain why they're rejecting an offered
+# location.
+#
+# Both apostrophe forms are listed because ``_classify_action`` strips
+# curly apostrophes via ``re.sub(r"[^\w\s']", ...)`` rather than
+# normalizing them. Following the convention in the negative-preference
+# and frustration phrase lists.
+_NEGATIVE_PREFERENCE_SAFETY_RECALL_PHRASES = (
+    "really unsafe",
+    "wasnt safe", "wasn't safe",
+    "felt unsafe",
+    "didnt feel safe", "didn't feel safe",
+    "felt threatened",
+    "made me feel unsafe",
+)
+
+
+def _has_safety_recall(redacted_message: str | None) -> bool:
+    """True when the user's message contains a past-tense safety disclosure.
+
+    Used by ``_handle_negative_preference`` to prepend a safety-aware
+    acknowledgment. Detection does NOT change the routing — peer-navigator
+    escalation remains the path. The acknowledgment exists so a "the
+    place was unsafe" disclosure isn't met with the flat "I understand"
+    used for plain "I don't like those options."
+
+    Conservative by construction: only fires inside this handler (called
+    after ``_classify_action`` returned ``negative_preference``), so the
+    phrases don't need to disambiguate against unrelated safety
+    references — context already established the user is rejecting a
+    service they tried.
+    """
+    if not redacted_message:
+        return False
+    text = normalize_apostrophes(redacted_message).lower()
+    return any(phrase in text for phrase in _NEGATIVE_PREFERENCE_SAFETY_RECALL_PHRASES)
+
+
+# Borough name normalization for direct-borough matches. The neighborhood
+# fallback below uses ``_stated_borough_from_city`` which doesn't handle
+# borough-name inputs (its inverse map keys on pa.city values, so
+# "Manhattan" returns None — "New York" returns "Manhattan").
+_NEGATIVE_PREFERENCE_BOROUGH_NAMES = {
+    "manhattan":      "Manhattan",
+    "brooklyn":       "Brooklyn",
+    "queens":         "Queens",
+    "bronx":          "Bronx",
+    "the bronx":      "Bronx",
+    "staten island":  "Staten Island",
+}
+
+
+def _resolve_to_borough(raw_location: str | None) -> str | None:
+    """Resolve a user-provided location string to its canonical borough.
+
+    Handles both borough inputs ("Manhattan", "the bronx") and
+    neighborhood inputs ("Harlem" → Manhattan, "Williamsburg" → Brooklyn,
+    "Astoria" → Queens). Returns None for unknown locations or out-of-
+    town addresses.
+
+    The existing ``_no_results_message`` only expands when ``is_borough``
+    is true, which excludes the wa_negative_preference scenario's
+    "Harlem" input. This function relaxes that gate for the negative-
+    preference path. Tradeoff: we offer borough-level alternatives
+    (Brooklyn, Bronx) instead of neighborhood-level (East Harlem,
+    Washington Heights). Neighborhood-level expansion would need a
+    neighborhood-adjacency graph we don't currently have.
+    """
+    if not raw_location:
+        return None
+    key = raw_location.lower().strip()
+    if key in _NEGATIVE_PREFERENCE_BOROUGH_NAMES:
+        return _NEGATIVE_PREFERENCE_BOROUGH_NAMES[key]
+    return _stated_borough_from_city(_normalize_location(raw_location))
+
+
+def _negative_preference_expansion(slots: dict) -> tuple[str, list[str]]:
+    """Compute borough-expansion offer for negative-preference tier 1.
+
+    Returns:
+        ``(prose_fragment, nearby_boroughs)``
+
+        - ``prose_fragment``: empty string when no expansion possible,
+          else a fragment like "broaden the search to nearby boroughs
+          (Brooklyn or Bronx)" that slots into the tier-1 message body.
+        - ``nearby_boroughs``: up to 2 borough names for quick-reply
+          buttons. Empty when no expansion.
+
+    Returns ``("", [])`` when location is missing, service_type is
+    missing, the location resolves to no known borough, or the
+    service+borough combo has no nearby-borough mapping (which would
+    be a data gap to investigate, not a code path to handle differently).
+    """
+    service_type = slots.get("service_type")
+    location = slots.get("location")
+    if not service_type or not location:
+        return "", []
+
+    borough = _resolve_to_borough(location)
+    if not borough:
+        return "", []
+
+    nearby = _get_nearby_boroughs(service_type, borough)[:2]
+    if not nearby:
+        return "", []
+
+    if len(nearby) == 1:
+        prose = f"broaden the search to {nearby[0]}"
+    else:
+        prose = f"broaden the search to nearby boroughs ({nearby[0]} or {nearby[1]})"
+    return prose, nearby
+
+
 def _handle_negative_preference(ctx):
     """Handle "I don't like those" / "none of these" with tiered escalation.
 
     After 3+ consecutive frustration-counted turns, routes to peer navigator.
     After 2, adds 311 as a live-help option. Otherwise offers to search
     something else.
+
+    Two layered behaviors:
+
+    1. **Safety-recall acknowledgment.** When the user's message contains
+       past-tense safety language ("was really unsafe", "wasn't safe",
+       "felt unsafe"), every tier prepends a safety-aware phrasing. The
+       acknowledgment validates without probing for trauma details —
+       peer navigators are the channel for unpacking. Crisis-adjacent
+       phrasings ("I'm not safe", "got attacked") fire crisis detection
+       and route before this handler runs.
+
+    2. **Borough expansion in tier 1.** When the user's location/service
+       combo supports nearby-borough alternatives, tier 1 mentions them
+       in prose and offers up to 2 quick-reply buttons ("🗺️ Try
+       Brooklyn"). Tier 2 and tier 3 stay escalation-focused — adding
+       geographic suggestions there muddles the escalation arc.
+
+    Eval target: ``wa_negative_preference``. R32: 3.91 (failing). Judge
+    feedback (May 2026 run): "didn't probe further about what 'unsafe'
+    meant" (Safety & Crisis 3/5), "didn't proactively try expanding
+    the search area" (Dialog Efficiency 3/5, Error Recovery 3/5). Both
+    addressed by the changes above.
     """
     # Also count as frustration for escalation tiers (Run 24 eval fix)
     frust_count = ctx.existing.get("_frustration_count", 0) + 1
     ctx.existing["_frustration_count"] = frust_count
 
+    has_safety = _has_safety_recall(ctx.redacted_message)
+
     # When frustration has accumulated, use tiered escalation
     if frust_count >= 3:
         ctx.existing["_last_action"] = "frustration"
         save_session_slots(ctx.session_id, ctx.existing)
+        if has_safety:
+            tier3_msg = (
+                "I'm sorry I haven't been able to help, especially "
+                "when you've shared that some of these places haven't "
+                "felt safe. Let me connect you with a peer navigator "
+                "— they can work with you directly to find somewhere "
+                "that feels right."
+            )
+        else:
+            tier3_msg = (
+                "I'm sorry I haven't been able to help. Let me connect "
+                "you with a peer navigator — they can work with you "
+                "directly."
+            )
         result = _empty_reply(
             ctx.session_id,
-            "I'm sorry I haven't been able to help. Let me connect you "
-            "with a peer navigator — they can work with you directly.",
+            tier3_msg,
             ctx.existing,
             quick_replies=[
                 {"label": "🤝 Peer navigator", "value": "Connect with peer navigator"},
@@ -254,11 +423,24 @@ def _handle_negative_preference(ctx):
     elif frust_count >= 2:
         ctx.existing["_last_action"] = "frustration"
         save_session_slots(ctx.session_id, ctx.existing)
+        if has_safety:
+            tier2_msg = (
+                "I hear you — and I'm sorry that some of these places "
+                "haven't felt safe. A peer navigator would be more "
+                "helpful — they're real people who know the system, "
+                "and they can help you find places that feel right. "
+                "You can also call 311 for live help."
+            )
+        else:
+            tier2_msg = (
+                "I hear you — I'm clearly not finding what you need "
+                "right now. A peer navigator would be more helpful — "
+                "they're real people who know the system. You can "
+                "also call 311 for live help."
+            )
         result = _empty_reply(
             ctx.session_id,
-            "I hear you — I'm clearly not finding what you need right now. "
-            "A peer navigator would be more helpful — they're real people "
-            "who know the system. You can also call 311 for live help.",
+            tier2_msg,
             ctx.existing,
             quick_replies=[
                 {"label": "🤝 Peer navigator", "value": "Connect with peer navigator"},
@@ -269,18 +451,58 @@ def _handle_negative_preference(ctx):
                   request_id=ctx.request_id, tone=ctx.tone)
         return result
 
+    # Tier 1: composed message with optional safety acknowledgment +
+    # optional borough expansion.
+    expansion_prose, nearby_boroughs = _negative_preference_expansion(ctx.existing)
+
+    if has_safety:
+        opener = (
+            "I'm sorry that happened — that sounds like a really "
+            "hard experience."
+        )
+        navigator_clause = (
+            "or connect you with a peer navigator who might know "
+            "places that feel safer."
+        )
+    else:
+        opener = "I understand — those options aren't what you need."
+        navigator_clause = (
+            "or connect you with a peer navigator who might know of "
+            "other resources."
+        )
+
+    if expansion_prose:
+        body = (
+            f"I can {expansion_prose}, look for a different type of "
+            f"service, {navigator_clause}"
+        )
+    else:
+        body = f"I can search for a different type of service, {navigator_clause}"
+
+    tier1_msg = f"{opener} {body} What would be most helpful?"
+
+    # Quick replies: expansion buttons first (most actionable for the
+    # rejected-this-area moment), peer navigator second (always present),
+    # then welcome categories (categorical pivot affordance, matches
+    # what the prose offers as "different type of service"). Worst case:
+    # 2 + 1 + 9 = 12 buttons. Wide but acceptable — each represents a
+    # distinct user intent at a branching moment.
+    qr = []
+    for borough in nearby_boroughs:
+        qr.append({
+            "label": f"🗺️ Try {borough}",
+            "value": f"Search in {borough} instead",
+        })
+    qr.append({"label": "🤝 Peer navigator", "value": "Connect with peer navigator"})
+    qr.extend(_WELCOME_QUICK_REPLIES)
+
     ctx.existing["_last_action"] = "negative_preference"
     save_session_slots(ctx.session_id, ctx.existing)
     result = _empty_reply(
         ctx.session_id,
-        "I understand — those options aren't what you need. "
-        "I can search for a different type of service, or connect "
-        "you with a peer navigator who might know of other resources. "
-        "What would be most helpful?",
+        tier1_msg,
         ctx.existing,
-        quick_replies=list(_WELCOME_QUICK_REPLIES) + [
-            {"label": "🤝 Peer navigator", "value": "Connect with peer navigator"},
-        ],
+        quick_replies=qr,
     )
     _log_turn(ctx.session_id, ctx.redacted_message, result, "negative_preference",
               request_id=ctx.request_id, tone=ctx.tone)

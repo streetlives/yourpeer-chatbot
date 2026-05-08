@@ -118,7 +118,12 @@ def stub_pipeline(monkeypatch):
         return ctrl.crisis
 
     def _routing_category(**kwargs):
-        return kwargs.get("action", "service"), 0.9
+        # Mock matches the production signature (category, confidence,
+        # confidence_reason). Default values are arbitrary — the tests
+        # in this file don't assert on them; they exercise the routing
+        # decisions made downstream of this call. See pipeline.py
+        # ``_compute_routing_category`` for the field semantics.
+        return kwargs.get("action", "service"), 0.9, "regex_match"
 
     monkeypatch.setattr(
         "app.services.chatbot.orchestrator._redact_with_safety_warning", _redact
