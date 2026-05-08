@@ -2799,3 +2799,201 @@ def test_c2_escape_button_actually_escapes_pending_confirmation(fresh_session):
     assert "just to make sure" not in r3_lower, (
         f"INT-7: escape button fell through to re-nudge. Got: {r3['response'][:200]}"
     )
+
+
+# -----------------------------------------------------------------------
+# CITYWIDE LOCATION HANDLING — top-level "NYC" / "the city" / "all NYC"
+# -----------------------------------------------------------------------
+# Before this fix, NYC variants either extracted as None (silent
+# re-prompt for borough) or as a freeform string ("NYC") that didn't
+# match any DB city value (silent zero-result query). The fix adds
+# CITYWIDE_SENTINEL with proper downstream handling.
+
+def test_citywide_extraction_bare_mentions():
+    """Bare mentions of NYC variants extract to CITYWIDE_SENTINEL."""
+    from app.services.slot_extraction_regex import _extract_location, CITYWIDE_SENTINEL
+    for phrase in ["NYC", "nyc", "NY", "ny", "the city",
+                   "New York", "new york", "New York City",
+                   "All NYC", "all five boroughs", "any borough",
+                   "across NYC", "anywhere in NYC"]:
+        assert _extract_location(phrase) == CITYWIDE_SENTINEL, (
+            f"{phrase!r} should extract to CITYWIDE_SENTINEL"
+        )
+
+
+def test_citywide_extraction_with_preposition():
+    """'I need food in NYC' extracts citywide, not 'NYC' as freeform."""
+    from app.services.slot_extraction_regex import _extract_location, CITYWIDE_SENTINEL
+    for phrase in ["I need food in NYC", "looking for shelter in the city",
+                   "food in NY", "I need help in New York City",
+                   "food across NYC", "anywhere in nyc"]:
+        assert _extract_location(phrase) == CITYWIDE_SENTINEL, (
+            f"{phrase!r} should extract to CITYWIDE_SENTINEL, "
+            f"got {_extract_location(phrase)!r}"
+        )
+
+
+def test_citywide_specific_borough_overrides():
+    """A specific borough mentioned alongside NYC variants wins."""
+    from app.services.slot_extraction_regex import _extract_location
+    cases = [
+        ("food in NYC, Brooklyn specifically", "brooklyn"),
+        ("I need food in NYC, in Manhattan", "manhattan"),
+        ("Looking for shelter in the city, around Queens", "queens"),
+        ("I need help in New York and especially Brooklyn", "brooklyn"),
+    ]
+    for phrase, expected in cases:
+        got = _extract_location(phrase)
+        assert got == expected, f"{phrase!r}: expected {expected!r}, got {got!r}"
+
+
+def test_citywide_word_boundary_false_positives():
+    """'ny' shouldn't match 'any' / 'many' / 'anyone' / 'anybody' / 'nyu' etc."""
+    from app.services.slot_extraction_regex import _extract_location, CITYWIDE_SENTINEL
+    # These have no real location and should NOT trigger citywide
+    for phrase in ["Anyone can help", "many people need this",
+                   "Anyone there?"]:
+        result = _extract_location(phrase)
+        assert result != CITYWIDE_SENTINEL, (
+            f"{phrase!r} should NOT extract to citywide (got {result!r})"
+        )
+
+
+def test_citywide_is_enough_to_answer():
+    """CITYWIDE_SENTINEL counts as a real location for answer-readiness."""
+    from app.services.slot_extraction_regex import (
+        is_enough_to_answer, CITYWIDE_SENTINEL, NEAR_ME_SENTINEL,
+    )
+    # Citywide is sufficient
+    assert is_enough_to_answer({"service_type": "food", "location": CITYWIDE_SENTINEL})
+    # Near-me alone is NOT sufficient (still needs GPS or borough)
+    assert not is_enough_to_answer({"service_type": "food", "location": NEAR_ME_SENTINEL})
+    # Specific borough is sufficient (sanity check)
+    assert is_enough_to_answer({"service_type": "food", "location": "brooklyn"})
+
+
+def test_citywide_quick_replies_not_shown_when_already_chosen():
+    """Once user has chosen citywide, don't re-prompt with borough buttons."""
+    from app.services.confirmation import _follow_up_quick_replies
+    from app.services.slot_extraction_regex import CITYWIDE_SENTINEL
+    # When location is CITYWIDE_SENTINEL and service_type is set,
+    # there's nothing left to ask about (assuming non-shelter).
+    qrs = _follow_up_quick_replies({
+        "service_type": "food",
+        "location": CITYWIDE_SENTINEL,
+    })
+    # Should not contain the borough-prompt buttons
+    labels = [qr["label"] for qr in qrs]
+    assert "Manhattan" not in labels
+    assert "🌆 All NYC" not in labels
+
+
+def test_citywide_quick_reply_button_present_when_prompting():
+    """When asking the user for location, offer 🌆 All NYC alongside boroughs."""
+    from app.services.confirmation import _follow_up_quick_replies
+    qrs = _follow_up_quick_replies({"service_type": "food"})
+    labels = [qr["label"] for qr in qrs]
+    assert "🌆 All NYC" in labels, f"All NYC button missing; got {labels}"
+    # Button value flows back through extraction → CITYWIDE_SENTINEL
+    all_nyc_btn = next(qr for qr in qrs if qr["label"] == "🌆 All NYC")
+    assert all_nyc_btn["value"] == "All NYC"
+
+
+def test_citywide_button_value_extracts_to_sentinel():
+    """The 'All NYC' button click value resolves to CITYWIDE_SENTINEL."""
+    from app.services.slot_extraction_regex import _extract_location, CITYWIDE_SENTINEL
+    assert _extract_location("All NYC") == CITYWIDE_SENTINEL
+
+
+def test_citywide_confirmation_message_mentions_citywide():
+    """Confirmation copy renders 'across NYC' instead of '__citywide__'."""
+    from app.services.confirmation import _build_confirmation_message
+    from app.services.slot_extraction_regex import CITYWIDE_SENTINEL
+    msg = _build_confirmation_message({
+        "service_type": "food",
+        "location": CITYWIDE_SENTINEL,
+    })
+    assert "across NYC" in msg, f"Citywide phrase missing: {msg!r}"
+    assert "__citywide__" not in msg
+    assert "five boroughs" in msg
+
+
+def test_citywide_confirmation_message_with_geolocation():
+    """When citywide + GPS active, copy reflects the distance-sort behavior."""
+    from app.services.confirmation import _build_confirmation_message
+    from app.services.slot_extraction_regex import CITYWIDE_SENTINEL
+    msg = _build_confirmation_message({
+        "service_type": "food",
+        "location": CITYWIDE_SENTINEL,
+        "_latitude": 40.7831,
+        "_longitude": -73.9712,
+    })
+    assert "across NYC" in msg
+    assert "distance" in msg
+
+
+def test_citywide_query_unions_all_boroughs(fresh_session):
+    """search_services with CITYWIDE_SENTINEL builds a city_list spanning
+    all 5 boroughs (so the SQL query catches services from any borough)."""
+    from app.rag import query_services
+    from app.services.slot_extraction_regex import CITYWIDE_SENTINEL
+    with patch("app.rag.execute_service_query") as mock_exec:
+        mock_exec.return_value = {
+            "services": [], "result_count": 0, "template_used": "food",
+            "params_applied": {}, "relaxed": False, "execution_ms": 0,
+        }
+        query_services(service_type="food", location=CITYWIDE_SENTINEL)
+
+    call_kwargs = mock_exec.call_args.kwargs
+    user_params = call_kwargs.get("user_params", {})
+    city_list = user_params.get("city_list", [])
+    assert city_list, "Citywide query should set city_list"
+    # Sample from each borough must appear (check primary city values)
+    expected_samples = {"new york", "brooklyn", "queens", "bronx", "staten island"}
+    found = expected_samples & set(city_list)
+    assert found == expected_samples, (
+        f"city_list missing borough samples: missing={expected_samples - found}, "
+        f"got first 10={city_list[:10]}"
+    )
+
+
+def test_citywide_with_geolocation_uses_proximity_path(fresh_session):
+    """When CITYWIDE + GPS coords are both present, the GPS path takes
+    precedence (uses lat/lon for proximity ordering across all boroughs).
+    The SQL layer's existing distance-band logic handles the sort."""
+    from app.rag import query_services
+    from app.services.slot_extraction_regex import CITYWIDE_SENTINEL
+    with patch("app.rag.execute_service_query") as mock_exec:
+        mock_exec.return_value = {
+            "services": [], "result_count": 0, "template_used": "food",
+            "params_applied": {}, "relaxed": False, "execution_ms": 0,
+        }
+        query_services(
+            service_type="food",
+            location=CITYWIDE_SENTINEL,
+            latitude=40.7831,
+            longitude=-73.9712,
+        )
+
+    user_params = mock_exec.call_args.kwargs["user_params"]
+    # GPS path: lat/lon set, no city_list (all-borough proximity search)
+    assert user_params.get("lat") == 40.7831
+    assert user_params.get("lon") == -73.9712
+    assert "city_list" not in user_params, (
+        "GPS path should take precedence over CITYWIDE city_list"
+    )
+
+
+def test_citywide_overrides_stale_specific_location(fresh_session):
+    """When user later says 'anywhere in NYC' after a previous specific
+    borough, the citywide intent overrides the stale value (mirrors the
+    NEAR_ME_SENTINEL override behavior)."""
+    from app.services.slot_extraction_regex import (
+        merge_slots, CITYWIDE_SENTINEL,
+    )
+    existing = {"service_type": "food", "location": "brooklyn"}
+    new_values = {"location": CITYWIDE_SENTINEL}
+    merged = merge_slots(existing, new_values)
+    assert merged["location"] == CITYWIDE_SENTINEL, (
+        f"Citywide should override stale borough; got {merged['location']!r}"
+    )

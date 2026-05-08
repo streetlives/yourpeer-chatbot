@@ -141,6 +141,7 @@ def _handle_location_unknown(ctx):
             {"label": "Queens", "value": "Queens"},
             {"label": "Bronx", "value": "Bronx"},
             {"label": "Staten Island", "value": "Staten Island"},
+            {"label": "🌆 All NYC", "value": "All NYC"},
         ],
     )
     _log_turn(ctx.session_id, ctx.redacted_message, result, "location_unknown",

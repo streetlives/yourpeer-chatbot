@@ -8,7 +8,7 @@ Handles:
   - Borough suggestion logic (service-type aware)
 """
 
-from app.services.slot_extraction_regex import NEAR_ME_SENTINEL
+from app.services.slot_extraction_regex import CITYWIDE_SENTINEL, NEAR_ME_SENTINEL
 from app.privacy.pii_redactor import redact_pii
 from app.services.phrase_lists import (
     _SERVICE_LABELS,
@@ -89,7 +89,11 @@ def _build_confirmation_message(slots: dict) -> str:
             msg = f"I\u2019ll look for {service_label} at {org_name}"
         else:
             msg = f"I\u2019ll look for services at {org_name}"
-        if location and location != "your area" and location != NEAR_ME_SENTINEL:
+        if (
+            location
+            and location != "your area"
+            and location not in (NEAR_ME_SENTINEL, CITYWIDE_SENTINEL)
+        ):
             location_clean, _ = redact_pii(location)
             msg += f" in {_display_location(location_clean)}"
         msg += " \u2014 does that sound right?"
@@ -104,12 +108,21 @@ def _build_confirmation_message(slots: dict) -> str:
     raw_primary_location = slots.get("location")
 
     # When using browser geolocation, show "near your location"
-    # instead of the raw "__near_me__" sentinel.
+    # instead of the raw "__near_me__" sentinel. When the user
+    # explicitly chose citywide, render that instead of trying to
+    # display "__citywide__".
     if (
         location == NEAR_ME_SENTINEL
         and slots.get("_latitude") is not None
     ):
         location = "near your location"
+    elif location == CITYWIDE_SENTINEL:
+        # If geolocation is also active, surface that — the SQL layer
+        # will distance-sort the citywide result set automatically.
+        if slots.get("_latitude") is not None:
+            location = "across NYC, sorted by distance from you"
+        else:
+            location = "across NYC (all five boroughs)"
     else:
         # Redact any PII that may have been captured in slot values
         location, _ = redact_pii(location)
@@ -118,7 +131,8 @@ def _build_confirmation_message(slots: dict) -> str:
 
     # "near your location" reads naturally without "in", but borough/
     # neighborhood names need "in" ("in Brooklyn", "in Harlem").
-    if location.startswith("near "):
+    # "across NYC..." also reads naturally without "in".
+    if location.startswith("near ") or location.startswith("across "):
         location_phrase = location
     else:
         location_phrase = f"in {location}"
@@ -340,6 +354,11 @@ def _follow_up_quick_replies(slots: dict) -> list:
         return list(_WELCOME_QUICK_REPLIES)
 
     # Missing location — suggest common boroughs + geolocation option
+    # plus an "All NYC" option for citywide search. Treats both
+    # NEAR_ME_SENTINEL ("near me" without GPS resolution) and
+    # missing-location as the same prompt state. CITYWIDE_SENTINEL
+    # is NOT in this branch — once the user has chosen citywide we
+    # don't re-prompt for a borough.
     if not slots.get("location") or slots.get("location") == NEAR_ME_SENTINEL:
         return [
             {"label": "📍 Use my location", "value": "__use_geolocation__"},
@@ -348,6 +367,12 @@ def _follow_up_quick_replies(slots: dict) -> list:
             {"label": "Queens", "value": "Queens"},
             {"label": "Bronx", "value": "Bronx"},
             {"label": "Staten Island", "value": "Staten Island"},
+            # All-NYC option: button value flows through normal slot
+            # extraction; "All NYC" matches _CITYWIDE_PHRASES and
+            # resolves to CITYWIDE_SENTINEL. Listed last so the
+            # specific-borough buttons are tried first by users who
+            # know their borough.
+            {"label": "🌆 All NYC", "value": "All NYC"},
         ]
 
     # Missing age (shelter only) — offer skip option

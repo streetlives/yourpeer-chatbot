@@ -17,6 +17,7 @@ from app.services.confirmation import (
     _build_confirmation_message,
     _confirmation_quick_replies,
     _follow_up_quick_replies,
+    _get_nearby_boroughs,
     _get_geographically_nearby_boroughs,
 )
 from app.services.phrase_lists import _SERVICE_LABELS, _WELCOME_QUICK_REPLIES
@@ -161,6 +162,7 @@ def _handle_change_location_request(ctx):
             {"label": "Queens", "value": "Queens"},
             {"label": "Bronx", "value": "Bronx"},
             {"label": "Staten Island", "value": "Staten Island"},
+            {"label": "🌆 All NYC", "value": "All NYC"},
         ],
     )
     _log_turn(ctx.session_id, ctx.redacted_message, result, ctx.category,
@@ -874,6 +876,7 @@ def _handle_pending_confirmation(ctx):
                 {"label": "Queens", "value": "Queens"},
                 {"label": "Bronx", "value": "Bronx"},
                 {"label": "Staten Island", "value": "Staten Island"},
+            {"label": "🌆 All NYC", "value": "All NYC"},
             ],
         )
         _log_turn(ctx.session_id, ctx.redacted_message, result, ctx.category,
