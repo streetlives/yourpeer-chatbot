@@ -291,21 +291,64 @@ def main() -> int:
     baseline = json.loads(args.baseline.read_text())
     print(f"Loaded baseline: {len(baseline)} messages from {args.baseline}")
 
-    # Load both models
+    # Load both models defensively. If one fails (commonly: missing
+    # safetensors + old torch + recent transformers, see CVE-2025-32434),
+    # report the failure and continue with whichever model(s) loaded
+    # successfully. The user can act on partial results rather than
+    # losing the whole run to one transitive dependency issue.
     from transformers import pipeline
 
     classifiers: dict[str, Any] = {}
-    if not args.skip_jhartmann:
-        print(f"Loading j-hartmann ({JHARTMANN_MODEL})...")
+    load_failures: list[str] = []
+
+    def _try_load(key: str, model_id: str) -> None:
+        print(f"Loading {key} ({model_id})...")
         t0 = time.time()
-        classifiers["jhartmann"] = pipeline("text-classification", model=JHARTMANN_MODEL)
-        print(f"  loaded in {time.time()-t0:.1f}s")
+        try:
+            classifiers[key] = pipeline("text-classification", model=model_id)
+            print(f"  loaded in {time.time()-t0:.1f}s")
+        except Exception as exc:
+            elapsed = time.time() - t0
+            print(f"  FAILED after {elapsed:.1f}s: {type(exc).__name__}", file=sys.stderr)
+            # Surface the most common cause inline so the user doesn't
+            # have to read a 50-line traceback to learn the fix.
+            msg = str(exc)
+            if "torch" in msg.lower() and ("2.6" in msg or "vulnerability" in msg.lower()):
+                print(
+                    "  hint: model ships pickle weights and transformers refuses\n"
+                    "        to load them under torch < 2.6 (CVE-2025-32434).\n"
+                    "        Fix: pip install -U \"torch>=2.6\"",
+                    file=sys.stderr,
+                )
+            elif "404" in msg or "not found" in msg.lower():
+                print("  hint: model id may be wrong or HF Hub is unreachable.",
+                      file=sys.stderr)
+            else:
+                # Print the brief error message but suppress the traceback —
+                # the user can rerun with PYTHONFAULTHANDLER=1 if they want it.
+                print(f"  details: {msg[:300]}", file=sys.stderr)
+            load_failures.append(key)
+
+    if not args.skip_jhartmann:
+        _try_load("jhartmann", JHARTMANN_MODEL)
 
     if not args.skip_kashyaparun:
-        print(f"Loading kashyaparun ({KASHYAPARUN_MODEL})...")
-        t0 = time.time()
-        classifiers["kashyaparun"] = pipeline("text-classification", model=KASHYAPARUN_MODEL)
-        print(f"  loaded in {time.time()-t0:.1f}s")
+        _try_load("kashyaparun", KASHYAPARUN_MODEL)
+
+    if not classifiers:
+        print(
+            "\nERROR: no models could be loaded. Cannot proceed.\n"
+            "Most common fix: pip install -U \"torch>=2.6\"",
+            file=sys.stderr,
+        )
+        return 1
+
+    if load_failures:
+        print(
+            f"\nProceeding with {len(classifiers)} of "
+            f"{len(classifiers) + len(load_failures)} models. "
+            f"Failed: {', '.join(load_failures)}\n"
+        )
 
     print(f"Threshold: {args.threshold}, min_chunk_tokens: {args.min_chunk_tokens}")
     print()

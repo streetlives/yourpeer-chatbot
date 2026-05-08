@@ -17,7 +17,6 @@ from app.services.confirmation import (
     _build_confirmation_message,
     _confirmation_quick_replies,
     _follow_up_quick_replies,
-    _get_nearby_boroughs,
     _get_geographically_nearby_boroughs,
 )
 from app.services.phrase_lists import _SERVICE_LABELS, _WELCOME_QUICK_REPLIES
