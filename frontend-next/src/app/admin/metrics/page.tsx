@@ -15,21 +15,7 @@ import { MetricDetailDialog } from "@/components/admin/metric-detail-dialog";
 import { findMetricDefinition } from "@/lib/admin/metric-definitions";
 import type { MetricDefinition } from "@/lib/admin/metric-definitions";
 import { EVAL_DIMENSIONS } from "@/lib/admin/eval-dimensions";
-
-// ---------------------------------------------------------------------------
-// TIMEZONE — All times render in Eastern Time (NYC-based service)
-// ---------------------------------------------------------------------------
-const NYC_TZ = "America/New_York";
-
-/** Convert a UTC hour (0–23) to an Eastern Time label like "9 AM" */
-function utcHourToET(utcHour: number): string {
-  const now = new Date();
-  const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), utcHour, 0, 0));
-  return d.toLocaleTimeString("en-US", {
-    hour: "numeric",
-    timeZone: NYC_TZ,
-  });
-}
+import { utcHourToET } from "@/lib/admin/format-time";
 
 // ---------------------------------------------------------------------------
 // STATISTICAL HELPERS

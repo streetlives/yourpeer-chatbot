@@ -99,6 +99,39 @@ export function formatTimeOfDayWithSeconds(timestamp: string): string {
 }
 
 // ---------------------------------------------------------------------------
+// Hour-of-day formatting
+// ---------------------------------------------------------------------------
+
+/**
+ * Convert a UTC hour (0–23) to an Eastern-Time hour label like "9 AM".
+ *
+ * Time-of-day stats arrive from the backend as UTC hour buckets (the
+ * `time_of_day.hourly` field on AdminStats). The dashboard renders in
+ * NYC time so admins can read the chart against the city they're
+ * staffing. This function does the conversion, anchored to "today" so
+ * DST shifts at the right moment of the year.
+ *
+ * Anchoring matters: UTC hour 13 lands at 9 AM ET in winter (UTC−5)
+ * and 9 AM EDT in summer (UTC−4). Using `now` as the anchor means the
+ * label is correct for the current viewing context. If we instead used
+ * a fixed reference date, half the year would be off by an hour.
+ *
+ * Used by:
+ *   - admin/metrics — Section 7 Hourly Distribution row
+ *   - admin/overview — When-bar widget
+ */
+export function utcHourToET(utcHour: number): string {
+  const now = new Date();
+  const d = new Date(
+    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), utcHour, 0, 0),
+  );
+  return d.toLocaleTimeString("en-US", {
+    hour: "numeric",
+    timeZone: NYC_TZ,
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
 
