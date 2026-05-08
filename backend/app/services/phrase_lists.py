@@ -524,7 +524,11 @@ _NEARBY_BOROUGHS_BY_SERVICE = {
     },
 }
 
-# Default fallback — geographic proximity when no service-specific data
+# Default fallback — used by ``_get_nearby_boroughs`` when no
+# service-specific entry is found in ``_NEARBY_BOROUGHS_BY_SERVICE``.
+# Roughly geographic but tuned for service-density tradeoffs since this
+# is part of the no-results path. For an authoritative geographic-only
+# answer, see ``_GEOGRAPHIC_NEIGHBORS_BY_BOROUGH`` below.
 _NEARBY_BOROUGHS_DEFAULT = {
     "Manhattan":    ["Brooklyn", "Queens"],
     "Brooklyn":     ["Manhattan", "Queens"],
@@ -532,6 +536,38 @@ _NEARBY_BOROUGHS_DEFAULT = {
     "Bronx":        ["Manhattan", "Queens"],
     "Staten Island": ["Brooklyn", "Manhattan"],
     "New York":     ["Brooklyn", "Queens"],  # Manhattan alias
+}
+
+# ---------------------------------------------------------------------------
+# Geographic neighbors — centroid-to-centroid distances (NYC boroughs).
+#
+# Why a separate table from ``_NEARBY_BOROUGHS_BY_SERVICE`` and
+# ``_NEARBY_BOROUGHS_DEFAULT``:
+#
+# Those tables answer the question "if there are 0 results here, where
+# else am I most likely to find this service?" — so they're ranked by
+# DB-confirmed service density. That's correct for the no-results
+# path (``confirmation._no_results_message``).
+#
+# The negative-preference path
+# (``chatbot.handlers.confirmation._negative_preference_expansion``)
+# answers a different question: "the user rejected what we found in
+# their borough — where geographically nearby would they reasonably
+# expect us to look next?" Density ranking misranks this. For example,
+# food density makes Manhattan → ["Brooklyn", "Queens"], but a user
+# in Harlem rejecting results expects Bronx (7.0 mi) and Brooklyn
+# (7.4 mi) — not Queens (~10 mi).
+#
+# Geography is service-agnostic, so this is a single dict keyed by
+# borough rather than nested under service type. Distances are
+# centroid-to-centroid, top-2 closest neighbors per borough.
+_GEOGRAPHIC_NEIGHBORS_BY_BOROUGH = {
+    "Manhattan":    ["Bronx", "Brooklyn"],     # 7.0 mi, 7.4 mi
+    "Brooklyn":     ["Manhattan", "Queens"],   # 7.4 mi, 8.5 mi
+    "Queens":       ["Brooklyn", "Bronx"],     # 8.5 mi, 8.8 mi
+    "Bronx":        ["Manhattan", "Queens"],   # 7.0 mi, 8.8 mi
+    "Staten Island": ["Brooklyn", "Manhattan"], # 12.8 mi, 16.9 mi
+    "New York":     ["Bronx", "Brooklyn"],     # Manhattan alias
 }
 
 # Service types that map to each template key (mirrors SLOT_SERVICE_TO_TEMPLATE)

@@ -15,6 +15,7 @@ from app.services.phrase_lists import (
     _WELCOME_QUICK_REPLIES,
     _NEARBY_BOROUGHS_BY_SERVICE,
     _NEARBY_BOROUGHS_DEFAULT,
+    _GEOGRAPHIC_NEIGHBORS_BY_BOROUGH,
     _SERVICE_TO_BOROUGH_KEY,
 )
 
@@ -372,11 +373,35 @@ def _follow_up_quick_replies(slots: dict) -> list:
 # ---------------------------------------------------------------------------
 
 def _get_nearby_boroughs(service_type: str | None, borough: str) -> list[str]:
-    """Return the best nearby boroughs to suggest for a given service + borough combo."""
+    """Return the best nearby boroughs to suggest for a given service + borough combo.
+
+    Used by the no-results path (``_no_results_message``). Ranking is
+    by DB-confirmed service density per service type, so that "0 results
+    here, try these instead" maximizes the chance of actually finding
+    something. For the negative-preference path — where the user rejected
+    what we found and wants geographically nearby alternatives — use
+    ``_get_geographically_nearby_boroughs`` instead.
+    """
     service_key = _SERVICE_TO_BOROUGH_KEY.get((service_type or "").lower())
     if service_key and service_key in _NEARBY_BOROUGHS_BY_SERVICE:
         return _NEARBY_BOROUGHS_BY_SERVICE[service_key].get(borough, [])
     return _NEARBY_BOROUGHS_DEFAULT.get(borough, [])
+
+
+def _get_geographically_nearby_boroughs(borough: str) -> list[str]:
+    """Return the geographically nearest boroughs to ``borough``.
+
+    Ranking is by centroid-to-centroid distance (top 2 closest), and is
+    service-agnostic. Used by the negative-preference path
+    (``chatbot.handlers.confirmation._negative_preference_expansion``)
+    where the user rejected results in their borough and expects
+    suggestions for nearby places to look — not density-maximized
+    suggestions.
+
+    Returns ``[]`` for unknown boroughs. Caller is expected to handle
+    the empty case (no expansion offered).
+    """
+    return _GEOGRAPHIC_NEIGHBORS_BY_BOROUGH.get(borough, [])
 
 
 def _no_results_message(slots: dict) -> str:

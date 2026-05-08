@@ -1899,6 +1899,105 @@ def test_get_nearby_boroughs_unknown_borough():
 
 
 # -----------------------------------------------------------------------
+# GEOGRAPHIC NEIGHBORS (negative-preference path) — centroid-to-centroid
+# -----------------------------------------------------------------------
+# Used by the negative-preference handler in
+# chatbot/handlers/confirmation.py::_negative_preference_expansion. Unlike
+# _get_nearby_boroughs (density-ranked, service-keyed, used by
+# _no_results_message), this is service-agnostic and ranked by physical
+# proximity. Authoritative distances per the data table:
+#   Manhattan → Bronx (7.0 mi), Brooklyn (7.4 mi)
+#   Brooklyn  → Manhattan (7.4 mi), Queens (8.5 mi)
+#   Queens    → Brooklyn (8.5 mi), Bronx (8.8 mi)
+#   Bronx     → Manhattan (7.0 mi), Queens (8.8 mi)
+#   Staten Island → Brooklyn (12.8 mi), Manhattan (16.9 mi)
+
+
+def test_get_geographically_nearby_boroughs_manhattan():
+    """Manhattan's closest neighbors are Bronx (7.0 mi) and Brooklyn
+    (7.4 mi), in that order. Queens (~10 mi) should NOT be in the
+    top 2 — this is the bug the fix targets (wa_negative_preference)."""
+    from app.services.confirmation import _get_geographically_nearby_boroughs
+    nearby = _get_geographically_nearby_boroughs("Manhattan")
+    assert nearby == ["Bronx", "Brooklyn"], (
+        f"Manhattan geographic neighbors should be [Bronx, Brooklyn]; "
+        f"got: {nearby}"
+    )
+
+
+def test_get_geographically_nearby_boroughs_brooklyn():
+    """Brooklyn's closest neighbors are Manhattan and Queens."""
+    from app.services.confirmation import _get_geographically_nearby_boroughs
+    assert _get_geographically_nearby_boroughs("Brooklyn") == ["Manhattan", "Queens"]
+
+
+def test_get_geographically_nearby_boroughs_queens():
+    """Queens's closest neighbors are Brooklyn and Bronx (not Manhattan,
+    which is further by centroid distance)."""
+    from app.services.confirmation import _get_geographically_nearby_boroughs
+    assert _get_geographically_nearby_boroughs("Queens") == ["Brooklyn", "Bronx"]
+
+
+def test_get_geographically_nearby_boroughs_bronx():
+    """Bronx's closest neighbors are Manhattan and Queens."""
+    from app.services.confirmation import _get_geographically_nearby_boroughs
+    assert _get_geographically_nearby_boroughs("Bronx") == ["Manhattan", "Queens"]
+
+
+def test_get_geographically_nearby_boroughs_staten_island():
+    """Staten Island's closest neighbors are Brooklyn and Manhattan,
+    both notably farther than any inter-borough distance."""
+    from app.services.confirmation import _get_geographically_nearby_boroughs
+    assert _get_geographically_nearby_boroughs("Staten Island") == ["Brooklyn", "Manhattan"]
+
+
+def test_get_geographically_nearby_boroughs_new_york_alias():
+    """'New York' (Manhattan alias) should resolve like Manhattan."""
+    from app.services.confirmation import _get_geographically_nearby_boroughs
+    assert _get_geographically_nearby_boroughs("New York") == ["Bronx", "Brooklyn"]
+
+
+def test_get_geographically_nearby_boroughs_unknown_returns_empty():
+    """Unknown borough returns [] (caller is expected to handle the
+    empty case by suppressing the expansion offer)."""
+    from app.services.confirmation import _get_geographically_nearby_boroughs
+    assert _get_geographically_nearby_boroughs("Yonkers") == []
+    assert _get_geographically_nearby_boroughs("") == []
+
+
+def test_geographic_neighbors_never_include_self():
+    """No borough should appear in its own neighbor list."""
+    from app.services.confirmation import _get_geographically_nearby_boroughs
+    for borough in ["Manhattan", "Brooklyn", "Queens", "Bronx", "Staten Island"]:
+        nearby = _get_geographically_nearby_boroughs(borough)
+        assert borough not in nearby, (
+            f"{borough}'s neighbor list should not include itself; "
+            f"got: {nearby}"
+        )
+
+
+def test_geographic_neighbors_diverge_from_density_for_manhattan_food():
+    """Regression guard for the wa_negative_preference fix: the two
+    consumers should diverge for Manhattan food specifically. The
+    density path returns Brooklyn/Queens (correct for no-results — those
+    have more food density). The geographic path returns Bronx/Brooklyn
+    (correct for negative-preference — those are physically closest to
+    Manhattan)."""
+    from app.services.confirmation import (
+        _get_nearby_boroughs,
+        _get_geographically_nearby_boroughs,
+    )
+    density = _get_nearby_boroughs("food", "Manhattan")
+    geographic = _get_geographically_nearby_boroughs("Manhattan")
+    assert density != geographic, (
+        f"Density and geographic rankings should diverge for "
+        f"Manhattan food; both returned {density}"
+    )
+    assert "Bronx" in geographic[:2]
+    assert "Bronx" not in density[:2]
+
+
+# -----------------------------------------------------------------------
 # CO-LOCATED MULTI-SERVICE QUERY
 # -----------------------------------------------------------------------
 

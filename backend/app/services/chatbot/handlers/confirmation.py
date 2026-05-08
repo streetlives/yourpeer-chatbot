@@ -18,6 +18,7 @@ from app.services.confirmation import (
     _confirmation_quick_replies,
     _follow_up_quick_replies,
     _get_nearby_boroughs,
+    _get_geographically_nearby_boroughs,
 )
 from app.services.phrase_lists import _SERVICE_LABELS, _WELCOME_QUICK_REPLIES
 from app.services.responses import _ESCALATION_RESPONSE
@@ -327,14 +328,25 @@ def _negative_preference_expansion(slots: dict) -> tuple[str, list[str]]:
 
         - ``prose_fragment``: empty string when no expansion possible,
           else a fragment like "broaden the search to nearby boroughs
-          (Brooklyn or Bronx)" that slots into the tier-1 message body.
+          (Bronx or Brooklyn)" that slots into the tier-1 message body.
         - ``nearby_boroughs``: up to 2 borough names for quick-reply
           buttons. Empty when no expansion.
 
     Returns ``("", [])`` when location is missing, service_type is
-    missing, the location resolves to no known borough, or the
-    service+borough combo has no nearby-borough mapping (which would
-    be a data gap to investigate, not a code path to handle differently).
+    missing, or the location resolves to no known borough.
+
+    Borough ranking is geographic (centroid-to-centroid), not
+    service-density-based. The user rejected results in their borough
+    and expects geographically nearby alternatives — e.g., Harlem food
+    rejection should suggest Bronx/Brooklyn, not Brooklyn/Queens, even
+    though Queens has more food density. See
+    ``_get_geographically_nearby_boroughs`` and
+    ``_GEOGRAPHIC_NEIGHBORS_BY_BOROUGH`` for the data source. The
+    no-results path uses density ranking via ``_get_nearby_boroughs``;
+    the two paths are intentionally split.
+
+    ``service_type`` is still required (we don't expand without a
+    service in scope), but no longer parameterizes the borough lookup.
     """
     service_type = slots.get("service_type")
     location = slots.get("location")
@@ -345,7 +357,7 @@ def _negative_preference_expansion(slots: dict) -> tuple[str, list[str]]:
     if not borough:
         return "", []
 
-    nearby = _get_nearby_boroughs(service_type, borough)[:2]
+    nearby = _get_geographically_nearby_boroughs(borough)[:2]
     if not nearby:
         return "", []
 
