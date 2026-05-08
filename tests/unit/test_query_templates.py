@@ -118,6 +118,44 @@ EXPECTED_TAXONOMY_NAMES = {
 }
 
 
+def _strip_sql_comments(sql: str) -> str:
+    """Strip ``-- line comments`` and ``/* block comments */`` from SQL.
+
+    Used by tests that assert on the presence/absence of SQL constructs.
+    Comments contain prose (e.g. timezone-handling notes referencing
+    ``CURRENT_TIMESTAMP`` and ``CURRENT_TIME``) that legitimately discuss
+    expressions without using them as executable SQL. Substring checks
+    against raw SQL trip on prose; stripping comments first lets the
+    tests inspect only the executable surface.
+    """
+    import re
+    # Remove block comments first (they can span lines).
+    sql = re.sub(r"/\*.*?\*/", "", sql, flags=re.DOTALL)
+    # Then remove line comments (-- to end of line).
+    sql = re.sub(r"--[^\n]*", "", sql)
+    return sql
+
+
+def _has_bare_current_time(sql: str) -> bool:
+    """Return True if the SQL contains a *standalone* ``CURRENT_TIME``
+    keyword (the signature of an open-now rank), False otherwise.
+
+    Distinguishes:
+        - bare ``CURRENT_TIME``  → True   (open-now rank — what we guard against)
+        - ``CURRENT_TIMESTAMP``  → False  (TZ-aware "now" — May 2026 fix)
+        - ``CURRENT_TIME`` inside a comment → False (prose, not executable)
+
+    The substring ``CURRENT_TIME`` appears inside ``CURRENT_TIMESTAMP``,
+    so plain ``in`` checks conflate the two. Word-boundary matching plus
+    comment stripping disambiguates.
+    """
+    import re
+    sql_no_comments = _strip_sql_comments(sql)
+    # \b enforces word boundaries; the negative lookahead rejects
+    # `CURRENT_TIMESTAMP` (which has more characters after `CURRENT_TIME`).
+    return bool(re.search(r"\bCURRENT_TIME\b(?!STAMP)", sql_no_comments))
+
+
 def test_all_templates_use_taxonomy_names_list():
     """Every template must use taxonomy_names (list), not the old taxonomy_name (string)."""
     for key, template in TEMPLATES.items():
@@ -623,6 +661,266 @@ def test_schedule_no_data_in_card():
 
 
 # -----------------------------------------------------------------------
+# SCHEDULE STATUS — TIMEZONE / OPEN-CLOSED PINNING
+# -----------------------------------------------------------------------
+#
+# These tests pin the open/closed determination using the injected `now`
+# parameter so assertions are wall-clock-independent. They were added in
+# response to the May 2026 incident where users reported "Closed" pills
+# on services whose listed hours indicated they should be open.
+#
+# Root cause was ``datetime.now().time()`` (no tz arg) returning the
+# container's local clock (UTC on Render) compared against
+# ``holiday_schedules.opens_at`` / ``closes_at`` (NYC-local). The fix
+# routes "now" through ``zoneinfo.ZoneInfo("America/New_York")`` and
+# accepts an injected ``now`` for testability. See
+# ``docs/audits/SCHEDULE_TZ_FIX.md`` for the full incident analysis.
+#
+# These tests are the regression contract: if any of them fail, the
+# timezone fix has regressed.
+
+class TestComputeScheduleStatusOpenClosed:
+    """Pin the open/closed determination across day, overnight, and
+    boundary cases. ``now`` is always injected so tests don't depend
+    on the wall clock at execution time."""
+
+    # ---- Daytime window: 9 AM – 5 PM ET --------------------------------
+
+    def test_at_4pm_inside_9_to_5_window_is_open(self):
+        """Regression test for the May 2026 user report.
+
+        Pre-fix: at 4 PM ET, the Render container saw 20:00 UTC.
+        Compared against ``open=09:00``, ``close=17:00``, the result
+        was "closed" because 20:00 > 17:00. Post-fix: ET-aware now of
+        16:00 lands inside the window."""
+        result = _compute_schedule_status(
+            opens_at=time(9, 0),
+            closes_at=time(17, 0),
+            now=time(16, 0),
+        )
+        assert result["is_open"] == "open"
+        assert result["hours_today"] == "9:00 AM – 5:00 PM"
+
+    def test_at_530pm_outside_9_to_5_window_is_closed(self):
+        """5:30 PM is past close; correctly closed."""
+        result = _compute_schedule_status(
+            opens_at=time(9, 0),
+            closes_at=time(17, 0),
+            now=time(17, 30),
+        )
+        assert result["is_open"] == "closed"
+
+    def test_at_8am_before_9am_open_is_closed(self):
+        """8 AM is before the 9 AM open; correctly closed."""
+        result = _compute_schedule_status(
+            opens_at=time(9, 0),
+            closes_at=time(17, 0),
+            now=time(8, 0),
+        )
+        assert result["is_open"] == "closed"
+
+    # ---- Boundary equality: exactly at open / close --------------------
+
+    def test_exactly_at_open_time_is_open(self):
+        """The schedule comparison is inclusive on both ends. A user
+        pulling up the bot at exactly 9:00:00 AM should see Open."""
+        result = _compute_schedule_status(
+            opens_at=time(9, 0),
+            closes_at=time(17, 0),
+            now=time(9, 0),
+        )
+        assert result["is_open"] == "open"
+
+    def test_exactly_at_close_time_is_open(self):
+        """At exactly 5:00:00 PM, the comparison is inclusive: still open.
+        This matches the SQL ``opens_at <= now AND closes_at >= now``
+        semantics in ``_OPEN_NOW_RANK`` (also inclusive)."""
+        result = _compute_schedule_status(
+            opens_at=time(9, 0),
+            closes_at=time(17, 0),
+            now=time(17, 0),
+        )
+        assert result["is_open"] == "open"
+
+    def test_one_minute_after_close_is_closed(self):
+        """5:01 PM is past close; correctly closed."""
+        result = _compute_schedule_status(
+            opens_at=time(9, 0),
+            closes_at=time(17, 0),
+            now=time(17, 1),
+        )
+        assert result["is_open"] == "closed"
+
+    # ---- Overnight (wrap past midnight) windows ------------------------
+    #
+    # Drop-in centers and crisis services often run overnight hours
+    # like 10 PM – 6 AM. When ``closes_at < opens_at``, the function
+    # interprets it as wrapping past midnight.
+
+    def test_overnight_window_at_2am_is_open(self):
+        """22:00 – 06:00 window, queried at 2 AM, is open."""
+        result = _compute_schedule_status(
+            opens_at=time(22, 0),
+            closes_at=time(6, 0),
+            now=time(2, 0),
+        )
+        assert result["is_open"] == "open"
+
+    def test_overnight_window_at_8am_is_closed(self):
+        """22:00 – 06:00 window, queried at 8 AM, is closed."""
+        result = _compute_schedule_status(
+            opens_at=time(22, 0),
+            closes_at=time(6, 0),
+            now=time(8, 0),
+        )
+        assert result["is_open"] == "closed"
+
+    def test_overnight_window_at_10pm_open_edge(self):
+        """22:00 – 06:00 window, queried at exactly 10 PM, is open."""
+        result = _compute_schedule_status(
+            opens_at=time(22, 0),
+            closes_at=time(6, 0),
+            now=time(22, 0),
+        )
+        assert result["is_open"] == "open"
+
+    def test_overnight_window_at_11pm_inside_evening_is_open(self):
+        """22:00 – 06:00 window, queried at 11 PM, is open."""
+        result = _compute_schedule_status(
+            opens_at=time(22, 0),
+            closes_at=time(6, 0),
+            now=time(23, 0),
+        )
+        assert result["is_open"] == "open"
+
+    def test_overnight_window_at_6am_close_edge(self):
+        """22:00 – 06:00 window, queried at exactly 6 AM, is open
+        (inclusive close edge, matches non-wrap semantics)."""
+        result = _compute_schedule_status(
+            opens_at=time(22, 0),
+            closes_at=time(6, 0),
+            now=time(6, 0),
+        )
+        assert result["is_open"] == "open"
+
+    def test_overnight_window_at_noon_outside_is_closed(self):
+        """22:00 – 06:00 window, queried at noon, is closed."""
+        result = _compute_schedule_status(
+            opens_at=time(22, 0),
+            closes_at=time(6, 0),
+            now=time(12, 0),
+        )
+        assert result["is_open"] == "closed"
+
+    # ---- Default `now=None` behavior ------------------------------------
+    #
+    # When ``now`` is omitted, the function must resolve to NYC-local
+    # time, NOT the container's local clock. This is the actual fix
+    # for the May 2026 bug: the old code did ``datetime.now().time()``
+    # without a tz, picking up UTC on Render.
+
+    def test_default_now_is_eastern_time_not_container_local(self, monkeypatch):
+        """With ``now=None``, the function must compute open/closed using
+        ``America/New_York`` regardless of the process's local clock.
+
+        Strategy: pretend the container is in UTC (as it is on Render)
+        and use a freezegun-style patch on ``datetime.now`` that returns
+        a known UTC moment. Verify the resulting open/closed evaluation
+        matches the NYC interpretation of that moment, not the UTC one.
+
+        We do this without freezegun because it's not a project dep —
+        we patch ``datetime`` in the module under test. This pattern
+        matches the rest of the test suite (see ``test_idempotency.py``
+        which calls out the same approach)."""
+        from datetime import datetime as real_datetime, timezone
+
+        # Pick a moment: 2026-06-15 20:00 UTC.
+        # In America/New_York that's 2026-06-15 16:00 EDT (4 PM ET).
+        # In UTC it's 8 PM. Daytime hours 9 AM – 5 PM ET should resolve
+        # to OPEN (4 PM is inside the window) — but only if we evaluate
+        # in NYC time. If the function falls back to UTC, it would see
+        # 20:00 and report CLOSED.
+        fixed_utc = real_datetime(2026, 6, 15, 20, 0, 0, tzinfo=timezone.utc)
+
+        class _FrozenDatetime(real_datetime):
+            @classmethod
+            def now(cls, tz=None):
+                if tz is None:
+                    # Mimics Python's behavior: returns naive local time.
+                    # On Render's UTC container, this is the UTC clock.
+                    return fixed_utc.replace(tzinfo=None)
+                return fixed_utc.astimezone(tz)
+
+        # Patch the datetime imported by the function under test.
+        # The function does ``from datetime import datetime, time as dt_time``
+        # locally, so we patch the source module's symbol.
+        import app.rag.query_templates as qt_mod
+        monkeypatch.setattr(qt_mod, "datetime", _FrozenDatetime, raising=False)
+        # Also patch the `datetime` symbol that's imported inside the
+        # function body. The local re-import means the patch must
+        # cover both the module-global and the function-local lookup.
+        # The simplest way is to monkeypatch the whole datetime module
+        # at the import location used inside the function.
+        import datetime as datetime_module
+        monkeypatch.setattr(datetime_module, "datetime", _FrozenDatetime)
+
+        result = _compute_schedule_status(
+            opens_at=time(9, 0),
+            closes_at=time(17, 0),
+            # now=None so the function reaches for its default (ET-aware)
+        )
+        assert result["is_open"] == "open", (
+            "Default now=None must evaluate in America/New_York. "
+            "Got CLOSED for 4 PM ET inside a 9 AM – 5 PM ET window — "
+            "this is the May 2026 regression. Check that "
+            "_compute_schedule_status uses zoneinfo.ZoneInfo, NOT "
+            "datetime.now().time()."
+        )
+
+
+class TestComputeScheduleStatusInjectedNow:
+    """Verify the `now` parameter is honored and tests are deterministic."""
+
+    def test_injected_now_overrides_default(self):
+        """When `now` is supplied, default ET resolution is bypassed."""
+        # Inject a time that's clearly closed for 9-5
+        result = _compute_schedule_status(
+            opens_at=time(9, 0),
+            closes_at=time(17, 0),
+            now=time(20, 0),
+        )
+        assert result["is_open"] == "closed"
+
+        # Now inject a time that's clearly open
+        result = _compute_schedule_status(
+            opens_at=time(9, 0),
+            closes_at=time(17, 0),
+            now=time(13, 30),
+        )
+        assert result["is_open"] == "open"
+
+    def test_injected_now_with_string_times(self):
+        """`now` injection works with string-typed schedule values."""
+        result = _compute_schedule_status(
+            opens_at="09:00:00",
+            closes_at="17:00:00",
+            now=time(13, 0),
+        )
+        assert result["is_open"] == "open"
+        assert result["hours_today"] == "9:00 AM – 5:00 PM"
+
+    def test_hours_today_format_unaffected_by_now(self):
+        """The display string is independent of `now`. Only is_open changes."""
+        for now_val in (time(8, 0), time(13, 0), time(18, 0)):
+            result = _compute_schedule_status(
+                opens_at=time(9, 0),
+                closes_at=time(17, 0),
+                now=now_val,
+            )
+            assert result["hours_today"] == "9:00 AM – 5:00 PM"
+
+
+# -----------------------------------------------------------------------
 # TIME FORMATTING
 # -----------------------------------------------------------------------
 # Tests for the format_time helper moved to tests/unit/test_time_format.py
@@ -1036,8 +1334,11 @@ def test_default_order_uses_freshness_first():
     query_executor.py.
     """
     sql, _ = build_query("food", {"borough": "Brooklyn", "max_results": 5})
-    # Should NOT contain the SQL open-now CASE (moved to Python)
-    assert "CURRENT_TIME" not in sql, (
+    # Should NOT contain the SQL open-now CASE (moved to Python).
+    # Strip line-comments first, then word-boundary match — so the
+    # legitimate `CURRENT_TIMESTAMP AT TIME ZONE` (May 2026 schedule TZ
+    # fix) doesn't substring-match against `CURRENT_TIME`.
+    assert _has_bare_current_time(sql) is False, (
         "ORDER BY should not include SQL open-now rank — Python is the single "
         "source of truth for open-status sorting (Apr 16, 2026)."
     )
@@ -1056,8 +1357,10 @@ def test_proximity_order_uses_distance_first():
     })
     assert "ST_Distance" in sql, "Proximity query should sort by distance"
     assert "last_validated_at" in sql, "Proximity query should also sort by freshness"
-    # SQL should not rank open-now
-    assert "CURRENT_TIME" not in sql, (
+    # SQL should not rank open-now. Use word-boundary match so the
+    # legitimate `CURRENT_TIMESTAMP` (schedule TZ fix) doesn't trip
+    # the substring check.
+    assert _has_bare_current_time(sql) is False, (
         "Proximity query should not include SQL open-now rank — Python handles it."
     )
 
@@ -1203,7 +1506,8 @@ def test_relaxed_query_keeps_sort_order():
         "borough": "Brooklyn", "max_results": 5,
     })
     assert "last_validated_at" in sql, "Relaxed query should still sort by freshness"
-    assert "CURRENT_TIME" not in sql, (
+    # Word-boundary match — `CURRENT_TIMESTAMP` (schedule TZ fix) is OK.
+    assert _has_bare_current_time(sql) is False, (
         "Relaxed query should not include SQL open-now rank (Python handles it)."
     )
 
@@ -1215,12 +1519,18 @@ def test_no_template_has_sql_open_now_sort():
     ordering as of Apr 16, 2026. If any template introduces a SQL-level rank,
     it risks drift from the Python sort and re-creates the dual-source
     inconsistency that was just cleaned up.
+
+    Use word-boundary matching — the May 2026 schedule TZ fix introduced
+    ``CURRENT_TIMESTAMP AT TIME ZONE 'America/New_York'`` inside the
+    ``today_sched`` JOIN clause. ``CURRENT_TIMESTAMP`` is not the open-now
+    rank's signature; only bare ``CURRENT_TIME`` is. Substring matching
+    would conflate the two.
     """
     for key in TEMPLATES:
         sql, _ = build_query(key, {"borough": "Brooklyn", "max_results": 5})
-        assert "CURRENT_TIME" not in sql, (
-            f"Template '{key}' includes CURRENT_TIME in SQL — this is the "
-            f"signature of the SQL open-now rank, which was removed for "
+        assert _has_bare_current_time(sql) is False, (
+            f"Template '{key}' includes bare CURRENT_TIME in SQL — this is "
+            f"the signature of the SQL open-now rank, which was removed for "
             f"single-source-of-truth. Python handles open-status sort."
         )
 

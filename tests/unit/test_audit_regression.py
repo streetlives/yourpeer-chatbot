@@ -1015,22 +1015,33 @@ class TestOpenNowSortOnlySemantics:
         output, not just the ORDER BY array. This catches the case where
         someone adds an open-now CASE directly into the SQL string instead
         of via _BASE_ORDER_PARTS.
+
+        Use word-boundary matching after stripping comments — the May 2026
+        schedule TZ fix added ``CURRENT_TIMESTAMP AT TIME ZONE 'America/
+        New_York'`` to the executable SQL (inside the ``today_sched`` JOIN
+        clause) and surrounding prose comments mention ``CURRENT_TIME``.
+        Neither is the open-now rank's signature; only bare ``CURRENT_TIME``
+        is. Substring matching would conflate.
         """
+        import re
         from app.rag.query_templates import build_query
         # The _OPEN_NOW_RANK signature is CURRENT_TIME comparisons on
-        # today_sched.opens_at/closes_at. We'll look for this specific
-        # pattern which should only appear in the defined-but-unused constant.
+        # today_sched.opens_at/closes_at. We look for that specific
+        # token, not its substring inside CURRENT_TIMESTAMP.
         for template_key in ["food", "shelter", "clothing", "medical",
                              "mental_health", "legal", "employment",
                              "personal_care", "other"]:
             sql, _ = build_query(template_key, {"max_results": 10})
-            # The LATERAL join references opens_at/closes_at in the SELECT
-            # (to surface today_opens/today_closes columns). That's fine.
-            # The open-now CASE would also reference "CURRENT_TIME" — and
-            # should NOT appear in the generated SQL if we've removed the
-            # rank from _BASE_ORDER_PARTS.
-            assert "CURRENT_TIME" not in sql, (
-                f"Template '{template_key}' SQL contains CURRENT_TIME "
+            # Strip block and line comments.
+            sql_no_comments = re.sub(r"/\*.*?\*/", "", sql, flags=re.DOTALL)
+            sql_no_comments = re.sub(r"--[^\n]*", "", sql_no_comments)
+            # Word-boundary match for bare CURRENT_TIME, rejecting
+            # CURRENT_TIMESTAMP via negative lookahead.
+            has_bare_current_time = bool(
+                re.search(r"\bCURRENT_TIME\b(?!STAMP)", sql_no_comments)
+            )
+            assert not has_bare_current_time, (
+                f"Template '{template_key}' SQL contains bare CURRENT_TIME "
                 f"(open-now CASE). As of Apr 16, 2026, open-now ranking "
                 f"is Python-only. Check _BASE_ORDER_PARTS and any template-"
                 f"specific ORDER BY additions."
@@ -1102,22 +1113,48 @@ class TestOpenNowSortOnlySemantics:
 
         E.g., a drop-in center open 10 PM - 6 AM should report 'open' when
         queried at 2 AM, not 'closed'.
+
+        Pre-fix: this test asserted only that the result was a valid
+        string, because the function took no ``now`` parameter and
+        depended on wall-clock time at execution. Post-fix (May 2026
+        timezone work, see ``docs/audits/SCHEDULE_TZ_FIX.md``): the
+        function accepts an injected ``now`` and we can pin actual
+        open/closed values. Comprehensive coverage of timezone and
+        boundary cases lives in ``tests/unit/test_query_templates.py::
+        TestComputeScheduleStatusOpenClosed``.
         """
         from datetime import time as time_cls
         from app.rag.query_templates import _compute_schedule_status
 
-        # Sanity check: non-overnight schedule
-        result_day = _compute_schedule_status(time_cls(9, 0), time_cls(17, 0))
-        # Can't assert is_open without knowing time-of-day at test execution,
-        # but we CAN assert the function returns a valid status string.
-        assert result_day["is_open"] in ("open", "closed")
+        # Daytime: 9 AM - 5 PM, queried at 1 PM, should be open.
+        result_day = _compute_schedule_status(
+            time_cls(9, 0), time_cls(17, 0), now=time_cls(13, 0)
+        )
+        assert result_day["is_open"] == "open", (
+            "Daytime 9-5 schedule at 1 PM should be open."
+        )
 
-        # Overnight: 10 PM - 6 AM — closes < opens in clock time
-        result_overnight = _compute_schedule_status(time_cls(22, 0), time_cls(6, 0))
-        assert result_overnight["is_open"] in ("open", "closed"), (
-            "Overnight schedule should produce open/closed, not None. "
+        # Daytime: same schedule, queried at 6 PM, should be closed.
+        result_day_closed = _compute_schedule_status(
+            time_cls(9, 0), time_cls(17, 0), now=time_cls(18, 0)
+        )
+        assert result_day_closed["is_open"] == "closed"
+
+        # Overnight: 10 PM - 6 AM — closes < opens in clock time.
+        # Queried at 2 AM, should be open.
+        result_overnight = _compute_schedule_status(
+            time_cls(22, 0), time_cls(6, 0), now=time_cls(2, 0)
+        )
+        assert result_overnight["is_open"] == "open", (
+            "Overnight 10pm-6am schedule at 2 AM should be open. "
             "Check _compute_schedule_status handles closes<opens case."
         )
+
+        # Overnight: same schedule, queried at 8 AM, should be closed.
+        result_overnight_closed = _compute_schedule_status(
+            time_cls(22, 0), time_cls(6, 0), now=time_cls(8, 0)
+        )
+        assert result_overnight_closed["is_open"] == "closed"
 
 
 # =============================================================================

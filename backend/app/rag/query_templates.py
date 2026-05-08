@@ -186,9 +186,22 @@ FROM services s
     -- their hours en masse. regular_schedules (971 rows) is stale pre-COVID
     -- data. YourPeer.nyc uses this same table for its schedule display.
     -- Weekday convention: 1=Monday...7=Sunday (matches PostgreSQL ISODOW).
+    --
+    -- Timezone: ``CURRENT_TIMESTAMP AT TIME ZONE 'America/New_York'`` evaluates
+    -- "today's weekday" in NYC time so that, e.g., a Tuesday-evening NYC user
+    -- sees Tuesday's hours rather than Wednesday's. The Streetlives DB lives
+    -- on AWS RDS with a session timezone we don't control; without the
+    -- explicit ``AT TIME ZONE``, ``CURRENT_DATE`` evaluates in the DB
+    -- session's tz and silently rolls over before NYC midnight on whichever
+    -- side of UTC the DB session is set to. This matches the Python-side
+    -- ``zoneinfo.ZoneInfo("America/New_York")`` used by
+    -- ``_compute_schedule_status``; both layers agree on what "today" means.
+    -- See ``docs/audits/SCHEDULE_TZ_FIX.md`` for the full incident.
     LEFT JOIN holiday_schedules today_sched
         ON today_sched.service_id = s.id
-        AND today_sched.weekday = EXTRACT(ISODOW FROM CURRENT_DATE)::int
+        AND today_sched.weekday = EXTRACT(
+            ISODOW FROM (CURRENT_TIMESTAMP AT TIME ZONE 'America/New_York')
+        )::int
         AND today_sched.occasion = 'COVID19'
     -- Membership eligibility: regular LEFT JOIN instead of LATERAL.
     -- Batches the lookup across all rows instead of per-row subquery.
@@ -468,11 +481,17 @@ FILTER_BY_CLOTHING_OCCASION = (
 # Open-now sort expression — INTENTIONALLY NOT USED in _BASE_ORDER_PARTS
 # (see comment above). Retained as documentation of the shape of a SQL-level
 # open-now rank if ever reintroduced, and for reference from unit tests.
+#
+# Timezone note: uses ``CURRENT_TIMESTAMP AT TIME ZONE 'America/New_York'``
+# so a future reintroduction inherits the same NYC-time semantics that
+# ``today_sched`` and Python's ``_compute_schedule_status`` already use.
+# Do NOT replace with bare ``CURRENT_TIME`` — that evaluates in the DB
+# session's timezone and reintroduces the May 2026 bug.
 _OPEN_NOW_RANK = """CASE
     WHEN today_sched.opens_at IS NOT NULL
          AND today_sched.closes_at IS NOT NULL
-         AND today_sched.opens_at <= CURRENT_TIME
-         AND today_sched.closes_at >= CURRENT_TIME
+         AND today_sched.opens_at <= (CURRENT_TIMESTAMP AT TIME ZONE 'America/New_York')::time
+         AND today_sched.closes_at >= (CURRENT_TIMESTAMP AT TIME ZONE 'America/New_York')::time
     THEN 0 ELSE 1
 END"""
 
@@ -1340,17 +1359,47 @@ def format_service_card(row: dict) -> dict:
     }
 
 
-def _compute_schedule_status(opens_at, closes_at) -> dict:
+def _compute_schedule_status(opens_at, closes_at, now=None) -> dict:
     """
     Compute human-readable hours and open/closed status.
 
+    All comparisons are done in **America/New_York** time. The Streetlives
+    DB stores ``holiday_schedules.opens_at`` / ``closes_at`` as naive
+    ``time`` values that represent NYC-local hours (confirmed with
+    Streetlives data team — every NYC org's hours are NYC-local).
+    The bot's user base is also NYC-local, so the timezone of "now," the
+    timezone of "user," and the timezone of the stored hours all share
+    ``America/New_York``. ``zoneinfo.ZoneInfo`` handles DST transitions
+    automatically.
+
+    Why this matters: ``datetime.now()`` (no tz arg) returns
+    ``datetime.now(LOCAL_TZ_OF_THE_PROCESS)``. On Render the container's
+    ``TZ`` env is unset, so the process clock is **UTC**. Comparing UTC
+    time-of-day against ET-stored ``opens_at`` / ``closes_at`` was the
+    cause of the "service shows Closed when listed hours say it's Open"
+    bug reported May 2026. See ``docs/audits/SCHEDULE_TZ_FIX.md`` for
+    the full incident analysis.
+
+    Args:
+        opens_at: Time the service opens today, as a ``time`` object or
+            ``HH:MM[:SS]`` string. Treated as NYC-local.
+        closes_at: Time the service closes today, same shape as
+            ``opens_at``. Treated as NYC-local. Values where ``closes_at
+            < opens_at`` (e.g., ``22:00`` and ``06:00``) are interpreted
+            as wrapping past midnight.
+        now: Optional ``time`` object representing the current time
+            in NYC. **Tests must always pass this explicitly** so that
+            assertions are wall-clock-independent. In production this is
+            ``None`` and resolves to ``datetime.now(ZoneInfo("America/
+            New_York")).time()``.
+
     Returns:
-        {
-            "hours_today": str or None,
-                e.g. "9:00 AM – 5:00 PM", or None if no data
-            "is_open": "open" | "closed" | None
-                None means no schedule data available
-        }
+        dict with keys:
+            ``hours_today``: ``str`` like ``"9:00 AM – 5:00 PM"`` or
+                ``None`` if either bound is missing or unparseable.
+            ``is_open``: ``"open"`` | ``"closed"`` | ``None``.
+                ``None`` only when no schedule data was supplied; the
+                function never returns ``None`` for parseable input.
     """
     if opens_at is None or closes_at is None:
         return {"hours_today": None, "is_open": None}
@@ -1381,8 +1430,13 @@ def _compute_schedule_status(opens_at, closes_at) -> dict:
     close_str = format_time(close_time)
     hours_today = f"{open_str} – {close_str}"
 
-    # Determine if currently open
-    now = datetime.now().time()
+    # Determine if currently open. Default `now` to NYC time.
+    # Tests inject `now` explicitly (see TestComputeScheduleStatus in
+    # tests/unit/test_query_templates.py) so assertions don't depend on
+    # wall-clock time at test execution.
+    if now is None:
+        from zoneinfo import ZoneInfo
+        now = datetime.now(ZoneInfo("America/New_York")).time()
     if open_time <= close_time:
         is_open = "open" if open_time <= now <= close_time else "closed"
     else:
