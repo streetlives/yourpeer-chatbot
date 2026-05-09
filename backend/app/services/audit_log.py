@@ -1115,17 +1115,24 @@ def record_llm_call(
     """
     from datetime import datetime, timezone
     sid = session_id or _session_id_ctx.get("")
+    call_record = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "session_id": sid,
+        "task": task,
+        "model": model,
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "latency_ms": latency_ms,
+        "success": success,
+    }
     with _lock:
-        _llm_calls.append({
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "session_id": sid,
-            "task": task,
-            "model": model,
-            "input_tokens": input_tokens,
-            "output_tokens": output_tokens,
-            "latency_ms": latency_ms,
-            "success": success,
-        })
+        _llm_calls.append(call_record)
+    # Write-through to SQLite so the deque survives restarts. Outside
+    # the lock — persistence has its own thread-safe connection lock,
+    # and holding both at once risks deadlock if the persistence layer
+    # ever calls back into audit_log. is_enabled() short-circuits when
+    # PILOT_DB_PATH is unset (in-memory-only mode).
+    persistence.persist_llm_call(call_record)
 
 
 def _compute_llm_metrics() -> dict:
@@ -1250,6 +1257,7 @@ def clear_audit_log() -> None:
         _llm_calls.clear()
         _eval_results = None
     persistence.clear_events()
+    persistence.clear_llm_calls()
 
 
 # ---------------------------------------------------------------------------
@@ -1257,32 +1265,52 @@ def clear_audit_log() -> None:
 # ---------------------------------------------------------------------------
 
 def hydrate_from_db() -> int:
-    """Load persisted events from SQLite into in-memory stores.
+    """Load persisted events and LLM calls from SQLite into in-memory stores.
 
     Returns the number of events loaded. Call once at startup.
+
+    Each data class (events, eval results, LLM calls) loads
+    independently — the previous early-return-on-empty-events
+    structure would have skipped LLM call hydration if the events
+    table happened to be empty (e.g. immediately after a manual
+    `clear events` admin action that didn't also clear LLM calls).
     """
     if not persistence.is_enabled():
         return 0
 
     events = persistence.load_all_events(MAX_EVENTS)
-    if not events:
-        return 0
+    if events:
+        with _lock:
+            for event in events:
+                _events.append(event)
+                sid = event.get("session_id", "")
+                if sid:
+                    _register_conversation(sid, event)
+                if event.get("type") == "query_execution":
+                    _query_log.append(event)
 
-    with _lock:
-        for event in events:
-            _events.append(event)
-            sid = event.get("session_id", "")
-            if sid:
-                _register_conversation(sid, event)
-            if event.get("type") == "query_execution":
-                _query_log.append(event)
-
-    # Also load eval results
+    # Load eval results
     eval_data = persistence.load_eval_results()
     if eval_data:
         global _eval_results
         with _lock:
             _eval_results = eval_data
 
-    logger.info(f"Hydrated audit log from SQLite: {len(events)} events")
+    # Load LLM calls. Without this, every deploy zeroed out the
+    # in-memory deque and the Total LLM Calls / Estimated Cost /
+    # Latency / Failure Rate metrics read as 0 / $0.0000 / "no data"
+    # for the window between restart and enough new chat traffic
+    # repopulating the deque. Hydrating mirrors how `_events` is
+    # restored — load chronologically-ordered rows and append, letting
+    # the deque's maxlen evict any rows beyond MAX_EVENTS naturally.
+    llm_calls = persistence.load_all_llm_calls(MAX_EVENTS)
+    if llm_calls:
+        with _lock:
+            for call in llm_calls:
+                _llm_calls.append(call)
+
+    logger.info(
+        f"Hydrated audit log from SQLite: {len(events)} events, "
+        f"{len(llm_calls)} LLM calls"
+    )
     return len(events)

@@ -72,6 +72,23 @@ CREATE TABLE IF NOT EXISTS eval_data (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     data TEXT NOT NULL
 );
+
+-- LLM calls — populated by audit_log.record_llm_call after each
+-- Anthropic API invocation. Schema mirrors `events` (timestamp +
+-- session_id native columns for index usefulness; rest as JSON in
+-- `data`) so future ad-hoc SQL queries ("cost by day", "calls per
+-- session") work without reshape. Logically separate from `events`
+-- because LLM calls fire 3-5x per chat turn and would otherwise
+-- dominate the events table's MAX_EVENTS=2000 window, distorting
+-- both feeds.
+CREATE TABLE IF NOT EXISTS llm_calls (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp TEXT NOT NULL,
+    session_id TEXT DEFAULT '',
+    data TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_llm_calls_session ON llm_calls(session_id);
+CREATE INDEX IF NOT EXISTS idx_llm_calls_timestamp ON llm_calls(timestamp DESC);
 """
 
 
@@ -284,6 +301,74 @@ def load_eval_results() -> Optional[dict]:
     except Exception as e:
         logger.error(f"Failed to load eval results: {e}")
         return None
+
+
+# ---------------------------------------------------------------------------
+# LLM CALL PERSISTENCE
+# ---------------------------------------------------------------------------
+# Each Anthropic API call recorded by audit_log.record_llm_call writes
+# one row here. Without this, the in-memory `_llm_calls` deque resets
+# to empty on every restart — which made Total LLM Calls / Estimated
+# LLM Cost / Latency p50-p95 / LLM Failure Rate read as zero for
+# minutes-to-hours after every deploy, exactly when staff are most
+# likely to be looking at the dashboard. Write-through here mirrors
+# the in-memory deque to disk synchronously so a restart hydrates
+# the deque from SQLite and the metrics resume immediately.
+
+def persist_llm_call(call: dict) -> None:
+    """Write a single LLM call record to SQLite."""
+    conn = _get_conn()
+    if conn is None:
+        return
+    try:
+        with _db_lock:
+            conn.execute(
+                "INSERT INTO llm_calls (timestamp, session_id, data) VALUES (?, ?, ?)",
+                (
+                    call.get("timestamp", ""),
+                    call.get("session_id", ""),
+                    json.dumps(call, default=str),
+                ),
+            )
+            conn.commit()
+    except Exception as e:
+        logger.error(f"Failed to persist LLM call: {e}")
+
+
+def load_all_llm_calls(max_calls: int = 2000) -> list[dict]:
+    """Load LLM calls from SQLite, most recent first, up to max_calls.
+
+    Returns the rows in chronological order (oldest first) so the
+    caller can append directly to a bounded deque and have the
+    natural eviction semantics work the same way as live writes.
+    """
+    conn = _get_conn()
+    if conn is None:
+        return []
+    try:
+        with _db_lock:
+            cursor = conn.execute(
+                "SELECT data FROM llm_calls ORDER BY id DESC LIMIT ?",
+                (max_calls,),
+            )
+            rows = cursor.fetchall()
+        return [json.loads(row[0]) for row in reversed(rows)]
+    except Exception as e:
+        logger.error(f"Failed to load LLM calls: {e}")
+        return []
+
+
+def clear_llm_calls() -> None:
+    """Delete all LLM calls from SQLite."""
+    conn = _get_conn()
+    if conn is None:
+        return
+    try:
+        with _db_lock:
+            conn.execute("DELETE FROM llm_calls")
+            conn.commit()
+    except Exception as e:
+        logger.error(f"Failed to clear LLM calls: {e}")
 
 
 # ---------------------------------------------------------------------------

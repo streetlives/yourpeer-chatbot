@@ -582,7 +582,7 @@ Coverage gap tests for 8 high/medium priority areas: zip code full flow (4), cri
 
 Comprehensive gap coverage for 9 areas identified during audit: `_compute_freshness` timezone/boundary handling (8), admin `/api/stats` response shape for routing/tone/multi_intent (6), post-results through `generate_reply` end-to-end (4), `skip_llm` through chatbot pipeline (2), `also_available` in post-results detail view (4), `last_validated_at` timezone edge cases (4), multi-intent queue decline with 2-item queue (2), prompt builder function shapes and guardrails (8), `format_service_card` deduplication and filtering (5).
 
-### `test_persistence.py` — 27 tests
+### `test_persistence.py` — 36 tests
 
 SQLite pilot persistence layer. Tests direct CRUD operations on all 3 tables (events, sessions, eval_data) including ordering, limits, upserts, and clears (12 tests). Disabled mode (PILOT_DB_PATH unset) verifies all operations are safe no-ops (6 tests). Audit log hydration round-trip: write events → clear in-memory → hydrate from SQLite → verify stats (4 tests). Session store hydration: write → clear → hydrate → verify slots (4 tests). Full restart simulation: user interaction → destroy in-memory state → hydrate → verify everything is restored (1 test).
 

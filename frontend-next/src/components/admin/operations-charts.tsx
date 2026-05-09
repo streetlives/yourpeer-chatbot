@@ -205,7 +205,7 @@ function HorizontalBars({
               : "text-neutral-400";
         return (
           <div key={i} className="flex items-center gap-2 text-xs">
-            <div className="w-[100px] flex-shrink-0 truncate text-neutral-700 font-medium" title={it.label}>
+            <div className="w-[150px] flex-shrink-0 truncate text-neutral-700 font-medium" title={it.label}>
               {it.label}
             </div>
             <div className="flex-1 h-[18px] bg-neutral-100 rounded overflow-hidden relative">
