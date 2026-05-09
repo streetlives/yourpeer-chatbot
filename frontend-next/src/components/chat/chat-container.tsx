@@ -334,7 +334,7 @@ export function ChatContainer() {
           feedback row; the feedback row now renders inline inside
           the latest bot message instead, but the wrapper stays for
           layout consistency. */}
-      <div className="relative flex-1">
+      <div className="relative flex-1 min-h-0">
         <div
           ref={chatRef}
           role="log"
@@ -342,7 +342,26 @@ export function ChatContainer() {
           aria-live="polite"
           aria-relevant="additions"
           tabIndex={0}
-          className="bg-white border border-neutral-200 rounded-2xl min-h-[400px] max-h-[75dvh] overflow-y-auto p-3 sm:p-5 flex flex-col gap-2.5 shadow-sm focus:outline-none focus:ring-2 focus:ring-amber-300/30 dark:bg-neutral-900 dark:border-neutral-800"
+          // Height policy:
+          //   • Mobile (< sm): no min-height. The chat region uses
+          //     `flex-1` from the parent + h-full here to fill the
+          //     space the header and ChatInput leave behind. Quick
+          //     replies (rendered inside this scroll region) used
+          //     to push the region's content past the 400px minimum
+          //     and add ~80px of pill height on top, which combined
+          //     with the always-on `min-h-[400px]` made the *total*
+          //     of header + chat region + input + safe-area exceed
+          //     100dvh — the small phantom mobile scroll the user
+          //     was reporting on iPhone 12 (844px viewport).
+          //   • Desktop (sm+): keep min-h-[400px] so the region
+          //     doesn't visually collapse on empty state. Plenty of
+          //     viewport on desktop, no overflow risk.
+          //
+          // max-h-[75dvh] on both breakpoints prevents the region
+          // from filling the whole screen on tall viewports and
+          // crowding out the input. (The flex layout would respect
+          // sibling sizes anyway, but max-h is a defensive cap.)
+          className="bg-white border border-neutral-200 rounded-2xl h-full sm:min-h-[400px] max-h-[75dvh] overflow-y-auto p-3 sm:p-5 flex flex-col gap-2.5 shadow-sm focus:outline-none focus:ring-2 focus:ring-amber-300/30 dark:bg-neutral-900 dark:border-neutral-800"
         >
           {!hydrated ? (
             <p className="text-neutral-400 text-sm">Loading…</p>
