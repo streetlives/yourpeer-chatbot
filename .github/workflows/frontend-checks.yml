@@ -19,21 +19,30 @@ on:
   pull_request:
     paths:
       - 'frontend-next/**'
+      - 'backend/app/main.py'
       - 'backend/app/services/audit_log.py'
       - 'backend/app/services/crisis_detector.py'
+      - 'tests/eval/eval_llm_judge.py'
       - '.github/workflows/frontend-checks.yml'
   push:
     branches: [main]
     paths:
       - 'frontend-next/**'
+      - 'backend/app/main.py'
       - 'backend/app/services/audit_log.py'
       - 'backend/app/services/crisis_detector.py'
+      - 'tests/eval/eval_llm_judge.py'
 
-# The bucket-key sentinel reads two backend files (audit_log.py,
-# crisis_detector.py), so a backend change to a bucket dict must
-# trigger this workflow even when frontend-next/ is untouched —
-# otherwise a backend rename would merge silently. The two paths above
-# are the source-of-truth files the sentinel parses.
+# The verify scripts read several backend files to do their cross-stack
+# contract checks. A backend change to any of these files must trigger
+# this workflow even when frontend-next/ is untouched — otherwise a
+# rename would merge silently and break the frontend at runtime. The
+# four paths above are the source-of-truth files the verify sentinels
+# parse:
+#   - main.py                 : /api/health response shape (contract.mjs)
+#   - audit_log.py            : event types + bucket dicts (contract.mjs + bucket-keys.mjs)
+#   - crisis_detector.py      : canonical crisis category names (bucket-keys.mjs)
+#   - eval_llm_judge.py       : DIMENSION_WEIGHTS keys (contract.mjs)
 
 concurrency:
   group: frontend-checks-${{ github.ref }}
