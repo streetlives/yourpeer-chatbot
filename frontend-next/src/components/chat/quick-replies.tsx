@@ -21,8 +21,25 @@ interface QuickRepliesProps {
   leadingSlot?: ReactNode;
 }
 
+// Quick reply pill class shared by all three button shapes (regular,
+// tel: link, generic href). Padding is responsive:
+//   • Mobile: px-3 py-2 (12px / 8px) — tightens horizontal width
+//     so 3-4 pills fit on a 360px row without wrapping, and reduces
+//     vertical height ~4-5px per row. Combined with the row's gap-2
+//     (8px), each pill's effective tap area is still ~44px square
+//     (28px content + 8px row gap on the bottom + visual margin
+//     above), comfortably at the WCAG 2.5.5 / Apple HIG floor.
+//   • Desktop (sm+): px-4 py-2.5 (16px / 10px) — original sizing
+//     where viewport space is plentiful and the larger pills feel
+//     more substantial.
+//
+// Border weight is also responsive: 1px on mobile (cleaner at high-
+// DPI mobile pixel density), 1.5px on desktop (visual weight).
+// 1.5px borders can render unevenly at some zoom levels on lower-
+// DPI displays, but desktop displays are largely past that issue
+// in 2026.
 const btnClass =
-  "px-4 py-2.5 rounded-full border-[1.5px] border-neutral-200 bg-white text-neutral-900 text-sm font-medium whitespace-normal sm:whitespace-nowrap text-left transition-all hover:bg-amber-300 hover:border-amber-300 hover:shadow-md hover:-translate-y-px active:translate-y-0 active:scale-[0.97] dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-100 dark:hover:bg-[rgba(255,213,79,0.75)] dark:hover:border-[rgba(255,213,79,0.75)] dark:hover:text-neutral-900";
+  "px-3 py-2 sm:px-4 sm:py-2.5 rounded-full border border-neutral-200 sm:border-[1.5px] bg-white text-neutral-900 text-sm font-medium whitespace-normal sm:whitespace-nowrap text-left transition-all hover:bg-amber-300 hover:border-amber-300 hover:shadow-md hover:-translate-y-px active:translate-y-0 active:scale-[0.97] dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-100 dark:hover:bg-[rgba(255,213,79,0.75)] dark:hover:border-[rgba(255,213,79,0.75)] dark:hover:text-neutral-900";
 
 export function QuickReplies({ replies, onSelect, leadingSlot }: QuickRepliesProps) {
   const [callConfirm, setCallConfirm] = useState<{ phone: string; label: string } | null>(null);
