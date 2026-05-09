@@ -123,7 +123,7 @@ def model_classify(
     Returns a dict with: cat (str|None), conf (float), winning_chunk (str|None),
     winning_native_label (str|None), n_chunks (int).
     """
-    chunsh = split_into_chunks(text, min_chunk_tokens)
+    chunks = split_into_chunks(text, min_chunk_tokens)
     if not chunks:
         return {
             "cat": None, "conf": 0.0,
@@ -403,13 +403,13 @@ def main() -> int:
             msg = str(exc)
             if "torch" in msg.lower() and ("2.6" in msg or "vulnerability" in msg.lower()):
                 print(
-                    f"  hint: model ships pickle weights and transformers refuses\n"
-                    f"        to load them under torch < 2.6 (CVE-2025-32434).\n"
-                    f"        Fix: pip install -U \"torch>=2.6\"",
+                    "  hint: model ships pickle weights and transformers refuses\n"
+                    "        to load them under torch < 2.6 (CVE-2025-32434).\n"
+                    "        Fix: pip install -U \"torch>=2.6\"",
                     file=sys.stderr,
                 )
             elif "404" in msg or "not found" in msg.lower():
-                print(f"  hint: model id may be wrong or HF Hub is unreachable.",
+                print("  hint: model id may be wrong or HF Hub is unreachable.",
                       file=sys.stderr)
             elif "trust_remote_code" in msg.lower():
                 print(
