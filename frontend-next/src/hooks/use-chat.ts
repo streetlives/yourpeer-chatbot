@@ -23,6 +23,7 @@ import {
 import { cacheLastResults } from "@/lib/chat/offline-cache";
 import { generateRequestId } from "@/lib/chat/request-id";
 import { redactPII } from "@/lib/chat/pii-redactor";
+import { BOROUGH_QUICK_REPLIES } from "@/lib/chat/borough-quick-replies";
 
 const GEOLOCATION_TRIGGER = "__use_geolocation__";
 const CRISIS_GEO_TRIGGER = "__crisis_geo_search__";
@@ -398,13 +399,11 @@ export function useChat() {
             id: nextMsgId(),
             role: "bot",
             text: coords.error,
-            quick_replies: [
-              { label: "Manhattan", value: "Manhattan" },
-              { label: "Brooklyn", value: "Brooklyn" },
-              { label: "Queens", value: "Queens" },
-              { label: "Bronx", value: "Bronx" },
-              { label: "Staten Island", value: "Staten Island" },
-            ],
+            // Spread the readonly constant into a mutable array — the
+            // ChatMessage shape uses `QuickReply[]`, and the spread is
+            // free (six items). See `lib/chat/borough-quick-replies.ts`
+            // for why this list is defined once and shared.
+            quick_replies: [...BOROUGH_QUICK_REPLIES],
           });
           return;
         }
@@ -761,13 +760,8 @@ export function useChat() {
             id: nextMsgId(),
             role: "bot",
             text: geoResult.error,
-            quick_replies: [
-              { label: "Manhattan", value: "Manhattan" },
-              { label: "Brooklyn", value: "Brooklyn" },
-              { label: "Queens", value: "Queens" },
-              { label: "Bronx", value: "Bronx" },
-              { label: "Staten Island", value: "Staten Island" },
-            ],
+            // Same fallback list as the initial geo-failure branch above.
+            quick_replies: [...BOROUGH_QUICK_REPLIES],
           });
           return;
         }
