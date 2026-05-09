@@ -7,7 +7,7 @@
 "use client";
 
 import type { AdminStats } from "@/lib/chat/types";
-import { utcHourToET } from "@/lib/admin/format-time";
+import { utcHourToET, etHourToUtcHour } from "@/lib/admin/format-time";
 
 // ===========================================================================
 // Operations widgets
@@ -230,13 +230,23 @@ function HorizontalBars({
 // ---------------------------------------------------------------------------
 
 /**
- * Hourly traffic shape. 24 bars, ET-labeled. Peak hour highlighted in
- * solid amber so it's a one-glance read for staffing decisions.
+ * Hourly traffic shape. 24 bars, ET-aligned (midnight ET on the left,
+ * 11 PM ET on the right). Peak hour highlighted in solid amber so it's
+ * a one-glance read for staffing decisions.
  *
  * Why this matters: Section 7's text rendering of the same data ("3 PM:
  * 47 · 2 PM: 41 · 11 AM: 38 · …") shows 6 hours and discards the
  * other 18. The actual shape — when the line goes up, when it tapers,
  * when it spikes — is invisible there. This view shows it.
+ *
+ * Why the bars are walked in ET order (not UTC order): the backend
+ * buckets events by UTC hour. A naive 0..23 walk over the UTC dict
+ * produces a chart anchored to UTC midnight, which in NYC means the
+ * leftmost bar is 8 PM ET (winter) or 9 PM EDT (summer) — five hours
+ * off from what an admin reading "the day's traffic" expects. So we
+ * walk ET hours 0..23 and look up each one's UTC bucket via
+ * `etHourToUtcHour`. The DST-safe inverse handles the boundary; this
+ * widget never has to know the offset.
  */
 export function WhenWidget({ stats }: { stats: AdminStats }) {
   const tod = stats.time_of_day;
@@ -250,30 +260,51 @@ export function WhenWidget({ stats }: { stats: AdminStats }) {
     );
   }
 
-  // Walk 0..23 explicitly so empty hours render as zero-bars, not as
-  // missing columns. The backend's hourly dict is sparse.
-  const bars = Array.from({ length: 24 }, (_, hour) => {
-    const value = (tod.hourly as Record<string, number>)[String(hour)] ?? 0;
+  // Walk ET hours 0..23 explicitly. Each ET hour maps to a UTC hour
+  // via the DST-safe inverse; we read the corresponding bucket from
+  // the backend dict (which is keyed by UTC hour string). Empty hours
+  // render as zero-bars rather than missing columns — the dict is
+  // sparse on the backend, but our chart is dense by design.
+  const hourly = tod.hourly as Record<string, number>;
+  const bars = Array.from({ length: 24 }, (_, etHour) => {
+    const utcHour = etHourToUtcHour(etHour);
+    const value = hourly[String(utcHour)] ?? 0;
     return {
-      label: utcHourToET(hour).replace(" ", ""), // "9AM" not "9 AM" for label space
+      label: utcHourToET(utcHour).replace(" ", ""), // "9AM" not "9 AM" for label space
       value,
     };
   });
 
-  const peakHour = tod.peak_hour_utc;
+  // Peak ET index — the bar to highlight visually. Computed from the
+  // ET-ordered bars array rather than from peak_hour_utc, so the
+  // highlight lands at the right column under this layout. Done as a
+  // reduce to satisfy the project's immutability lint rule (no
+  // mutable accumulator inside Array.from). Seeded with 0 because
+  // bars is always 24 long (the Array.from above) — comparing against
+  // -1 would leave best stuck at -1 for the all-zero case.
+  const peakEtIndex = bars.reduce(
+    (best, bar, i) => (bar.value > bars[best].value ? i : best),
+    0,
+  );
+
+  // Subtitle peak label: prefer the backend's peak_hour_utc (it's the
+  // ground truth from the full event timestamps), fall back to our
+  // local peak if absent. Either way the displayed string is in ET.
   const peakLabel =
-    peakHour != null
-      ? utcHourToET(peakHour)
-      : null;
+    tod.peak_hour_utc != null
+      ? utcHourToET(tod.peak_hour_utc)
+      : peakEtIndex >= 0
+        ? utcHourToET(etHourToUtcHour(peakEtIndex))
+        : null;
 
   return (
     <WidgetCard
       title="When (Hourly Traffic)"
-      subtitle={`${tod.total_events} turns${peakLabel ? ` · peak ${peakLabel}` : ""}`}
+      subtitle={`${tod.total_events} events${peakLabel ? ` · peak ${peakLabel}` : ""}`}
     >
       <VerticalBars
         items={bars}
-        highlightIndex={peakHour != null ? peakHour : -1}
+        highlightIndex={peakEtIndex}
         height={96}
       />
     </WidgetCard>
@@ -344,10 +375,12 @@ export function WhereWidget({ stats }: { stats: AdminStats }) {
 // ---------------------------------------------------------------------------
 
 /**
- * Session duration distribution — 5 buckets (<1m, 1-5m, 5-15m, 15-30m,
- * 30m+). The 1-5min and 5-15min buckets are the navigator-handoff target
- * range; the chart shows whether sessions are clustering there or
- * skewing too short (bounce-likely) / too long (stuck users).
+ * Session duration distribution — 5 buckets (<1m, 1-3m, 3-7m, 7-15m,
+ * 15m+). The 3-7m bucket is the peer-navigator handoff target range;
+ * the chart shows whether sessions are clustering there or skewing
+ * too short (bounce-likely) / too long (stuck users). Bucket
+ * boundaries are owned by the backend `_compute_session_duration`
+ * function — keep this list in lockstep with that function.
  */
 export function HowLongWidget({ stats }: { stats: AdminStats }) {
   const sd = stats.session_duration;
@@ -361,18 +394,19 @@ export function HowLongWidget({ stats }: { stats: AdminStats }) {
     );
   }
 
-  // Canonical bucket order. Backend returns these as keys; we want them
-  // displayed left-to-right in chronological order regardless of the
-  // dict's iteration order. If the backend ever introduces a new bucket
-  // it'd be missing from this list and we'd silently drop it — we render
-  // any unknown keys at the end as a fallback.
-  const ORDER = ["<1min", "1_to_5min", "5_to_15min", "15_to_30min", "30min_plus"];
+  // Canonical bucket order. Keys here MUST match the keys emitted by
+  // `audit_log._compute_session_duration` (under_1min, 1_3min, 3_7min,
+  // 7_15min, over_15min). Any unknown keys render at the end of the
+  // chart in their iteration order — we display rather than drop, so a
+  // bucket-name change on the backend is visible (degraded labels) not
+  // silent (missing data).
+  const ORDER = ["under_1min", "1_3min", "3_7min", "7_15min", "over_15min"];
   const LABEL_BY_KEY: Record<string, string> = {
-    "<1min": "<1m",
-    "1_to_5min": "1-5m",
-    "5_to_15min": "5-15m",
-    "15_to_30min": "15-30m",
-    "30min_plus": "30m+",
+    "under_1min": "<1m",
+    "1_3min": "1-3m",
+    "3_7min": "3-7m",
+    "7_15min": "7-15m",
+    "over_15min": "15m+",
   };
 
   const buckets = sd.buckets as Record<string, number>;
@@ -430,16 +464,18 @@ export function EngagementWidget({ stats }: { stats: AdminStats }) {
     );
   }
 
-  // Turn-count distribution buckets. Keep canonical order (1, 2, 3-5,
-  // 6-10, 11+). Same robustness as duration: render unknown keys after
+  // Turn-count distribution buckets. Backend emits these exact keys
+  // from `_compute_session_metrics` (1_turn, 2-3_turns, 4-6_turns,
+  // 7-10_turns, 11+_turns) — keep this list in lockstep with that
+  // function. Same robustness as duration: render unknown keys after
   // canonical, don't drop.
-  const ORDER = ["1", "2", "3_to_5", "6_to_10", "11_plus"];
+  const ORDER = ["1_turn", "2-3_turns", "4-6_turns", "7-10_turns", "11+_turns"];
   const LABEL_BY_KEY: Record<string, string> = {
-    "1": "1",
-    "2": "2",
-    "3_to_5": "3-5",
-    "6_to_10": "6-10",
-    "11_plus": "11+",
+    "1_turn": "1",
+    "2-3_turns": "2-3",
+    "4-6_turns": "4-6",
+    "7-10_turns": "7-10",
+    "11+_turns": "11+",
   };
 
   const dist = sm.distribution as Record<string, number>;

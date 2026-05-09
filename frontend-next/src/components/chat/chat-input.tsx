@@ -66,6 +66,12 @@ export function ChatInput({ onSend, disabled }: ChatInputProps) {
   }, []);
 
   return (
+    // No inline safe-area-inset-bottom here — the outer chat-container
+    // already adds env(safe-area-inset-bottom, 0px) to its bottom
+    // padding, which pushes ChatInput (the last child of that
+    // container) above the home indicator on PWA mode for notched
+    // iPhones. Adding the inset again here would compose two times,
+    // producing extra empty space below the input.
     <div className="flex flex-col gap-1.5">
       <form onSubmit={handleSubmit} className="flex gap-2" aria-label="Chat input">
         <label htmlFor="chat-message-input" className="sr-only">
@@ -81,7 +87,7 @@ export function ChatInput({ onSend, disabled }: ChatInputProps) {
           placeholder="What do you need help with?"
           autoComplete="off"
           disabled={disabled}
-          className="flex-1 px-4 py-3 border border-neutral-200 rounded-xl bg-white text-neutral-900 text-[0.94rem] outline-none transition-all focus:border-neutral-300 focus:ring-2 focus:ring-amber-300/30 placeholder:text-neutral-400 disabled:opacity-50 dark:bg-neutral-900 dark:border-neutral-700 dark:text-neutral-100 dark:focus:border-neutral-600 dark:placeholder:text-neutral-500"
+          className="flex-1 px-4 py-3 border border-neutral-200 rounded-xl bg-white text-neutral-900 text-base outline-none transition-all focus:border-neutral-300 focus:ring-2 focus:ring-amber-300/30 placeholder:text-neutral-400 disabled:opacity-50 dark:bg-neutral-900 dark:border-neutral-700 dark:text-neutral-100 dark:focus:border-neutral-600 dark:placeholder:text-neutral-500"
         />
 
         <VoiceInputButton

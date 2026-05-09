@@ -201,8 +201,26 @@ export function ChatContainer() {
   }, [messages]);
 
   return (
-    <div className="flex flex-col max-w-[820px] mx-auto px-4 pb-7 min-h-dvh">
-      <div className="flex items-baseline gap-2.5 px-1 pt-5 pb-3.5">
+    <div
+      // Horizontal padding: max() of the safe-area-inset and the
+      // responsive 12px/16px Tailwind would have given us. Doing this
+      // via Tailwind arbitrary values (rather than a `style` prop)
+      // means the `sm:` cascade still wins above 640px — the previous
+      // version used a `style` prop for these and silently overrode
+      // sm:px-4, losing 4px of desktop side padding.
+      className="flex flex-col max-w-[820px] mx-auto pl-[max(env(safe-area-inset-left,0px),0.75rem)] pr-[max(env(safe-area-inset-right,0px),0.75rem)] sm:pl-[max(env(safe-area-inset-left,0px),1rem)] sm:pr-[max(env(safe-area-inset-right,0px),1rem)] min-h-dvh"
+      style={{
+        // Vertical safe-area handling: keep these as inline style
+        // because there's no responsive breakpoint to compose with —
+        // top inset is just the inset, bottom inset is inset + the
+        // existing pb-7 (1.75rem) spacing. env() values evaluate to 0
+        // on devices without insets, so this is a no-op on a desktop
+        // browser or a non-notched phone.
+        paddingTop: "env(safe-area-inset-top, 0px)",
+        paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 1.75rem)",
+      }}
+    >
+      <div className="flex items-baseline gap-2.5 px-1 pt-5 pb-3.5 flex-wrap">
         <h1 className="text-xl font-bold tracking-tight text-neutral-900 dark:text-neutral-100">
           YourPeer AI Chat
         </h1>
@@ -285,7 +303,7 @@ export function ChatContainer() {
           aria-live="polite"
           aria-relevant="additions"
           tabIndex={0}
-          className="bg-white border border-neutral-200 rounded-2xl min-h-[400px] max-h-[75vh] overflow-y-auto p-5 flex flex-col gap-2.5 shadow-sm focus:outline-none focus:ring-2 focus:ring-amber-300/30 dark:bg-neutral-900 dark:border-neutral-800"
+          className="bg-white border border-neutral-200 rounded-2xl min-h-[400px] max-h-[75dvh] overflow-y-auto p-3 sm:p-5 flex flex-col gap-2.5 shadow-sm focus:outline-none focus:ring-2 focus:ring-amber-300/30 dark:bg-neutral-900 dark:border-neutral-800"
         >
           {!hydrated ? (
             <p className="text-neutral-400 text-sm">Loading…</p>

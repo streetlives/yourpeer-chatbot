@@ -11,7 +11,8 @@
     "verify:pending": "node scripts/verify/pending-responses.mjs",
     "verify:pii": "node scripts/verify/pii-redactor.mjs",
     "verify:theme": "node scripts/verify/theme.mjs",
-    "verify": "npm run verify:redaction && npm run verify:pending && npm run verify:pii && npm run verify:theme"
+    "verify:time": "node scripts/verify/time-helpers.mjs",
+    "verify": "npm run verify:redaction && npm run verify:pending && npm run verify:pii && npm run verify:theme && npm run verify:time"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.5",
