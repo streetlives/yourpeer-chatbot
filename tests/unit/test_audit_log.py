@@ -1237,13 +1237,13 @@ def test_record_llm_call_empty_when_no_contextvar_set():
     """Outside a request context (startup tasks, ping_llm health probe,
     direct test invocations), the contextvar default is "" and that's
     what gets recorded — matching pre-fix behavior for non-request paths.
+
+    The autouse `_reset_audit_log_session_context` fixture in conftest.py
+    resets the contextvar to "" before each test, so this test sees a
+    clean state without needing an explicit reset here.
     """
-    from app.services.audit_log import record_llm_call, set_session_id_context, _llm_calls
+    from app.services.audit_log import record_llm_call, _llm_calls
     clear_audit_log()
-    # Reset to default — clear_audit_log doesn't touch the contextvar
-    # (it's per-coroutine state, not module state), so any earlier test
-    # in this run could have left it set. Explicit reset.
-    set_session_id_context("")
     record_llm_call(
         task="slot_extraction",
         model="claude-haiku-4-5-20251001",

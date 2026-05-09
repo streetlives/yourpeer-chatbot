@@ -385,6 +385,36 @@ def _reset_claude_client_cache():
     cc._init_error = None
 
 
+@pytest.fixture(autouse=True)
+def _reset_audit_log_session_context():
+    """Reset the per-request session-id ContextVar between tests.
+
+    ``audit_log._session_id_ctx`` is set by ``generate_reply`` at the
+    top of each chat request and read by ``record_llm_call`` to tag
+    each LLM call with its session id. In production the ContextVar
+    is per-coroutine — each FastAPI request gets a fresh context, so
+    requests can't see each other's ids.
+
+    In tests that's not automatic. Synchronous tests run in the main
+    thread's root context; if test A calls ``set_session_id_context("alice")``
+    and test B follows without setting one, test B's
+    ``record_llm_call`` reads "alice" and tags the recorded call with
+    that stale id. Most tests don't assert on session_id and would
+    silently absorb the wrong value, hiding the leak until a metric
+    later that did inspect session_id (e.g.
+    ``avg_calls_per_session``) returned a number that no individual
+    test created.
+
+    Same shape as ``_reset_claude_client_cache`` — clear before AND
+    after each test, robust against tests that are themselves the
+    leak source.
+    """
+    from app.services.audit_log import set_session_id_context
+    set_session_id_context("")
+    yield
+    set_session_id_context("")
+
+
 @pytest.fixture
 def mock_service_card():
     """A single realistic service card dict."""

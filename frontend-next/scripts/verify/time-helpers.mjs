@@ -89,9 +89,9 @@ for (let etH = 0; etH < 24; etH += 1) {
   const utc = etHourToUtcHour(etH);
   // Read the UTC hour back as an ET label, parse the hour out.
   const label = utcHourToET(utc);
-  // utcHourToET returns "9 AM" / "12 PM" / "11 PM" — convert back to
-  // 24h via Date parsing.
-  // const parsed = new Date(`${label} GMT`);
+  // utcHourToET returns "9 AM" / "12 PM" / "11 PM" — recover the
+  // 24h hour from the label directly (string-parsed; no Date round-trip
+  // needed).
   const recoveredHour =
     label.includes("12 AM") ? 0 :
       label.includes("12 PM") ? 12 :

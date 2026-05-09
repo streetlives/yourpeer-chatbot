@@ -36,6 +36,9 @@
  */
 
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
 
 import { getBackendUrl } from "../../src/lib/backend-url.ts";
 
@@ -207,9 +210,6 @@ check("env set with whitespace padding → trimmed", () => {
 // CI prevents a future contributor from "simplifying" by hoisting
 // the call back to module top and silently re-breaking the build.
 // ---------------------------------------------------------------------
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
 
 check("routes don't call getBackendUrl() at module top", () => {
   const here = dirname(fileURLToPath(import.meta.url));
