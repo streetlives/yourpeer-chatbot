@@ -52,6 +52,33 @@ class QueryTimeoutError(Exception):
     """
     pass
 
+
+class DatabaseUnreachableError(Exception):
+    """Raised when the DB host can't be reached at all (TCP connect
+    failure, host DNS unresolvable, network partition).
+
+    Distinct from QueryTimeoutError — that one means "we connected and
+    ran a query but it took too long"; this one means "we never
+    got a connection in the first place." Different operational signal,
+    different user-facing message.
+
+    Distinct from the silent `return []` path used for unexpected
+    SQLAlchemy errors. Connection-unreachable is recoverable infra
+    state, not a "no rows match" result; surfacing it lets callers
+    show an honest "service temporarily unavailable, please retry"
+    instead of a misleading "no services found near you."
+
+    Triggered by psycopg2.OperationalError messages containing
+    transport-layer failure markers ("could not connect to server",
+    "connection refused", "operation timed out", "no route to host",
+    "name or service not known"). The string sniff is necessary
+    because SQLAlchemy wraps everything as OperationalError and
+    psycopg2's specific exception types aren't always importable
+    in our environment (same constraint that motivated the string
+    sniff for QueryCanceled above).
+    """
+    pass
+
 # ---------------------------------------------------------------------------
 # DATABASE CONNECTION
 # ---------------------------------------------------------------------------
@@ -101,6 +128,16 @@ def _get_engine():
             connect_args={
                 "options": "-c statement_timeout=5000"
                            " -c idle_in_transaction_session_timeout=10000",
+                # Fail fast on dead RDS hosts. Without this, psycopg2
+                # uses the OS-default TCP connect timeout (~75-130s
+                # depending on kernel) — which means a brief AWS network
+                # blip or RDS maintenance window ties up a backend worker
+                # for over a minute on a single dead connection,
+                # multiplied across the request burst that always hits
+                # exactly when service is degraded. 5s is comfortably
+                # above the actual us-east-1 RDS connect time (~50-200ms)
+                # while bounding worst-case worker tieup.
+                "connect_timeout": 5,
                 "keepalives": 1,
                 "keepalives_idle": 30,       # send keepalive after 30s idle
                 "keepalives_interval": 10,   # retry every 10s
@@ -427,6 +464,17 @@ def execute_service_query(
         # borough-level query that strips lat/lon/radius.
         timed_out = True
         rows = []
+    except DatabaseUnreachableError:
+        # No relaxed-fallback retry: the second connect would hit the
+        # same dead host and waste another connect_timeout window
+        # (5s) before failing identically. Surface the unreachable
+        # state immediately so the chatbot orchestrator can return a
+        # truthful "service temporarily unavailable" message instead
+        # of falsely reporting "no services found near you" — the
+        # latter is a worse experience because it suggests the user
+        # should adjust their query when in fact they should retry
+        # in a minute.
+        raise
     elapsed_ms = int((time.monotonic() - start) * 1000)
 
     results = deduplicate_results(rows)
@@ -474,6 +522,11 @@ def execute_service_query(
             f"Database may be under heavy load."
         )
         rows_relaxed = []
+    except DatabaseUnreachableError:
+        # See the strict-query handler above for the rationale —
+        # propagate so the orchestrator can show "service temporarily
+        # unavailable" instead of an incorrect "no results."
+        raise
     elapsed_ms += int((time.monotonic() - start) * 1000)
 
     results_relaxed = deduplicate_results(rows_relaxed)
@@ -523,6 +576,26 @@ def _execute_sql(sql: str, params: dict) -> list[dict]:
             logger.debug(f"SQL: {sql}")
             logger.debug(f"Params: {params}")
             raise QueryTimeoutError("Query exceeded statement_timeout") from e
+
+        # Detect connection-level failures (host unreachable, TCP
+        # connect timeout, DNS failure, refused). String-sniff for the
+        # same reason as QueryCanceled — psycopg2's specific exception
+        # types aren't always importable, and SQLAlchemy wraps them.
+        # All five markers below have been observed in this app's
+        # production logs; the OR-list catches the union of "could not
+        # establish a working connection" cases.
+        if any(marker in error_str for marker in (
+            "could not connect to server",
+            "connection refused",
+            "operation timed out",
+            "no route to host",
+            "name or service not known",
+            "could not translate host name",
+        )):
+            logger.error(f"Database unreachable: {e}")
+            raise DatabaseUnreachableError(
+                "Database host unreachable — check RDS status / network"
+            ) from e
 
         logger.error(f"Query execution error: {e}")
         logger.debug(f"SQL: {sql}")
