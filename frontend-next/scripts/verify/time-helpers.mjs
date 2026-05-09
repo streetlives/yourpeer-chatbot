@@ -32,9 +32,6 @@
  * test runner is added, these can become real tests.
  */
 
-import { fileURLToPath } from "node:url";
-import { dirname, resolve } from "node:path";
-
 // Inline the helpers rather than import — the source is TypeScript and
 // this script runs as plain ESM JS. Keep this in lockstep with
 // `src/lib/admin/format-time.ts` (utcHourToET + etHourToUtcHour). If
@@ -94,7 +91,7 @@ for (let etH = 0; etH < 24; etH += 1) {
   const label = utcHourToET(utc);
   // utcHourToET returns "9 AM" / "12 PM" / "11 PM" — convert back to
   // 24h via Date parsing.
-  const parsed = new Date(`${label} GMT`);
+  // const parsed = new Date(`${label} GMT`);
   const recoveredHour =
     label.includes("12 AM") ? 0 :
       label.includes("12 PM") ? 12 :
