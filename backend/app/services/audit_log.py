@@ -17,6 +17,7 @@ import json
 import logging
 import threading
 from collections import deque, OrderedDict
+from contextvars import ContextVar
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -1046,6 +1047,44 @@ def _compute_repetition_rate(all_events: list) -> dict:
 _llm_calls: deque = deque(maxlen=MAX_EVENTS)
 
 
+# Per-request session-id context. Set by the chatbot orchestrator at the
+# top of generate_reply(); consulted by record_llm_call() when a caller
+# doesn't pass session_id explicitly.
+#
+# Why this exists: record_llm_call is invoked from six call sites deep in
+# the call tree (slot extraction dispatch, crisis detection, post-results
+# classify, filter-keyword extract, conversational reply). Plumbing
+# session_id through every intermediate function would require touching
+# half the codebase for one observability field. A ContextVar set once at
+# the request entry point propagates automatically through asyncio
+# coroutines AND through FastAPI's threadpool bridge for sync downstream
+# code (anyio handles context propagation across the boundary), so every
+# LLM call within a request inherits the right session_id without
+# function-signature changes.
+#
+# Default is the empty string so non-request contexts (startup tasks,
+# direct test invocations of record_llm_call, the LLM health probe in
+# claude_client.ping_llm()) record without session_id, matching existing
+# behavior. Explicit `session_id=` arguments to record_llm_call still win
+# over the contextvar, so any future caller that knows its session_id can
+# pass it directly.
+_session_id_ctx: ContextVar[str] = ContextVar("audit_log_session_id", default="")
+
+
+def set_session_id_context(session_id: str) -> None:
+    """Set the per-request session-id seen by `record_llm_call`.
+
+    Called once at the top of `generate_reply` in the chatbot
+    orchestrator. The contextvar is per-coroutine, so concurrent
+    requests don't see each other's session ids — each request's
+    coroutine tree gets its own copy of the context.
+
+    Pass an empty string to clear (rare; usually unnecessary since
+    each request's context starts fresh).
+    """
+    _session_id_ctx.set(session_id)
+
+
 def record_llm_call(
     task: str,
     model: str,
@@ -1058,13 +1097,28 @@ def record_llm_call(
     """Record an LLM API call for cost/latency/volume metrics.
 
     Called after each Anthropic API call in claude_client.py,
-    crisis_detector.py, and llm_slot_extractor.py.
+    crisis_detector.py, slot_extraction/dispatch.py, and
+    post_results.py.
+
+    Resolution order for session_id:
+      1. Explicit `session_id=` kwarg if non-empty.
+      2. The `_session_id_ctx` ContextVar set at the top of
+         generate_reply() — covers every LLM call made during a
+         normal chat request without each call site having to plumb
+         session_id through.
+      3. Empty string fallback for non-request contexts.
+
+    `avg_calls_per_session` in `_compute_llm_metrics` only counts
+    calls with a non-empty session_id, so without the contextvar
+    fallback, that metric was always None even when calls were
+    being made. See May 2026 admin-metrics investigation.
     """
     from datetime import datetime, timezone
+    sid = session_id or _session_id_ctx.get("")
     with _lock:
         _llm_calls.append({
             "timestamp": datetime.now(timezone.utc).isoformat(),
-            "session_id": session_id,
+            "session_id": sid,
             "task": task,
             "model": model,
             "input_tokens": input_tokens,
