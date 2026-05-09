@@ -220,25 +220,64 @@ export function ChatContainer() {
         paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 1.75rem)",
       }}
     >
-      <div className="flex items-baseline gap-2.5 px-1 pt-5 pb-3.5 flex-wrap">
-        <h1 className="text-xl font-bold tracking-tight text-neutral-900 dark:text-neutral-100">
-          YourPeer AI Chat
-        </h1>
-        <span
-          title={dotLabel}
-          aria-label={dotLabel}
-          className={`inline-block w-2 h-2 rounded-full shrink-0 ${dotColor}`}
-        />
-        <span className="text-sm text-neutral-400 dark:text-neutral-500">
+      {/* Header layout — responsive:
+       *   • Mobile (< sm, ~640px): two rows.
+       *       Row 1: [title] [dot]    [theme] [Leave site]   (right cluster pinned via ml-auto)
+       *       Row 2: [subtitle]
+       *   • Desktop (sm+): single row.
+       *       [title] [dot] [subtitle]    [theme] [Leave site]
+       *
+       * Mobile vertical spacing is intentionally tight:
+       *   • pt-3 pb-2 (was pt-5 pb-3.5): the original padding was
+       *     sized for a one-row header. With two rows on mobile,
+       *     the same padding compounds with the extra row height
+       *     and pushes chat content too far down — wasted real
+       *     estate on a screen that's already small. sm: bumps
+       *     the padding back up to the original values for desktop.
+       *   • gap-0 between rows (was gap-1): the subtitle sits
+       *     directly under the title with only the natural line
+       *     height as separation. Reads as a sub-header rather
+       *     than a separate paragraph.
+       *   • text-xs on the subtitle (was text-sm): 12px tag-line
+       *     weight rather than 14px sub-header weight, since the
+       *     subtitle is supplementary on mobile, not equal-weight
+       *     to the title. sm:text-sm restores the original size
+       *     on desktop where it sits inline with the title.
+       *
+       * Why not just flex-wrap the original single row: at narrow
+       * widths flex-wrap split the five children arbitrarily, so
+       * the right cluster could land on a wrap line BELOW the
+       * subtitle. Two parallel renderings of the right cluster
+       * (one inside the title row for mobile, one as a sibling
+       * for desktop) give deterministic placement at every width.
+       * sm:contents on the mobile row dissolves it into the outer
+       * flex on desktop so children become direct descendants.
+       */}
+      <div className="flex flex-col sm:flex-row sm:items-baseline gap-0 sm:gap-2.5 px-1 pt-3 pb-2 sm:pt-5 sm:pb-3.5">
+        <div className="flex items-center gap-2.5 sm:contents">
+          <h1 className="text-xl font-bold tracking-tight text-neutral-900 dark:text-neutral-100">
+            YourPeer AI Chat
+          </h1>
+          <span
+            title={dotLabel}
+            aria-label={dotLabel}
+            className={`inline-block w-2 h-2 rounded-full shrink-0 ${dotColor}`}
+          />
+          {/* Right cluster on MOBILE only — pinned to the right edge
+           * of row 1 via ml-auto. Hidden on desktop; the desktop
+           * instance below sits at the trailing edge of the single
+           * header row. */}
+          <div className="ml-auto flex items-center gap-2 sm:hidden">
+            <ThemeToggle />
+            <QuickExit />
+          </div>
+        </div>
+        <span className="text-xs sm:text-sm text-neutral-400 dark:text-neutral-500 leading-tight">
           Find services near you
         </span>
-        {/* Header right cluster: ThemeToggle + QuickExit, pushed to
-            the right edge by ml-auto. items-baseline on the parent
-            keeps the h1 + status aligned; self-center keeps the
-            buttons vertically centered to the header row rather
-            than inheriting the text baseline. The gap matches the
-            inter-element spacing of the rest of the header. */}
-        <div className="ml-auto self-center flex items-center gap-2">
+        {/* Right cluster on DESKTOP only — sits at the trailing edge
+         * of the single header row via sm:ml-auto. Hidden on mobile. */}
+        <div className="hidden sm:ml-auto sm:flex items-center gap-2">
           <ThemeToggle />
           <QuickExit />
         </div>
