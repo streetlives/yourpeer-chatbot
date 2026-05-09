@@ -1,13 +1,38 @@
 """
-Tier 2 smoke test — j-hartmann vs kashyaparun on first-turn eval messages.
+Tier 2 smoke test — chunked-MiniLM baseline vs j-hartmann on first-turn
+eval messages.
 
-Compares three classifiers on the same input set:
+Compares two classifiers on the same input set:
   (a) chunked MiniLM TONE_ROUTES — read from out_chunked.json baseline
       (the result of running tone_routes_eval_compare.py --chunk).
   (b) j-hartmann/emotion-english-distilroberta-base
       Ekman 6 + neutral, ~329 MB. Mature, 3/9 of our categories mapped.
-  (c) kashyaparun/Mental-Health-Chatbot-using-RoBERTa-fine-tuned-on-GoEmotion
-      GoEmotions 28, ~500 MB. Mental-health-framed, 6/9 mapped.
+
+  HISTORICAL NOTE: An earlier version of this script tested two
+  additional pretrained classifiers in slot (c). Both were dropped
+  for separate reasons that are worth preserving as foundation-tooling
+  lessons.
+
+  - kashyaparun/Mental-Health-Chatbot-using-RoBERTa-fine-tuned-on-GoEmotion
+    is a broken HuggingFace upload: declares
+    architectures=['RobertaForMaskedLM'], uses non-standard layer names
+    (transformer.encoder.* instead of roberta.encoder.*) so all weights
+    load as UNEXPECTED, missing classifier.dense / classifier.out_proj
+    entirely. Result: a randomly-initialized classifier emitting
+    near-uniform LABEL_0..27 outputs. Diagnosed May 7 2026. The strict
+    load validator (_validate_loaded) was added in response.
+
+  - shhossain/all-MiniLM-L6-v2-sentiment-classifier (which would have
+    been the architectural-footprint argument: same MiniLM backbone the
+    chatbot already uses, ~22.7M params) was tested briefly but breaks
+    against transformers >= 5.0 with AttributeError on
+    `all_tied_weights_keys`. The model uses custom code via
+    trust_remote_code=True, was last updated ~2 years ago, and predates
+    the v5 attribute requirement. Patching around it would mean owning
+    a compatibility shim against an unmaintained upstream. The
+    architectural argument that motivated testing shhossain (own the
+    classifier, share MiniLM backbone) is better served by fine-tuning
+    our own; see docs/design/CLASSIFIER_FINE_TUNE_PLAN.md.
 
 Each model:
   - Runs per-chunk with the same chunker as tone_routes_eval_compare.py
@@ -15,9 +40,8 @@ Each model:
   - Fires the highest-confidence mapped category above threshold
 
 Reports:
-  - Per-bucket counts for all three classifiers
+  - Per-bucket counts for both classifiers
   - WIN-set comparison: do the models catch the same cases or different ones?
-  - Intersection / union analysis (would A1+A2 ensemble beat either alone?)
   - Specific behavior on the named "killer" messages
 
 Usage (from repo root, chatbot venv active, with `transformers` installed):
@@ -38,11 +62,15 @@ from typing import Any
 # -- Config -------------------------------------------------------------------
 
 JHARTMANN_MODEL = "j-hartmann/emotion-english-distilroberta-base"
-KASHYAPARUN_MODEL = (
-    "kashyaparun/Mental-Health-Chatbot-using-RoBERTa-fine-tuned-on-GoEmotion"
-)
 DEFAULT_THRESHOLD = 0.50
 DEFAULT_MIN_CHUNK_TOKENS = 3
+
+# Per-model load options. Empty for j-hartmann (vanilla
+# RobertaForSequenceClassification, no special handling needed). Kept
+# as a dict so future model additions have a clear extension point.
+MODEL_LOAD_KWARGS: dict[str, dict[str, Any]] = {
+    "jhartmann": {},
+}
 
 # Native-taxonomy → our-9-categories mapping for j-hartmann.
 # Ekman 6 + neutral; covers anger, fear, sadness mappable. Disgust,
@@ -52,23 +80,6 @@ JHARTMANN_TO_OURS: dict[str, str] = {
     "anger": "angry",
     "fear": "scared",
     "sadness": "sad",
-}
-
-# Native-taxonomy → our-9-categories mapping for kashyaparun.
-# GoEmotions 28; covers 6 of our 9. Choices documented inline.
-KASHYAPARUN_TO_OURS: dict[str, str] = {
-    "anger": "angry",
-    "annoyance": "angry",       # loose; annoyance is milder anger
-    "disappointment": "rough_day",  # loose; "things didn't go as hoped"
-    "embarrassment": "shame",   # direct; closest standard-taxonomy match
-    "fear": "scared",
-    "grief": "grief",
-    "nervousness": "scared",    # GoEmotions distinguishes from fear; both → our "scared"
-    "sadness": "sad",
-    # Deliberately NOT mapping remorse → undeserving:
-    #   Remorse = regret over one's own past actions
-    #   Undeserving = feeling unworthy of receiving help in the present
-    #   Different clinical/affective territory; mapping would dilute both.
 }
 
 # Domain-specific categories no standard emotion taxonomy has.
@@ -112,7 +123,7 @@ def model_classify(
     Returns a dict with: cat (str|None), conf (float), winning_chunk (str|None),
     winning_native_label (str|None), n_chunks (int).
     """
-    chunks = split_into_chunks(text, min_chunk_tokens)
+    chunsh = split_into_chunks(text, min_chunk_tokens)
     if not chunks:
         return {
             "cat": None, "conf": 0.0,
@@ -188,32 +199,28 @@ def print_bucket_table(rows: list[dict], baselines: dict[str, list[dict]]) -> No
 
     minilm_buckets = buckets(rows, "bucket_minilm")
     jh_buckets = buckets(rows, "bucket_jhartmann")
-    ks_buckets = buckets(rows, "bucket_kashyaparun")
 
     print(f"\n=== Bucket counts ({len(rows)} first-turn messages) ===\n")
-    print(f"{'bucket':<13} {'minilm-chunked':>15} {'j-hartmann':>12} {'kashyaparun':>13}")
-    print("-" * 56)
+    print(f"{'bucket':<13} {'minilm-chunked':>15} {'j-hartmann':>12}")
+    print("-" * 42)
     for b in ["WIN", "CONFLICT", "LEX_ONLY", "AGREEMENT", "DOUBLE_MISS"]:
-        print(f"{b:<13} {minilm_buckets[b]:>15} {jh_buckets[b]:>12} {ks_buckets[b]:>13}")
+        print(f"{b:<13} {minilm_buckets[b]:>15} {jh_buckets[b]:>12}")
 
 
 def print_win_overlap(rows: list[dict]) -> None:
-    """Show whether the three classifiers catch the SAME cases or DIFFERENT ones."""
+    """Show whether the two classifiers catch the SAME cases or DIFFERENT ones."""
     minilm_wins = {r["id"] for r in rows if r["bucket_minilm"] == "WIN"}
     jh_wins = {r["id"] for r in rows if r["bucket_jhartmann"] == "WIN"}
-    ks_wins = {r["id"] for r in rows if r["bucket_kashyaparun"] == "WIN"}
 
     print("\n=== WIN-set overlap ===\n")
     print(f"  MiniLM-chunked wins:    {len(minilm_wins)} = {sorted(minilm_wins)}")
     print(f"  j-hartmann wins:        {len(jh_wins)} = {sorted(jh_wins)}")
-    print(f"  kashyaparun wins:       {len(ks_wins)} = {sorted(ks_wins)}")
 
-    union = minilm_wins | jh_wins | ks_wins
+    union = minilm_wins | jh_wins
     print(f"\n  Union of all wins:      {len(union)}")
-    print(f"  All three agree on:     {len(minilm_wins & jh_wins & ks_wins)}")
-    print(f"  Only MiniLM catches:    {len(minilm_wins - jh_wins - ks_wins)}")
-    print(f"  Only j-hartmann:        {len(jh_wins - minilm_wins - ks_wins)}")
-    print(f"  Only kashyaparun:       {len(ks_wins - minilm_wins - jh_wins)}")
+    print(f"  Both agree on:          {len(minilm_wins & jh_wins)}")
+    print(f"  Only MiniLM catches:    {len(minilm_wins - jh_wins)}")
+    print(f"  Only j-hartmann:        {len(jh_wins - minilm_wins)}")
 
 
 def print_win_details(rows: list[dict], model_key: str, label: str) -> None:
@@ -251,10 +258,9 @@ def print_killer_cases(rows: list[dict]) -> None:
         print(f"    msg: {match['text'][:100]!r}")
         print(f"    lex={match['lex_specific']!s:<14} "
               f"minilm={match['model_minilm']['cat']!s:<10} "
-              f"jh={match['model_jhartmann']['cat']!s:<10} "
-              f"ks={match['model_kashyaparun']['cat']!s}")
+              f"jh={match['model_jhartmann']['cat']!s}")
         # If any model fired, show the chunk that triggered
-        for k, lbl in [("minilm", "minilm"), ("jhartmann", "jh"), ("kashyaparun", "ks")]:
+        for k, lbl in [("minilm", "minilm"), ("jhartmann", "jh")]:
             m = match[f"model_{k}"]
             if m["cat"]:
                 print(f"      {lbl} chunk: {m.get('winning_chunk')!r} "
@@ -277,10 +283,8 @@ def main() -> int:
                         help="Minimum tokens per chunk (default 3)")
     parser.add_argument("--json", type=Path, default=None,
                         help="Optional path to write full JSON output")
-    parser.add_argument("--skip-kashyaparun", action="store_true",
-                        help="Skip kashyaparun (e.g., to test j-hartmann only)")
     parser.add_argument("--skip-jhartmann", action="store_true",
-                        help="Skip j-hartmann (e.g., to test kashyaparun only)")
+                        help="Skip j-hartmann load (run baseline-only)")
     args = parser.parse_args()
 
     if not args.baseline.exists():
@@ -301,11 +305,95 @@ def main() -> int:
     classifiers: dict[str, Any] = {}
     load_failures: list[str] = []
 
-    def _try_load(key: str, model_id: str) -> None:
+    def _validate_loaded(name: str, clf, mapping: dict[str, str]) -> bool:
+        """Strict post-load validation. Catches the silent-failure mode
+        where pipeline() returns successfully but the model is broken
+        (kashyaparun lesson, May 2026): wrong layer names → all weights
+        randomly-initialized → uniform-distribution noise output.
+
+        Three checks:
+          1. id2label is not the default 'LABEL_N' placeholder (which
+             indicates the model card never declared label names — a
+             strong signal the classifier head wasn't published).
+          2. At least one model label overlaps the mapping keys (else
+             the whole mapping is dead code and produces 0 fires).
+          3. Smoke probe: model can classify a clear emotional input
+             above 0.5. If a strongly emotional sentence yields top-1
+             score below 0.5, the classifier head is likely random or
+             the model is multi-label sigmoid (different threshold
+             needed). Either way, surfacing this lets the user act.
+        """
+        config = getattr(clf.model, "config", None)
+        id2label: dict = getattr(config, "id2label", {}) if config else {}
+
+        # Check 1: id2label sanity
+        label_values = [str(v) for v in id2label.values()]
+        placeholders = [v for v in label_values if v.startswith("LABEL_")]
+        if label_values and len(placeholders) == len(label_values):
+            print(
+                f"  ⚠ {name}: id2label is all 'LABEL_N' placeholders. "
+                f"The model card didn't publish proper label names — "
+                f"the classifier head may be missing or randomly initialized.",
+                file=sys.stderr,
+            )
+            return False
+
+        # Check 2: mapping overlap
+        label_set = {v.lower() for v in label_values}
+        mapping_keys = set(mapping)
+        overlap = label_set & mapping_keys
+        if not overlap:
+            preview = sorted(label_set)[:6]
+            print(
+                f"  ⚠ {name}: model emits labels {preview}{'...' if len(label_set) > 6 else ''} "
+                f"but mapping expects {sorted(mapping_keys)}. Mapping will produce 0 fires.",
+                file=sys.stderr,
+            )
+            return False
+
+        # Check 3: smoke probe — strongly emotional input should produce a
+        # decisive top-1 score for any working classifier.
+        try:
+            probe = clf("I am scared and overwhelmed right now")
+        except Exception as exc:
+            print(f"  ⚠ {name}: smoke probe raised {type(exc).__name__}: {exc}",
+                  file=sys.stderr)
+            return False
+        # Pipeline returns either [{label, score}] (default top_k=1) or
+        # [[{label, score}, ...]] (top_k=None). Normalize.
+        if not probe:
+            print(f"  ⚠ {name}: smoke probe returned empty result", file=sys.stderr)
+            return False
+        first = probe[0]
+        if isinstance(first, list):
+            first = first[0] if first else None
+        if not first or "score" not in first:
+            print(f"  ⚠ {name}: smoke probe shape unexpected: {probe!r}", file=sys.stderr)
+            return False
+        top_score = float(first["score"])
+        top_label = first.get("label", "?")
+        if top_score < 0.5:
+            print(
+                f"  ⚠ {name}: smoke probe top-1 = {top_label!r} @ {top_score:.3f} "
+                f"(below 0.5 on clear emotional input). Classifier may be "
+                f"randomly initialized, or the model is multi-label sigmoid "
+                f"and needs a lower threshold.",
+                file=sys.stderr,
+            )
+            return False
+
+        print(f"  ✓ {name} validated: labels={sorted(label_set)[:6]}{'...' if len(label_set) > 6 else ''} "
+              f"smoke_probe={top_label!r}@{top_score:.2f}")
+        return True
+
+    def _try_load(key: str, model_id: str, mapping: dict[str, str]) -> None:
         print(f"Loading {key} ({model_id})...")
+        kwargs = MODEL_LOAD_KWARGS.get(key, {})
+        if kwargs:
+            print(f"  load options: {kwargs}")
         t0 = time.time()
         try:
-            classifiers[key] = pipeline("text-classification", model=model_id)
+            clf = pipeline("text-classification", model=model_id, **kwargs)
             print(f"  loaded in {time.time()-t0:.1f}s")
         except Exception as exc:
             elapsed = time.time() - t0
@@ -315,25 +403,42 @@ def main() -> int:
             msg = str(exc)
             if "torch" in msg.lower() and ("2.6" in msg or "vulnerability" in msg.lower()):
                 print(
-                    "  hint: model ships pickle weights and transformers refuses\n"
-                    "        to load them under torch < 2.6 (CVE-2025-32434).\n"
-                    "        Fix: pip install -U \"torch>=2.6\"",
+                    f"  hint: model ships pickle weights and transformers refuses\n"
+                    f"        to load them under torch < 2.6 (CVE-2025-32434).\n"
+                    f"        Fix: pip install -U \"torch>=2.6\"",
                     file=sys.stderr,
                 )
             elif "404" in msg or "not found" in msg.lower():
-                print("  hint: model id may be wrong or HF Hub is unreachable.",
+                print(f"  hint: model id may be wrong or HF Hub is unreachable.",
                       file=sys.stderr)
+            elif "trust_remote_code" in msg.lower():
+                print(
+                    f"  hint: model has custom code; ensure MODEL_LOAD_KWARGS[{key!r}]\n"
+                    f"        includes 'trust_remote_code': True.",
+                    file=sys.stderr,
+                )
             else:
                 # Print the brief error message but suppress the traceback —
                 # the user can rerun with PYTHONFAULTHANDLER=1 if they want it.
                 print(f"  details: {msg[:300]}", file=sys.stderr)
             load_failures.append(key)
+            return
+
+        # Strict validation: pipeline() returned, but is the model actually
+        # working? This is the kashyaparun-lesson check.
+        if _validate_loaded(key, clf, mapping):
+            classifiers[key] = clf
+        else:
+            print(
+                f"  {key} loaded but failed validation — excluded from the run.\n"
+                f"  See the warnings above. To force-include despite warnings,\n"
+                f"  comment out the validation gate in _try_load.",
+                file=sys.stderr,
+            )
+            load_failures.append(key)
 
     if not args.skip_jhartmann:
-        _try_load("jhartmann", JHARTMANN_MODEL)
-
-    if not args.skip_kashyaparun:
-        _try_load("kashyaparun", KASHYAPARUN_MODEL)
+        _try_load("jhartmann", JHARTMANN_MODEL, JHARTMANN_TO_OURS)
 
     if not classifiers:
         print(
@@ -391,18 +496,6 @@ def main() -> int:
                                       "winning_native_label": None, "n_chunks": 0}
             row["bucket_jhartmann"] = "SKIPPED"
 
-        # kashyaparun
-        if "kashyaparun" in classifiers:
-            ks = model_classify(b["text"], classifiers["kashyaparun"],
-                                KASHYAPARUN_TO_OURS, args.threshold,
-                                args.min_chunk_tokens)
-            row["model_kashyaparun"] = ks
-            row["bucket_kashyaparun"] = categorize(b["lex_specific"], ks["cat"])
-        else:
-            row["model_kashyaparun"] = {"cat": None, "conf": 0.0, "winning_chunk": None,
-                                        "winning_native_label": None, "n_chunks": 0}
-            row["bucket_kashyaparun"] = "SKIPPED"
-
         rows.append(row)
 
     print(f"  done ({len(rows)} messages)")
@@ -413,8 +506,6 @@ def main() -> int:
 
     if not args.skip_jhartmann:
         print_win_details(rows, "jhartmann", "j-hartmann")
-    if not args.skip_kashyaparun:
-        print_win_details(rows, "kashyaparun", "kashyaparun")
 
     print_killer_cases(rows)
 
@@ -424,12 +515,10 @@ def main() -> int:
     n_lex = sum(1 for r in rows if r["lex_specific"] not in (None, "generic"))
     n_minilm = sum(1 for r in rows if r["bucket_minilm"] in ("WIN", "AGREEMENT"))
     n_jh = sum(1 for r in rows if r["bucket_jhartmann"] in ("WIN", "AGREEMENT"))
-    n_ks = sum(1 for r in rows if r["bucket_kashyaparun"] in ("WIN", "AGREEMENT"))
 
     print(f"  Lexicon specific tone:       {n_lex:>3}/{n} ({100*n_lex/n:.1f}%)")
     print(f"  + MiniLM-chunked:            {n_minilm:>3}/{n} ({100*n_minilm/n:.1f}%)")
     print(f"  + j-hartmann:                {n_jh:>3}/{n} ({100*n_jh/n:.1f}%)")
-    print(f"  + kashyaparun:               {n_ks:>3}/{n} ({100*n_ks/n:.1f}%)")
 
     # JSON output
     if args.json:
