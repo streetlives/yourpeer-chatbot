@@ -12,7 +12,8 @@
     "verify:pii": "node scripts/verify/pii-redactor.mjs",
     "verify:theme": "node scripts/verify/theme.mjs",
     "verify:time": "node scripts/verify/time-helpers.mjs",
-    "verify": "npm run verify:redaction && npm run verify:pending && npm run verify:pii && npm run verify:theme && npm run verify:time"
+    "verify:bucket-keys": "node scripts/verify/bucket-keys.mjs",
+    "verify": "npm run verify:redaction && npm run verify:pending && npm run verify:pii && npm run verify:theme && npm run verify:time && npm run verify:bucket-keys"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.5",
@@ -41,6 +42,6 @@
     "@types/react-dom": "19.2.3"
   },
   "engines": {
-    "node": ">=20.9.0"
+    "node": ">=22.6.0"
   }
 }

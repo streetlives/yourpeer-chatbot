@@ -8,6 +8,10 @@
 
 import type { AdminStats } from "@/lib/chat/types";
 import { utcHourToET, etHourToUtcHour } from "@/lib/admin/format-time";
+import {
+  TURN_COUNT_BUCKET_KEYS,
+  SESSION_DURATION_BUCKET_KEYS,
+} from "@/lib/admin/bucket-keys";
 
 // ===========================================================================
 // Operations widgets
@@ -394,13 +398,17 @@ export function HowLongWidget({ stats }: { stats: AdminStats }) {
     );
   }
 
-  // Canonical bucket order. Keys here MUST match the keys emitted by
-  // `audit_log._compute_session_duration` (under_1min, 1_3min, 3_7min,
-  // 7_15min, over_15min). Any unknown keys render at the end of the
-  // chart in their iteration order — we display rather than drop, so a
-  // bucket-name change on the backend is visible (degraded labels) not
-  // silent (missing data).
-  const ORDER = ["under_1min", "1_3min", "3_7min", "7_15min", "over_15min"];
+  // Canonical bucket order lives in `lib/admin/bucket-keys.ts` so the
+  // verify script can cross-check against the backend's
+  // `_compute_session_duration` source. Display labels stay here
+  // (presentation lives on the frontend). Any unknown keys render at
+  // the end of the chart in their iteration order — display rather
+  // than drop, so a bucket-name change is visible (degraded labels)
+  // not silent (missing data).
+  //
+  // Widened to readonly string[] for the concat with Object.keys()
+  // below (which returns string[], not the literal union).
+  const ORDER: readonly string[] = SESSION_DURATION_BUCKET_KEYS;
   const LABEL_BY_KEY: Record<string, string> = {
     "under_1min": "<1m",
     "1_3min": "1-3m",
@@ -464,12 +472,14 @@ export function EngagementWidget({ stats }: { stats: AdminStats }) {
     );
   }
 
-  // Turn-count distribution buckets. Backend emits these exact keys
-  // from `_compute_session_metrics` (1_turn, 2-3_turns, 4-6_turns,
-  // 7-10_turns, 11+_turns) — keep this list in lockstep with that
-  // function. Same robustness as duration: render unknown keys after
-  // canonical, don't drop.
-  const ORDER = ["1_turn", "2-3_turns", "4-6_turns", "7-10_turns", "11+_turns"];
+  // Turn-count distribution buckets. Canonical order lives in
+  // `lib/admin/bucket-keys.ts` so the verify script can cross-check
+  // against the backend's `_compute_session_metrics` source. Display
+  // labels stay here (presentation lives on the frontend).
+  //
+  // Widened to readonly string[] for the concat with Object.keys()
+  // below (which returns string[], not the literal union).
+  const ORDER: readonly string[] = TURN_COUNT_BUCKET_KEYS;
   const LABEL_BY_KEY: Record<string, string> = {
     "1_turn": "1",
     "2-3_turns": "2-3",
