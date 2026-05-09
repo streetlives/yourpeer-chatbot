@@ -442,12 +442,29 @@ function ActionButtons({ service, name }: { service: ServiceResult; name: string
   return (
     <>
       <div className="flex gap-1.5 pt-1 mt-auto" role="group" aria-label={`Actions for ${name}`}>
+        {/* All three action buttons get `flex-1 min-w-0`. flex-1 alone
+         * gives `flex: 1 1 0%` but flex items default to `min-width:
+         * auto` (= min-content), so an item with long unbreakable
+         * content can refuse to shrink below that — pushing the row
+         * out of equal thirds and starving the other buttons.
+         *
+         * Specifically: when service.website is something like
+         * `agapehome.churchtrac.com`, the domain string has no break
+         * opportunities, so its min-content width is the full string.
+         * Without min-w-0, the website button keeps that width and
+         * the inner `truncate` span never has a constrained parent to
+         * ellipsize against.
+         *
+         * `min-w-0` on each item overrides the default and lets flex
+         * actually distribute width. The inner truncate then engages
+         * inside the website button's 1/3 share.
+         */}
         {service.phone && (
           <button
             type="button"
             onClick={() => setShowCallConfirm(true)}
             aria-label={`Call ${name}`}
-            className="flex-1 py-2 rounded-lg border border-neutral-900 bg-neutral-900 text-center text-xs font-semibold text-white transition hover:bg-neutral-700 dark:border-neutral-400 dark:bg-neutral-400 dark:text-neutral-900 dark:hover:bg-neutral-300 dark:hover:border-neutral-300"
+            className="flex-1 min-w-0 py-2 rounded-lg border border-neutral-900 bg-neutral-900 text-center text-xs font-semibold text-white transition hover:bg-neutral-700 dark:border-neutral-400 dark:bg-neutral-400 dark:text-neutral-900 dark:hover:bg-neutral-300 dark:hover:border-neutral-300"
           >
             Call
           </button>
@@ -458,9 +475,15 @@ function ActionButtons({ service, name }: { service: ServiceResult; name: string
             target="_blank"
             rel="noopener noreferrer"
             aria-label={`Get directions to ${name} (opens in new tab)`}
-            className="flex-1 py-2 rounded-lg border border-amber-300 bg-amber-300 text-center text-xs font-semibold text-neutral-900 transition hover:bg-amber-400 hover:border-amber-400 dark:border-[rgba(255,213,79,0.75)] dark:bg-[rgba(255,213,79,0.75)] dark:hover:bg-[rgba(255,213,79,0.95)] dark:hover:border-[rgba(255,213,79,0.95)]"
+            className="flex-1 min-w-0 py-2 rounded-lg border border-amber-300 bg-amber-300 text-center text-xs font-semibold text-neutral-900 transition hover:bg-amber-400 hover:border-amber-400 dark:border-[rgba(255,213,79,0.75)] dark:bg-[rgba(255,213,79,0.75)] dark:hover:bg-[rgba(255,213,79,0.95)] dark:hover:border-[rgba(255,213,79,0.95)]"
           >
-            Directions
+            <span className="block leading-tight">
+              Directions
+            </span>
+              <span
+                className="block text-[0.65rem] font-normal text-neutral-500 dark:text-neutral-400 leading-tight mt-0.5 truncate px-1">
+                Google Maps
+              </span>
           </a>
         )}
         {service.website && (
@@ -473,7 +496,7 @@ function ActionButtons({ service, name }: { service: ServiceResult; name: string
                 ? `Visit ${name} website at ${websiteDomain} (opens in new tab)`
                 : `Visit ${name} website (opens in new tab)`
             }
-            className="flex-1 py-2 rounded-lg border border-neutral-200 bg-neutral-50 text-center text-xs font-semibold text-neutral-900 transition hover:bg-neutral-100 hover:border-neutral-300 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-100 dark:hover:bg-neutral-800 dark:hover:border-neutral-600"
+            className="flex-1 min-w-0 py-2 rounded-lg border border-neutral-200 bg-neutral-50 text-center text-xs font-semibold text-neutral-900 transition hover:bg-neutral-100 hover:border-neutral-300 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-100 dark:hover:bg-neutral-800 dark:hover:border-neutral-600"
           >
             <span className="block leading-tight">
               Website
