@@ -24,6 +24,15 @@ export default function OverviewPage() {
 
   return (
     <>
+      {/* System Health sits at the top so the dashboard's first
+          visible signal is "is everything running?". If a backend is
+          unhealthy, every metric below is suspect; surfacing health
+          first means admins notice a degraded system before they
+          start interpreting numbers it produced. */}
+      <div className="mb-6">
+        <SystemHealth />
+      </div>
+
       <DataPanel
         slice={statsSlice}
         skeleton={<StatCardSkeleton />}
@@ -42,10 +51,6 @@ export default function OverviewPage() {
           </>
         )}
       </DataPanel>
-
-      <div className="my-6">
-        <SystemHealth />
-      </div>
 
       <div className="mb-7">
         <h2 className="text-base font-semibold mb-4">Recent Activity</h2>
