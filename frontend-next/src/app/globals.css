@@ -28,7 +28,7 @@
      shift) makes the whole viewport pan sideways. */
   html,
   body {
-    overflow-x: hidden;
+    overflow-x: clip;
     overscroll-behavior: none;
   }
 
