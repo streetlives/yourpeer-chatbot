@@ -103,7 +103,7 @@ export function TablePagination({
               onPageSizeChange(Number(e.target.value) as PageSize)
             }
             aria-label="Items per page"
-            className="px-2 py-1 border border-neutral-200 rounded-md bg-white text-neutral-700 text-xs focus:outline-none focus:border-amber-400 focus:ring-1 focus:ring-amber-400"
+            className="pl-2 pr-6 border border-neutral-200 rounded-md bg-white text-neutral-700 text-xs focus:outline-none focus:border-amber-400 focus:ring-1 focus:ring-amber-400"
           >
             {PAGE_SIZE_OPTIONS.map((n) => (
               <option key={n} value={n}>
