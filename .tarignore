@@ -37,8 +37,19 @@ yourpeer-chatbot/data
  
 # Session transcripts — may contain redacted but
 # still sensitive conversation content.
+#
+# Be careful with these patterns: a bare `*transcript*` matched
+# `transcript-drawer.tsx` (a frontend admin component) and silently
+# dropped it from the tarball, breaking the production build because
+# `conversation-table.tsx` imports it. The patterns below are
+# anchored to data-file extensions so source files with "transcript"
+# in the name aren't caught.
 transcripts/
-*transcript*
+*transcript*.json
+*transcript*.jsonl
+*transcript*.csv
+*transcript*.txt
+*transcript*.log
 *session_data*
 *conversation_log*
  

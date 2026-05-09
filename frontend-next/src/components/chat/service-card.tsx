@@ -4,12 +4,42 @@
 "use client";
 
 import { useState } from "react";
-import { MapPin, Phone, Mail, Clock, CheckCircle, AlertTriangle, ChevronDown } from "lucide-react";
+import { MapPin, Phone, Mail, Clock, CheckCircle, AlertTriangle, ChevronDown, ExternalLink } from "lucide-react";
 import type { ServiceResult } from "@/lib/chat/types";
 import { LocationFeedbackRow } from "./location-feedback-row";
 import { CallConfirmDialog } from "./call-confirm-dialog";
 import { ReviewDetailDialog } from "./review-detail-dialog";
 import { SafeHtml } from "./safe-html";
+
+/**
+ * Extract a display-friendly domain from a website URL. Used by the
+ * Website button to show users where they're being navigated *before*
+ * they tap, addressing the Aurora-session feedback ("This is the
+ * separate website. So this is run by street work and not by us
+ * anymore?") — the domain answers the provenance question that the
+ * external-link icon alone doesn't.
+ *
+ * Strips a leading "www." since users don't think of that as part of
+ * the brand identity. Returns null on parse failure (scheme-less
+ * URLs, malformed input, empty string) so callers can degrade
+ * gracefully — the button still renders, just without the subtitle.
+ *
+ * Note: scheme-less URLs in `service.website` (e.g. "alifoneny.org"
+ * with no http:// prefix) will fail to parse here AND would also be
+ * broken hyperlinks in the browser — `<a href="alifoneny.org">`
+ * resolves to a relative path. Showing an icon-only fallback when
+ * the URL doesn't parse correctly matches that broken-link reality;
+ * pretending we know the domain via prefix-prepending would mislead.
+ * Backend should normalize source data to always include the scheme.
+ */
+function extractDomain(url: string): string | null {
+  try {
+    const u = new URL(url);
+    return u.hostname.replace(/^www\./, "");
+  } catch {
+    return null;
+  }
+}
 
 const REVIEW_TRUNCATE_AT = 120;
 const REVIEW_TRUNCATE_TO = 117;
@@ -185,10 +215,10 @@ export function ServiceCard({ service, isActive, index, total }: ServiceCardProp
       role="listitem"
       aria-label={cardLabel}
       aria-current={isActive ? "true" : undefined}
-      className="flex-shrink-0 w-[280px] snap-start bg-white border border-neutral-200 rounded-2xl p-4 flex flex-col gap-2.5 transition-all hover:border-neutral-300 hover:shadow-md dark:bg-neutral-800 dark:border-neutral-700 dark:hover:border-neutral-600"
+      className="flex-shrink-0 w-[280px] max-w-[calc(100vw-5rem)] snap-start bg-white border border-neutral-200 rounded-2xl p-4 flex flex-col gap-2.5 transition-all hover:border-neutral-300 hover:shadow-md dark:bg-neutral-800 dark:border-neutral-700 dark:hover:border-neutral-600"
     >
       {/* Name */}
-      <div className="text-[0.95rem] font-semibold tracking-tight text-neutral-900 dark:text-neutral-100 leading-snug">
+      <div className="text-[0.95rem] font-semibold tracking-tight text-neutral-900 dark:text-neutral-100 leading-snug break-words">
         {name}
       </div>
 
@@ -403,6 +433,12 @@ function DetailsSection({ service, hasDetails, detailsOpen, setDetailsOpen }: {
 function ActionButtons({ service, name }: { service: ServiceResult; name: string }) {
   const [showCallConfirm, setShowCallConfirm] = useState(false);
 
+  // Pre-compute the domain once per render. Used both in the
+  // visible subtitle and the aria-label, so we only want to parse
+  // the URL once. Null when extraction fails — the button degrades
+  // to the single-line icon-only form in that case.
+  const websiteDomain = service.website ? extractDomain(service.website) : null;
+
   return (
     <>
       <div className="flex gap-1.5 pt-1 mt-auto" role="group" aria-label={`Actions for ${name}`}>
@@ -421,7 +457,7 @@ function ActionButtons({ service, name }: { service: ServiceResult; name: string
             href={`https://maps.google.com/?q=${encodeURIComponent(service.address)}`}
             target="_blank"
             rel="noopener noreferrer"
-            aria-label={`Get directions to ${name}`}
+            aria-label={`Get directions to ${name} (opens in new tab)`}
             className="flex-1 py-2 rounded-lg border border-amber-300 bg-amber-300 text-center text-xs font-semibold text-neutral-900 transition hover:bg-amber-400 hover:border-amber-400 dark:border-[rgba(255,213,79,0.75)] dark:bg-[rgba(255,213,79,0.75)] dark:hover:bg-[rgba(255,213,79,0.95)] dark:hover:border-[rgba(255,213,79,0.95)]"
           >
             Directions
@@ -432,10 +468,25 @@ function ActionButtons({ service, name }: { service: ServiceResult; name: string
             href={service.website}
             target="_blank"
             rel="noopener noreferrer"
-            aria-label={`Visit ${name} website`}
+            aria-label={
+              websiteDomain
+                ? `Visit ${name} website at ${websiteDomain} (opens in new tab)`
+                : `Visit ${name} website (opens in new tab)`
+            }
             className="flex-1 py-2 rounded-lg border border-neutral-200 bg-neutral-50 text-center text-xs font-semibold text-neutral-900 transition hover:bg-neutral-100 hover:border-neutral-300 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-100 dark:hover:bg-neutral-800 dark:hover:border-neutral-600"
           >
-            Website
+            <span className="block leading-tight">
+              Website
+              <ExternalLink size={11} aria-hidden="true" className="inline ml-1 -mt-0.5" />
+            </span>
+            {websiteDomain && (
+              <span
+                className="block text-[0.65rem] font-normal text-neutral-500 dark:text-neutral-400 leading-tight mt-0.5 truncate px-1"
+                title={websiteDomain}
+              >
+                {websiteDomain}
+              </span>
+            )}
           </a>
         )}
       </div>
@@ -508,11 +559,11 @@ export function LocationCard({ services, isActive, index, total }: LocationCardP
       role="listitem"
       aria-label={cardLabel}
       aria-current={isActive ? "true" : undefined}
-      className="flex-shrink-0 w-[280px] snap-start bg-white border border-neutral-200 rounded-2xl p-4 flex flex-col gap-2.5 transition-all hover:border-neutral-300 hover:shadow-md dark:bg-neutral-800 dark:border-neutral-700 dark:hover:border-neutral-600"
+      className="flex-shrink-0 w-[280px] max-w-[calc(100vw-5rem)] snap-start bg-white border border-neutral-200 rounded-2xl p-4 flex flex-col gap-2.5 transition-all hover:border-neutral-300 hover:shadow-md dark:bg-neutral-800 dark:border-neutral-700 dark:hover:border-neutral-600"
     >
       {/* Organization header */}
       <div className="flex flex-col gap-0.5">
-        <div className="text-[0.95rem] font-semibold tracking-tight text-neutral-900 dark:text-neutral-100 leading-snug">
+        <div className="text-[0.95rem] font-semibold tracking-tight text-neutral-900 dark:text-neutral-100 leading-snug break-words">
           {orgName}
         </div>
         <ValidatedBadge dateStr={bestVerified ?? undefined} />

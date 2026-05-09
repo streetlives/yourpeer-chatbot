@@ -5,10 +5,16 @@
 // https://opensource.org/licenses/MIT.
 
 import { NextResponse } from "next/server";
-
-const BACKEND_URL = process.env.CHAT_BACKEND_URL || "http://localhost:8000";
+import { getBackendUrl } from "@/lib/backend-url";
 
 export async function GET() {
+  // Resolve the backend URL up-front so a missing CHAT_BACKEND_URL in
+  // production escapes the try/catch below. Otherwise the helper's
+  // "CHAT_BACKEND_URL is required" error gets swallowed and the route
+  // returns the friendly "Backend unreachable" 503 — which masks the
+  // real misconfiguration in deploy logs.
+  const backendUrl = getBackendUrl();
+
   try {
     const headers: Record<string, string> = {};
 
@@ -19,7 +25,7 @@ export async function GET() {
       headers["Authorization"] = `Bearer ${adminKey}`;
     }
 
-    const res = await fetch(`${BACKEND_URL}/api/health`, {
+    const res = await fetch(`${backendUrl}/api/health`, {
       signal: AbortSignal.timeout(5_000),
       headers,
       // Prevent caching so every poll gets fresh status

@@ -5,6 +5,31 @@
 @layer base {
   html {
     scroll-behavior: smooth;
+    /* Mobile hardening — added April 2026, prompted by user-testing
+       sessions where the page bounced and scrolled sideways on iOS.
+       - touch-action: manipulation eliminates the legacy 300ms tap
+         delay and prevents double-tap-to-zoom (which momentarily
+         shifts the layout viewport).
+       - -webkit-text-size-adjust: 100% prevents iOS / Android Chrome
+         from auto-enlarging text in narrow containers.
+       - -webkit-tap-highlight-color: transparent removes the grey
+         flash on tap that makes interactions feel like a website
+         rather than an app. */
+    touch-action: manipulation;
+    -webkit-text-size-adjust: 100%;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  /* Mobile hardening — clip horizontal overflow so a single rogue
+     pixel can't make the entire page horizontally scrollable, and
+     kill the rubber-band overscroll bounce on iOS / Android. Without
+     these, any element that protrudes (a long unbroken word, a
+     fixed-width card on a 320px screen, a soft-keyboard layout
+     shift) makes the whole viewport pan sideways. */
+  html,
+  body {
+    overflow-x: hidden;
+    overscroll-behavior: none;
   }
 
   :root {

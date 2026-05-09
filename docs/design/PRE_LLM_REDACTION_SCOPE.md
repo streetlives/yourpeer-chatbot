@@ -682,7 +682,7 @@ entirely (any CI / runbook scripts that still pass it will get a
 clear `unrecognized arguments` error from argparse rather than a
 silent no-op). `redact_before_llm: True` is still emitted in
 `report.json` as a constant for back-compat with downstream
-report-readers (the dashboard, EVAL_RESULTS_R28-R41.md generator,
+report-readers (the dashboard, EVAL_RESULTS_R28-R42.md generator,
 report-diff scripts).
 
 **Verification before merge:**
@@ -843,7 +843,7 @@ honor `colocated_service_types` and `service_detail`). Both fixes
 were necessary for the eval to give a fair signal — neither was a
 redaction-work cost. **Reviewer time:** moderate — Phase 1 was small
 but touched many files; Phase 2's deliverables were the GO/NO-GO doc
-and the per-run entries in `EVAL_RESULTS_R28-R41.md`; Phase 4 was
+and the per-run entries in `EVAL_RESULTS_R28-R42.md`; Phase 4 was
 trivially reviewable (deletes + simplifications behind a flag that
 had been on in production for the prior monitoring window).
 

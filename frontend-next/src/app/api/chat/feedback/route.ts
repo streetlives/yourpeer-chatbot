@@ -10,8 +10,7 @@ import {
   getClientIp,
   rateLimitResponse,
 } from "@/lib/rate-limit";
-
-const BACKEND_URL = process.env.CHAT_BACKEND_URL || "http://localhost:8000";
+import { getBackendUrl } from "@/lib/backend-url";
 
 const FEEDBACK_IP_LIMITS: [number, number][] = [
   [60, 20], // 20 feedback requests/minute per IP
@@ -24,9 +23,13 @@ export async function POST(req: NextRequest) {
     return rateLimitResponse(limit.retryAfter);
   }
 
+  // Resolve backend URL before the try/catch — see chat/route.ts for
+  // the rationale. Same pattern across all five proxy routes.
+  const backendUrl = getBackendUrl();
+
   try {
     const body = await req.json();
-    const res = await fetch(`${BACKEND_URL}/chat/feedback`, {
+    const res = await fetch(`${backendUrl}/chat/feedback`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

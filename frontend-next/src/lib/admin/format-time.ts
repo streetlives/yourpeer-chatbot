@@ -99,6 +99,84 @@ export function formatTimeOfDayWithSeconds(timestamp: string): string {
 }
 
 // ---------------------------------------------------------------------------
+// Hour-of-day formatting
+// ---------------------------------------------------------------------------
+
+/**
+ * Convert a UTC hour (0–23) to an Eastern-Time hour label like "9 AM".
+ *
+ * Time-of-day stats arrive from the backend as UTC hour buckets (the
+ * `time_of_day.hourly` field on AdminStats). The dashboard renders in
+ * NYC time so admins can read the chart against the city they're
+ * staffing. This function does the conversion, anchored to "today" so
+ * DST shifts at the right moment of the year.
+ *
+ * Anchoring matters: UTC hour 13 lands at 9 AM ET in winter (UTC−5)
+ * and 9 AM EDT in summer (UTC−4). Using `now` as the anchor means the
+ * label is correct for the current viewing context. If we instead used
+ * a fixed reference date, half the year would be off by an hour.
+ *
+ * Used by:
+ *   - admin/metrics — Section 7 Hourly Distribution row
+ *   - admin/overview — When-bar widget
+ */
+export function utcHourToET(utcHour: number): string {
+  const now = new Date();
+  const d = new Date(
+    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), utcHour, 0, 0),
+  );
+  return d.toLocaleTimeString("en-US", {
+    hour: "numeric",
+    timeZone: NYC_TZ,
+  });
+}
+
+/**
+ * Inverse of `utcHourToET`: given an ET hour (0–23 in NYC-local time),
+ * return the corresponding UTC hour for the current date.
+ *
+ * Needed when the dashboard renders an ET-aligned hourly histogram
+ * (one bar per ET hour, midnight-ET on the left) but reads counts from
+ * the backend's UTC-bucketed dict. Naive fixed-offset arithmetic
+ * (etHour + 5) breaks across DST.
+ *
+ * Implementation: try all 24 UTC hours and return the one whose ET
+ * representation matches the requested etHour. This is O(24) but runs
+ * once per chart render, costs essentially nothing, and avoids any
+ * manual offset / DST arithmetic — the engine's tz database does all
+ * the work via the same `toLocaleTimeString` round-trip that
+ * `utcHourToET` uses, so the two functions are guaranteed inverses.
+ *
+ * Returns 0–23. Returns 0 (with a console warning) for an out-of-range
+ * input rather than throwing — the chart should keep rendering even
+ * on a bad hour value.
+ */
+export function etHourToUtcHour(etHour: number): number {
+  if (etHour < 0 || etHour > 23 || !Number.isInteger(etHour)) {
+    return 0;
+  }
+  const now = new Date();
+  for (let utc = 0; utc < 24; utc += 1) {
+    const d = new Date(
+      Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), utc, 0, 0),
+    );
+    const etLabel = d.toLocaleTimeString("en-US", {
+      timeZone: NYC_TZ,
+      hour: "numeric",
+      hour12: false,
+    });
+    // Some locales render "0" as "24"; normalize.
+    const etHourFromLabel = parseInt(etLabel, 10) % 24;
+    if (etHourFromLabel === etHour) return utc;
+  }
+  // Fallback — shouldn't be reachable for any valid etHour because
+  // every hour 0–23 maps to some UTC hour. If the engine's tz database
+  // is broken, returning 0 keeps the chart rendering rather than
+  // throwing.
+  return 0;
+}
+
+// ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
 

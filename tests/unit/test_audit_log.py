@@ -1171,3 +1171,152 @@ def test_multi_intent_empty():
     mi = stats["multi_intent"]
     assert mi["queue_offers"] == 0
     assert mi["queue_declines"] == 0
+
+
+# ---------------------------------------------------------------------------
+# LLM call session_id contextvar (May 2026 admin-metrics fix)
+# ---------------------------------------------------------------------------
+#
+# Background: record_llm_call() previously took an explicit session_id
+# kwarg with default "", and zero of the six call sites in the codebase
+# passed one. The result: avg_calls_per_session in the admin metrics
+# was always None even when calls were being made, because the metric
+# only counts calls with non-empty session_id.
+#
+# The fix introduced a ContextVar that the chatbot orchestrator sets at
+# the top of generate_reply(). record_llm_call now falls back to the
+# contextvar when session_id arg is empty. These tests pin that
+# contract: explicit > contextvar > "".
+
+
+def test_record_llm_call_uses_contextvar_when_arg_empty():
+    """When session_id arg is empty, record_llm_call reads the contextvar.
+
+    This is the production path: every current caller passes session_id=""
+    (the default), so the contextvar is what gets recorded. If this test
+    fails, avg_calls_per_session will be None in admin metrics again.
+    """
+    from app.services.audit_log import record_llm_call, set_session_id_context, _llm_calls
+    clear_audit_log()
+    set_session_id_context("session-abc")
+    record_llm_call(
+        task="slot_extraction",
+        model="claude-haiku-4-5-20251001",
+        input_tokens=100,
+        output_tokens=20,
+        latency_ms=300,
+        success=True,
+    )
+    assert len(_llm_calls) == 1
+    assert _llm_calls[0]["session_id"] == "session-abc"
+
+
+def test_record_llm_call_explicit_arg_wins_over_contextvar():
+    """Explicit session_id= kwarg takes precedence over the contextvar.
+
+    Future callers that have session_id directly in scope (or tests that
+    want to record a specific session) shouldn't be silently overridden
+    by a stale contextvar from earlier in the same coroutine.
+    """
+    from app.services.audit_log import record_llm_call, set_session_id_context, _llm_calls
+    clear_audit_log()
+    set_session_id_context("from-context")
+    record_llm_call(
+        task="crisis_detection",
+        model="claude-sonnet-4-6",
+        input_tokens=500,
+        output_tokens=15,
+        latency_ms=800,
+        success=True,
+        session_id="from-arg",
+    )
+    assert _llm_calls[0]["session_id"] == "from-arg"
+
+
+def test_record_llm_call_empty_when_no_contextvar_set():
+    """Outside a request context (startup tasks, ping_llm health probe,
+    direct test invocations), the contextvar default is "" and that's
+    what gets recorded — matching pre-fix behavior for non-request paths.
+
+    The autouse `_reset_audit_log_session_context` fixture in conftest.py
+    resets the contextvar to "" before each test, so this test sees a
+    clean state without needing an explicit reset here.
+    """
+    from app.services.audit_log import record_llm_call, _llm_calls
+    clear_audit_log()
+    record_llm_call(
+        task="slot_extraction",
+        model="claude-haiku-4-5-20251001",
+        input_tokens=100,
+        output_tokens=20,
+        latency_ms=300,
+        success=True,
+    )
+    assert _llm_calls[0]["session_id"] == ""
+
+
+def test_avg_calls_per_session_now_populates():
+    """End-to-end: with the contextvar set, avg_calls_per_session in
+    _compute_llm_metrics is no longer None. This is the metric that
+    drove the 'No calls logged yet' subtitle bug in admin/metrics.
+    """
+    from app.services.audit_log import record_llm_call, set_session_id_context, _compute_llm_metrics
+    clear_audit_log()
+
+    # Two sessions, three calls in the first, one in the second.
+    set_session_id_context("session-1")
+    for _ in range(3):
+        record_llm_call(
+            task="slot_extraction",
+            model="claude-haiku-4-5-20251001",
+            input_tokens=100, output_tokens=20, latency_ms=200, success=True,
+        )
+    set_session_id_context("session-2")
+    record_llm_call(
+        task="slot_extraction",
+        model="claude-haiku-4-5-20251001",
+        input_tokens=100, output_tokens=20, latency_ms=200, success=True,
+    )
+
+    metrics = _compute_llm_metrics()
+    assert metrics["total_calls"] == 4
+    # avg_per_session = (3 + 1) / 2 = 2.0
+    assert metrics["avg_calls_per_session"] == 2.0
+
+
+def test_contextvar_isolation_across_coroutines():
+    """ContextVars are per-coroutine. Two concurrent async requests
+    each see their own session_id, even when interleaved.
+
+    Without isolation, request A's session_id could leak into a
+    record_llm_call made during request B's processing. Confirms
+    the standard ContextVar contract holds in our usage.
+    """
+    import asyncio
+    from app.services.audit_log import record_llm_call, set_session_id_context, _llm_calls
+
+    clear_audit_log()
+
+    async def simulated_request(sid: str, delay: float):
+        set_session_id_context(sid)
+        await asyncio.sleep(delay)  # interleave
+        record_llm_call(
+            task="slot_extraction",
+            model="claude-haiku-4-5-20251001",
+            input_tokens=100, output_tokens=20, latency_ms=200, success=True,
+        )
+
+    async def runner():
+        await asyncio.gather(
+            simulated_request("alice", 0.02),
+            simulated_request("bob", 0.01),
+            simulated_request("carol", 0.005),
+        )
+
+    asyncio.run(runner())
+
+    sids = sorted(c["session_id"] for c in _llm_calls)
+    assert sids == ["alice", "bob", "carol"], (
+        f"Expected each coroutine to record its own session_id; got {sids}"
+    )
+

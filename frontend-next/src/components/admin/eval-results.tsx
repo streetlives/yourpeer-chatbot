@@ -6,9 +6,12 @@
 
 "use client";
 
+import { useState } from "react";
 import type { EvalReport } from "@/lib/chat/types";
 import { StatCard } from "./stat-card";
+import { DimensionDetailDialog } from "./dimension-detail-dialog";
 import { EVAL_DIMENSIONS, DIM_SHORT_LABELS, getDimension } from "@/lib/admin/eval-dimensions";
+import type { EvalDimension } from "@/lib/admin/eval-dimensions";
 
 /**
  * EvalResults — pure presentation component for an EvalReport.
@@ -27,6 +30,12 @@ interface EvalResultsProps {
 
 export function EvalResults({ report }: EvalResultsProps) {
   const { summary } = report;
+
+  // Open-dimension state: tracks which dimension's explainer dialog
+  // is currently shown, or null when closed. Mirrors the
+  // selectedMetric pattern in metrics/page.tsx so the two pages have
+  // the same shape of in-component dialog state.
+  const [selectedDimension, setSelectedDimension] = useState<EvalDimension | null>(null);
 
   // Passing rate: scenarios scoring >= 4.0 average that didn't error.
   // Matches the "scenario passes if its average score across all 11
@@ -113,7 +122,11 @@ export function EvalResults({ report }: EvalResultsProps) {
       {/* Dimension scores */}
       <div className="mb-7" id="eval-dimension-scores">
         <h3 className="text-base font-semibold mb-4">Dimension Scores</h3>
-        {EVAL_DIMENSIONS.map(({ key, shortLabel, target, blocker }) => {
+        <p className="text-xs text-neutral-400 mb-3">
+          Click a dimension name to see what the LLM judge measures and how it scores 1–5.
+        </p>
+        {EVAL_DIMENSIONS.map((dim) => {
+          const { key, shortLabel, target, blocker } = dim;
           const d = summary.dimension_averages[key];
           if (!d) return null;
           const pct = (d.average / 5) * 100;
@@ -136,7 +149,14 @@ export function EvalResults({ report }: EvalResultsProps) {
               className="flex items-center gap-3.5 py-2.5 border-b border-neutral-100 last:border-b-0"
             >
               <div className="w-[220px] flex-shrink-0 text-sm font-medium">
-                {shortLabel}
+                <button
+                  type="button"
+                  onClick={() => setSelectedDimension(dim)}
+                  className="text-left hover:text-amber-600 focus:text-amber-600 focus:outline-none focus:underline transition-colors cursor-pointer"
+                  aria-label={`Show details for ${shortLabel}`}
+                >
+                  {shortLabel}
+                </button>
                 {blocker && (
                   <span className="ml-1.5 text-[0.65rem] text-red-600 font-semibold">
                     BLOCKER
@@ -275,6 +295,13 @@ export function EvalResults({ report }: EvalResultsProps) {
           </div>
         );
       })}
+
+      {selectedDimension && (
+        <DimensionDetailDialog
+          dimension={selectedDimension}
+          onClose={() => setSelectedDimension(null)}
+        />
+      )}
     </>
   );
 }

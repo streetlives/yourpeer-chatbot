@@ -25,6 +25,15 @@ export const viewport: Viewport = {
   // them pinch-zoom accidentally while tapping buttons. maximumScale
   // is a balance between a11y (users who need to zoom) and correct
   // layout on small screens. Stick with defaults (zooming allowed).
+  //
+  // interactiveWidget: "resizes-content" tells the browser to shrink
+  // the layout viewport when the on-screen keyboard opens, instead
+  // of overlaying the keyboard on top of the page. With this set,
+  // the chat input + most-recent-message stay visible while typing
+  // — without it (the legacy default), iOS Safari hides the input
+  // behind the keyboard. Supported in Chrome 108+, Safari 16+;
+  // older browsers fall back to the existing dvh-based handling.
+  interactiveWidget: "resizes-content",
 };
 
 export const metadata: Metadata = {

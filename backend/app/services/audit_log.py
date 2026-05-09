@@ -17,8 +17,9 @@ import json
 import logging
 import threading
 from collections import deque, OrderedDict
+from contextvars import ContextVar
 from copy import deepcopy
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from app.services import persistence
@@ -281,6 +282,57 @@ def get_stats() -> dict:
         sid = t.get("session_id", "")
         sess_cats.setdefault(sid, set()).add(t.get("category", ""))
 
+    # Crisis category breakdown — aggregated from the crisis_category
+    # field on each crisis_detected event. The crisis_detector emits
+    # one of 8 canonical categories (suicide_self_harm, medical_emergency,
+    # domestic_violence, youth_runaway, assault_victim, safety_concern,
+    # trafficking, violence) plus a fallback "safety_concern" when the
+    # LLM stage misses or the category field is missing.
+    #
+    # Two breakdowns are surfaced:
+    #
+    # crises_by_category — ALL-TIME breakdown across every crisis event
+    #   ever logged. Used for the historical/cumulative view on the
+    #   admin Overview page. Sums to total_crises.
+    #
+    # crises_by_category_24h — rolling 24-hour window, anchored to now.
+    #   Used for the recent-activity view on the Overview page. Rolling
+    #   (rather than calendar-today) matters at the day boundary: an
+    #   admin checking the dashboard at 12:01 AM would see an empty
+    #   "today" panel under a calendar approach even if there were 5
+    #   crises 30 minutes earlier. Rolling 24h keeps the most-recent
+    #   activity visible regardless of when the admin checks. Sums to
+    #   total_crises_24h.
+    #
+    # Both are sparse: only categories with N > 0 appear, matching the
+    # convention of category_distribution / service_type_distribution.
+    cutoff_24h_utc = datetime.now(timezone.utc) - timedelta(hours=24)
+    crises_by_category: dict[str, int] = {}
+    crises_by_category_24h: dict[str, int] = {}
+    for c in crises:
+        cat = c.get("crisis_category") or "uncategorized"
+        crises_by_category[cat] = crises_by_category.get(cat, 0) + 1
+
+        # 24h-bucket: only count if the event timestamp parses and
+        # lands at or after the rolling cutoff. Events with missing or
+        # malformed timestamps stay in the all-time bucket but are
+        # excluded from the 24h count — silently dropping them from
+        # "recent" is the right default (we can't prove they're recent)
+        # while keeping them in all-time preserves the total_crises
+        # invariant.
+        ts = c.get("timestamp")
+        if ts:
+            try:
+                event_dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                if event_dt >= cutoff_24h_utc:
+                    crises_by_category_24h[cat] = (
+                        crises_by_category_24h.get(cat, 0) + 1
+                    )
+            except (ValueError, AttributeError):
+                continue
+
+    total_crises_24h = sum(crises_by_category_24h.values())
+
     # Distributions
     cat_dist: dict[str, int] = {}
     svc_dist: dict[str, int] = {}
@@ -378,6 +430,15 @@ def get_stats() -> dict:
         "total_turns": len(turns),
         "total_queries": len(queries),
         "total_crises": len(crises),
+        # Crises that occurred in the last 24 hours, rolling. See the
+        # aggregation block above for the rolling-vs-calendar rationale.
+        "total_crises_24h": total_crises_24h,
+        # All-time crisis breakdown by category. Sums to total_crises.
+        "crises_by_category": crises_by_category,
+        # Rolling-24h crisis breakdown by category. Sums to
+        # total_crises_24h. Empty dict {} when no crises in the last
+        # 24 hours (sparse convention).
+        "crises_by_category_24h": crises_by_category_24h,
         "total_resets": len(resets),
         "unique_sessions": len(all_sessions),
         "total_escalations": len(esc_sessions),
@@ -986,6 +1047,44 @@ def _compute_repetition_rate(all_events: list) -> dict:
 _llm_calls: deque = deque(maxlen=MAX_EVENTS)
 
 
+# Per-request session-id context. Set by the chatbot orchestrator at the
+# top of generate_reply(); consulted by record_llm_call() when a caller
+# doesn't pass session_id explicitly.
+#
+# Why this exists: record_llm_call is invoked from six call sites deep in
+# the call tree (slot extraction dispatch, crisis detection, post-results
+# classify, filter-keyword extract, conversational reply). Plumbing
+# session_id through every intermediate function would require touching
+# half the codebase for one observability field. A ContextVar set once at
+# the request entry point propagates automatically through asyncio
+# coroutines AND through FastAPI's threadpool bridge for sync downstream
+# code (anyio handles context propagation across the boundary), so every
+# LLM call within a request inherits the right session_id without
+# function-signature changes.
+#
+# Default is the empty string so non-request contexts (startup tasks,
+# direct test invocations of record_llm_call, the LLM health probe in
+# claude_client.ping_llm()) record without session_id, matching existing
+# behavior. Explicit `session_id=` arguments to record_llm_call still win
+# over the contextvar, so any future caller that knows its session_id can
+# pass it directly.
+_session_id_ctx: ContextVar[str] = ContextVar("audit_log_session_id", default="")
+
+
+def set_session_id_context(session_id: str) -> None:
+    """Set the per-request session-id seen by `record_llm_call`.
+
+    Called once at the top of `generate_reply` in the chatbot
+    orchestrator. The contextvar is per-coroutine, so concurrent
+    requests don't see each other's session ids — each request's
+    coroutine tree gets its own copy of the context.
+
+    Pass an empty string to clear (rare; usually unnecessary since
+    each request's context starts fresh).
+    """
+    _session_id_ctx.set(session_id)
+
+
 def record_llm_call(
     task: str,
     model: str,
@@ -998,13 +1097,28 @@ def record_llm_call(
     """Record an LLM API call for cost/latency/volume metrics.
 
     Called after each Anthropic API call in claude_client.py,
-    crisis_detector.py, and llm_slot_extractor.py.
+    crisis_detector.py, slot_extraction/dispatch.py, and
+    post_results.py.
+
+    Resolution order for session_id:
+      1. Explicit `session_id=` kwarg if non-empty.
+      2. The `_session_id_ctx` ContextVar set at the top of
+         generate_reply() — covers every LLM call made during a
+         normal chat request without each call site having to plumb
+         session_id through.
+      3. Empty string fallback for non-request contexts.
+
+    `avg_calls_per_session` in `_compute_llm_metrics` only counts
+    calls with a non-empty session_id, so without the contextvar
+    fallback, that metric was always None even when calls were
+    being made. See May 2026 admin-metrics investigation.
     """
     from datetime import datetime, timezone
+    sid = session_id or _session_id_ctx.get("")
     with _lock:
         _llm_calls.append({
             "timestamp": datetime.now(timezone.utc).isoformat(),
-            "session_id": session_id,
+            "session_id": sid,
             "task": task,
             "model": model,
             "input_tokens": input_tokens,

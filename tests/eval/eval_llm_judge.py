@@ -5681,7 +5681,7 @@ def generate_report(results: list, baseline_id: str = "R38") -> dict:
     # Capture the pre-LLM redaction state at report time. Pre-LLM redaction
     # was made mandatory in Phase 4 (May 2026); this field is now always
     # True. Retained in the report schema for back-compat with downstream
-    # report-readers (the dashboard, EVAL_RESULTS_R28-R41.md generator,
+    # report-readers (the dashboard, EVAL_RESULTS_R28-R42.md generator,
     # report-diff scripts) that look for it.
     redact_state = True
 

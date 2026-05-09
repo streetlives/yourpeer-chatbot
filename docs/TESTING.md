@@ -356,7 +356,7 @@ The legacy `test_llm_slot_extractor.py`, `test_llm_classifier.py`, `test_llm_mul
 | End-to-end narrative dispatch | 4 | `TestExtractEndToEndNarrative` (no-mock fallback chain) |
 | Live API extraction | 5 | `tests/integration/test_slot_extraction_live.py` (skipped without API key) |
 
-### `test_audit_log.py` — 70 tests
+### `test_audit_log.py` — 75 tests
 
 Validates all 13 public functions in the audit log module.
 
@@ -578,7 +578,7 @@ Research-sourced crisis detection edge cases from C-SSRS (5 severity levels), HI
 
 Coverage gap tests for 8 high/medium priority areas: zip code full flow (4), crisis step-down + multi-intent (2), LLM contradictory category (2), near-me sentinel safety (3), session_exists (3), get_client_ip (5), _extract_session_id (4), _normalize_url (9), feedback→stats (4).
 
-### `test_format_pipeline_and_admin.py` — 41 tests
+### `test_format_pipeline_and_admin.py` — 50 tests
 
 Comprehensive gap coverage for 9 areas identified during audit: `_compute_freshness` timezone/boundary handling (8), admin `/api/stats` response shape for routing/tone/multi_intent (6), post-results through `generate_reply` end-to-end (4), `skip_llm` through chatbot pipeline (2), `also_available` in post-results detail view (4), `last_validated_at` timezone edge cases (4), multi-intent queue decline with 2-item queue (2), prompt builder function shapes and guardrails (8), `format_service_card` deduplication and filtering (5).
 

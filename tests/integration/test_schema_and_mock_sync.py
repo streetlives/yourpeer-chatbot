@@ -297,6 +297,8 @@ class TestAdminStatsDrift:
     # Update this set when the TypeScript interface changes.
     _TS_ADMIN_STATS_KEYS = {
         "unique_sessions", "total_turns", "total_queries", "total_crises",
+        "total_crises_24h",
+        "crises_by_category", "crises_by_category_24h",
         "total_escalations", "total_resets", "service_intent_sessions",
         "relaxed_query_rate", "feedback_up", "feedback_down", "feedback_score",
         "slot_confirmation_rate", "slot_correction_rate",

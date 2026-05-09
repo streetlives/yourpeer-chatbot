@@ -63,7 +63,7 @@ These grow over time and are updated on every eval run or metric recompute.
  
 | File | What it covers |
 |------|----------------|
-| [EVAL_RESULTS_R28-R41.md](ops/EVAL_RESULTS_R28-R41.md) | Per-run eval scoring (current Opus-era runs), critical failures, fixes. See [EVAL_RESULTS_R1-R27.md](ops/EVAL_RESULTS_R1-R27.md) for the historical Sonnet-era runs. |
+| [EVAL_RESULTS_R28-R42.md](ops/EVAL_RESULTS_R28-R42.md) | Per-run eval scoring (current Opus-era runs), critical failures, fixes. See [EVAL_RESULTS_R1-R27.md](ops/EVAL_RESULTS_R1-R27.md) for the historical Sonnet-era runs. |
 | [METRICS.md](ops/METRICS.md) | 35+ success metrics across 7 layers with definitions, targets, phasing |
  
 ## Related docs elsewhere in the repo

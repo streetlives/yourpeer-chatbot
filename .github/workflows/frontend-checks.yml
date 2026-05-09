@@ -1,20 +1,48 @@
 name: Frontend checks
 
-# Lint, typecheck, and build the Next.js frontend on every PR and on pushes
-# to main that touch frontend code.
+# Lint, typecheck, verify, and build the Next.js frontend on every PR
+# and on pushes to main that touch frontend code.
 #
-# No frontend tests exist yet — if vitest/playwright is added later, add a
-# test step between typecheck and build.
+# The "verify" step runs the standalone scripts in frontend-next/scripts/verify/
+# — these are the only test surface for pure-function helpers (theme,
+# PII redaction, pending-message classification, time helpers, the
+# bucket-key sentinel). Skipping them in CI was a real gap: it meant
+# Python ↔ TypeScript contract drift could merge cleanly even though
+# `npm run verify` would have flagged it locally. The bucket-key
+# sentinel was added specifically to catch this class of bug, so
+# wiring it into CI is what makes that protection meaningful.
+#
+# No frontend tests (vitest/playwright) exist yet — if added later,
+# add a separate test step alongside verify.
 
 on:
   pull_request:
     paths:
       - 'frontend-next/**'
+      - 'backend/app/main.py'
+      - 'backend/app/services/audit_log.py'
+      - 'backend/app/services/crisis_detector.py'
+      - 'tests/eval/eval_llm_judge.py'
       - '.github/workflows/frontend-checks.yml'
   push:
     branches: [main]
     paths:
       - 'frontend-next/**'
+      - 'backend/app/main.py'
+      - 'backend/app/services/audit_log.py'
+      - 'backend/app/services/crisis_detector.py'
+      - 'tests/eval/eval_llm_judge.py'
+
+# The verify scripts read several backend files to do their cross-stack
+# contract checks. A backend change to any of these files must trigger
+# this workflow even when frontend-next/ is untouched — otherwise a
+# rename would merge silently and break the frontend at runtime. The
+# four paths above are the source-of-truth files the verify sentinels
+# parse:
+#   - main.py                 : /api/health response shape (contract.mjs)
+#   - audit_log.py            : event types + bucket dicts (contract.mjs + bucket-keys.mjs)
+#   - crisis_detector.py      : canonical crisis category names (bucket-keys.mjs)
+#   - eval_llm_judge.py       : DIMENSION_WEIGHTS keys (contract.mjs)
 
 concurrency:
   group: frontend-checks-${{ github.ref }}
@@ -22,7 +50,7 @@ concurrency:
 
 jobs:
   checks:
-    name: Lint, typecheck, build
+    name: Lint, typecheck, verify, build
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -36,9 +64,14 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v6
         with:
-          # Node 20 LTS — satisfies package.json engines ">=20.9.0"
-          # (Next.js 16 minimum) and matches what production deploys under.
-          node-version: '20'
+          # Node 22 LTS — the verify scripts import .ts files directly
+          # (built-in type-stripping enabled by default in Node 22.6+).
+          # Node 20 would fail with "unknown file extension .ts" errors
+          # on any verify script that does `import ... from "...ts"`.
+          # Production builds run on Node 22 too (Next.js 16 supports
+          # both, but we standardize on the LTS that supports our
+          # verify-script approach).
+          node-version: '22'
           cache: 'npm'
           cache-dependency-path: frontend-next/package-lock.json
 
@@ -54,6 +87,16 @@ jobs:
       - name: Type-check
         run: npx tsc --noEmit
         # --noEmit: just check types, don't emit .js output.
+
+      - name: Verify (pure-function checks + cross-stack contract checks)
+        run: npm run verify
+        # Aggregate of: redaction, pending, pii, theme, time-helpers,
+        # bucket-keys. Theme + time-helpers are pure-JS round-trip
+        # checks. Redaction/pii/pending exercise PII boundaries that
+        # types can't catch. Bucket-keys is the cross-stack sentinel:
+        # it parses backend Python files (audit_log.py,
+        # crisis_detector.py) and asserts their distribution-dict keys
+        # match the canonical lists in src/lib/admin/bucket-keys.ts.
 
       - name: Build
         run: npm run build

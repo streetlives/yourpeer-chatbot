@@ -15,21 +15,7 @@ import { MetricDetailDialog } from "@/components/admin/metric-detail-dialog";
 import { findMetricDefinition } from "@/lib/admin/metric-definitions";
 import type { MetricDefinition } from "@/lib/admin/metric-definitions";
 import { EVAL_DIMENSIONS } from "@/lib/admin/eval-dimensions";
-
-// ---------------------------------------------------------------------------
-// TIMEZONE — All times render in Eastern Time (NYC-based service)
-// ---------------------------------------------------------------------------
-const NYC_TZ = "America/New_York";
-
-/** Convert a UTC hour (0–23) to an Eastern Time label like "9 AM" */
-function utcHourToET(utcHour: number): string {
-  const now = new Date();
-  const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), utcHour, 0, 0));
-  return d.toLocaleTimeString("en-US", {
-    hour: "numeric",
-    timeZone: NYC_TZ,
-  });
-}
+import { utcHourToET } from "@/lib/admin/format-time";
 
 // ---------------------------------------------------------------------------
 // STATISTICAL HELPERS
@@ -215,6 +201,42 @@ export default function MetricsPage() {
   const crisisShareOfCalls = crisisTask && llmMetrics?.total_calls
     ? crisisTask.calls / llmMetrics.total_calls
     : null;
+
+  // Total LLM Calls subtitle — kept coherent with the value cell.
+  // Prior bug (May 2026): subtitle gated on avg_calls_per_session,
+  // value gated on total_calls. The two could disagree, producing
+  // "13" with subtitle "No calls logged yet". Now: if total_calls is
+  // 0, say so; otherwise prefer the avg-per-session phrasing (which
+  // requires the backend's session_id contextvar fix to be deployed),
+  // and fall back to a defensive "X calls (per-session unavailable)"
+  // for the rare case where total_calls > 0 but avg is still null
+  // (e.g. legacy untagged calls still in the in-memory deque from
+  // before the contextvar fix landed).
+  const llmTotalCalls = llmMetrics?.total_calls ?? 0;
+  const llmAvgPerSession = llmMetrics?.avg_calls_per_session;
+  const llmCallsSubtitle =
+    llmTotalCalls === 0
+      ? "No calls logged yet"
+      : llmAvgPerSession != null
+        ? `Avg ${llmAvgPerSession} calls/session`
+        : `${llmTotalCalls} calls (per-session unavailable)`;
+
+  // Latency p50 / p95 display — format both percentiles separately so
+  // the "ms" suffix doesn't get concatenated onto the "n/a" fallback.
+  // Prior bug: `${p95 ?? "n/a"}ms` produced the "n/ams" display when
+  // the backend correctly returned null for p95 (it does so when
+  // len(latencies) < 20 — see audit_log.py:_compute_llm_metrics —
+  // because below that sample size the 95th percentile isn't
+  // statistically meaningful).
+  const llmLatencyValue = (() => {
+    if (llmMetrics?.latency_p50_ms == null) return null;
+    const p50 = `${llmMetrics.latency_p50_ms}ms`;
+    const p95 =
+      llmMetrics.latency_p95_ms != null
+        ? `${llmMetrics.latency_p95_ms}ms`
+        : "n/a";
+    return `${p50} / ${p95}`;
+  })();
 
   return (
     <>
@@ -601,9 +623,9 @@ export default function MetricsPage() {
         <MetricRow onClick={onMetricClick} name="Negative Preference Rate" subtitle={`% of sessions where user rejected all results (${recovery?.negative_preference_turns || 0} turns)`} target="≤ 10%" value={fmtMetric(recovery?.negative_preference_session_rate ?? null, true)} status={statusClass(recovery?.negative_preference_session_rate ?? null, 0.1, "lte", 0.2)} />
 
         {/* --- LLM cost & performance --- */}
-        <MetricRow onClick={onMetricClick} name="Total LLM Calls" subtitle={llmMetrics?.avg_calls_per_session != null ? `Avg ${llmMetrics.avg_calls_per_session} calls/session` : "No calls logged yet"} target="Baseline tracking" value={llmMetrics?.total_calls != null ? String(llmMetrics.total_calls) : null} status={llmMetrics?.total_calls ? "tracking" : "no-data"} />
+        <MetricRow onClick={onMetricClick} name="Total LLM Calls" subtitle={llmCallsSubtitle} target="Baseline tracking" value={llmMetrics?.total_calls != null ? String(llmMetrics.total_calls) : null} status={llmMetrics?.total_calls ? "tracking" : "no-data"} />
         <MetricRow onClick={onMetricClick} name="Estimated LLM Cost" subtitle={`${llmMetrics?.total_input_tokens || 0} input + ${llmMetrics?.total_output_tokens || 0} output tokens`} target="Track for capacity model" value={llmMetrics?.estimated_cost != null ? `$${llmMetrics.estimated_cost.toFixed(4)}` : null} status={llmMetrics?.estimated_cost ? "tracking" : "no-data"} />
-        <MetricRow onClick={onMetricClick} name="Latency p50 / p95" subtitle="Median and 95th percentile LLM response time" target="p50 ≤ 600ms" value={llmMetrics?.latency_p50_ms != null ? `${llmMetrics.latency_p50_ms}ms / ${llmMetrics.latency_p95_ms ?? "n/a"}ms` : null} status={llmMetrics?.latency_p50_ms != null ? (llmMetrics.latency_p50_ms <= 600 ? "on-target" : "warning") : "no-data"} />
+        <MetricRow onClick={onMetricClick} name="Latency p50 / p95" subtitle="Median and 95th percentile LLM response time" target="p50 ≤ 600ms" value={llmLatencyValue} status={llmMetrics?.latency_p50_ms != null ? (llmMetrics.latency_p50_ms <= 600 ? "on-target" : "warning") : "no-data"} />
         <MetricRow onClick={onMetricClick} name="LLM Failure Rate" subtitle="% of LLM calls that failed (timeout, error, invalid response)" target="≤ 2%" value={fmtMetric(llmMetrics?.failure_rate ?? null, true)} status={statusClass(llmMetrics?.failure_rate ?? null, 0.02, "lte", 0.05)} />
         {llmMetrics?.by_task && Object.keys(llmMetrics.by_task).length > 0 && (
           <MetricRow onClick={onMetricClick} name="Calls by Task" subtitle={Object.entries(llmMetrics.by_task as Record<string, { calls: number; avg_latency_ms: number }>).sort(([, a], [, b]) => b.calls - a.calls).map(([task, info]) => `${task}: ${info.calls} (${info.avg_latency_ms}ms avg)`).join(" · ")} target="—" value={`${Object.keys(llmMetrics.by_task).length} tasks`} status="tracking" />

@@ -49,6 +49,7 @@ DOCS_DIR = ROOT / "docs"
 TESTS_DIR = ROOT / "tests"
 BACKEND_DIR = ROOT / "backend"
 SCRIPTS_DIR = ROOT / "scripts"
+TOOLS_DIR = ROOT / "tools"
 
 
 # -----------------------------------------------------------------------
@@ -131,13 +132,19 @@ def ignored_lines(content: str) -> set[int]:
 # -----------------------------------------------------------------------
 
 def all_md_files() -> list[Path]:
-    """Return all markdown files from repo root, docs/, scripts/ (recursive).
+    """Return all markdown files from repo root, docs/, scripts/, tools/ (recursive).
 
     Skips macOS AppleDouble companion files (`._*`) which appear when
     a tarball made on macOS is extracted on another platform — those are
     binary metadata blobs that look like markdown by extension but crash
     UTF-8 readers. Real `.md` files starting with `._` are vanishingly
     rare in this repo's convention.
+
+    `scripts/` and `tools/` are walked only if they exist — both are
+    optional layout in some checkouts (sparse clones, branches that
+    predate the directory). `docs/` is required and unconditional;
+    a missing docs/ tree is itself a drift signal worth surfacing
+    further up the call chain.
     """
     def collect(root: Path) -> list[Path]:
         return [p for p in root.rglob("*.md")
@@ -148,6 +155,8 @@ def all_md_files() -> list[Path]:
     files.extend(collect(DOCS_DIR))
     if SCRIPTS_DIR.exists():
         files.extend(collect(SCRIPTS_DIR))
+    if TOOLS_DIR.exists():
+        files.extend(collect(TOOLS_DIR))
     return sorted(set(files))
 
 
@@ -695,12 +704,12 @@ def _suggest_directory_for(ref: str) -> Optional[str]:
 
 def check_bare_filenames(args):
     """Catch backticked bare filenames like `chatbot.py` (no path prefix)
-    that don't exist anywhere in backend/, tests/, or scripts/."""
+    that don't exist anywhere in backend/, tests/, scripts/, or tools/."""
     global _scanned_refs
 
     # Build inventory of actual Python file basenames
     inventory: set[str] = set()
-    for base in (BACKEND_DIR, TESTS_DIR, SCRIPTS_DIR):
+    for base in (BACKEND_DIR, TESTS_DIR, SCRIPTS_DIR, TOOLS_DIR):
         if base.exists():
             for p in base.rglob("*.py"):
                 if "__pycache__" in p.parts:

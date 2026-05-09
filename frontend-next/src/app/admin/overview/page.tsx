@@ -11,6 +11,7 @@ import { DataPanel } from "@/components/admin/data-panel";
 import { StatCard } from "@/components/admin/stat-card";
 import { EventFeed } from "@/components/admin/event-feed";
 import { SystemHealth } from "@/components/admin/system-health";
+import { OperationsBlock } from "@/components/admin/operations-charts";
 import { StatCardSkeleton, TableSkeleton } from "@/components/admin/loading-skeleton";
 import type { AdminStats } from "@/lib/chat/types";
 
@@ -23,6 +24,15 @@ export default function OverviewPage() {
 
   return (
     <>
+      {/* System Health sits at the top so the dashboard's first
+          visible signal is "is everything running?". If a backend is
+          unhealthy, every metric below is suspect; surfacing health
+          first means admins notice a degraded system before they
+          start interpreting numbers it produced. */}
+      <div className="mb-6">
+        <SystemHealth />
+      </div>
+
       <DataPanel
         slice={statsSlice}
         skeleton={<StatCardSkeleton />}
@@ -34,12 +44,13 @@ export default function OverviewPage() {
           </div>
         }
       >
-        {(s) => <StatCardsRow stats={s as AdminStats} />}
+        {(s) => (
+          <>
+            <StatCardsRow stats={s as AdminStats} />
+            <OperationsBlock stats={s as AdminStats} />
+          </>
+        )}
       </DataPanel>
-
-      <div className="my-6">
-        <SystemHealth />
-      </div>
 
       <div className="mb-7">
         <h2 className="text-base font-semibold mb-4">Recent Activity</h2>
@@ -102,6 +113,37 @@ function StatCardsRow({ stats: s }: { stats: AdminStats }) {
         : noResultRate <= 0.25 ? "text-amber-500"
           : "text-red-600";
 
+  // --- Confirmation Confirm Rate ---
+  // Replaces the legacy "Crises Detected" count card. A bare crisis
+  // count is uninformative on a daily basis (you can't have a "high"
+  // or "low" count without context); the per-category breakdown lives
+  // in the Operations block's CrisisCategoriesWidget instead.
+  //
+  // Confirm rate fills the "intent-understanding quality" slot in the
+  // top row that the other 5 cards don't cover. It's the upstream
+  // signal — % of confirmation prompts the user agreed with. Low
+  // confirm rate means the bot is mis-hearing user intent, even if
+  // downstream metrics like Task Completion still look OK.
+  //
+  // Thresholds: 75% as the "users agreeing with what we heard"
+  // baseline, 50-75% as a warning band, below 50% as a real signal
+  // that slot extraction is misaligned with what users are saying.
+  // Keep these numbers in sync with the metrics page's confirm-rate
+  // row if/when one is added there.
+  const confirmRate = s.confirmation_breakdown?.confirm_rate ?? null;
+  const confirmActions = s.confirmation_breakdown?.total_actions ?? 0;
+  const confirmDisplay =
+    confirmRate != null ? `${Math.round(confirmRate * 100)}%` : "—";
+  const confirmCls =
+    confirmRate == null ? ""
+      : confirmRate >= 0.75 ? "text-green-600"
+        : confirmRate >= 0.5 ? "text-amber-500"
+          : "text-red-600";
+  const confirmNote =
+    confirmActions > 0
+      ? `${confirmActions} confirmation${confirmActions !== 1 ? "s" : ""} · target ≥ 75%`
+      : "target ≥ 75%";
+
   // --- User Feedback ---
   const totalFeedback = (s.feedback_up || 0) + (s.feedback_down || 0);
   const feedbackDisplay =
@@ -131,9 +173,10 @@ function StatCardsRow({ stats: s }: { stats: AdminStats }) {
         note="target ≤ 5"
       />
       <StatCard
-        label="Crises Detected"
-        value={s.total_crises}
-        colorClass={s.total_crises > 0 ? "text-red-600" : "text-green-600"}
+        label="Confirmation Confirm Rate"
+        value={confirmDisplay}
+        colorClass={confirmCls}
+        note={confirmNote}
       />
       <StatCard
         label="User Feedback"

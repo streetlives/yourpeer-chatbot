@@ -10,8 +10,7 @@ import {
   getClientIp,
   rateLimitResponse,
 } from "@/lib/rate-limit";
-
-const BACKEND_URL = process.env.CHAT_BACKEND_URL || "http://localhost:8000";
+import { getBackendUrl } from "@/lib/backend-url";
 
 const LOCATION_FEEDBACK_IP_LIMITS: [number, number][] = [
   [60, 10], // 10 location feedback requests/minute per IP
@@ -24,9 +23,12 @@ export async function POST(req: NextRequest) {
     return rateLimitResponse(limit.retryAfter);
   }
 
+  // Resolve backend URL before the try/catch — see chat/route.ts.
+  const backendUrl = getBackendUrl();
+
   try {
     const body = await req.json();
-    const res = await fetch(`${BACKEND_URL}/chat/location-feedback`, {
+    const res = await fetch(`${backendUrl}/chat/location-feedback`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

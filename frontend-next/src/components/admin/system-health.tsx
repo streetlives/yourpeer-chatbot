@@ -78,7 +78,7 @@ export function SystemHealth() {
   const rows = health
     ? [
         {
-          name: "Backend",
+          name: "Backend API",
           status: health.status === "unhealthy" ? "down" : "up",
           detail: health.uptime_seconds != null ? `Uptime: ${formatUptime(health.uptime_seconds)}` : "Running",
         },
@@ -126,20 +126,61 @@ export function SystemHealth() {
           {overallLabel}
         </span>
       </div>
-      <div className="divide-y divide-slate-100">
-        {rows.length === 0 && (
-          <div className="px-4 py-3 text-sm text-slate-400">
-            {error || "Loading…"}
-          </div>
-        )}
-        {rows.map((row) => (
-          <div key={row.name} className="flex items-center gap-3 px-4 py-2.5">
-            <StatusDot status={row.status} />
-            <span className="text-sm font-medium text-slate-700 w-32">{row.name}</span>
-            <span className="text-sm text-slate-500">{row.detail}</span>
-          </div>
-        ))}
-      </div>
+      {rows.length === 0 && (
+        <div className="px-4 py-3 text-sm text-slate-400">
+          {error || "Loading…"}
+        </div>
+      )}
+      {/* Two-column layout on md+ screens. Flow is column-major
+          (`grid-flow-col` + `grid-rows-2`) so rows fill down the first
+          column before the second:
+            Col 1: Backend API   →   Col 2: LLM (Anthropic)
+            Col 1: Database          Col 2: Semantic router
+          The default row-major auto-flow would split the pairs across
+          rows instead, which loses the deliberate "infrastructure /
+          intelligence" grouping. On narrow screens it stacks to a
+          single column.
+
+          Each cell carries its own bottom-border for the row separator
+          (replacing the previous `divide-y` idiom, which can't span
+          across columns). The column-divider is rendered only on md+
+          via a `md:border-r` on left-column cells. */}
+      {rows.length > 0 && (
+        <div className="grid grid-cols-1 md:grid-cols-2 md:grid-rows-2 md:grid-flow-col">
+          {rows.map((row, i) => {
+            const isLeftColumn = i < 2; // First two rows go in column 1
+            const isLastOverall = i === rows.length - 1;
+            const isBottomOfColumn = i === 1 || i === 3;
+            // Bottom border treatment:
+            //   Mobile (single column): every row except the last gets one.
+            //   Desktop (2 columns):    every row except the bottom-most
+            //     row in each column gets one. We achieve this by always
+            //     drawing it on mobile, then suppressing it at md: for
+            //     row 1 (bottom of col 1) so the col-1 bottom doesn't
+            //     show a hanging line.
+            const mobileBottomBorder = !isLastOverall;
+            const desktopSuppressBottom = isBottomOfColumn;
+            return (
+              <div
+                key={row.name}
+                className={`flex items-center gap-3 px-4 py-2.5 ${
+                  mobileBottomBorder ? "border-b border-slate-100" : ""
+                } ${
+                  desktopSuppressBottom ? "md:border-b-0" : ""
+                } ${
+                  // Vertical separator between the two columns, only
+                  // visible at md+ (when columns actually exist).
+                  isLeftColumn ? "md:border-r md:border-slate-100" : ""
+                }`}
+              >
+                <StatusDot status={row.status} />
+                <span className="text-sm font-medium text-slate-700 flex-shrink-0">{row.name}</span>
+                <span className="text-sm text-slate-500 truncate" title={row.detail}>{row.detail}</span>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

@@ -106,6 +106,20 @@ def generate_reply(
     if not request_id:
         request_id = str(uuid.uuid4())
 
+    # Stamp this request's session_id onto the audit-log contextvar.
+    # `record_llm_call` (in audit_log.py) reads it as a fallback when
+    # the caller doesn't pass session_id explicitly — which is every
+    # current call site. Without this, `avg_calls_per_session` in the
+    # admin metrics is always None because no LLM call has ever had a
+    # non-empty session_id. ContextVar propagates through async
+    # coroutines and FastAPI's threadpool bridge automatically, so
+    # the six call sites deep in the call tree (slot extraction,
+    # crisis Stage 2, post-results classify, filter-keyword extract,
+    # conversational reply) all pick it up without signature changes.
+    # See May 2026 admin-metrics investigation.
+    from app.services.audit_log import set_session_id_context
+    set_session_id_context(session_id)
+
     logger.info(f"[req:{request_id}] Session {session_id}: processing message")
 
     # --- Empty message guard ---
