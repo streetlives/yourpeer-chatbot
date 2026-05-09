@@ -489,77 +489,30 @@ export function EngagementWidget({ stats }: { stats: AdminStats }) {
 }
 
 // ---------------------------------------------------------------------------
-// Widget 5 — Crisis Categories Today
+// Widget 5 — Crisis Activity (Last 24h + All-time, side-by-side)
 // ---------------------------------------------------------------------------
 
 /**
- * Crisis events broken down by category. Replaces the bare "Crises
- * Detected" count card from the original Overview. The breakdown is
- * the actually-actionable signal — "3 medical, 1 DV today" tells a
- * story; "4 crises" doesn't.
+ * Display labels for crisis categories. Lifted to module scope so the
+ * two crisis panels (24h and all-time) share one source.
  *
- * When zero crises occurred, renders as a quiet sentinel — neutral
- * styling, "No crises in this window" — rather than as an empty chart.
- * The point of this widget is to surface activity when it happens, not
- * to demand attention when nothing did.
- *
- * Relies on `stats.crises_by_category` (added to the backend
- * aggregation on May 2026). Sums to `stats.total_crises`; that
- * invariant is enforced by the backend test suite.
+ * The backend emits canonical snake_case names from
+ * `crisis_detector._CRISIS_CATEGORIES`; presentation lives here. An
+ * unknown key falls back to title-cased snake-case via humanizeKey,
+ * so a future backend addition renders acceptably without a frontend
+ * change.
  */
-export function CrisisCategoriesWidget({ stats }: { stats: AdminStats }) {
-  const breakdown = stats.crises_by_category ?? {};
-  const total = stats.total_crises ?? 0;
-  const entries = Object.entries(breakdown).sort(([, a], [, b]) => b - a);
-
-  if (total === 0) {
-    // Sentinel state — not a chart, just a quiet status.
-    return (
-      <WidgetCard
-        title="Crisis Activity"
-        subtitle="Detection running"
-      >
-        <div className="flex items-center gap-2 text-sm text-emerald-700 py-2">
-          <span className="text-base">✓</span>
-          <span>No crises detected in this window.</span>
-        </div>
-      </WidgetCard>
-    );
-  }
-
-  // Active state — show the breakdown. Display labels are humanized
-  // here (not on the backend) because the backend stays presentation-
-  // agnostic and we want sensible casing/spacing for admin display.
-  // Unknown keys fall back to title-cased version of the snake_case name.
-  const DISPLAY_LABELS: Record<string, string> = {
-    suicide_self_harm: "Suicide / Self-Harm",
-    medical_emergency: "Medical Emergency",
-    domestic_violence: "Domestic Violence",
-    youth_runaway: "Youth Runaway",
-    assault_victim: "Assault Victim",
-    safety_concern: "Safety Concern",
-    trafficking: "Trafficking",
-    violence: "Violence",
-    uncategorized: "Uncategorized",
-  };
-
-  const items = entries.map(([key, count]) => ({
-    label: DISPLAY_LABELS[key] ?? humanizeKey(key),
-    value: count,
-  }));
-
-  return (
-    <WidgetCard
-      title="Crisis Activity"
-      subtitle={`${total} crisis event${total !== 1 ? "s" : ""} · by category`}
-    >
-      <HorizontalBars items={items} maxRows={8} />
-      <div className="mt-3 pt-2 border-t border-neutral-100 text-[0.65rem] text-neutral-400">
-        See the Recent Activity feed below for individual crisis events.
-      </div>
-    </WidgetCard>
-  );
-}
+const CRISIS_DISPLAY_LABELS: Record<string, string> = {
+  suicide_self_harm: "Suicide / Self-Harm",
+  medical_emergency: "Medical Emergency",
+  domestic_violence: "Domestic Violence",
+  youth_runaway: "Youth Runaway",
+  assault_victim: "Assault Victim",
+  safety_concern: "Safety Concern",
+  trafficking: "Trafficking",
+  violence: "Violence",
+  uncategorized: "Uncategorized",
+};
 
 /** snake_case → "Snake Case" — fallback for unknown crisis category keys. */
 function humanizeKey(key: string): string {
@@ -569,8 +522,143 @@ function humanizeKey(key: string): string {
     .join(" ");
 }
 
+/**
+ * One crisis-breakdown panel. Used twice in CrisisActivityBlock — once
+ * for the rolling-24h view and once for the all-time view. Renders as
+ * a sentinel ("✓ No crises…") when the breakdown is empty, so the
+ * panel signals "we're watching, nothing to report" rather than
+ * appearing broken.
+ *
+ * Stacks panel-internal content vertically (title-row, then body). The
+ * outer CrisisActivityBlock provides the section header.
+ */
+function CrisisPanel({
+  title,
+  subtitle,
+  emptyText,
+  breakdown,
+  total,
+  showFooterHint = false,
+}: {
+  title: string;
+  subtitle: string;
+  emptyText: string;
+  breakdown: Record<string, number>;
+  total: number;
+  /** Set on the 24h panel only — the link to the activity feed below
+   *  is more useful pointing at recent events than at all-time ones. */
+  showFooterHint?: boolean;
+}) {
+  if (total === 0) {
+    return (
+      <div className="bg-white border border-neutral-200 rounded-lg p-4">
+        <div className="text-xs uppercase tracking-wider text-neutral-500 font-semibold">
+          {title}
+        </div>
+        <div className="text-[0.7rem] text-neutral-400 mt-0.5 mb-3">
+          {subtitle}
+        </div>
+        <div className="flex items-center gap-2 text-sm text-emerald-700 py-2">
+          <span className="text-base">✓</span>
+          <span>{emptyText}</span>
+        </div>
+      </div>
+    );
+  }
+
+  // Sort by count descending. Display labels are humanized at render time
+  // (CRISIS_DISPLAY_LABELS is shared at module scope).
+  const items = Object.entries(breakdown)
+    .sort(([, a], [, b]) => b - a)
+    .map(([key, count]) => ({
+      label: CRISIS_DISPLAY_LABELS[key] ?? humanizeKey(key),
+      value: count,
+    }));
+
+  return (
+    <div className="bg-white border border-neutral-200 rounded-lg p-4">
+      <div className="text-xs uppercase tracking-wider text-neutral-500 font-semibold">
+        {title}
+      </div>
+      <div className="text-[0.7rem] text-neutral-400 mt-0.5 mb-3">
+        {subtitle}
+      </div>
+      <HorizontalBars items={items} maxRows={8} />
+      {showFooterHint && (
+        <div className="mt-3 pt-2 border-t border-neutral-100 text-[0.65rem] text-neutral-400">
+          See the Recent Activity feed below for individual crisis events.
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Crisis Activity block — single section header with two side-by-side
+ * panels. Replaces the bare "Crises Detected" count card from the
+ * original Overview, and replaces the previous single-panel
+ * CrisisCategoriesWidget.
+ *
+ * The two panels intentionally show:
+ *   - Last 24 hours (rolling, anchored to now) — "what's happening
+ *     recently". This is the panel that should change shape day to day.
+ *   - All-time — "what's the cumulative shape" — useful for recognizing
+ *     when today's mix is unusual relative to historical norms.
+ *
+ * Side-by-side rather than stacked because the comparison itself is the
+ * interesting signal (is today's mix unusual? are we seeing more DV
+ * than usual?). Both panels under one header rather than two separate
+ * widget cards because they're answering the same question at different
+ * scopes — visually unifying them makes that legible.
+ *
+ * Backend dependencies: `crises_by_category_24h` + `total_crises_24h`
+ * for the recent panel; `crises_by_category` + `total_crises` for the
+ * all-time panel. Both contracts are pinned by the backend test suite.
+ */
+export function CrisisActivityBlock({ stats }: { stats: AdminStats }) {
+  return (
+    <div className="bg-neutral-50 border border-neutral-200 rounded-lg p-4">
+      <div className="flex items-baseline justify-between gap-2 mb-3">
+        <div>
+          <div className="text-xs uppercase tracking-wider text-neutral-500 font-semibold">
+            Crisis Activity
+          </div>
+          <div className="text-[0.7rem] text-neutral-400 mt-0.5">
+            Detection running · breakdown by category
+          </div>
+        </div>
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <CrisisPanel
+          title="Last 24 Hours"
+          subtitle={
+            stats.total_crises_24h > 0
+              ? `${stats.total_crises_24h} event${stats.total_crises_24h !== 1 ? "s" : ""} · rolling window`
+              : "rolling window"
+          }
+          emptyText="No crises detected in the last 24 hours."
+          breakdown={stats.crises_by_category_24h ?? {}}
+          total={stats.total_crises_24h ?? 0}
+          showFooterHint
+        />
+        <CrisisPanel
+          title="All-Time"
+          subtitle={
+            stats.total_crises > 0
+              ? `${stats.total_crises} event${stats.total_crises !== 1 ? "s" : ""} · cumulative`
+              : "cumulative"
+          }
+          emptyText="No crises detected to date."
+          breakdown={stats.crises_by_category ?? {}}
+          total={stats.total_crises ?? 0}
+        />
+      </div>
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------------------
-// Container — composes the five widgets into a responsive grid
+// Container — composes the operations widgets into a responsive grid
 // ---------------------------------------------------------------------------
 
 /**
@@ -578,10 +666,9 @@ function humanizeKey(key: string): string {
  * row and the System Health panel on the Overview page.
  *
  * Grid layout: on wide screens, two-up for the most-paired widgets
- * (When + Where, How Long + Engagement) with Crisis Activity below.
- * On narrow screens it stacks. The grid uses `auto-fit` rather than
- * fixed column counts so a single-widget mobile view falls out
- * naturally.
+ * (When + Where, How Long + Engagement). Crisis Activity sits below
+ * spanning both columns and contains its own internal 2-up layout for
+ * the 24h vs all-time panels.
  */
 export function OperationsBlock({ stats }: { stats: AdminStats }) {
   return (
@@ -598,10 +685,10 @@ export function OperationsBlock({ stats }: { stats: AdminStats }) {
         <HowLongWidget stats={stats} />
         <EngagementWidget stats={stats} />
         {/* Crisis Activity spans both columns on wide screens — the
-            label deserves the width and the chart often only has 2-3
-            rows so it'd look stranded in a half-width column. */}
+            block contains two internal panels (24h + all-time) so it
+            needs the full row width to render them side-by-side. */}
         <div className="lg:col-span-2">
-          <CrisisCategoriesWidget stats={stats} />
+          <CrisisActivityBlock stats={stats} />
         </div>
       </div>
     </div>

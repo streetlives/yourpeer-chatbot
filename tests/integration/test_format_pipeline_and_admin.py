@@ -317,6 +317,82 @@ class TestCrisisByCategory:
         stats = get_stats()
         assert stats["crises_by_category"] == {}
         assert stats["total_crises"] == 0
+        # 24h bucket has the same zero-state shape.
+        assert stats["crises_by_category_24h"] == {}
+        assert stats["total_crises_24h"] == 0
+
+    def test_24h_bucket_includes_recent_crises(self):
+        """Events staged inside setup_method() are 'now' (well within
+        the rolling 24h window), so the 24h breakdown must equal the
+        all-time breakdown for this test data."""
+        stats = get_stats()
+        assert stats["crises_by_category_24h"] == stats["crises_by_category"]
+        assert stats["total_crises_24h"] == stats["total_crises"]
+
+    def test_24h_bucket_excludes_older_crises(self):
+        """Events older than 24h must drop out of the 24h bucket but
+        remain in the all-time bucket. Patch _now_iso so we can stage
+        crises with timestamps > 24h ago."""
+        clear_audit_log()
+        from unittest.mock import patch
+
+        # Stage one crisis 25 hours ago (outside 24h window) and one
+        # 23 hours ago (inside).
+        old_ts = (datetime.now(timezone.utc) - timedelta(hours=25)).isoformat()
+        recent_ts = (datetime.now(timezone.utc) - timedelta(hours=23)).isoformat()
+
+        with patch("app.services.audit_log._now_iso", return_value=old_ts):
+            log_crisis_detected("s_old", "domestic_violence", "[redacted]")
+        with patch("app.services.audit_log._now_iso", return_value=recent_ts):
+            log_crisis_detected("s_recent", "medical_emergency", "[redacted]")
+
+        stats = get_stats()
+        # All-time has both
+        assert stats["total_crises"] == 2
+        assert stats["crises_by_category"] == {
+            "domestic_violence": 1, "medical_emergency": 1,
+        }
+        # 24h has only the recent one
+        assert stats["total_crises_24h"] == 1
+        assert stats["crises_by_category_24h"] == {"medical_emergency": 1}
+
+    def test_24h_bucket_sum_invariant(self):
+        """Companion invariant to test_total_matches_sum_of_categories:
+        the 24h breakdown must sum to total_crises_24h. If this drifts,
+        the Recent panel won't sum to its headline number."""
+        stats = get_stats()
+        breakdown_24h_total = sum(stats["crises_by_category_24h"].values())
+        assert breakdown_24h_total == stats["total_crises_24h"], (
+            f"crises_by_category_24h sums to {breakdown_24h_total} but "
+            f"total_crises_24h is {stats['total_crises_24h']}"
+        )
+
+    def test_24h_excludes_events_with_missing_timestamp(self):
+        """An event with no timestamp (defensive — the logger always
+        sets one, but a future code path or persistence-layer recovery
+        might not) is dropped from the 24h bucket but kept in all-time.
+        This preserves the total_crises invariant; an event with no
+        timestamp can't be proven to be recent."""
+        clear_audit_log()
+        # Bypass log_crisis_detected to inject a timestamp-less event
+        # directly. This exercises the defensive branch in the
+        # aggregation logic.
+        from app.services.audit_log import _events, _lock
+        with _lock:
+            _events.append({
+                "type": "crisis_detected",
+                "timestamp": "",  # missing/empty
+                "session_id": "s_no_ts",
+                "crisis_category": "violence",
+            })
+
+        stats = get_stats()
+        # All-time counts it
+        assert stats["total_crises"] == 1
+        assert stats["crises_by_category"] == {"violence": 1}
+        # 24h drops it
+        assert stats["total_crises_24h"] == 0
+        assert stats["crises_by_category_24h"] == {}
 
 
 # -----------------------------------------------------------------------

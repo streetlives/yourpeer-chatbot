@@ -18,7 +18,7 @@ import logging
 import threading
 from collections import deque, OrderedDict
 from copy import deepcopy
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from app.services import persistence
@@ -288,14 +288,49 @@ def get_stats() -> dict:
     # trafficking, violence) plus a fallback "safety_concern" when the
     # LLM stage misses or the category field is missing.
     #
-    # Sparse representation: only categories that fired during this
-    # period appear in the dict, matching the convention of
-    # category_distribution / service_type_distribution. Frontends that
-    # want a fixed-axis chart can union with their own canonical list.
+    # Two breakdowns are surfaced:
+    #
+    # crises_by_category — ALL-TIME breakdown across every crisis event
+    #   ever logged. Used for the historical/cumulative view on the
+    #   admin Overview page. Sums to total_crises.
+    #
+    # crises_by_category_24h — rolling 24-hour window, anchored to now.
+    #   Used for the recent-activity view on the Overview page. Rolling
+    #   (rather than calendar-today) matters at the day boundary: an
+    #   admin checking the dashboard at 12:01 AM would see an empty
+    #   "today" panel under a calendar approach even if there were 5
+    #   crises 30 minutes earlier. Rolling 24h keeps the most-recent
+    #   activity visible regardless of when the admin checks. Sums to
+    #   total_crises_24h.
+    #
+    # Both are sparse: only categories with N > 0 appear, matching the
+    # convention of category_distribution / service_type_distribution.
+    cutoff_24h_utc = datetime.now(timezone.utc) - timedelta(hours=24)
     crises_by_category: dict[str, int] = {}
+    crises_by_category_24h: dict[str, int] = {}
     for c in crises:
         cat = c.get("crisis_category") or "uncategorized"
         crises_by_category[cat] = crises_by_category.get(cat, 0) + 1
+
+        # 24h-bucket: only count if the event timestamp parses and
+        # lands at or after the rolling cutoff. Events with missing or
+        # malformed timestamps stay in the all-time bucket but are
+        # excluded from the 24h count — silently dropping them from
+        # "recent" is the right default (we can't prove they're recent)
+        # while keeping them in all-time preserves the total_crises
+        # invariant.
+        ts = c.get("timestamp")
+        if ts:
+            try:
+                event_dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                if event_dt >= cutoff_24h_utc:
+                    crises_by_category_24h[cat] = (
+                        crises_by_category_24h.get(cat, 0) + 1
+                    )
+            except (ValueError, AttributeError):
+                continue
+
+    total_crises_24h = sum(crises_by_category_24h.values())
 
     # Distributions
     cat_dist: dict[str, int] = {}
@@ -394,9 +429,15 @@ def get_stats() -> dict:
         "total_turns": len(turns),
         "total_queries": len(queries),
         "total_crises": len(crises),
-        # Crisis breakdown by category, populated from each crisis_detected
-        # event's crisis_category field. See the aggregation block above.
+        # Crises that occurred in the last 24 hours, rolling. See the
+        # aggregation block above for the rolling-vs-calendar rationale.
+        "total_crises_24h": total_crises_24h,
+        # All-time crisis breakdown by category. Sums to total_crises.
         "crises_by_category": crises_by_category,
+        # Rolling-24h crisis breakdown by category. Sums to
+        # total_crises_24h. Empty dict {} when no crises in the last
+        # 24 hours (sparse convention).
+        "crises_by_category_24h": crises_by_category_24h,
         "total_resets": len(resets),
         "unique_sessions": len(all_sessions),
         "total_escalations": len(esc_sessions),

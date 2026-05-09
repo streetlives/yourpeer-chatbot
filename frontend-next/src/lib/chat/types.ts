@@ -191,10 +191,20 @@ export interface AdminStats {
   total_queries: number;
   total_crises: number;
   /**
-   * Sparse breakdown of crisis events by category (8 canonical categories
-   * plus an "uncategorized" fallback). Sums to `total_crises`. Categories
-   * not seen during the period are absent — matches the convention of
-   * `category_distribution` and `service_type_distribution`.
+   * Total crisis events in the last 24 hours, rolling. Sums to the
+   * values in `crises_by_category_24h`. Rolling-window (rather than
+   * calendar-today) to keep the most-recent activity visible
+   * regardless of when an admin checks the dashboard — a calendar
+   * approach would show an empty panel at 12:01 AM even with crises
+   * 30 minutes earlier.
+   */
+  total_crises_24h: number;
+  /**
+   * All-time sparse breakdown of crisis events by category (8 canonical
+   * categories plus an "uncategorized" fallback). Sums to `total_crises`.
+   * Categories not seen across the entire dataset are absent — matches
+   * the convention of `category_distribution` and
+   * `service_type_distribution`.
    *
    * Backend source: `crisis_detector._CRISIS_CATEGORIES` defines the 8
    * canonical categories (suicide_self_harm, medical_emergency,
@@ -203,6 +213,13 @@ export interface AdminStats {
    * each `crisis_detected` event's `crisis_category` field.
    */
   crises_by_category: Record<string, number>;
+  /**
+   * Same shape as `crises_by_category` but scoped to crises that
+   * occurred in the last 24 hours, rolling. Sums to `total_crises_24h`.
+   * Empty `{}` when there have been no crises in the last 24 hours
+   * (sparse convention).
+   */
+  crises_by_category_24h: Record<string, number>;
   total_escalations: number;
   total_resets: number;
   service_intent_sessions: number;
