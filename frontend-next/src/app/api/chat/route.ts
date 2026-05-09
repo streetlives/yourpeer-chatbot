@@ -10,8 +10,9 @@ import {
   getClientIp,
   rateLimitResponse,
 } from "@/lib/rate-limit";
+import { getBackendUrl } from "@/lib/backend-url";
 
-const BACKEND_URL = process.env.CHAT_BACKEND_URL || "http://localhost:8000";
+const BACKEND_URL = getBackendUrl();
 
 // Frontend-layer rate limits (per IP).
 // First line of defense — the backend has its own, stricter per-session +

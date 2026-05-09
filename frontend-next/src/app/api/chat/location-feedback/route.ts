@@ -10,8 +10,9 @@ import {
   getClientIp,
   rateLimitResponse,
 } from "@/lib/rate-limit";
+import { getBackendUrl } from "@/lib/backend-url";
 
-const BACKEND_URL = process.env.CHAT_BACKEND_URL || "http://localhost:8000";
+const BACKEND_URL = getBackendUrl();
 
 const LOCATION_FEEDBACK_IP_LIMITS: [number, number][] = [
   [60, 10], // 10 location feedback requests/minute per IP

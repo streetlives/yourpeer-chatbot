@@ -5,8 +5,9 @@
 // https://opensource.org/licenses/MIT.
 
 import { NextRequest, NextResponse } from "next/server";
+import { getBackendUrl } from "@/lib/backend-url";
 
-const BACKEND_URL = process.env.CHAT_BACKEND_URL || "http://localhost:8000";
+const BACKEND_URL = getBackendUrl();
 
 /**
  * Catch-all proxy: /api/admin/stats → /admin/api/stats
