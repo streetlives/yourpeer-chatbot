@@ -402,7 +402,7 @@ export default function MetricsPage() {
       >
         {toneClassifierDegenerate && (
           <div className="bg-amber-50 border border-amber-200 rounded-lg px-3.5 py-2.5 text-sm text-amber-800 mb-3">
-            <strong>Tone classifier rarely firing</strong> — only {Math.round((toneClassifierCoverage ?? 0) * 100)}% of {totalToneClassified} classified turns have a tone detected. The derived emotional and tone metrics below may be unreliable until classifier coverage improves. Investigate the split classifier&apos;s tone detection logic before drawing conclusions from this section.
+            <strong>Tone classifier rarely firing</strong> — only {Math.round((toneClassifierCoverage ?? 0) * 100)}% of {totalToneClassified} (total) classified turns have a tone detected. The derived emotional and tone metrics below may be unreliable until classifier coverage improves. Investigate the split classifier&apos;s tone detection logic before drawing conclusions from this section.
           </div>
         )}
         <MetricRow onClick={onMetricClick}
