@@ -185,10 +185,10 @@ export function ServiceCard({ service, isActive, index, total }: ServiceCardProp
       role="listitem"
       aria-label={cardLabel}
       aria-current={isActive ? "true" : undefined}
-      className="flex-shrink-0 w-[280px] snap-start bg-white border border-neutral-200 rounded-2xl p-4 flex flex-col gap-2.5 transition-all hover:border-neutral-300 hover:shadow-md dark:bg-neutral-800 dark:border-neutral-700 dark:hover:border-neutral-600"
+      className="flex-shrink-0 w-[280px] max-w-[calc(100vw-5rem)] snap-start bg-white border border-neutral-200 rounded-2xl p-4 flex flex-col gap-2.5 transition-all hover:border-neutral-300 hover:shadow-md dark:bg-neutral-800 dark:border-neutral-700 dark:hover:border-neutral-600"
     >
       {/* Name */}
-      <div className="text-[0.95rem] font-semibold tracking-tight text-neutral-900 dark:text-neutral-100 leading-snug">
+      <div className="text-[0.95rem] font-semibold tracking-tight text-neutral-900 dark:text-neutral-100 leading-snug break-words">
         {name}
       </div>
 
@@ -508,11 +508,11 @@ export function LocationCard({ services, isActive, index, total }: LocationCardP
       role="listitem"
       aria-label={cardLabel}
       aria-current={isActive ? "true" : undefined}
-      className="flex-shrink-0 w-[280px] snap-start bg-white border border-neutral-200 rounded-2xl p-4 flex flex-col gap-2.5 transition-all hover:border-neutral-300 hover:shadow-md dark:bg-neutral-800 dark:border-neutral-700 dark:hover:border-neutral-600"
+      className="flex-shrink-0 w-[280px] max-w-[calc(100vw-5rem)] snap-start bg-white border border-neutral-200 rounded-2xl p-4 flex flex-col gap-2.5 transition-all hover:border-neutral-300 hover:shadow-md dark:bg-neutral-800 dark:border-neutral-700 dark:hover:border-neutral-600"
     >
       {/* Organization header */}
       <div className="flex flex-col gap-0.5">
-        <div className="text-[0.95rem] font-semibold tracking-tight text-neutral-900 dark:text-neutral-100 leading-snug">
+        <div className="text-[0.95rem] font-semibold tracking-tight text-neutral-900 dark:text-neutral-100 leading-snug break-words">
           {orgName}
         </div>
         <ValidatedBadge dateStr={bestVerified ?? undefined} />

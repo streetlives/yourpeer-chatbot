@@ -22,7 +22,7 @@ interface QuickRepliesProps {
 }
 
 const btnClass =
-  "px-4 py-2.5 rounded-full border-[1.5px] border-neutral-200 bg-white text-neutral-900 text-sm font-medium whitespace-nowrap transition-all hover:bg-amber-300 hover:border-amber-300 hover:shadow-md hover:-translate-y-px active:translate-y-0 active:scale-[0.97] dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-100 dark:hover:bg-[rgba(255,213,79,0.75)] dark:hover:border-[rgba(255,213,79,0.75)] dark:hover:text-neutral-900";
+  "px-4 py-2.5 rounded-full border-[1.5px] border-neutral-200 bg-white text-neutral-900 text-sm font-medium whitespace-normal sm:whitespace-nowrap text-left transition-all hover:bg-amber-300 hover:border-amber-300 hover:shadow-md hover:-translate-y-px active:translate-y-0 active:scale-[0.97] dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-100 dark:hover:bg-[rgba(255,213,79,0.75)] dark:hover:border-[rgba(255,213,79,0.75)] dark:hover:text-neutral-900";
 
 export function QuickReplies({ replies, onSelect, leadingSlot }: QuickRepliesProps) {
   const [callConfirm, setCallConfirm] = useState<{ phone: string; label: string } | null>(null);
@@ -41,7 +41,7 @@ export function QuickReplies({ replies, onSelect, leadingSlot }: QuickRepliesPro
       <div
         role="group"
         aria-label="Quick reply options"
-        className="flex flex-wrap items-center gap-2 self-start max-w-[92%] animate-in fade-in slide-in-from-bottom-1"
+        className="flex flex-wrap items-center gap-2 self-start max-w-full sm:max-w-[92%] animate-in fade-in slide-in-from-bottom-1"
       >
         {leadingSlot}
         {visibleReplies.map((qr, idx) =>
