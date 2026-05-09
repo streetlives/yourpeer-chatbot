@@ -97,8 +97,24 @@ function VerticalBars({
 
   return (
     <div className="w-full">
+      {/* Bar row.
+       *
+       * IMPORTANT: do NOT add `items-end` here. The earlier version had it,
+       * which made the column wrappers content-sized instead of stretching
+       * to the 96px height. With wrappers at content-height, the bar's
+       * percentage height (`max(2px, X%)`) had no definite parent to
+       * resolve against — it fell back to `auto` per spec, which for an
+       * empty div is 0, so every bar collapsed to its 2px floor and the
+       * chart appeared blank despite valid data.
+       *
+       * Default `align-items: stretch` makes each wrapper fill the 96px
+       * height. The wrapper's own `justify-end` then anchors the bar to
+       * the bottom of that 96px column, giving the same visual intent
+       * `items-end` was meant to provide — but without breaking
+       * percentage-height resolution.
+       */}
       <div
-        className="flex items-end gap-[2px]"
+        className="flex gap-[2px]"
         style={{ height: `${height}px` }}
       >
         {items.map((it, i) => {
@@ -205,7 +221,7 @@ function HorizontalBars({
               : "text-neutral-400";
         return (
           <div key={i} className="flex items-center gap-2 text-xs">
-            <div className="w-[150px] flex-shrink-0 truncate text-neutral-700 font-medium" title={it.label}>
+            <div className="w-[100px] flex-shrink-0 truncate text-neutral-700 font-medium" title={it.label}>
               {it.label}
             </div>
             <div className="flex-1 h-[18px] bg-neutral-100 rounded overflow-hidden relative">
