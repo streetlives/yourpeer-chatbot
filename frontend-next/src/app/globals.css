@@ -25,7 +25,21 @@
      kill the rubber-band overscroll bounce on iOS / Android. Without
      these, any element that protrudes (a long unbroken word, a
      fixed-width card on a 320px screen, a soft-keyboard layout
-     shift) makes the whole viewport pan sideways. */
+     shift) makes the whole viewport pan sideways.
+
+     `overflow-x: clip` (not `hidden`): the spec rule is that when
+     one axis is hidden/auto/scroll/clip and the other is visible,
+     the visible axis silently computes to `auto`. So `overflow-x:
+     hidden` on html/body was secretly making both elements vertical
+     scroll containers — html and body each ran their own y-scroll,
+     and tiny sub-pixel rounding between them produced a 1-2px
+     phantom vertical scroll on mobile even when the document
+     genuinely fit. `clip` clips overflow without making the element
+     a scroll container, so overflow-y stays `visible` and the
+     document's natural scroll is the only y-scroll context.
+
+     Browser support for `overflow: clip`: Chrome 90+, Firefox 81+,
+     Safari 15.8+ — comfortably above this project's targets. */
   html,
   body {
     overflow-x: clip;

@@ -15,7 +15,8 @@
     "verify:bucket-keys": "node scripts/verify/bucket-keys.mjs",
     "verify:contract": "node scripts/verify/contract.mjs",
     "verify:backend-url": "node scripts/verify/backend-url.mjs",
-    "verify": "npm run verify:redaction && npm run verify:pending && npm run verify:pii && npm run verify:theme && npm run verify:time && npm run verify:bucket-keys && npm run verify:contract && npm run verify:backend-url"
+    "verify:globals-css": "node scripts/verify/globals-css.mjs",
+    "verify": "npm run verify:redaction && npm run verify:pending && npm run verify:pii && npm run verify:theme && npm run verify:time && npm run verify:bucket-keys && npm run verify:contract && npm run verify:backend-url && npm run verify:globals-css"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.5",
