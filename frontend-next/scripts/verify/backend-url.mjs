@@ -186,5 +186,71 @@ check("env set with whitespace padding → trimmed", () => {
 });
 
 // ---------------------------------------------------------------------
+// Case 8: routes don't call getBackendUrl() at module top.
+//
+// Why this case exists: the original PR #90 had each route
+// evaluating `const BACKEND_URL = getBackendUrl()` at the top of
+// the module file. That broke `next build` — the "Collecting page
+// data" phase imports each route module to determine static-vs-
+// dynamic, and does so with NODE_ENV=production set but without
+// runtime env vars. The helper's production guard fired and the
+// build failed on every deploy.
+//
+// Per-request invocation (inside the handler, before the try
+// block) is the right pattern: the env check runs at request
+// time when the deploy server has env vars set, and a missing
+// env var still surfaces clearly on the very first request via
+// Next's default error handler.
+//
+// This case parses each of the five route files and asserts the
+// helper is NEVER called at module-top level. Catching this in
+// CI prevents a future contributor from "simplifying" by hoisting
+// the call back to module top and silently re-breaking the build.
+// ---------------------------------------------------------------------
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
+
+check("routes don't call getBackendUrl() at module top", () => {
+  const here = dirname(fileURLToPath(import.meta.url));
+  const routes = [
+    "../../src/app/api/chat/route.ts",
+    "../../src/app/api/chat/feedback/route.ts",
+    "../../src/app/api/chat/location-feedback/route.ts",
+    "../../src/app/api/health/route.ts",
+    "../../src/app/api/admin/[...slug]/route.ts",
+  ];
+
+  // A "module-top" call site is a getBackendUrl() invocation that
+  // appears at the start of a line (zero indentation) — anything
+  // indented is inside a function body. This pattern is permissive
+  // (it would miss `const x =\n  getBackendUrl()` split across two
+  // lines) but no current route uses that style and a future
+  // contributor adding it would have to do so deliberately. The
+  // strict check is: unindented `const FOO = getBackendUrl()` or
+  // bare `getBackendUrl()` at the top of a line outside a function.
+  const moduleTopCallRegex = /^(?:const|let|var|export)\s.*getBackendUrl\s*\(\s*\)/m;
+
+  for (const relPath of routes) {
+    const fullPath = join(here, relPath);
+    const src = readFileSync(fullPath, "utf8");
+    assert.equal(
+      moduleTopCallRegex.test(src),
+      false,
+      `${relPath}: getBackendUrl() must be called inside a handler, not at module top. ` +
+        "Module-top calls fire during `next build`'s page-data collection phase " +
+        "where runtime env vars aren't set, breaking the build.",
+    );
+    // Also assert the helper IS imported and called somewhere in the
+    // file — a future refactor could remove the import accidentally
+    // and we'd want to know.
+    assert.ok(
+      src.includes("getBackendUrl()"),
+      `${relPath}: must call getBackendUrl() in a handler`,
+    );
+  }
+});
+
+// ---------------------------------------------------------------------
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed > 0 ? 1 : 0);

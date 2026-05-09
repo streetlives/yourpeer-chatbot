@@ -7,8 +7,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getBackendUrl } from "@/lib/backend-url";
 
-const BACKEND_URL = getBackendUrl();
-
 /**
  * Catch-all proxy: /api/admin/stats → /admin/api/stats
  *                  /api/admin/eval/run → /admin/api/eval/run
@@ -21,7 +19,13 @@ const BACKEND_URL = getBackendUrl();
  */
 async function proxyToBackend(req: NextRequest, slug: string[]) {
   const path = slug.join("/");
-  const url = new URL(`${BACKEND_URL}/admin/api/${path}`);
+
+  // Resolve backend URL before the try/catch so a missing
+  // CHAT_BACKEND_URL in production surfaces the helper's clear
+  // error in deploy logs rather than the friendly "Failed to reach
+  // admin backend" 502 (which would mask the real misconfiguration).
+  const backendUrl = getBackendUrl();
+  const url = new URL(`${backendUrl}/admin/api/${path}`);
 
   // Forward query params
   req.nextUrl.searchParams.forEach((value, key) => {

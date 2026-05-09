@@ -36,12 +36,26 @@
  *   vars are a common ops mistake (e.g. .env file with trailing
  *   space) that would otherwise produce baffling URL parse errors.
  *
- * Note for callers: this function is intentionally called at module
- * top level by each route. That means if production env is missing,
- * the route's first request will 500 with the helper's error
- * message visible in deploy logs — preferable to lazy per-request
- * checks that could let some requests succeed (against the wrong
- * backend) before the misconfiguration is noticed.
+ * Why callers invoke this per-request, not at module top level:
+ *   The earlier version of this helper was called once at module
+ *   top in each route (`const BACKEND_URL = getBackendUrl()`). That
+ *   broke `next build`: Next.js's "Collecting page data" phase
+ *   evaluates each route module to determine static-vs-dynamic, and
+ *   does so with `NODE_ENV=production` set but without runtime env
+ *   vars. The helper saw "production with missing env" and threw,
+ *   failing the build on every deploy.
+ *
+ *   Per-request invocation defers the env check to actual request
+ *   handling, where the Render server has the runtime env vars set.
+ *   The "module-top is earlier failure than per-request" argument
+ *   that drove the earlier design doesn't actually hold: the
+ *   function is deterministic in env vars, so the very first
+ *   incoming request fails identically to module load. The friendly
+ *   try/catch handlers in each route would also swallow the env
+ *   error if the call were inside the try block — so callers must
+ *   place this call BEFORE their try/catch, so missing-env errors
+ *   escape to the default Next.js error handler (visible in deploy
+ *   logs) rather than getting masked as "Backend unreachable".
  */
 export function getBackendUrl(): string {
   const raw = process.env.CHAT_BACKEND_URL?.trim();

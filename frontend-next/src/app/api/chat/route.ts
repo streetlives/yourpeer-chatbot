@@ -12,8 +12,6 @@ import {
 } from "@/lib/rate-limit";
 import { getBackendUrl } from "@/lib/backend-url";
 
-const BACKEND_URL = getBackendUrl();
-
 // Frontend-layer rate limits (per IP).
 // First line of defense — the backend has its own, stricter per-session +
 // per-IP limits. These prevent request volume from overwhelming the Node.js
@@ -31,10 +29,15 @@ export async function POST(req: NextRequest) {
     return rateLimitResponse(limit.retryAfter);
   }
 
+  // Resolve backend URL before the try/catch so a missing
+  // CHAT_BACKEND_URL in production escapes the proxy-failure handler
+  // and surfaces the helper's clear error in logs.
+  const backendUrl = getBackendUrl();
+
   try {
     const body = await req.json();
     const requestId = req.headers.get("x-request-id") || crypto.randomUUID();
-    const res = await fetch(`${BACKEND_URL}/chat/`, {
+    const res = await fetch(`${backendUrl}/chat/`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
