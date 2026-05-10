@@ -23,7 +23,10 @@ import os
 from datetime import datetime, timezone, timedelta
 from unittest.mock import patch
 from typing import Any
-
+# Helper context manager — pytest's caplog fixture has subtle behavior
+# around logger propagation in deeply-nested loggers; a simple
+# capture context is cleaner for these tests.
+from contextlib import contextmanager
 import pytest
 from fastapi.testclient import TestClient
 from app.main import app
@@ -2268,12 +2271,6 @@ def test_list_all_invalid_categories_produces_empty_filter_and_warns():
     assert any("Junk1" in w and "Junk2" in w for w in warnings), (
         f"Expected a warning naming all invalid names. Got: {warnings}"
     )
-
-
-# Helper context manager — pytest's caplog fixture has subtle behavior
-# around logger propagation in deeply-nested loggers; a simple
-# capture context is cleaner for these tests.
-from contextlib import contextmanager
 
 
 @contextmanager
