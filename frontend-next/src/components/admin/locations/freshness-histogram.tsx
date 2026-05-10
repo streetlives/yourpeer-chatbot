@@ -32,8 +32,14 @@ import { isAdminApiError } from "@/lib/admin/locations-types";
  */
 export function FreshnessHistogram({
   onBucketClick,
+  activeBucket,
 }: {
   onBucketClick?: (key: FreshnessBucketKey) => void;
+  /** When set (and non-empty), the matching bar renders with an
+   *  active-state outline so users can see which bucket is currently
+   *  filtering the table below. Toggle-off via clicking the same bar
+   *  is handled by the caller — this prop is presentation only. */
+  activeBucket?: FreshnessBucketKey | "";
 }) {
   const [data, setData] = useState<FreshnessHistogramResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -113,6 +119,7 @@ export function FreshnessHistogram({
           const pct = (bucket.count / maxValue) * 100;
           const heightStyle = bucket.count === 0 ? "1px" : `max(2px, ${pct}%)`;
           const colorClass = colorClassForBucket(bucket.key, bucket.count);
+          const isActive = activeBucket === bucket.key;
 
           const inner = (
             <div
@@ -126,14 +133,24 @@ export function FreshnessHistogram({
           // keyboard users can activate the filter the same way mouse
           // users can click. Otherwise it's a plain div (still
           // hoverable for the title tooltip).
+          //
+          // Active state: when this bucket matches the table's current
+          // filter, mark it with an amber ring + tinted background so
+          // it's visually unmistakable which bar is "in effect." The
+          // toggle behavior (click again to clear) is much more
+          // discoverable when the active state is visible.
           if (onBucketClick) {
+            const activeRing = isActive
+              ? "ring-2 ring-amber-500 ring-offset-1 ring-offset-white dark:ring-offset-neutral-900 bg-amber-50/50 dark:bg-amber-900/10"
+              : "hover:opacity-90";
             return (
               <button
                 key={bucket.key}
                 type="button"
                 onClick={() => onBucketClick(bucket.key)}
-                className="flex-1 min-w-0 flex flex-col items-center justify-end gap-0.5 cursor-pointer hover:opacity-90 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 rounded"
-                aria-label={`Filter table to ${bucket.label} bucket (${bucket.count} locations)`}
+                className={`flex-1 min-w-0 flex flex-col items-center justify-end gap-0.5 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 rounded ${activeRing}`}
+                aria-label={`${isActive ? "Currently filtering by " : "Filter table to "}${bucket.label} bucket (${bucket.count} locations)${isActive ? " — click to clear" : ""}`}
+                aria-pressed={isActive}
               >
                 {inner}
               </button>
@@ -152,23 +169,42 @@ export function FreshnessHistogram({
 
       {/* Bucket labels under the bars. Two lines per label: the date
        *  range, then the count below in smaller text. Aligned to
-       *  match the bar columns above. */}
+       *  match the bar columns above. The active bucket's label is
+       *  rendered in amber/bold to reinforce the active-state cue from
+       *  the bar's ring. */}
       <div className="flex gap-1 mt-2">
-        {data.buckets.map((bucket) => (
-          <div key={bucket.key} className="flex-1 min-w-0 text-center">
-            <div className="text-[0.65rem] uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
-              {bucket.label}
+        {data.buckets.map((bucket) => {
+          const isActive = activeBucket === bucket.key;
+          return (
+            <div key={bucket.key} className="flex-1 min-w-0 text-center">
+              <div
+                className={`text-[0.65rem] uppercase tracking-wide ${
+                  isActive
+                    ? "text-amber-700 dark:text-amber-400 font-semibold"
+                    : "text-neutral-500 dark:text-neutral-400"
+                }`}
+              >
+                {bucket.label}
+              </div>
+              <div
+                className={`text-xs tabular-nums ${
+                  isActive
+                    ? "text-amber-700 dark:text-amber-400 font-semibold"
+                    : "text-neutral-700 dark:text-neutral-300"
+                }`}
+              >
+                {bucket.count.toLocaleString()}
+              </div>
             </div>
-            <div className="text-xs text-neutral-700 dark:text-neutral-300 tabular-nums">
-              {bucket.count.toLocaleString()}
-            </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
       {onBucketClick && (
         <p className="mt-3 text-[0.7rem] text-neutral-500 dark:text-neutral-400 italic">
-          Click a bucket to filter the table below.
+          {activeBucket
+            ? "Click the highlighted bucket again to clear the filter."
+            : "Click a bucket to filter the table below."}
         </p>
       )}
     </div>

@@ -303,18 +303,20 @@ export interface StaleCategoriesResponse {
 // GET /api/admin/locations/feedback-aggregates — sections 5a + 5b
 // -----------------------------------------------------------------
 
-export type FeedbackCriterion =
-  | "safety"
-  | "friendliness"
-  | "cleanliness"
-  | "queer_friendly";
+// FeedbackCriterion + FEEDBACK_CRITERIA both derive from the
+// canonical FEEDBACK_CRITERIA_KEYS in locations-keys.ts. That's
+// the single source of truth — and the array the
+// verify:locations-contract script checks against the backend's
+// _FEEDBACK_CRITERIA tuple. Re-exporting here so consumer code
+// can keep importing from locations-types.ts (which has all the
+// related shapes — CriterionCounts, MostFlaggedRow, etc.) while
+// the underlying constant stays in one place.
+import { FEEDBACK_CRITERIA_KEYS } from "./locations-keys";
 
-export const FEEDBACK_CRITERIA: ReadonlyArray<FeedbackCriterion> = [
-  "safety",
-  "friendliness",
-  "cleanliness",
-  "queer_friendly",
-] as const;
+export type FeedbackCriterion = (typeof FEEDBACK_CRITERIA_KEYS)[number];
+
+export const FEEDBACK_CRITERIA: ReadonlyArray<FeedbackCriterion> =
+  FEEDBACK_CRITERIA_KEYS;
 
 /** Display label for each criterion — kept on the frontend so the
  *  presentation can change without backend coordination. */
@@ -418,6 +420,59 @@ export interface FeedbackCommentsResponse {
   total_with_comments: number;
   /** Echo of the effective limit used. */
   limit: number;
+}
+
+// -----------------------------------------------------------------
+// GET /api/admin/locations/integrity-callouts — section 6
+// -----------------------------------------------------------------
+
+export type CalloutSeverity = "warning" | "info";
+
+export interface IntegrityCallout {
+  /** Stable id for keying / referencing — matches the backend constant. */
+  id:
+    | "orphaned_locations"
+    | "orphaned_services"
+    | "malformed_phones"
+    | "entity_encoded_html"
+    | "coordinate_issues_ref";
+  severity: CalloutSeverity;
+  title: string;
+  count: number;
+  /** One-sentence "what this means + what to do." */
+  action_hint: string;
+  /** Cross-reference key when the callout points to another section
+   *  (e.g. coordinate_issues_ref → section_3c_coordinate_validation).
+   *  null for self-contained callouts. */
+  ref: string | null;
+}
+
+export interface IntegrityCalloutsResponse {
+  /** Only firing callouts (count > 0), in display order. */
+  callouts: IntegrityCallout[];
+  total_callouts: number;
+  /** True iff no callouts fired — frontend renders the positive
+   *  ✓ "no integrity issues" state. */
+  all_clear: boolean;
+}
+
+// -----------------------------------------------------------------
+// GET /api/admin/locations/timeseries — section 7
+// -----------------------------------------------------------------
+
+export interface TimeseriesWeek {
+  /** ISO date of the Monday starting the week. */
+  week_start: string;
+  locations_added: number;
+  locations_verified: number;
+  feedback_events: number;
+}
+
+export interface TimeseriesResponse {
+  /** Always exactly TIMESERIES_WEEKS rows in chronological order
+   *  (oldest first). Empty weeks render as zeros. */
+  weeks: TimeseriesWeek[];
+  total_weeks: number;
 }
 
 // -----------------------------------------------------------------
