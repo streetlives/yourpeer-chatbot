@@ -16,12 +16,16 @@ from app.services.locations_admin.aggregations import (
     get_locations_by_borough,
     get_service_borough_heatmap,
     get_coordinate_issues,
+    get_category_coverage,
+    get_stale_categories,
     FRESHNESS_THRESHOLD_DAYS,
     RECENT_FLAGS_LOOKBACK_DAYS,
     HEATMAP_TOP_N_CATEGORIES,
     FEEDBACK_MIN_SAMPLE,
     TIMESERIES_WEEKS,
     NYC_BOROUGHS,
+    STALE_CATEGORY_LOOKBACK_DAYS,
+    STALE_CATEGORIES_TOP_N,
 )
 
 __all__ = [
@@ -31,10 +35,14 @@ __all__ = [
     "get_locations_by_borough",
     "get_service_borough_heatmap",
     "get_coordinate_issues",
+    "get_category_coverage",
+    "get_stale_categories",
     "FRESHNESS_THRESHOLD_DAYS",
     "RECENT_FLAGS_LOOKBACK_DAYS",
     "HEATMAP_TOP_N_CATEGORIES",
     "FEEDBACK_MIN_SAMPLE",
     "TIMESERIES_WEEKS",
     "NYC_BOROUGHS",
+    "STALE_CATEGORY_LOOKBACK_DAYS",
+    "STALE_CATEGORIES_TOP_N",
 ]

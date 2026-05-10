@@ -29,6 +29,7 @@ from app.main import app
 from app.services.audit_log import (
     clear_audit_log,
     log_location_feedback,
+    log_query_execution,
 )
 
 
@@ -836,3 +837,230 @@ def test_coordinate_issues_outside_nyc_sort_first():
         # Outside-NYC sorts before mismatch
         assert body["issues"][0]["location_id"] == "loc-outside"
         assert body["issues"][1]["location_id"] == "loc-mismatch"
+
+
+# -----------------------------------------------------------------------
+# /category-coverage (day 4 — section 4a)
+# -----------------------------------------------------------------------
+
+def test_category_coverage_requires_admin_auth():
+    with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}):
+        response = client.get("/admin/api/locations/category-coverage")
+        assert response.status_code == 401
+
+
+def test_category_coverage_empty_data():
+    """No taxonomies → empty categories array, zero uncategorized."""
+    clear_audit_log()
+    responder = _make_sql_responder({})
+    with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}), \
+         patch("app.services.locations_admin.aggregations._execute_sql", side_effect=responder):
+        r = admin_client.get("/admin/api/locations/category-coverage")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["categories"] == []
+        assert body["uncategorized_demand"] == {"query_count": 0, "no_result_count": 0}
+
+
+def test_category_coverage_supply_only_no_demand():
+    """Taxonomy supply data with no demand → category appears with
+    demand_query_count=0, demand_supply_ratio=null, and verified%
+    correctly computed."""
+    clear_audit_log()
+    rows = [
+        {
+            "taxonomy_name": "Food",
+            "service_count": 50,
+            "location_count": 30,
+            "fresh_location_count": 12,
+        },
+    ]
+    responder = _make_sql_responder({"GROUP BY t.name": rows})
+    with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}), \
+         patch("app.services.locations_admin.aggregations._execute_sql", side_effect=responder):
+        body = admin_client.get("/admin/api/locations/category-coverage").json()
+        assert len(body["categories"]) == 1
+        cat = body["categories"][0]
+        assert cat["taxonomy_name"] == "Food"
+        assert cat["service_count"] == 50
+        assert cat["location_count"] == 30
+        assert cat["fresh_location_count"] == 12
+        assert cat["verified_lt90d_pct"] == 40.0
+        assert cat["demand_query_count"] == 0
+        assert cat["demand_supply_ratio"] is None    # no demand → no ratio
+
+
+def test_category_coverage_demand_attributed_via_template_mapping():
+    """Demand from FoodQuery template → split evenly across the 11
+    taxonomies in its mapping. Each Food-related taxonomy gets
+    queries / 11."""
+    clear_audit_log()
+    # Seed audit log so get_stats has something to compute from
+    log_query_execution(
+        session_id="s1", template_name="FoodQuery",
+        params={}, result_count=2, execution_ms=20,
+    )
+    log_query_execution(
+        session_id="s2", template_name="FoodQuery",
+        params={}, result_count=0, execution_ms=22,
+    )
+
+    # Single taxonomy "Food" — covered by FoodQuery's mapping
+    sql_rows = [
+        {
+            "taxonomy_name": "Food",
+            "service_count": 100,
+            "location_count": 50,
+            "fresh_location_count": 25,
+        },
+    ]
+    responder = _make_sql_responder({"GROUP BY t.name": sql_rows})
+    with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}), \
+         patch("app.services.locations_admin.aggregations._execute_sql", side_effect=responder):
+        body = admin_client.get("/admin/api/locations/category-coverage").json()
+        cat = body["categories"][0]
+        # FoodQuery covers 11 taxonomies → each gets 2/11 queries, 1/11 no-result
+        assert cat["demand_query_count"] == round(2 / 11, 1)
+        assert cat["no_result_count"] == round(1 / 11, 1)
+        # demand_supply_ratio = (2/11) / 50 ≈ 0.004 → rounds to 0.0
+        assert cat["demand_supply_ratio"] == round((2 / 11) / 50, 2)
+
+
+def test_category_coverage_uncategorized_demand_aggregated():
+    """Templates not in the mapping (OtherServicesQuery) accumulate
+    in the uncategorized aggregate."""
+    clear_audit_log()
+    log_query_execution(
+        session_id="s1", template_name="OtherServicesQuery",
+        params={}, result_count=0, execution_ms=15,
+    )
+    log_query_execution(
+        session_id="s2", template_name="OtherServicesQuery",
+        params={}, result_count=3, execution_ms=18,
+    )
+
+    responder = _make_sql_responder({})
+    with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}), \
+         patch("app.services.locations_admin.aggregations._execute_sql", side_effect=responder):
+        body = admin_client.get("/admin/api/locations/category-coverage").json()
+        assert body["uncategorized_demand"]["query_count"] == 2
+        assert body["uncategorized_demand"]["no_result_count"] == 1
+
+
+def test_category_coverage_sort_by_ratio_desc_nulls_last():
+    """Categories with demand:supply ratios sort DESC; nulls land at
+    the bottom sorted by location_count DESC as the secondary key."""
+    clear_audit_log()
+    # Seed: FoodQuery contributes demand to "Food" taxonomies
+    for _ in range(11):    # 11 queries → 1 per taxonomy after split
+        log_query_execution(
+            session_id="s1", template_name="FoodQuery",
+            params={}, result_count=1, execution_ms=20,
+        )
+    sql_rows = [
+        # Has demand, ratio = 1 / 100 = 0.01
+        {"taxonomy_name": "Food", "service_count": 100, "location_count": 100, "fresh_location_count": 50},
+        # Has demand, ratio = 1 / 5 = 0.2  ← should sort first
+        {"taxonomy_name": "Food Pantry", "service_count": 5, "location_count": 5, "fresh_location_count": 1},
+        # No demand mapping for this taxonomy → null ratio
+        {"taxonomy_name": "Some Other Tax", "service_count": 200, "location_count": 200, "fresh_location_count": 50},
+        # Also no demand, smaller location count
+        {"taxonomy_name": "Tiny Tax", "service_count": 3, "location_count": 3, "fresh_location_count": 0},
+    ]
+    responder = _make_sql_responder({"GROUP BY t.name": sql_rows})
+    with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}), \
+         patch("app.services.locations_admin.aggregations._execute_sql", side_effect=responder):
+        body = admin_client.get("/admin/api/locations/category-coverage").json()
+        names = [c["taxonomy_name"] for c in body["categories"]]
+        # Food Pantry first (highest ratio), Food second (lower ratio),
+        # then "Some Other Tax" (no ratio, but bigger location_count)
+        # before "Tiny Tax" (no ratio, smaller location_count).
+        assert names == ["Food Pantry", "Food", "Some Other Tax", "Tiny Tax"]
+
+
+# -----------------------------------------------------------------------
+# /stale-categories (day 4 — section 4b)
+# -----------------------------------------------------------------------
+
+def test_stale_categories_requires_admin_auth():
+    with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}):
+        response = client.get("/admin/api/locations/stale-categories")
+        assert response.status_code == 401
+
+
+def test_stale_categories_empty_returns_empty_list():
+    """No stale categories → empty list, total_stale=0."""
+    clear_audit_log()
+    responder = _make_sql_responder({})
+    with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}), \
+         patch("app.services.locations_admin.aggregations._execute_sql", side_effect=responder):
+        r = admin_client.get("/admin/api/locations/stale-categories")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["categories"] == []
+        assert body["total_stale"] == 0
+        assert body["lookback_days"] == 180
+
+
+def test_stale_categories_returns_oldest_first():
+    """Categories with older max_verified_at sort first; days_since
+    computed against today."""
+    from datetime import date, timedelta as td
+    clear_audit_log()
+    # Two stale categories, one staler than the other
+    older_date = date.today() - td(days=400)
+    newer_date = date.today() - td(days=200)
+    rows = [
+        # SQL ORDER BY ASC NULLS FIRST puts oldest first; we trust
+        # that and just consume in order.
+        {"taxonomy_name": "Free Wi-Fi", "location_count": 3, "max_verified_at": older_date},
+        {"taxonomy_name": "Showers", "location_count": 8, "max_verified_at": newer_date},
+    ]
+    responder = _make_sql_responder({"HAVING": rows})
+    with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}), \
+         patch("app.services.locations_admin.aggregations._execute_sql", side_effect=responder):
+        body = admin_client.get("/admin/api/locations/stale-categories").json()
+        assert body["categories"][0]["taxonomy_name"] == "Free Wi-Fi"
+        assert body["categories"][0]["days_since_max_verified"] == 400
+        assert body["categories"][1]["taxonomy_name"] == "Showers"
+        assert body["categories"][1]["days_since_max_verified"] == 200
+
+
+def test_stale_categories_truncates_at_top_n():
+    """When more than STALE_CATEGORIES_TOP_N (10) qualify, only the
+    top 10 are returned but total_stale reports the full count."""
+    from datetime import date, timedelta as td
+    clear_audit_log()
+    # 15 stale rows
+    rows = [
+        {
+            "taxonomy_name": f"Stale {i}",
+            "location_count": 1,
+            "max_verified_at": date.today() - td(days=200 + i),
+        }
+        for i in range(15)
+    ]
+    responder = _make_sql_responder({"HAVING": rows})
+    with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}), \
+         patch("app.services.locations_admin.aggregations._execute_sql", side_effect=responder):
+        body = admin_client.get("/admin/api/locations/stale-categories").json()
+        assert len(body["categories"]) == 10
+        assert body["total_stale"] == 15
+
+
+def test_stale_categories_handles_null_max_verified():
+    """A category whose locations have all NULL last_validated_at
+    qualifies as stale (max returns NULL → caught by the HAVING
+    OR-clause). days_since is null."""
+    clear_audit_log()
+    rows = [
+        {"taxonomy_name": "Never Verified Tax", "location_count": 2, "max_verified_at": None},
+    ]
+    responder = _make_sql_responder({"HAVING": rows})
+    with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}), \
+         patch("app.services.locations_admin.aggregations._execute_sql", side_effect=responder):
+        body = admin_client.get("/admin/api/locations/stale-categories").json()
+        cat = body["categories"][0]
+        assert cat["taxonomy_name"] == "Never Verified Tax"
+        assert cat["max_verified_at"] is None
+        assert cat["days_since_max_verified"] is None

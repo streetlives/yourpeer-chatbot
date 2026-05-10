@@ -237,6 +237,69 @@ export interface CoordinateIssuesResponse {
 }
 
 // -----------------------------------------------------------------
+// GET /api/admin/locations/category-coverage — section 4a
+// -----------------------------------------------------------------
+
+export interface CategoryCoverageRow {
+  taxonomy_name: string;
+  service_count: number;
+  /** Distinct locations offering at least one service in this taxonomy. */
+  location_count: number;
+  /** Of those locations, how many are verified <90 days ago. */
+  fresh_location_count: number;
+  /** % of location_count that's fresh. null when location_count == 0. */
+  verified_lt90d_pct: number | null;
+  /** Best-effort attribution from chat-template demand via
+   *  even-split across each template's covered taxonomies.
+   *  May be a fractional float (e.g. 2/11 = 0.18). */
+  demand_query_count: number;
+  no_result_count: number;
+  /** demand_no_result / demand_query when both nonzero, else null. */
+  no_result_rate: number | null;
+  /** demand_query_count / location_count, when both nonzero, else null.
+   *  High = "users keep asking, supply is thin". */
+  demand_supply_ratio: number | null;
+}
+
+export interface CategoryCoverageResponse {
+  /** Sorted by demand_supply_ratio DESC NULLS LAST, then
+   *  -location_count for stable tie-break in the null group. */
+  categories: CategoryCoverageRow[];
+  /** Demand from chat templates that don't map to a fixed taxonomy
+   *  set (e.g. OtherServicesQuery, org-name searches). Surfaced
+   *  separately so admins can see how much demand isn't attributable. */
+  uncategorized_demand: {
+    query_count: number;
+    no_result_count: number;
+  };
+}
+
+// -----------------------------------------------------------------
+// GET /api/admin/locations/stale-categories — section 4b
+// -----------------------------------------------------------------
+
+export interface StaleCategoryRow {
+  taxonomy_name: string;
+  /** Number of locations offering this taxonomy. */
+  location_count: number;
+  /** Most recent last_validated_at across all locations offering this.
+   *  null when every offering location has last_validated_at IS NULL. */
+  max_verified_at: string | null;
+  /** Days since `max_verified_at`. null when max_verified_at is null. */
+  days_since_max_verified: number | null;
+}
+
+export interface StaleCategoriesResponse {
+  /** Top-N categories where every offering location is stale.
+   *  Sorted oldest-first so the most-needing-attention surfaces first. */
+  categories: StaleCategoryRow[];
+  /** Total count of stale categories across the catalog — may exceed
+   *  categories.length when truncated. */
+  total_stale: number;
+  lookback_days: number;
+}
+
+// -----------------------------------------------------------------
 // API error shape — shared with other admin endpoints
 // -----------------------------------------------------------------
 

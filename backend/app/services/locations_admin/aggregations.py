@@ -993,3 +993,305 @@ def get_coordinate_issues() -> dict:
         "total_with_coords": total_with_coords,
         "outside_nyc_count": outside_nyc_count,
     }
+
+
+# ---------------------------------------------------------------------------
+# SECTION 4a — SERVICE-TYPE COVERAGE WITH DEMAND:SUPPLY
+# ---------------------------------------------------------------------------
+
+# Mapping: chatbot template_name (logged on query_execution events as
+# `template_name`) → list of canonical taxonomy names that template's
+# results would be filtered to. Keep in lockstep with the `taxonomy_aliases`
+# arrays in query_templates.py — when a template's coverage list grows,
+# this map needs to grow too. The lookup is best-effort: a template
+# without an entry gets "unknown coverage" and contributes no demand
+# signal to any taxonomy in section 4a.
+#
+# Why this mapping lives here, not in query_templates.py: query_templates
+# is the source of truth for SQL building; this is a presentation-layer
+# inversion (taxonomy → template name → demand). Tightly coupling them
+# in one direction (templates listing their aliases) is fine, but
+# requiring query_templates to also know about admin-stats reverse
+# lookups would muddle its purpose. If the coupling becomes painful,
+# lift to a shared module.
+_TEMPLATE_TO_TAXONOMIES: dict[str, list[str]] = {
+    "FoodQuery": [
+        "Food", "Food Pantry", "Food Benefits", "Mobile Pantry",
+        "Mobile Food Truck", "Mobile Market",
+        "Food Delivery / Meals on Wheels", "Soup Kitchen",
+        "Mobile Soup Kitchen", "Brown Bag", "Farmer's Markets",
+    ],
+    "HousingEligibilityQuery": [
+        "Shelter", "Drop-in Center", "Transitional Housing",
+        "Permanent Housing", "Emergency Shelter", "Family Shelter",
+        "Single Adults Shelter", "Youth Shelter", "Domestic Violence Shelter",
+    ],
+    "ClothingQuery": [
+        "Clothing", "Clothing Pantry", "Interview-Ready Clothing",
+    ],
+    "HealthcareQuery": [
+        "Healthcare", "Medical Care", "Dental Care", "Vision Care",
+        "HIV Testing", "STI Testing", "Pharmacy",
+        "Reproductive Healthcare",
+    ],
+    "LegalQuery": [
+        "Legal Services", "Legal Aid", "Immigration Legal Services",
+        "Tenant Legal Services",
+    ],
+    "EmploymentQuery": [
+        "Employment", "Job Training", "Job Placement", "Resume Help",
+    ],
+    "PersonalCareQuery": [
+        "Personal Care", "Showers", "Laundry", "Hygiene Supplies",
+        "Toiletries", "Hair Care",
+    ],
+    "MentalHealthQuery": [
+        "Mental Health", "Mental Health Counseling", "Therapy",
+        "Substance Use Treatment", "Substance Use Counseling",
+        "Detox", "Crisis Counseling",
+    ],
+    # OtherServicesQuery and the org_name template don't map cleanly to
+    # a fixed taxonomy set — they're catch-alls. Not in this map; their
+    # demand signal won't surface in section 4a (correct: we don't
+    # know which taxonomy they hit).
+}
+
+
+def get_category_coverage() -> dict:
+    """Section 4a: per-taxonomy coverage table with demand:supply ratio.
+
+    Returns shape:
+        {
+            "categories": [
+                {
+                    "taxonomy_name": "Food Pantry",
+                    "service_count": int,        # services tagged with this taxonomy
+                    "location_count": int,       # distinct locations offering
+                    "fresh_location_count": int, # of those, last_validated <90d
+                    "verified_lt90d_pct": float | None,
+                    "demand_query_count": int,   # queries via mapping (best-effort)
+                    "no_result_count": int,
+                    "no_result_rate": float | None,
+                    # Demand:supply ratio = demand_query_count / location_count.
+                    # High ratio = "users keep asking, supply is thin."
+                    "demand_supply_ratio": float | None,
+                },
+                ...
+            ],
+        }
+
+    Sort: demand_supply_ratio DESC, NULLS LAST. Categories with no
+    demand signal sort to the bottom. The frontend can re-sort
+    client-side; this is just the most operationally useful default.
+
+    Demand mapping notes:
+        - Per-template demand is read from the existing
+          no_result_by_service metric.
+        - Each template's demand is divided EVENLY across the
+          taxonomies in its mapping. This isn't precise — a "Food"
+          search probably hits "Food Pantry" more than "Farmer's
+          Markets" in practice — but a uniform split is honest about
+          the uncertainty rather than fabricating a weighting we
+          don't have data for. Shown as a column with an info
+          tooltip on the frontend.
+        - Templates not in _TEMPLATE_TO_TAXONOMIES contribute no
+          demand to any taxonomy. The "uncategorized demand" total
+          is exposed separately in the response so admins can see
+          how much demand is being lost to that bucket.
+    """
+    # Step 1: SQL aggregation for the supply side. One row per
+    # taxonomy with service count, distinct location count, fresh
+    # location count.
+    sql = """
+    SELECT
+        t.name AS taxonomy_name,
+        COUNT(DISTINCT s.id)        AS service_count,
+        COUNT(DISTINCT l.id)        AS location_count,
+        COUNT(DISTINCT l.id) FILTER (
+            WHERE l.last_validated_at >= CURRENT_DATE - INTERVAL '%(fresh)s days'
+        ) AS fresh_location_count
+    FROM taxonomies t
+    JOIN service_taxonomy st ON st.taxonomy_id = t.id
+    JOIN services s          ON s.id = st.service_id
+    JOIN service_at_locations sal ON sal.service_id = s.id
+    JOIN locations l         ON l.id = sal.location_id
+    GROUP BY t.name
+    """ % {"fresh": FRESHNESS_THRESHOLD_DAYS}
+    rows = _execute_sql(sql, {})
+
+    # Step 2: gather demand from no_result_by_service. Imported here
+    # rather than at module top to avoid a circular: audit_log doesn't
+    # depend on locations_admin and we want to keep it that way.
+    from app.services.audit_log import get_stats as _get_stats
+    stats = _get_stats()
+    no_result = stats.get("no_result_by_service") or {}
+
+    # Step 3: invert the template→taxonomies map into per-taxonomy
+    # demand contributions. Each template's total queries get
+    # divided evenly among the taxonomies it covers. Templates
+    # without mapping accumulate to "uncategorized."
+    demand_by_taxonomy: dict[str, dict[str, float]] = {}
+    uncategorized_demand_queries = 0
+    uncategorized_no_result = 0
+    for template_name, info in no_result.items():
+        total_q = int(info.get("total_queries") or 0)
+        no_r = int(info.get("no_result_count") or 0)
+        taxonomies = _TEMPLATE_TO_TAXONOMIES.get(template_name)
+        if not taxonomies:
+            uncategorized_demand_queries += total_q
+            uncategorized_no_result += no_r
+            continue
+        # Even split — see docstring for the rationale.
+        per_tax_q = total_q / len(taxonomies)
+        per_tax_nr = no_r / len(taxonomies)
+        for tax_name in taxonomies:
+            d = demand_by_taxonomy.setdefault(
+                tax_name, {"queries": 0.0, "no_result": 0.0}
+            )
+            d["queries"] += per_tax_q
+            d["no_result"] += per_tax_nr
+
+    # Step 4: assemble the response.
+    categories: list[dict[str, Any]] = []
+    for r in rows:
+        tax_name = r.get("taxonomy_name") or ""
+        loc_count = int(r.get("location_count") or 0)
+        fresh_count = int(r.get("fresh_location_count") or 0)
+        demand = demand_by_taxonomy.get(tax_name, {"queries": 0.0, "no_result": 0.0})
+        demand_q = demand["queries"]
+        demand_nr = demand["no_result"]
+        verified_pct = round(100.0 * fresh_count / loc_count, 1) if loc_count else None
+        no_result_rate = round(demand_nr / demand_q, 2) if demand_q > 0 else None
+        # Demand:supply only meaningful when both sides nonzero. When
+        # demand is 0 (no traffic to this taxonomy via any template),
+        # ratio is None — correct distinction from "ratio is 0" which
+        # would mean "queries existed but supply was infinite."
+        ratio = round(demand_q / loc_count, 2) if (demand_q > 0 and loc_count > 0) else None
+
+        categories.append({
+            "taxonomy_name": tax_name,
+            "service_count": int(r.get("service_count") or 0),
+            "location_count": loc_count,
+            "fresh_location_count": fresh_count,
+            "verified_lt90d_pct": verified_pct,
+            "demand_query_count": round(demand_q, 1),
+            "no_result_count": round(demand_nr, 1),
+            "no_result_rate": no_result_rate,
+            "demand_supply_ratio": ratio,
+        })
+
+    # Sort: demand:supply DESC, NULLS LAST (taxonomies with demand
+    # signal float to the top — "users keep asking and supply is
+    # thin" is the most operationally useful prompt). Within the
+    # null group, sort by location_count DESC so the largest gaps
+    # show first.
+    categories.sort(
+        key=lambda c: (
+            c["demand_supply_ratio"] is None,    # False (has ratio) sorts first
+            -(c["demand_supply_ratio"] or 0),
+            -c["location_count"],
+        )
+    )
+
+    return {
+        "categories": categories,
+        "uncategorized_demand": {
+            "query_count": uncategorized_demand_queries,
+            "no_result_count": uncategorized_no_result,
+        },
+    }
+
+
+# ---------------------------------------------------------------------------
+# SECTION 4b — STALE CATEGORIES (no recent verification across all locations)
+# ---------------------------------------------------------------------------
+
+# How stale a category needs to be to surface here. A category counts
+# as "stale" if NO location offering it has been verified within this
+# many days — meaning the entire category is at risk of going stale
+# system-wide. 180d is intentionally longer than the standard
+# FRESHNESS_THRESHOLD_DAYS (90) — section 4b is about
+# "category-wide neglect," not just "above the routine freshness bar."
+STALE_CATEGORY_LOOKBACK_DAYS = 180
+
+# How many stale categories to surface in the UI. If more than this
+# qualify, the section header surfaces the count and the table
+# truncates.
+STALE_CATEGORIES_TOP_N = 10
+
+
+def get_stale_categories() -> dict:
+    """Section 4b: top-N taxonomies where every offering location is stale.
+
+    Returns shape:
+        {
+            "categories": [
+                {
+                    "taxonomy_name": "Free Wi-Fi Access",
+                    "location_count": int,     # how many locations offer it
+                    "max_verified_at": str | None,  # most-recent across them
+                    "days_since_max_verified": int | None,
+                },
+                ...
+            ],
+            "total_stale": int,            # total count of stale categories
+            "lookback_days": int,
+        }
+
+    A category counts as "stale" if its MOST-RECENTLY-VERIFIED
+    offering location is older than STALE_CATEGORY_LOOKBACK_DAYS
+    (180 days). This is stronger than "average is stale" — it means
+    NOT EVEN ONE location offering this taxonomy has been verified
+    recently. Categories with no offering locations at all (which
+    SQL JOIN will exclude) don't appear here; they'd be a different
+    kind of bug surfaced by section 6.
+
+    Sort: oldest max-verification first (most-stale at the top),
+    so the categories most-needing-attention surface first.
+    """
+    sql = """
+    SELECT
+        t.name AS taxonomy_name,
+        COUNT(DISTINCT l.id) AS location_count,
+        MAX(l.last_validated_at) AS max_verified_at
+    FROM taxonomies t
+    JOIN service_taxonomy st ON st.taxonomy_id = t.id
+    JOIN service_at_locations sal ON sal.service_id = st.service_id
+    JOIN locations l ON l.id = sal.location_id
+    GROUP BY t.name
+    HAVING (
+        MAX(l.last_validated_at) IS NULL
+        OR MAX(l.last_validated_at) < CURRENT_DATE - INTERVAL '%(stale)s days'
+    )
+    ORDER BY MAX(l.last_validated_at) ASC NULLS FIRST
+    """ % {"stale": STALE_CATEGORY_LOOKBACK_DAYS}
+    rows = _execute_sql(sql, {})
+
+    today = datetime.now(timezone.utc).date()
+    categories: list[dict[str, Any]] = []
+    for r in rows[:STALE_CATEGORIES_TOP_N]:
+        max_v = r.get("max_verified_at")
+        max_v_iso: Optional[str] = None
+        days_since: Optional[int] = None
+        if max_v is not None:
+            if hasattr(max_v, "isoformat"):
+                max_v_iso = max_v.isoformat()
+                # Coerce date / datetime to date for the day count
+                if hasattr(max_v, "date"):
+                    days_since = (today - max_v.date()).days
+                else:
+                    days_since = (today - max_v).days
+            else:
+                max_v_iso = str(max_v)
+        categories.append({
+            "taxonomy_name": r.get("taxonomy_name") or "",
+            "location_count": int(r.get("location_count") or 0),
+            "max_verified_at": max_v_iso,
+            "days_since_max_verified": days_since,
+        })
+
+    return {
+        "categories": categories,
+        "total_stale": len(rows),
+        "lookback_days": STALE_CATEGORY_LOOKBACK_DAYS,
+    }

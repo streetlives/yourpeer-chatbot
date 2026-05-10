@@ -30,6 +30,8 @@ from app.services.locations_admin import (
     get_locations_by_borough,
     get_service_borough_heatmap,
     get_coordinate_issues,
+    get_category_coverage,
+    get_stale_categories,
 )
 
 logger = logging.getLogger(__name__)
@@ -216,3 +218,42 @@ def locations_coordinate_issues():
         return get_coordinate_issues()
     except Exception as e:
         return _admin_error("/api/locations/coordinate-issues", e)
+
+
+@router.get("/category-coverage")
+def locations_category_coverage():
+    """Section 4a: per-taxonomy coverage with demand:supply ratio.
+
+    Returns one row per taxonomy with service count, distinct location
+    count, fresh-location-count, and (where mappable from chat
+    template names) demand signal. Categories are sorted by
+    demand:supply DESC, NULLS LAST so high-demand-thin-supply
+    categories surface first — the operationally useful default.
+
+    Demand mapping is best-effort: chat templates that don't map
+    to a fixed taxonomy set (e.g. OtherServicesQuery, org-name
+    searches) contribute to an `uncategorized_demand` aggregate
+    counter rather than being attributed to specific taxonomies.
+    """
+    try:
+        return get_category_coverage()
+    except Exception as e:
+        return _admin_error("/api/locations/category-coverage", e)
+
+
+@router.get("/stale-categories")
+def locations_stale_categories():
+    """Section 4b: top-N taxonomies where every offering location is stale.
+
+    A taxonomy counts as stale if its most-recently-verified offering
+    location is older than STALE_CATEGORY_LOOKBACK_DAYS (180d) — i.e.
+    NOT EVEN ONE location in the category has been verified recently.
+
+    Returns top STALE_CATEGORIES_TOP_N (10) plus a `total_stale`
+    counter so the frontend can surface "showing 10 of 23 stale
+    categories" framing when applicable.
+    """
+    try:
+        return get_stale_categories()
+    except Exception as e:
+        return _admin_error("/api/locations/stale-categories", e)

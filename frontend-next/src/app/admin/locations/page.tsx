@@ -9,6 +9,8 @@ import { FreshnessHistogram } from "@/components/admin/locations/freshness-histo
 import { BoroughBreakdownTable } from "@/components/admin/locations/borough-breakdown";
 import { ServiceBoroughHeatmap } from "@/components/admin/locations/service-borough-heatmap";
 import { CoordinateIssuesTable } from "@/components/admin/locations/coordinate-issues-table";
+import { CategoryCoverageTable } from "@/components/admin/locations/category-coverage-table";
+import { StaleCategoriesList } from "@/components/admin/locations/stale-categories-list";
 import { LocationsTable } from "@/components/admin/locations/locations-table";
 import { StatCardSkeleton } from "@/components/admin/loading-skeleton";
 import type {
@@ -154,6 +156,35 @@ export default function LocationsPage() {
           borough-mismatch issues need manual verification — either side could be wrong.
         </p>
         <CoordinateIssuesTable />
+      </div>
+
+      {/* Section 4a: per-taxonomy coverage with demand:supply ratio.
+       *  Default sort surfaces categories where users keep asking and
+       *  supply is thin — the most operationally useful triage prompt. */}
+      <div className="mt-6">
+        <h2 className="text-base font-semibold mb-3 text-neutral-900 dark:text-neutral-100">
+          Service-type coverage
+        </h2>
+        <p className="text-xs text-neutral-500 dark:text-neutral-400 mb-3">
+          Per-taxonomy supply (services + locations) paired with chat demand.
+          Default sort: highest demand-to-supply ratio first — the operational
+          prompt for &ldquo;where should we focus partner outreach this quarter?&rdquo;
+        </p>
+        <CategoryCoverageTable />
+      </div>
+
+      {/* Section 4b: stale categories — taxonomies where no offering
+       *  location has been verified in 180+ days. */}
+      <div className="mt-6">
+        <h2 className="text-base font-semibold mb-3 text-neutral-900 dark:text-neutral-100">
+          Stale categories
+        </h2>
+        <p className="text-xs text-neutral-500 dark:text-neutral-400 mb-3">
+          Taxonomies where every offering location is &gt;180 days old. These are
+          categories at risk of going stale system-wide — a single fresh location
+          would clear the alert.
+        </p>
+        <StaleCategoriesList />
       </div>
 
       {/* Section 2b: triage table. ageBucket is controlled by the page
