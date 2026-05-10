@@ -127,7 +127,11 @@ export function ChatMessage({ message, onQuickReply, onRetry, onCancel, isLatest
 
   return (
     <>
-      <div className={isUser ? "self-end flex flex-col items-end max-w-[82%]" : "self-start max-w-[82%]"}>
+      <div
+        data-message-id={message.id}
+        data-message-role={message.role}
+        className={isUser ? "self-end flex flex-col items-end max-w-[82%]" : "self-start max-w-[82%]"}
+      >
         <div
           role={isUser ? "status" : "article"}
           aria-label={isUser ? "You said" : "YourPeer said"}
