@@ -7,13 +7,23 @@ endpoints register at /admin/api/locations/<x> and are reachable
 from the frontend at /api/admin/locations/<x> via the catch-all
 proxy at frontend-next/src/app/api/admin/[...slug]/route.ts.
 
-Endpoints (day 1):
-    GET /admin/api/locations/stats
-    GET /admin/api/locations/list
+Full endpoint list (one per page section):
+    GET /admin/api/locations/stats                  (section 1)
+    GET /admin/api/locations/freshness-histogram    (section 2a)
+    GET /admin/api/locations/list                   (section 2b)
+    GET /admin/api/locations/by-borough             (section 3a)
+    GET /admin/api/locations/heatmap                (section 3b)
+    GET /admin/api/locations/coordinate-issues      (section 3c)
+    GET /admin/api/locations/category-coverage      (section 4a)
+    GET /admin/api/locations/stale-categories       (section 4b)
+    GET /admin/api/locations/feedback-aggregates    (sections 5a + 5b)
+    GET /admin/api/locations/feedback-comments      (section 5c)
+    GET /admin/api/locations/integrity-callouts     (section 6)
+    GET /admin/api/locations/timeseries             (section 7)
 
-Subsequent days add: by-borough, heatmap, coordinate-issues,
-by-category, stale-categories, feedback-aggregates,
-feedback-comments, integrity-checks, timeseries.
+Each endpoint is a thin wrapper around its aggregation function in
+locations_admin/aggregations.py — input parsing + try/except + the
+shared _admin_error helper. No business logic lives here.
 """
 from __future__ import annotations
 
@@ -34,6 +44,8 @@ from app.services.locations_admin import (
     get_stale_categories,
     get_location_feedback_aggregates,
     get_recent_feedback_comments,
+    get_data_integrity_callouts,
+    get_locations_timeseries,
     RECENT_COMMENTS_DEFAULT_LIMIT,
     RECENT_COMMENTS_MAX_LIMIT,
 )
@@ -113,9 +125,10 @@ def locations_list(
     has_issues: bool = Query(
         False,
         description=(
-            "Filter to rows missing phone OR address OR hours. "
-            "Recent-feedback issues are a v1 limitation; not yet "
-            "intersected here."
+            "Filter to rows missing phone OR address OR hours OR with any "
+            "negative recent feedback (location_feedback events with at "
+            "least one False criterion in the last 45 days). Union — any "
+            "one of these is enough to surface the row."
         ),
     ),
     category: Optional[list[str]] = Query(
@@ -320,3 +333,38 @@ def locations_feedback_comments(
         return get_recent_feedback_comments(limit=limit)
     except Exception as e:
         return _admin_error("/api/locations/feedback-comments", e)
+
+
+@router.get("/integrity-callouts")
+def locations_integrity_callouts():
+    """Section 6: data-integrity callouts.
+
+    Five queries fan out from one endpoint, each a count check.
+    Returns the firing callouts (count > 0) in display order, plus
+    `all_clear: True` when nothing fires — surfaces the positive
+    state explicitly so the frontend can render a "✓ no integrity
+    issues" callout instead of an empty list.
+    """
+    try:
+        return get_data_integrity_callouts()
+    except Exception as e:
+        return _admin_error("/api/locations/integrity-callouts", e)
+
+
+@router.get("/timeseries")
+def locations_timeseries():
+    """Section 7: weekly time series for the last TIMESERIES_WEEKS (=26).
+
+    Returns three series in one response:
+      * locations_added per week
+      * locations_verified per week (last_validated_at touched)
+      * feedback_events per week (location_feedback events)
+
+    Always exactly TIMESERIES_WEEKS rows in chronological order.
+    Empty weeks render as zeros, never missing — gives the frontend
+    a continuous shape to plot without interpolation.
+    """
+    try:
+        return get_locations_timeseries()
+    except Exception as e:
+        return _admin_error("/api/locations/timeseries", e)

@@ -13,8 +13,11 @@ import { CategoryCoverageTable } from "@/components/admin/locations/category-cov
 import { StaleCategoriesList } from "@/components/admin/locations/stale-categories-list";
 import { FeedbackAggregatesPanel } from "@/components/admin/locations/feedback-aggregates";
 import { FeedbackCommentsStream } from "@/components/admin/locations/feedback-comments-stream";
+import { DataIntegrityCallouts } from "@/components/admin/locations/data-integrity-callouts";
+import { LocationsTimeseries } from "@/components/admin/locations/locations-timeseries";
 import { LocationsTable } from "@/components/admin/locations/locations-table";
 import { StatCardSkeleton } from "@/components/admin/loading-skeleton";
+import { AdminSection } from "@/components/admin/admin-section";
 import type {
   LocationsStats,
   LocationsAgeBucket,
@@ -23,25 +26,31 @@ import { isAdminApiError } from "@/lib/admin/locations-types";
 import { AlertCircle } from "lucide-react";
 
 /**
- * Locations admin page (v1, days 1-2 scope).
+ * Locations admin page — v1 feature-complete.
  *
- * Layout:
- *   1. Stat strip (section 1)
- *   2. Freshness histogram (section 2a) — clicking a bar drives
- *      the table's age_bucket filter via lifted state
- *   3. Borough breakdown table (section 3a)
- *   4. Triage table (section 2b)
+ * Layout (in display order; section IDs match the spec):
+ *   1.  Stat strip                                       (section 1)
+ *   2.  Freshness histogram                              (section 2a)
+ *   3.  Borough breakdown                                (section 3a)
+ *   4.  Service-category × borough heatmap               (section 3b)
+ *   5.  Coordinate validation                            (section 3c)
+ *   6.  Service-type coverage with demand:supply         (section 4a)
+ *   7.  Stale categories                                 (section 4b)
+ *   8.  Location feedback (per-criterion + most-flagged) (sections 5a+5b)
+ *   9.  Recent feedback comments                         (section 5c)
+ *   10. Data integrity callouts                          (section 6)
+ *   11. Activity over time                               (section 7)
+ *   12. Locations needing review (triage table)          (section 2b — placed last)
  *
- * The histogram → table click-through works by lifting the table's
- * age_bucket filter up to the page. The table accepts ageBucket as
- * an optional controlled prop; when the page passes it (along with
- * a setter), the histogram's onBucketClick callback can update the
- * page state and the table re-renders with the new filter applied.
+ * Cross-component state coordination is intentionally minimal: only
+ * the freshness-histogram → triage-table click-through needs lifting.
+ * The page owns an `ageBucket` state; the histogram drives it via
+ * onBucketClick and visualizes its current value via the activeBucket
+ * prop; the triage table consumes it via its controlled ageBucket prop.
  *
- * Other section 2b filters stay table-internal — only age_bucket
- * needs cross-component coordination today. If section 4 (category
- * coverage) ever wants to drive the table's category filter via
- * click-through, the same lifting pattern applies.
+ * Everything else fetches independently. 12 components, 12 endpoints,
+ * each component owning its own loading / error / empty states. See
+ * src/components/admin/locations/README.md for the section map.
  */
 export default function LocationsPage() {
   const [stats, setStats] = useState<LocationsStats | null>(null);
@@ -117,128 +126,138 @@ export default function LocationsPage() {
 
       {/* Section 2a: freshness histogram. Clicking a bar drives the
        *  triage table's age_bucket filter (see handleHistogramClick). */}
-      <div className="mt-6">
-        <h2 className="text-base font-semibold mb-3 text-neutral-900 dark:text-neutral-100">
-          Data freshness
-        </h2>
-        <FreshnessHistogram onBucketClick={handleHistogramClick} />
-      </div>
+      <AdminSection title="Data freshness">
+        <FreshnessHistogram
+          onBucketClick={handleHistogramClick}
+          activeBucket={ageBucket}
+        />
+      </AdminSection>
 
       {/* Section 3a: borough breakdown */}
-      <div className="mt-6">
-        <h2 className="text-base font-semibold mb-3 text-neutral-900 dark:text-neutral-100">
-          Locations by borough
-        </h2>
+      <AdminSection title="Locations by borough">
         <BoroughBreakdownTable />
-      </div>
+      </AdminSection>
 
       {/* Section 3b: service-category × borough heatmap. Top 10 by
        *  default; expand toggle in the component reveals the rest. */}
-      <div className="mt-6">
-        <h2 className="text-base font-semibold mb-3 text-neutral-900 dark:text-neutral-100">
-          Service categories by borough
-        </h2>
-        <p className="text-xs text-neutral-500 dark:text-neutral-400 mb-3">
-          Cell color shows location count, anchored to the brightest cell across the matrix.
-          Use this to spot equity gaps — categories where a borough is empty (—) or near-empty
-          relative to its peers.
-        </p>
+      <AdminSection
+        title="Service categories by borough"
+        description="Cell color shows location count, anchored to the brightest cell across the matrix. Use this to spot equity gaps — categories where a borough is empty (—) or near-empty relative to its peers."
+      >
         <ServiceBoroughHeatmap />
-      </div>
+      </AdminSection>
 
       {/* Section 3c: coordinate validation. Surfaces data-quality bugs:
        *  coords outside NYC, or coords that disagree with the stated city. */}
-      <div className="mt-6">
-        <h2 className="text-base font-semibold mb-3 text-neutral-900 dark:text-neutral-100">
-          Coordinate validation
-        </h2>
-        <p className="text-xs text-neutral-500 dark:text-neutral-400 mb-3">
-          Locations whose lat/lon doesn&apos;t match their declared city.
-          Outside-NYC issues are likely typo&apos;d coordinates;
-          borough-mismatch issues need manual verification — either side could be wrong.
-        </p>
+      <AdminSection
+        title="Coordinate validation"
+        description={
+          <>
+            Locations whose lat/lon doesn&apos;t match their declared city.
+            Outside-NYC issues are likely typo&apos;d coordinates;
+            borough-mismatch issues need manual verification — either side could be wrong.
+          </>
+        }
+      >
         <CoordinateIssuesTable />
-      </div>
+      </AdminSection>
 
       {/* Section 4a: per-taxonomy coverage with demand:supply ratio.
        *  Default sort surfaces categories where users keep asking and
        *  supply is thin — the most operationally useful triage prompt. */}
-      <div className="mt-6">
-        <h2 className="text-base font-semibold mb-3 text-neutral-900 dark:text-neutral-100">
-          Service-type coverage
-        </h2>
-        <p className="text-xs text-neutral-500 dark:text-neutral-400 mb-3">
-          Per-taxonomy supply (services + locations) paired with chat demand.
-          Default sort: highest demand-to-supply ratio first — the operational
-          prompt for &ldquo;where should we focus partner outreach this quarter?&rdquo;
-        </p>
+      <AdminSection
+        title="Service-type coverage"
+        description={
+          <>
+            Per-taxonomy supply (services + locations) paired with chat demand.
+            Default sort: highest demand-to-supply ratio first — the operational
+            prompt for &ldquo;where should we focus partner outreach this quarter?&rdquo;
+          </>
+        }
+      >
         <CategoryCoverageTable />
-      </div>
+      </AdminSection>
 
       {/* Section 4b: stale categories — taxonomies where no offering
        *  location has been verified in 180+ days. */}
-      <div className="mt-6">
-        <h2 className="text-base font-semibold mb-3 text-neutral-900 dark:text-neutral-100">
-          Stale categories
-        </h2>
-        <p className="text-xs text-neutral-500 dark:text-neutral-400 mb-3">
-          Taxonomies where every offering location is &gt;180 days old. These are
-          categories at risk of going stale system-wide — a single fresh location
-          would clear the alert.
-        </p>
+      <AdminSection
+        title="Stale categories"
+        description={
+          <>
+            Taxonomies where every offering location is &gt;180 days old. These are
+            categories at risk of going stale system-wide — a single fresh location
+            would clear the alert.
+          </>
+        }
+      >
         <StaleCategoriesList />
-      </div>
+      </AdminSection>
 
       {/* Sections 5a + 5b: location feedback aggregates. The component
        *  fetches once and renders the per-criterion baseline above the
        *  most-flagged ranking — admins build a population baseline
        *  before reading individual rows. Section 5c (comments stream)
        *  comes in a separate day. */}
-      <div className="mt-6">
-        <h2 className="text-base font-semibold mb-3 text-neutral-900 dark:text-neutral-100">
-          Location feedback
-        </h2>
-        <p className="text-xs text-neutral-500 dark:text-neutral-400 mb-3">
-          Per-criterion baseline across all feedback events, plus the most-flagged
-          locations by smoothed negative ratio. Locations need at least 2 feedback
-          events to qualify for the ranking.
-        </p>
+      <AdminSection
+        title="Location feedback"
+        description="Per-criterion baseline across all feedback events, plus the most-flagged locations by smoothed negative ratio. Locations need at least 2 feedback events to qualify for the ranking."
+      >
         <FeedbackAggregatesPanel />
-      </div>
+      </AdminSection>
 
       {/* Section 5c: recent comments stream — qualitative companion
        *  to the quantitative feedback aggregates above. Each row is
        *  clickable and opens the originating session's transcript in
        *  the standard admin TranscriptDrawer. */}
-      <div className="mt-6">
-        <h2 className="text-base font-semibold mb-3 text-neutral-900 dark:text-neutral-100">
-          Recent feedback comments
-        </h2>
-        <p className="text-xs text-neutral-500 dark:text-neutral-400 mb-3">
-          The qualitative companion — comments often surface things that don&apos;t
-          fit any criterion checkbox. Click a row to view the full chat session
-          for context.
-        </p>
+      <AdminSection
+        title="Recent feedback comments"
+        description={
+          <>
+            The qualitative companion — comments often surface things that don&apos;t
+            fit any criterion checkbox. Click a row to view the full chat session
+            for context.
+          </>
+        }
+      >
         <FeedbackCommentsStream />
-      </div>
+      </AdminSection>
+
+      {/* Section 6: data integrity callouts — query-driven panel that
+       *  fires only when count > 0 of any check. Empty state is a
+       *  positive ✓ "no issues detected" state. */}
+      <AdminSection
+        title="Data integrity"
+        description={
+          <>
+            Catalog-wide health checks: orphaned records, malformed phone formats,
+            encoded HTML in descriptions, and a rollup of the coordinate validation
+            above. Each fires only when there&apos;s something to fix.
+          </>
+        }
+      >
+        <DataIntegrityCallouts />
+      </AdminSection>
+
+      {/* Section 7: time series — locations added / verified /
+       *  feedback events by week, last 26 weeks. */}
+      <AdminSection
+        title="Activity over time"
+        description="Last 26 weeks. The shape of these curves is the signal: steady cadence versus trending up versus recent spike each tell a different story about where the catalog is headed."
+      >
+        <LocationsTimeseries />
+      </AdminSection>
 
       {/* Section 2b: triage table. ageBucket is controlled by the page
-       *  so the histogram can drive it. Other filters stay internal. */}
-      <div className="mt-6">
-        <h2
-          ref={tableHeadingRef}
-          className="text-base font-semibold mb-3 text-neutral-900 dark:text-neutral-100 scroll-mt-6"
-        >
-          Locations needing review
-        </h2>
-        <p className="text-xs text-neutral-500 dark:text-neutral-400 mb-3">
-          Default view shows least-recently-verified locations first
-          (never-verified at the top). Use filters to narrow by borough,
-          age bucket, or data-quality issues. The histogram above also
-          drives the age filter — click a bar to apply, click again to clear.
-        </p>
+       *  so the histogram can drive it. Other filters stay internal.
+       *  The section heading is the smooth-scroll target for histogram
+       *  bar clicks — ref forwarded through AdminSection. */}
+      <AdminSection
+        ref={tableHeadingRef}
+        title="Locations needing review"
+        description="Default view shows least-recently-verified locations first (never-verified at the top). Use filters to narrow by borough, age bucket, or data-quality issues. The histogram above also drives the age filter — click a bar to apply, click again to clear."
+      >
         <LocationsTable ageBucket={ageBucket} onAgeBucketChange={setAgeBucket} />
-      </div>
+      </AdminSection>
     </>
   );
 }

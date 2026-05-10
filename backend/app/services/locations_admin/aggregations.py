@@ -1,18 +1,40 @@
 """
 Locations admin — aggregation queries.
 
-Day-1 scope: top stat strip (section 1) and "needs review" sortable
-table (section 2b) of the Locations admin page spec.
+One function per page section. The Locations admin page renders 11
+spec'd analytical sections plus a triage table; each function below
+backs one endpoint under /admin/api/locations/*. Functions in display
+order:
+
+  * Section 1 — get_locations_stats           (top stat strip)
+  * Section 2a — get_freshness_histogram      (age-bucket bars)
+  * Section 2b — get_locations_list           (triage table, paginated/sortable/filterable)
+  * Section 3a — get_locations_by_borough     (rollup table)
+  * Section 3b — get_service_borough_heatmap  (taxonomy × borough)
+  * Section 3c — get_coordinate_issues        (geo validation)
+  * Section 4a — get_category_coverage        (demand:supply)
+  * Section 4b — get_stale_categories         (system-wide neglect)
+  * Section 5a/5b — get_location_feedback_aggregates
+  * Section 5c — get_recent_feedback_comments
+  * Section 6 — get_data_integrity_callouts   (orphan checks etc.)
+  * Section 7 — get_locations_timeseries      (weekly added/verified/feedback)
 
 Each function returns a structured dict matching its frontend
 TypeScript counterpart (see `frontend-next/src/lib/admin/
 locations-types.ts`). Aggregations run against the Streetlives
-read-only Postgres via the existing `_execute_sql` helper —
-no new schema, no migrations, no new connection.
+read-only Postgres via the existing `_execute_sql` helper — no new
+schema, no migrations, no new connection.
 
-Constants are exported at module top so future tuning is one-stop:
-fresh threshold, recent-flags lookback, top-N-categories, feedback
-sample minimum. Each documented inline.
+Tunable constants are exported at module top so future tuning is
+one-stop: fresh threshold, recent-flags lookback, top-N categories,
+feedback sample minimum, audit-log cap, time-series window. Each
+documented inline.
+
+Audit-log reads go through `_get_events_capped(event_type)` (defined
+below). It wraps `get_recent_events(limit=AUDIT_LOG_CAP, ...)` and
+logs a WARNING when the cap is reached — so silent truncation past
+AUDIT_LOG_CAP events becomes a visible signal in production logs
+rather than a quietly-undercounting aggregation.
 """
 from __future__ import annotations
 
@@ -67,6 +89,52 @@ FEEDBACK_MIN_SAMPLE = 2
 # the team enough history to see seasonal shape without making the
 # time series visually busy.
 TIMESERIES_WEEKS = 26
+
+# How many audit-log events of one type we read in a single pass.
+# `get_recent_events` returns the most-recent N events of the given
+# type, silently truncating older ones when there are more. Set high
+# enough that pilot-volume usage never trips it, but observably
+# capped — _get_events_capped() warns the moment we hit the limit so
+# the silent-truncation case stops being silent.
+#
+# When this warning starts firing in production logs, the next step
+# is either bumping the cap or migrating these aggregations to a
+# streaming / paginated read pattern.
+AUDIT_LOG_CAP = 10000
+
+
+def _get_events_capped(event_type: str) -> list:
+    """Wrapper around `get_recent_events` that warns when the cap is
+    likely hit.
+
+    `get_recent_events(limit=AUDIT_LOG_CAP)` truncates silently when
+    there are more than AUDIT_LOG_CAP events of that type — the
+    function has no way to signal "there's more." We approximate the
+    signal here by checking whether the result length exactly equals
+    the cap; if so, log a warning so production observability picks
+    it up.
+
+    Note the approximation: there's a single-event window where the
+    cap is hit exactly with no truncation, which would log a false-
+    positive warning. Acceptable — the noise is small and the cost
+    of the alternative (a second query for the true count) isn't
+    worth it at the catalog's current scale.
+
+    All locations-admin aggregations that read from the audit log
+    should go through this wrapper, not `get_recent_events` directly,
+    so the warning surface is consistent.
+    """
+    events = get_recent_events(limit=AUDIT_LOG_CAP, event_type=event_type)
+    if len(events) >= AUDIT_LOG_CAP:
+        logger.warning(
+            "locations_admin: AUDIT_LOG_CAP (%d) reached for event_type=%s — "
+            "older events truncated. Aggregations using this read may "
+            "undercount. Consider bumping the cap or migrating to a "
+            "paginated read.",
+            AUDIT_LOG_CAP,
+            event_type,
+        )
+    return events
 
 
 # ---------------------------------------------------------------------------
@@ -133,7 +201,7 @@ def get_locations_stats() -> dict:
     # with_feedback_count + feedback trend from the local audit log.
     # Generic events table is keyed by `type`; idx_events_type carries
     # the WHERE so this is fast even at 10k+ events.
-    feedback_events = get_recent_events(limit=10000, event_type="location_feedback")
+    feedback_events = _get_events_capped("location_feedback")
     distinct_loc_ids = {ev.get("location_id") for ev in feedback_events if ev.get("location_id")}
 
     cutoff_7d = datetime.now(timezone.utc) - timedelta(days=7)
@@ -206,6 +274,30 @@ _SORT_KEY_TO_SQL = {
 # "Other" matches anything outside this set — typically out-of-NYC
 # entries that shouldn't be there.
 NYC_BOROUGHS = ("Manhattan", "Brooklyn", "Queens", "Bronx", "Staten Island")
+
+
+def _borough_case_sql(city_col: str) -> str:
+    """Generate the SQL CASE expression that maps a `city` column to
+    one of NYC_BOROUGHS or "Other".
+
+    Returns a bare CASE expression — caller adds AS borough or wraps
+    in a JOIN. The string literals are produced from NYC_BOROUGHS so
+    the SQL stays in lockstep with the Python constant; previously the
+    list was hand-typed in four separate SQL blocks and drift was a
+    real maintenance risk.
+
+    `city_col` is interpolated into the SQL unescaped — pass it from
+    a fixed call site, never from user input. (All callers in this
+    module pass literal column references like "pa.city" or "pa2.city".)
+    """
+    # NYC_BOROUGHS contents are hard-coded Python strings — no user
+    # input — so concatenating into a SQL IN-list is safe. We still
+    # wrap each in single quotes for SQL literal syntax.
+    quoted = ", ".join(f"'{b}'" for b in NYC_BOROUGHS)
+    return (
+        f"CASE WHEN {city_col} IN ({quoted}) "
+        f"THEN {city_col} ELSE 'Other' END"
+    )
 
 
 def get_locations_list(
@@ -313,6 +405,24 @@ def get_locations_list(
     if age_clause:
         where_clauses.append(age_clause)
 
+    # Compute "recent_flags" + "has_reviews" from the audit log
+    # upfront — we need recent_flags both for the has_issues filter
+    # (below, in the WHERE clause) AND for the per-row recent_flags
+    # column in the response. Walking the events once is cheaper than
+    # twice.
+    fb_events = _get_events_capped("location_feedback")
+    cutoff = datetime.now(timezone.utc) - timedelta(days=RECENT_FLAGS_LOOKBACK_DAYS)
+    recent_flags_by_loc: dict[str, int] = defaultdict(int)
+    has_reviews_by_loc: set[str] = set()
+    for ev in fb_events:
+        loc_id = ev.get("location_id")
+        if not loc_id:
+            continue
+        loc_id = str(loc_id)
+        has_reviews_by_loc.add(loc_id)
+        if _ev_after(ev, cutoff) and _has_negative_criterion(ev):
+            recent_flags_by_loc[loc_id] += 1
+
     if search:
         where_clauses.append(
             "(LOWER(l.name) LIKE :search_pat OR LOWER(o.name) LIKE :search_pat)"
@@ -335,9 +445,13 @@ def get_locations_list(
         params["category_list"] = list(category)
 
     # has_issues toggle: missing phone OR missing address OR missing
-    # hours OR has any negative recent feedback. This is the union
-    # so it surfaces every location that needs SOME kind of attention.
+    # hours OR has any negative recent feedback (recent_flags > 0).
+    # Union so it surfaces every location that needs SOME kind of
+    # attention. recent_flags isn't a SQL-side concept — it's
+    # computed from the audit log — so we feed the flagged
+    # location_ids in as a bound array.
     if has_issues:
+        flagged_loc_ids = list(recent_flags_by_loc.keys())
         where_clauses.append("""
         (
             best_phone.number IS NULL
@@ -348,13 +462,13 @@ def get_locations_list(
                 WHERE sal_h.location_id = l.id
                 LIMIT 1
             )
+            OR l.id::text = ANY(:flagged_loc_ids)
         )
         """)
-        # The "OR has negative recent feedback" branch is harder to
-        # express in pure SQL without bringing the audit-log into the
-        # join chain. v1 covers the three structural-data branches;
-        # post-v1 we can intersect with the in-memory recent-flags
-        # set if ops triage demands it. Documented limitation.
+        # Even when flagged_loc_ids is empty, binding an empty array
+        # keeps the SQL identical across requests (Postgres handles
+        # `= ANY(ARRAY[]::text[])` correctly — matches nothing).
+        params["flagged_loc_ids"] = flagged_loc_ids
 
     where_sql = ("WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
 
@@ -445,22 +559,9 @@ def get_locations_list(
     count_rows = _execute_sql(count_sql, {k: v for k, v in params.items() if k not in ("limit", "offset")})
     total = int(count_rows[0]["total"]) if count_rows else 0
 
-    # Compute "recent_flags" + "has_reviews" from the audit log.
-    # We pull all location_feedback events once (capped at 10k for
-    # safety; current volume is far below that) and bucket by
-    # location_id. Faster than N subqueries; same answer.
-    fb_events = get_recent_events(limit=10000, event_type="location_feedback")
-    cutoff = datetime.now(timezone.utc) - timedelta(days=RECENT_FLAGS_LOOKBACK_DAYS)
-    recent_flags_by_loc: dict[str, int] = defaultdict(int)
-    has_reviews_by_loc: set[str] = set()
-    for ev in fb_events:
-        loc_id = ev.get("location_id")
-        if not loc_id:
-            continue
-        loc_id = str(loc_id)
-        has_reviews_by_loc.add(loc_id)
-        if _ev_after(ev, cutoff) and _has_negative_criterion(ev):
-            recent_flags_by_loc[loc_id] += 1
+    # recent_flags_by_loc + has_reviews_by_loc were computed upfront
+    # so the has_issues filter could feed flagged ids into the WHERE
+    # clause. They're re-used here for the per-row response columns.
 
     locations: list[dict] = []
     for r in list_rows:
@@ -642,11 +743,7 @@ def get_locations_by_borough() -> dict:
     WITH labeled AS (
         SELECT
             l.id,
-            CASE
-                WHEN pa.city IN ('Manhattan', 'Brooklyn', 'Queens', 'Bronx', 'Staten Island')
-                    THEN pa.city
-                ELSE 'Other'
-            END AS borough,
+            %(borough_case)s AS borough,
             l.last_validated_at
         FROM locations l
         LEFT JOIN physical_addresses pa ON pa.location_id = l.id
@@ -660,15 +757,15 @@ def get_locations_by_borough() -> dict:
         (SELECT COUNT(*) FROM service_at_locations sal
          JOIN locations l2 ON sal.location_id = l2.id
          LEFT JOIN physical_addresses pa2 ON pa2.location_id = l2.id
-         WHERE CASE
-                  WHEN pa2.city IN ('Manhattan', 'Brooklyn', 'Queens', 'Bronx', 'Staten Island')
-                       THEN pa2.city
-                  ELSE 'Other'
-               END = labeled.borough
+         WHERE %(borough_case_pa2)s = labeled.borough
         ) AS service_count
     FROM labeled
     GROUP BY borough
-    """ % {"fresh": FRESHNESS_THRESHOLD_DAYS}
+    """ % {
+        "fresh": FRESHNESS_THRESHOLD_DAYS,
+        "borough_case": _borough_case_sql("pa.city"),
+        "borough_case_pa2": _borough_case_sql("pa2.city"),
+    }
 
     grouped_rows = _execute_sql(grouped_sql, {})
 
@@ -698,11 +795,7 @@ def get_locations_by_borough() -> dict:
     WITH labeled AS (
         SELECT
             l.id AS location_id,
-            CASE
-                WHEN pa.city IN ('Manhattan', 'Brooklyn', 'Queens', 'Bronx', 'Staten Island')
-                    THEN pa.city
-                ELSE 'Other'
-            END AS borough
+            %(borough_case)s AS borough
         FROM locations l
         LEFT JOIN physical_addresses pa ON pa.location_id = l.id
     ),
@@ -719,7 +812,7 @@ def get_locations_by_borough() -> dict:
         GROUP BY labeled.borough, t.name
     )
     SELECT borough, category FROM counts WHERE rn = 1
-    """
+    """ % {"borough_case": _borough_case_sql("pa.city")}
     top_cat_rows = _execute_sql(top_cat_sql, {})
     top_cat_by_borough = {r.get("borough"): r.get("category") for r in top_cat_rows}
 
@@ -800,11 +893,7 @@ def get_service_borough_heatmap() -> dict:
     sql = """
     SELECT
         t.name AS category,
-        CASE
-            WHEN pa.city IN ('Manhattan', 'Brooklyn', 'Queens', 'Bronx', 'Staten Island')
-                THEN pa.city
-            ELSE 'Other'
-        END AS borough,
+        %(borough_case)s AS borough,
         COUNT(DISTINCT l.id) AS location_count
     FROM taxonomies t
     JOIN service_taxonomy st ON st.taxonomy_id = t.id
@@ -812,7 +901,7 @@ def get_service_borough_heatmap() -> dict:
     JOIN locations l ON l.id = sal.location_id
     LEFT JOIN physical_addresses pa ON pa.location_id = l.id
     GROUP BY t.name, borough
-    """
+    """ % {"borough_case": _borough_case_sql("pa.city")}
     rows = _execute_sql(sql, {})
 
     # Aggregate by category. Each category gets a per-borough dict
@@ -880,7 +969,7 @@ def get_coordinate_issues() -> dict:
       * Pull every location with non-null position.
       * Compute borough from coordinates via boundaries.borough_from_coords.
       * Compare against the stated city (mapped to a canonical borough
-        via _stated_borough_from_city).
+        via stated_borough_from_city).
       * Flag mismatches AND points outside NYC entirely.
 
     Two separate counters because they're different fix paths:
@@ -915,8 +1004,10 @@ def get_coordinate_issues() -> dict:
     # Lazy-import to mirror query_executor's pattern: boundaries does
     # GeoJSON parsing on first call, which we want to defer until the
     # endpoint is actually hit (not on import-time / module-load).
+    # stated_borough_from_city is the public alias for the city→borough
+    # resolver — see query_executor.py near the function definition.
     from app.rag.boundaries import borough_from_coords
-    from app.rag.query_executor import _stated_borough_from_city
+    from app.rag.query_executor import stated_borough_from_city
 
     issues: list[dict[str, Any]] = []
     total_with_coords = 0
@@ -939,7 +1030,7 @@ def get_coordinate_issues() -> dict:
 
         computed = borough_from_coords(lat_f, lon_f)
         stated_city = r.get("stated_city")
-        stated = _stated_borough_from_city(stated_city) if stated_city else None
+        stated = stated_borough_from_city(stated_city) if stated_city else None
 
         if computed is None:
             # Outside NYC entirely — coords don't fall in any of the 5
@@ -1149,12 +1240,25 @@ def get_category_coverage() -> dict:
     """ % {"fresh": FRESHNESS_THRESHOLD_DAYS}
     rows = _execute_sql(sql, {})
 
-    # Step 2: gather demand from no_result_by_service. Imported here
-    # rather than at module top to avoid a circular: audit_log doesn't
-    # depend on locations_admin and we want to keep it that way.
-    from app.services.audit_log import get_stats as _get_stats
-    stats = _get_stats()
-    no_result = stats.get("no_result_by_service") or {}
+    # Step 2: gather demand from no_result_by_service.
+    #
+    # We could call audit_log.get_stats() here and read its
+    # "no_result_by_service" key — but get_stats walks the entire
+    # audit log and computes ~30 metrics (LLM cost rollups,
+    # frustration tiers, session durations, …) only one of which
+    # we need. Calling the underlying _compute helper directly with
+    # a one-shot fetch of query_execution events skips all that
+    # other work. Per-section measurement showed an order-of-
+    # magnitude speedup on this endpoint at production audit-log
+    # size.
+    #
+    # Imported here rather than at module top to avoid a circular:
+    # audit_log doesn't depend on locations_admin and we want to
+    # keep it that way. _get_events_capped (defined above) handles
+    # the underlying get_recent_events call.
+    from app.services.audit_log import _compute_no_result_by_service
+    query_events = _get_events_capped("query_execution")
+    no_result = _compute_no_result_by_service(query_events)
 
     # Step 3: invert the template→taxonomies map into per-taxonomy
     # demand contributions. Each template's total queries get
@@ -1401,7 +1505,7 @@ def get_location_feedback_aggregates() -> dict:
     (the answer to question 3 in the spec), this avoids one-off noise
     while still surfacing genuine signals at low volume.
     """
-    events = get_recent_events(limit=10000, event_type="location_feedback")
+    events = _get_events_capped("location_feedback")
 
     # Per-location aggregation
     by_location: dict[str, dict[str, Any]] = {}
@@ -1580,7 +1684,7 @@ def get_recent_feedback_comments(limit: int = RECENT_COMMENTS_DEFAULT_LIMIT) -> 
     # other code paths.
     limit = max(1, min(RECENT_COMMENTS_MAX_LIMIT, int(limit)))
 
-    events = get_recent_events(limit=10000, event_type="location_feedback")
+    events = _get_events_capped("location_feedback")
 
     # Filter to events with non-empty comments. Whitespace-only
     # comments are treated as empty.
@@ -1934,7 +2038,7 @@ def get_locations_timeseries() -> dict:
     # ---- Series 3: feedback events ----
     # Pulled from the audit log, not the DB — feedback lives in the
     # event store, not Postgres. Walk events, bucket into weeks.
-    feedback_events = get_recent_events(limit=10000, event_type="location_feedback")
+    feedback_events = _get_events_capped("location_feedback")
     for ev in feedback_events:
         ts = ev.get("timestamp") or ""
         if not ts:

@@ -19,8 +19,15 @@ import { isAdminApiError } from "@/lib/admin/locations-types";
  *
  * Columns:
  *   * Locations — total count
- *   * Services — services available across those locations
- *   * Avg services / location — efficiency proxy; high values
+ *   * Service entries — count of service-at-location pairs at the
+ *     borough's locations. NOT the count of distinct services —
+ *     a multi-service location contributes one entry per service.
+ *     Sum across boroughs equals total service-at-location rows,
+ *     which is a different (typically larger) number than the
+ *     stat strip's "Total services" (= distinct services in the
+ *     catalog). The two answer different questions and that's
+ *     intentional, but the column name needs to communicate it.
+ *   * Avg entries / location — efficiency proxy; high values
  *     signal one location offering many services (e.g. a multi-
  *     service center), low values signal single-purpose locations
  *   * % verified <90d — freshness ratio for the borough
@@ -88,11 +95,15 @@ export function BoroughBreakdownTable() {
               <th scope="col" className="px-4 py-3 text-xs uppercase tracking-wider font-semibold text-neutral-400 text-right">
                 Locations
               </th>
-              <th scope="col" className="px-4 py-3 text-xs uppercase tracking-wider font-semibold text-neutral-400 text-right">
-                Services
+              <th
+                scope="col"
+                className="px-4 py-3 text-xs uppercase tracking-wider font-semibold text-neutral-400 text-right"
+                title="Count of service-at-location pairs in this borough. A multi-service location contributes one entry per service — sum across boroughs is larger than the 'Total services' stat (which counts distinct services in the catalog)."
+              >
+                Service entries
               </th>
               <th scope="col" className="px-4 py-3 text-xs uppercase tracking-wider font-semibold text-neutral-400 text-right">
-                Avg svcs/loc
+                Avg entries/loc
               </th>
               <th scope="col" className="px-4 py-3 text-xs uppercase tracking-wider font-semibold text-neutral-400 text-left">
                 Verified &lt;90d

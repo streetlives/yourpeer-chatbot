@@ -711,7 +711,7 @@ def test_coordinate_issues_clean_data_returns_no_issues():
     with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}), \
          patch("app.services.locations_admin.aggregations._execute_sql", side_effect=responder), \
          patch("app.rag.boundaries.borough_from_coords", return_value="Manhattan"), \
-         patch("app.rag.query_executor._stated_borough_from_city", return_value="Manhattan"):
+         patch("app.rag.query_executor.stated_borough_from_city", return_value="Manhattan"):
         body = admin_client.get("/admin/api/locations/coordinate-issues").json()
         assert body["issues"] == []
         assert body["total_with_coords"] == 1
@@ -735,7 +735,7 @@ def test_coordinate_issues_borough_mismatch():
     with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}), \
          patch("app.services.locations_admin.aggregations._execute_sql", side_effect=responder), \
          patch("app.rag.boundaries.borough_from_coords", return_value="Manhattan"), \
-         patch("app.rag.query_executor._stated_borough_from_city", return_value="Brooklyn"):
+         patch("app.rag.query_executor.stated_borough_from_city", return_value="Brooklyn"):
         body = admin_client.get("/admin/api/locations/coordinate-issues").json()
         assert len(body["issues"]) == 1
         issue = body["issues"][0]
@@ -762,7 +762,7 @@ def test_coordinate_issues_outside_nyc():
     with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}), \
          patch("app.services.locations_admin.aggregations._execute_sql", side_effect=responder), \
          patch("app.rag.boundaries.borough_from_coords", return_value=None), \
-         patch("app.rag.query_executor._stated_borough_from_city", return_value="Manhattan"):
+         patch("app.rag.query_executor.stated_borough_from_city", return_value="Manhattan"):
         body = admin_client.get("/admin/api/locations/coordinate-issues").json()
         assert len(body["issues"]) == 1
         issue = body["issues"][0]
@@ -789,7 +789,7 @@ def test_coordinate_issues_unmappable_city_does_not_flag():
     with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}), \
          patch("app.services.locations_admin.aggregations._execute_sql", side_effect=responder), \
          patch("app.rag.boundaries.borough_from_coords", return_value=None), \
-         patch("app.rag.query_executor._stated_borough_from_city", return_value=None):
+         patch("app.rag.query_executor.stated_borough_from_city", return_value=None):
         body = admin_client.get("/admin/api/locations/coordinate-issues").json()
         # Outside NYC → still surfaces as issue (data quality concern)
         assert len(body["issues"]) == 1
@@ -831,7 +831,7 @@ def test_coordinate_issues_outside_nyc_sort_first():
     with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}), \
          patch("app.services.locations_admin.aggregations._execute_sql", side_effect=responder), \
          patch("app.rag.boundaries.borough_from_coords", side_effect=["Manhattan", None]), \
-         patch("app.rag.query_executor._stated_borough_from_city", side_effect=["Brooklyn", "Manhattan"]):
+         patch("app.rag.query_executor.stated_borough_from_city", side_effect=["Brooklyn", "Manhattan"]):
         body = admin_client.get("/admin/api/locations/coordinate-issues").json()
         assert len(body["issues"]) == 2
         # Outside-NYC sorts before mismatch
@@ -1530,7 +1530,7 @@ def test_integrity_callouts_coord_issues_ref_with_outside_nyc():
     with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}), \
          patch("app.services.locations_admin.aggregations._execute_sql", side_effect=responder), \
          patch("app.rag.boundaries.borough_from_coords", return_value=None), \
-         patch("app.rag.query_executor._stated_borough_from_city", return_value="Manhattan"):
+         patch("app.rag.query_executor.stated_borough_from_city", return_value="Manhattan"):
         body = admin_client.get("/admin/api/locations/integrity-callouts").json()
         c = next(c for c in body["callouts"] if c["id"] == "coordinate_issues_ref")
         assert c["severity"] == "warning"   # outside_nyc_count > 0
@@ -1750,3 +1750,138 @@ def test_all_locations_endpoints_require_admin_auth():
                 f"without the admin Bearer token. This endpoint may "
                 f"be missing its admin-auth dependency."
             )
+
+
+# -----------------------------------------------------------------------
+# AUDIT_LOG_CAP observability — confirms the cap warning fires at the
+# boundary so silent truncation becomes visible in production logs.
+# -----------------------------------------------------------------------
+
+def test_audit_log_cap_warning_fires_when_limit_reached(caplog):
+    """When the audit-log read returns exactly AUDIT_LOG_CAP events,
+    the wrapper logs a warning so production observability surfaces
+    the likely truncation. Catches the boundary case where the cap
+    is first hit; the alternative (silent truncation) is what the
+    wrapper exists to prevent.
+
+    Note the test fakes a "cap hit" by patching the underlying
+    get_recent_events — same shape as production once the audit log
+    grows past 10k of one type.
+    """
+    import logging
+    from app.services.locations_admin.aggregations import (
+        _get_events_capped,
+        AUDIT_LOG_CAP,
+    )
+
+    # Return exactly AUDIT_LOG_CAP events — looks like truncation
+    # from the wrapper's perspective.
+    fake_events = [{"type": "location_feedback"} for _ in range(AUDIT_LOG_CAP)]
+    with patch(
+        "app.services.locations_admin.aggregations.get_recent_events",
+        return_value=fake_events,
+    ), caplog.at_level(logging.WARNING, logger="app.services.locations_admin.aggregations"):
+        events = _get_events_capped("location_feedback")
+    assert len(events) == AUDIT_LOG_CAP
+    # Warning fired
+    assert any(
+        "AUDIT_LOG_CAP" in r.message and "location_feedback" in r.message
+        for r in caplog.records
+    ), (
+        "Expected an AUDIT_LOG_CAP warning when the read hits the cap, "
+        "got: " + repr([r.message for r in caplog.records])
+    )
+
+
+def test_audit_log_cap_warning_silent_below_limit(caplog):
+    """Under the cap, the wrapper stays quiet — no warning, no log
+    noise. Confirms the warning's selectivity."""
+    import logging
+    from app.services.locations_admin.aggregations import (
+        _get_events_capped,
+        AUDIT_LOG_CAP,
+    )
+
+    fake_events = [{"type": "location_feedback"} for _ in range(AUDIT_LOG_CAP - 1)]
+    with patch(
+        "app.services.locations_admin.aggregations.get_recent_events",
+        return_value=fake_events,
+    ), caplog.at_level(logging.WARNING, logger="app.services.locations_admin.aggregations"):
+        events = _get_events_capped("location_feedback")
+    assert len(events) == AUDIT_LOG_CAP - 1
+    assert not any("AUDIT_LOG_CAP" in r.message for r in caplog.records), (
+        "Did not expect an AUDIT_LOG_CAP warning when below the cap; "
+        "got: " + repr([r.message for r in caplog.records])
+    )
+
+
+def test_has_issues_filter_includes_flagged_locations_from_audit_log():
+    """has_issues=true should surface locations with recent negative
+    feedback even when their structural data (phone/address/hours) is
+    complete. Previously the filter only looked at SQL columns; this
+    confirms the audit-log intersection is wired."""
+    clear_audit_log()
+    # Log a negative-feedback event for a specific location id.
+    log_location_feedback(
+        session_id="sess-1",
+        location_id="loc-flagged-123",
+        location_name="Flagged Loc",
+        safety=False,
+        comment="not safe",
+    )
+
+    # Capture the params that the list query is called with so we
+    # can assert that flagged_loc_ids made it into the bind dict.
+    captured_params: dict[str, Any] = {}
+    def responder(sql, params):
+        if "FROM locations l\n    JOIN organizations" in sql and "LIMIT" in sql:
+            captured_params.update(params)
+            return []   # no rows — we only care about the params here
+        if "COUNT(*) AS total" in sql:
+            return [{"total": 0}]
+        return []
+
+    with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}), \
+         patch("app.services.locations_admin.aggregations._execute_sql", side_effect=responder):
+        r = admin_client.get("/admin/api/locations/list?has_issues=true")
+        assert r.status_code == 200
+
+    assert "flagged_loc_ids" in captured_params, (
+        "has_issues filter should bind flagged_loc_ids so audit-log "
+        f"flags can be intersected. Got params: {list(captured_params)}"
+    )
+    assert "loc-flagged-123" in captured_params["flagged_loc_ids"], (
+        "Expected the logged feedback location id to appear in the "
+        f"bound flagged_loc_ids list. Got: {captured_params['flagged_loc_ids']!r}"
+    )
+
+
+def test_has_issues_filter_omits_flagged_loc_ids_param_when_off():
+    """Sanity: when has_issues is NOT set, the flagged_loc_ids bind
+    param shouldn't appear at all. Catches accidental coupling of the
+    audit-log walk to the param-binding path."""
+    clear_audit_log()
+    log_location_feedback(
+        session_id="sess-1",
+        location_id="loc-flagged-456",
+        location_name="Flagged Loc",
+        safety=False,
+    )
+
+    captured_params: dict[str, Any] = {}
+    def responder(sql, params):
+        if "FROM locations l\n    JOIN organizations" in sql and "LIMIT" in sql:
+            captured_params.update(params)
+            return []
+        if "COUNT(*) AS total" in sql:
+            return [{"total": 0}]
+        return []
+
+    with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}), \
+         patch("app.services.locations_admin.aggregations._execute_sql", side_effect=responder):
+        admin_client.get("/admin/api/locations/list")  # has_issues default = false
+
+    assert "flagged_loc_ids" not in captured_params, (
+        "flagged_loc_ids should only be bound when has_issues=true; "
+        f"got params: {list(captured_params)}"
+    )
