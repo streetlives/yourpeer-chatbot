@@ -31,6 +31,10 @@ from app.services.audit_log import (
     log_location_feedback,
     log_query_execution,
 )
+# Helper context manager — pytest's caplog fixture has subtle behavior
+# around logger propagation in deeply-nested loggers; a simple
+# capture context is cleaner for these tests.
+from contextlib import contextmanager
 
 
 # Mirror the _AdminClient pattern from test_admin_api_routes.py — see
@@ -2252,13 +2256,6 @@ def test_list_all_invalid_categories_produces_empty_filter_and_warns():
     assert any("Junk1" in w and "Junk2" in w for w in warnings), (
         f"Expected a warning naming all invalid names. Got: {warnings}"
     )
-
-
-# Helper context manager — pytest's caplog fixture has subtle behavior
-# around logger propagation in deeply-nested loggers; a simple
-# capture context is cleaner for these tests.
-from contextlib import contextmanager
-
 
 @contextmanager
 def caplog_for(logger_name: str):
