@@ -10,6 +10,7 @@ import { LocationFeedbackRow } from "./location-feedback-row";
 import { CallConfirmDialog } from "./call-confirm-dialog";
 import { ReviewDetailDialog } from "./review-detail-dialog";
 import { SafeHtml } from "./safe-html";
+import { formatPhone } from "@/lib/chat/format-phone";
 
 /**
  * Extract a display-friendly domain from a website URL. Used by the
@@ -484,7 +485,7 @@ function DetailsSection({ service, hasDetails, detailsOpen, setDetailsOpen }: {
           {service.phone && (
             <div className="flex items-start gap-2 text-xs text-neutral-500 dark:text-neutral-400">
               <Phone size={14} className="text-neutral-400 dark:text-neutral-500 mt-0.5 flex-shrink-0" aria-hidden="true" />
-              <span>{service.phone}</span>
+              <span>{formatPhone(service.phone)}</span>
             </div>
           )}
           {service.email && (
