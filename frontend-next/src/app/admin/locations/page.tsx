@@ -11,6 +11,7 @@ import { ServiceBoroughHeatmap } from "@/components/admin/locations/service-boro
 import { CoordinateIssuesTable } from "@/components/admin/locations/coordinate-issues-table";
 import { CategoryCoverageTable } from "@/components/admin/locations/category-coverage-table";
 import { StaleCategoriesList } from "@/components/admin/locations/stale-categories-list";
+import { FeedbackAggregatesPanel } from "@/components/admin/locations/feedback-aggregates";
 import { LocationsTable } from "@/components/admin/locations/locations-table";
 import { StatCardSkeleton } from "@/components/admin/loading-skeleton";
 import type {
@@ -185,6 +186,23 @@ export default function LocationsPage() {
           would clear the alert.
         </p>
         <StaleCategoriesList />
+      </div>
+
+      {/* Sections 5a + 5b: location feedback aggregates. The component
+       *  fetches once and renders the per-criterion baseline above the
+       *  most-flagged ranking — admins build a population baseline
+       *  before reading individual rows. Section 5c (comments stream)
+       *  comes in a separate day. */}
+      <div className="mt-6">
+        <h2 className="text-base font-semibold mb-3 text-neutral-900 dark:text-neutral-100">
+          Location feedback
+        </h2>
+        <p className="text-xs text-neutral-500 dark:text-neutral-400 mb-3">
+          Per-criterion baseline across all feedback events, plus the most-flagged
+          locations by smoothed negative ratio. Locations need at least 2 feedback
+          events to qualify for the ranking.
+        </p>
+        <FeedbackAggregatesPanel />
       </div>
 
       {/* Section 2b: triage table. ageBucket is controlled by the page

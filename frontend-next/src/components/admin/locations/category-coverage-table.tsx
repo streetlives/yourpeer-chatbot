@@ -14,7 +14,7 @@ import { isAdminApiError } from "@/lib/admin/locations-types";
 // Categories to show by default. Anything beyond surfaces under a
 // "Show all" toggle so admins can drill into the long tail when
 // they need to.
-const DEFAULT_VISIBLE_CATEGORIES = 15;
+const DEFAULT_VISIBLE_CATEGORIES = 12;
 
 /**
  * Section 4a — service-type coverage with demand:supply ratio.

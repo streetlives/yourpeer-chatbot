@@ -1064,3 +1064,208 @@ def test_stale_categories_handles_null_max_verified():
         assert cat["taxonomy_name"] == "Never Verified Tax"
         assert cat["max_verified_at"] is None
         assert cat["days_since_max_verified"] is None
+
+
+# -----------------------------------------------------------------------
+# /feedback-aggregates (day 5 — sections 5a + 5b)
+# -----------------------------------------------------------------------
+
+def test_feedback_aggregates_requires_admin_auth():
+    with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}):
+        response = client.get("/admin/api/locations/feedback-aggregates")
+        assert response.status_code == 401
+
+
+def test_feedback_aggregates_empty_returns_zeros():
+    """No feedback events at all → empty most_flagged, zeroed
+    criterion_summary, but the response shape is fully populated
+    (all four criteria appear with rated=0, negative_pct=null)."""
+    clear_audit_log()
+    with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}):
+        r = admin_client.get("/admin/api/locations/feedback-aggregates")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["most_flagged"] == []
+        assert body["total_eligible"] == 0
+        assert body["min_sample"] == 2
+        assert body["total_events_overall"] == 0
+        # All four criteria render even with no data
+        assert set(body["criterion_summary"].keys()) == {
+            "safety", "friendliness", "cleanliness", "queer_friendly"
+        }
+        for crit, summary in body["criterion_summary"].items():
+            assert summary["events_rated"] == 0
+            assert summary["positive"] == 0
+            assert summary["negative"] == 0
+            assert summary["negative_pct"] is None
+
+
+def test_feedback_aggregates_min_sample_excludes_one_offs():
+    """A location with only 1 feedback event should NOT appear in
+    most_flagged. This is the FEEDBACK_MIN_SAMPLE=2 cutoff that
+    answers spec question 3."""
+    clear_audit_log()
+    log_location_feedback(
+        session_id="s1", location_id="loc-only-once",
+        location_name="Single Event Location", safety=False,
+    )
+    with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}):
+        body = admin_client.get("/admin/api/locations/feedback-aggregates").json()
+        assert body["most_flagged"] == []
+        assert body["total_eligible"] == 0
+        # But the single event still contributes to the criterion summary
+        assert body["total_events_overall"] == 1
+        assert body["criterion_summary"]["safety"]["events_rated"] == 1
+        assert body["criterion_summary"]["safety"]["negative"] == 1
+
+
+def test_feedback_aggregates_min_sample_includes_at_threshold():
+    """A location with exactly FEEDBACK_MIN_SAMPLE (2) events SHOULD
+    appear — the cutoff is inclusive."""
+    clear_audit_log()
+    log_location_feedback(
+        session_id="s1", location_id="loc-at-threshold",
+        location_name="Threshold Location", safety=False,
+    )
+    log_location_feedback(
+        session_id="s2", location_id="loc-at-threshold",
+        location_name="Threshold Location", safety=True,
+    )
+    with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}):
+        body = admin_client.get("/admin/api/locations/feedback-aggregates").json()
+        assert len(body["most_flagged"]) == 1
+        assert body["most_flagged"][0]["location_id"] == "loc-at-threshold"
+        assert body["total_eligible"] == 1
+
+
+def test_feedback_aggregates_smoothing_breaks_tied_100pct_cliff():
+    """Two locations both at 100% negative — Laplace smoothing must
+    rank the higher-sample one above the lower-sample one. This is
+    the bug the smoothing exists to prevent: without it, 2/2 and
+    4/4 would both score 1.0 and order would depend on dict
+    iteration luck."""
+    clear_audit_log()
+    # 2/2 negative
+    log_location_feedback(session_id="s1", location_id="loc-small", location_name="Small", safety=False)
+    log_location_feedback(session_id="s2", location_id="loc-small", location_name="Small", safety=False)
+    # 4/4 negative — should rank above
+    for i in range(4):
+        log_location_feedback(
+            session_id=f"big-{i}", location_id="loc-big", location_name="Big",
+            safety=False,
+        )
+    with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}):
+        body = admin_client.get("/admin/api/locations/feedback-aggregates").json()
+        ids = [r["location_id"] for r in body["most_flagged"]]
+        assert ids == ["loc-big", "loc-small"]
+        # Smoothed values: 2/2 → 3/4 = 0.75; 4/4 → 5/6 ≈ 0.8333
+        big = body["most_flagged"][0]
+        small = body["most_flagged"][1]
+        assert big["negative_ratio_smoothed"] == 0.8333
+        assert small["negative_ratio_smoothed"] == 0.75
+        # raw_negative_ratio for both should be 1.0 — surfacing both
+        # smoothed and raw lets admins see what the "truth" is plus
+        # what ranking we used.
+        assert big["raw_negative_ratio"] == 1.0
+        assert small["raw_negative_ratio"] == 1.0
+
+
+def test_feedback_aggregates_criterion_counts_per_location():
+    """Each location's criterion_counts breaks down individual ratings
+    into pos/neg/rated. A location rated False on safety twice and
+    True on friendliness once should show safety=2 negative + 0 pos
+    + 2 rated; friendliness=0 neg + 1 pos + 1 rated."""
+    clear_audit_log()
+    log_location_feedback(
+        session_id="s1", location_id="loc-mixed",
+        location_name="Mixed", safety=False, friendliness=True,
+    )
+    log_location_feedback(
+        session_id="s2", location_id="loc-mixed",
+        location_name="Mixed", safety=False,
+    )
+    with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}):
+        body = admin_client.get("/admin/api/locations/feedback-aggregates").json()
+        loc = body["most_flagged"][0]
+        c = loc["criterion_counts"]
+        assert c["safety"] == {"positive": 0, "negative": 2, "rated": 2}
+        assert c["friendliness"] == {"positive": 1, "negative": 0, "rated": 1}
+        # Cleanliness and queer_friendly both have all-zero counts
+        # (nobody rated them) — included in shape regardless
+        assert c["cleanliness"] == {"positive": 0, "negative": 0, "rated": 0}
+        assert c["queer_friendly"] == {"positive": 0, "negative": 0, "rated": 0}
+
+
+def test_feedback_aggregates_criterion_summary_population_pct():
+    """Section 5b: per-criterion population %. Across all events, what
+    fraction of safety ratings (where users actually rated safety)
+    were negative?
+
+    Setup: 4 events. Safety rated in all 4: 1 True + 3 False = 75% neg.
+    Cleanliness rated in 1 event: 1 True = 0% neg.
+    Other criteria not rated → events_rated=0, negative_pct=null."""
+    clear_audit_log()
+    log_location_feedback(session_id="s1", location_id="loc-A", location_name="A",
+                          safety=False, cleanliness=True)
+    log_location_feedback(session_id="s2", location_id="loc-A", location_name="A", safety=False)
+    log_location_feedback(session_id="s3", location_id="loc-B", location_name="B", safety=True)
+    log_location_feedback(session_id="s4", location_id="loc-B", location_name="B", safety=False)
+    with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}):
+        cs = admin_client.get("/admin/api/locations/feedback-aggregates").json()["criterion_summary"]
+        assert cs["safety"]["events_rated"] == 4
+        assert cs["safety"]["positive"] == 1
+        assert cs["safety"]["negative"] == 3
+        assert cs["safety"]["negative_pct"] == 75.0
+        assert cs["cleanliness"]["events_rated"] == 1
+        assert cs["cleanliness"]["negative"] == 0
+        assert cs["cleanliness"]["negative_pct"] == 0.0
+        # No friendliness ratings at all → events_rated=0, negative_pct=null
+        assert cs["friendliness"]["events_rated"] == 0
+        assert cs["friendliness"]["negative_pct"] is None
+
+
+def test_feedback_aggregates_comments_count():
+    """A location's comments_count is the number of events with a
+    non-empty comment. Empty strings and whitespace-only strings
+    don't count."""
+    clear_audit_log()
+    log_location_feedback(session_id="s1", location_id="loc-C", location_name="C",
+                          safety=False, comment="really unsafe at night")
+    log_location_feedback(session_id="s2", location_id="loc-C", location_name="C",
+                          safety=True, comment="")
+    log_location_feedback(session_id="s3", location_id="loc-C", location_name="C",
+                          safety=False, comment="   ")    # whitespace-only
+    log_location_feedback(session_id="s4", location_id="loc-C", location_name="C",
+                          safety=False, comment="staff was rude")
+    with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}):
+        body = admin_client.get("/admin/api/locations/feedback-aggregates").json()
+        loc = body["most_flagged"][0]
+        assert loc["total_events"] == 4
+        assert loc["comments_count"] == 2    # only the two real comments
+
+
+def test_feedback_aggregates_top_n_truncation():
+    """When more than MOST_FLAGGED_TOP_N (10) locations qualify, only
+    the top 10 by smoothed negative ratio appear. total_eligible
+    reports the full count."""
+    clear_audit_log()
+    # 12 locations, each with 2 feedback events (above the min sample).
+    # Vary negative count to produce different ratios.
+    for i in range(12):
+        # Location i has i False ratings out of 2 events. So:
+        # i=0: 0 neg / 2 → smoothed 1/4 = 0.25
+        # i=1: but 1 neg + 1 pos / 2 → smoothed 2/4 = 0.5
+        # i=2 onward: capped at 2 negs (only 2 events), so all i>=2
+        #   look the same — that's fine, we're testing truncation
+        #   not ranking nuance.
+        for j in range(2):
+            is_negative = j < min(i, 2)
+            log_location_feedback(
+                session_id=f"s-{i}-{j}", location_id=f"loc-{i}",
+                location_name=f"Loc {i}",
+                safety=False if is_negative else True,
+            )
+    with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}):
+        body = admin_client.get("/admin/api/locations/feedback-aggregates").json()
+        assert len(body["most_flagged"]) == 10    # truncated
+        assert body["total_eligible"] == 12       # full count surfaced

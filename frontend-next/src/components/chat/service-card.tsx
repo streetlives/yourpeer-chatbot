@@ -89,8 +89,8 @@ const REVIEW_TRUNCATE_TO_DESKTOP = 117;
 export function useReviewTruncate(): { at: number; to: number } {
   const [isMobile, setIsMobile] = useState(false);
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- window.innerWidth is undefined during SSR; one-time bridge from SSR default (desktop) to real client viewport
-    setIsMobile(window.innerWidth < 640);
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- matchMedia is undefined during SSR; one-time bridge from SSR default (desktop) to real client viewport
+    setIsMobile(window.matchMedia("(max-width: 639px)").matches);
   }, []);
   return isMobile
     ? { at: REVIEW_TRUNCATE_AT_MOBILE, to: REVIEW_TRUNCATE_TO_MOBILE }
@@ -358,13 +358,11 @@ export function ServiceCard({ service, isActive, index, total, reviewTruncate }:
             type="button"
             onClick={() => setReviewOpen(true)}
             aria-label={`Read full review for ${name}`}
-            className={`${baseCls} text-left w-full transition hover:bg-neutral-100 hover:border-neutral-200 cursor-pointer dark:hover:bg-neutral-800 dark:hover:border-neutral-700`}
+            className={`${baseCls} line-clamp-2 sm:line-clamp-none text-left w-full transition hover:bg-neutral-100 hover:border-neutral-200 cursor-pointer dark:hover:bg-neutral-800 dark:hover:border-neutral-700`}
           >
-            <span className="line-clamp-2 sm:line-clamp-none block">
-              <span aria-hidden="true">💬 </span>
-              {preview}
-            </span>
-            <span className="not-italic font-medium text-amber-700 dark:text-amber-400">
+            <span aria-hidden="true">💬 </span>
+            {preview}
+            <span className="ml-1 not-italic font-medium text-amber-700 dark:text-amber-400">
               Read more
             </span>
           </button>
@@ -582,7 +580,7 @@ function ActionButtons({ service, name }: { service: ServiceResult; name: string
             </span>
             {websiteDomain && (
               <span
-                className="block text-[0.65rem] font-normal text-neutral-500 dark:text-neutral-400 leading-tight mt-0.5 truncate px-1"
+                className="block text-[0.65rem] font-normal text-neutral-700 leading-tight mt-0.5 truncate px-1"
                 title="Google Maps"
               >
                 Google Maps
@@ -822,13 +820,11 @@ export function LocationCard({ services, isActive, index, total, reviewTruncate 
             type="button"
             onClick={() => setReviewOpen(true)}
             aria-label={`Read full review for ${orgName}`}
-            className={`${baseCls} text-left w-full transition hover:bg-neutral-100 hover:border-neutral-200 cursor-pointer dark:hover:bg-neutral-800 dark:hover:border-neutral-700`}
+            className={`${baseCls} line-clamp-2 sm:line-clamp-none text-left w-full transition hover:bg-neutral-100 hover:border-neutral-200 cursor-pointer dark:hover:bg-neutral-800 dark:hover:border-neutral-700`}
           >
-            <span className="line-clamp-2 sm:line-clamp-none block">
-              <span aria-hidden="true">💬 </span>
-              {preview}
-            </span>
-            <span className="not-italic font-medium text-amber-700 dark:text-amber-400">
+            <span aria-hidden="true">💬 </span>
+            {preview}
+            <span className="ml-1 not-italic font-medium text-amber-700 dark:text-amber-400">
               Read more
             </span>
           </button>

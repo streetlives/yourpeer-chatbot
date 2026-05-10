@@ -32,6 +32,7 @@ from app.services.locations_admin import (
     get_coordinate_issues,
     get_category_coverage,
     get_stale_categories,
+    get_location_feedback_aggregates,
 )
 
 logger = logging.getLogger(__name__)
@@ -257,3 +258,31 @@ def locations_stale_categories():
         return get_stale_categories()
     except Exception as e:
         return _admin_error("/api/locations/stale-categories", e)
+
+
+@router.get("/feedback-aggregates")
+def locations_feedback_aggregates():
+    """Sections 5a + 5b: location-feedback aggregation.
+
+    Returns:
+      - `most_flagged`: top-N locations sorted by smoothed negative
+        ratio. FEEDBACK_MIN_SAMPLE eligibility cutoff (≥2 events)
+        avoids one-off noise. Laplace add-one smoothing
+        ((neg+1)/(total+2)) prevents the "tied at 100%" cliff that
+        a raw negative-ratio sort would produce on small samples.
+      - `criterion_summary`: per-criterion population %.
+        How often does safety / friendliness / cleanliness /
+        queer_friendly get flagged across ALL feedback events?
+        Pairs with `most_flagged` to give context: an individual
+        location's 50% safety-negative rate reads differently
+        when the population baseline is 5% vs 30%.
+
+    Sections 5a and 5b are returned in one response because they
+    share the same source events and the Python aggregation pass
+    naturally produces both. Two separate endpoints would mean two
+    scans of the same event log.
+    """
+    try:
+        return get_location_feedback_aggregates()
+    except Exception as e:
+        return _admin_error("/api/locations/feedback-aggregates", e)

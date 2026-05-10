@@ -1295,3 +1295,202 @@ def get_stale_categories() -> dict:
         "total_stale": len(rows),
         "lookback_days": STALE_CATEGORY_LOOKBACK_DAYS,
     }
+
+
+# ---------------------------------------------------------------------------
+# SECTION 5a + 5b — LOCATION FEEDBACK AGGREGATES
+# ---------------------------------------------------------------------------
+
+# The four criteria captured by `log_location_feedback`. Listed here
+# (rather than computed dynamically from event data) so the response
+# shape is stable across runs — sections 5a and 5b always render the
+# same four columns whether or not the underlying events happen to
+# contain them. New criteria require updating this list AND the
+# log_location_feedback signature.
+_FEEDBACK_CRITERIA = ("safety", "friendliness", "cleanliness", "queer_friendly")
+
+# Number of locations to surface in the "most-flagged" ranking.
+# 10 keeps the table scannable and matches the team's review cadence
+# (a few minutes of triage is enough to review 10 rows). The
+# `total_eligible` aggregate in the response lets the frontend show
+# "showing top 10 of N qualifying" framing when there are more.
+MOST_FLAGGED_TOP_N = 10
+
+
+def get_location_feedback_aggregates() -> dict:
+    """Sections 5a + 5b: location-feedback aggregation in one response.
+
+    Returns shape:
+        {
+            "most_flagged": [
+                {
+                    "location_id": str,
+                    "location_name": str | None,    # snapshot from feedback events
+                    "total_events": int,
+                    "criterion_counts": {           # per-criterion {pos, neg, total_rated}
+                        "safety": {"positive": int, "negative": int, "rated": int},
+                        ...
+                    },
+                    "negative_ratings_count": int,  # sum of False ratings across criteria
+                    "total_ratings_count": int,     # sum of all ratings (True+False) across criteria
+                    "negative_ratio_smoothed": float,  # (neg+1)/(total+2)
+                    "raw_negative_ratio": float,    # neg/total — for display alongside smoothed
+                    "last_event_at": str,           # ISO8601
+                    "comments_count": int,          # events with non-empty comment
+                },
+                ...
+            ],
+            "total_eligible": int,                # total locations with ≥ FEEDBACK_MIN_SAMPLE events
+            "min_sample": int,                    # FEEDBACK_MIN_SAMPLE
+            "criterion_summary": {                # section 5b — per-criterion population %
+                "safety": {
+                    "events_rated": int,          # how many events had this criterion rated
+                    "positive": int,              # True ratings count
+                    "negative": int,              # False ratings count
+                    "negative_pct": float | None, # negative / events_rated, or null when 0 events
+                },
+                ...
+            },
+            "total_events_overall": int,
+        }
+
+    Sections 5a (most_flagged) and 5b (criterion_summary) are returned
+    in one response because they share the same source events and the
+    Python aggregation pass naturally produces both. Two separate
+    endpoints would mean two scans of the same event log.
+
+    Smoothing for negative_ratio_smoothed uses Laplace add-one:
+    (neg + 1) / (total_rated + 2). This pulls low-sample locations
+    slightly toward the population mean rather than letting them
+    pin at 100%/0%. Standard pattern, well-understood, no statistical
+    surprises. The raw_negative_ratio is also surfaced so admins can
+    see the unsmoothed signal alongside.
+
+    Eligibility cutoff: a location must have at least FEEDBACK_MIN_SAMPLE
+    events to qualify for the most_flagged ranking. With FEEDBACK_MIN_SAMPLE=2
+    (the answer to question 3 in the spec), this avoids one-off noise
+    while still surfacing genuine signals at low volume.
+    """
+    events = get_recent_events(limit=10000, event_type="location_feedback")
+
+    # Per-location aggregation
+    by_location: dict[str, dict[str, Any]] = {}
+    # Per-criterion population aggregation (section 5b)
+    crit_summary: dict[str, dict[str, int]] = {
+        c: {"events_rated": 0, "positive": 0, "negative": 0}
+        for c in _FEEDBACK_CRITERIA
+    }
+    total_events_overall = 0
+
+    for ev in events:
+        loc_id = ev.get("location_id")
+        if not loc_id:
+            continue
+        loc_id = str(loc_id)
+        total_events_overall += 1
+
+        bucket = by_location.setdefault(
+            loc_id,
+            {
+                "location_name": None,
+                "total_events": 0,
+                "criterion_counts": {
+                    c: {"positive": 0, "negative": 0, "rated": 0}
+                    for c in _FEEDBACK_CRITERIA
+                },
+                "negative_ratings_count": 0,
+                "total_ratings_count": 0,
+                "last_event_at": "",
+                "comments_count": 0,
+            },
+        )
+        bucket["total_events"] += 1
+
+        # Capture the most-recent location_name. Names can change over
+        # time; snapshotting the latest is a reasonable display
+        # choice. Empty / None names are skipped — keeps any prior
+        # non-empty name as a fallback.
+        loc_name = ev.get("location_name")
+        if loc_name:
+            bucket["location_name"] = loc_name
+
+        ts = ev.get("timestamp") or ""
+        if ts > bucket["last_event_at"]:
+            bucket["last_event_at"] = ts
+
+        if (ev.get("comment") or "").strip():
+            bucket["comments_count"] += 1
+
+        ratings = ev.get("ratings") or {}
+        for crit in _FEEDBACK_CRITERIA:
+            if crit not in ratings:
+                continue
+            value = ratings[crit]
+            if value is None:
+                # Defensive — should already be filtered out at log time
+                continue
+            crit_summary[crit]["events_rated"] += 1
+            bucket["criterion_counts"][crit]["rated"] += 1
+            bucket["total_ratings_count"] += 1
+            if value is True:
+                crit_summary[crit]["positive"] += 1
+                bucket["criterion_counts"][crit]["positive"] += 1
+            elif value is False:
+                crit_summary[crit]["negative"] += 1
+                bucket["criterion_counts"][crit]["negative"] += 1
+                bucket["negative_ratings_count"] += 1
+
+    # Compute the most-flagged ranking. Apply the FEEDBACK_MIN_SAMPLE
+    # cutoff (exclude one-off noise) and smooth low-sample ratios via
+    # Laplace add-one smoothing. Sort by smoothed ratio DESC, with
+    # raw negative count as a stable tie-break (a 4/4 ranks above
+    # 2/2 even if the smoothed ratio happens to be the same — and
+    # since Laplace gives 4/4 = 5/6 = 0.833 vs 2/2 = 3/4 = 0.75,
+    # they actually differ; the tie-break is for the rare edge case).
+    eligible_count = 0
+    rows: list[dict[str, Any]] = []
+    for loc_id, bucket in by_location.items():
+        if bucket["total_events"] < FEEDBACK_MIN_SAMPLE:
+            continue
+        eligible_count += 1
+        total_rated = bucket["total_ratings_count"]
+        neg = bucket["negative_ratings_count"]
+        smoothed = (neg + 1) / (total_rated + 2) if total_rated >= 0 else 0.5
+        raw = neg / total_rated if total_rated > 0 else 0.0
+        rows.append({
+            "location_id": loc_id,
+            "location_name": bucket["location_name"],
+            "total_events": bucket["total_events"],
+            "criterion_counts": bucket["criterion_counts"],
+            "negative_ratings_count": neg,
+            "total_ratings_count": total_rated,
+            "negative_ratio_smoothed": round(smoothed, 4),
+            "raw_negative_ratio": round(raw, 4),
+            "last_event_at": bucket["last_event_at"],
+            "comments_count": bucket["comments_count"],
+        })
+
+    rows.sort(key=lambda r: (-r["negative_ratio_smoothed"], -r["negative_ratings_count"]))
+    most_flagged = rows[:MOST_FLAGGED_TOP_N]
+
+    # Build the per-criterion summary (section 5b)
+    criterion_summary: dict[str, dict[str, Any]] = {}
+    for crit in _FEEDBACK_CRITERIA:
+        c = crit_summary[crit]
+        rated = c["events_rated"]
+        criterion_summary[crit] = {
+            "events_rated": rated,
+            "positive": c["positive"],
+            "negative": c["negative"],
+            "negative_pct": (
+                round(100.0 * c["negative"] / rated, 1) if rated > 0 else None
+            ),
+        }
+
+    return {
+        "most_flagged": most_flagged,
+        "total_eligible": eligible_count,
+        "min_sample": FEEDBACK_MIN_SAMPLE,
+        "criterion_summary": criterion_summary,
+        "total_events_overall": total_events_overall,
+    }

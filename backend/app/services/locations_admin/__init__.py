@@ -18,6 +18,7 @@ from app.services.locations_admin.aggregations import (
     get_coordinate_issues,
     get_category_coverage,
     get_stale_categories,
+    get_location_feedback_aggregates,
     FRESHNESS_THRESHOLD_DAYS,
     RECENT_FLAGS_LOOKBACK_DAYS,
     HEATMAP_TOP_N_CATEGORIES,
@@ -26,6 +27,7 @@ from app.services.locations_admin.aggregations import (
     NYC_BOROUGHS,
     STALE_CATEGORY_LOOKBACK_DAYS,
     STALE_CATEGORIES_TOP_N,
+    MOST_FLAGGED_TOP_N,
 )
 
 __all__ = [
@@ -37,6 +39,7 @@ __all__ = [
     "get_coordinate_issues",
     "get_category_coverage",
     "get_stale_categories",
+    "get_location_feedback_aggregates",
     "FRESHNESS_THRESHOLD_DAYS",
     "RECENT_FLAGS_LOOKBACK_DAYS",
     "HEATMAP_TOP_N_CATEGORIES",
@@ -45,4 +48,5 @@ __all__ = [
     "NYC_BOROUGHS",
     "STALE_CATEGORY_LOOKBACK_DAYS",
     "STALE_CATEGORIES_TOP_N",
+    "MOST_FLAGGED_TOP_N",
 ]

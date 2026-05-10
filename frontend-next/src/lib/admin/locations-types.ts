@@ -300,6 +300,94 @@ export interface StaleCategoriesResponse {
 }
 
 // -----------------------------------------------------------------
+// GET /api/admin/locations/feedback-aggregates — sections 5a + 5b
+// -----------------------------------------------------------------
+
+export type FeedbackCriterion =
+  | "safety"
+  | "friendliness"
+  | "cleanliness"
+  | "queer_friendly";
+
+export const FEEDBACK_CRITERIA: ReadonlyArray<FeedbackCriterion> = [
+  "safety",
+  "friendliness",
+  "cleanliness",
+  "queer_friendly",
+] as const;
+
+/** Display label for each criterion — kept on the frontend so the
+ *  presentation can change without backend coordination. */
+export const FEEDBACK_CRITERION_LABELS: Record<FeedbackCriterion, string> = {
+  safety: "Safety",
+  friendliness: "Friendliness",
+  cleanliness: "Cleanliness",
+  queer_friendly: "Queer-friendly",
+};
+
+export interface CriterionCounts {
+  positive: number;
+  negative: number;
+  /** total ratings on this criterion (positive + negative). */
+  rated: number;
+}
+
+export interface MostFlaggedRow {
+  location_id: string;
+  /** May be null if every event on this location lacked a name
+   *  (rare — the chat captures this from the service card title). */
+  location_name: string | null;
+  total_events: number;
+  criterion_counts: Record<FeedbackCriterion, CriterionCounts>;
+  /** Sum of False ratings across all four criteria. */
+  negative_ratings_count: number;
+  /** Sum of True+False ratings across all four criteria. */
+  total_ratings_count: number;
+  /** (neg + 1) / (total + 2) — Laplace smoothing. Used for the
+   *  default sort order. */
+  negative_ratio_smoothed: number;
+  /** neg / total — surfaced for transparency alongside the smoothed
+   *  ratio so admins can see what the "raw" signal looks like. */
+  raw_negative_ratio: number;
+  /** ISO8601 of the most-recent feedback event for this location. */
+  last_event_at: string;
+  /** Number of events with non-empty (non-whitespace) comments. */
+  comments_count: number;
+}
+
+export interface CriterionSummaryRow {
+  /** How many events rated this criterion (the denominator for any
+   *  per-criterion analysis). */
+  events_rated: number;
+  positive: number;
+  negative: number;
+  /** negative / events_rated as a percentage. null when events_rated
+   *  is 0 — distinguishes "this criterion isn't being rated" from
+   *  "this criterion is consistently positive (0% negative)". */
+  negative_pct: number | null;
+}
+
+export interface FeedbackAggregatesResponse {
+  /** Top-N locations sorted by smoothed negative ratio. May be empty
+   *  even when total_events_overall > 0 (if no location has reached
+   *  the min_sample cutoff). */
+  most_flagged: MostFlaggedRow[];
+  /** Locations that meet the min_sample cutoff. May exceed
+   *  most_flagged.length when there are more than MOST_FLAGGED_TOP_N
+   *  qualifying locations. */
+  total_eligible: number;
+  /** Eligibility threshold (FEEDBACK_MIN_SAMPLE on the backend). */
+  min_sample: number;
+  /** Per-criterion population %: how often does each criterion get
+   *  flagged across ALL feedback events? Always renders all four
+   *  criteria, even when none have data. */
+  criterion_summary: Record<FeedbackCriterion, CriterionSummaryRow>;
+  /** Total location_feedback events seen — useful for "X events from
+   *  Y locations" framing. */
+  total_events_overall: number;
+}
+
+// -----------------------------------------------------------------
 // API error shape — shared with other admin endpoints
 // -----------------------------------------------------------------
 
