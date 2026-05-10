@@ -10,7 +10,7 @@ import type {
   CriterionSummaryRow,
   FeedbackCriterion,
 } from "@/lib/admin/locations-types";
-import { useAdminFetch } from "@/lib/admin/use-admin-fetch";
+import { useAdminFetch } from "@/hooks/use-admin-fetch";
 import {
   FEEDBACK_CRITERIA,
   FEEDBACK_CRITERION_LABELS,

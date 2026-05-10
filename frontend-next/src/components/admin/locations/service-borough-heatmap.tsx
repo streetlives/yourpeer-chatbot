@@ -6,7 +6,7 @@
 import { useMemo, useState } from "react";
 import { AlertCircle, ChevronDown, ChevronUp } from "lucide-react";
 import type { HeatmapResponse, HeatmapCategory, BoroughLabel } from "@/lib/admin/locations-types";
-import { useAdminFetch } from "@/lib/admin/use-admin-fetch";
+import { useAdminFetch } from "@/hooks/use-admin-fetch";
 
 // Default top-N matching the backend constant. Surfaced here as a
 // const so future tuning lives in one place. Backend's

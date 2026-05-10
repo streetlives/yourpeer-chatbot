@@ -9,7 +9,7 @@ import type {
   CategoryCoverageResponse,
   CategoryCoverageRow,
 } from "@/lib/admin/locations-types";
-import { useAdminFetch } from "@/lib/admin/use-admin-fetch";
+import { useAdminFetch } from "@/hooks/use-admin-fetch";
 
 // Categories to show by default. Anything beyond surfaces under a
 // "Show all" toggle so admins can drill into the long tail when

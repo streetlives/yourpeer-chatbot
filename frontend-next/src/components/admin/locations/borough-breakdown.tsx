@@ -5,7 +5,7 @@
 
 import { AlertCircle } from "lucide-react";
 import type { BoroughBreakdownResponse } from "@/lib/admin/locations-types";
-import { useAdminFetch } from "@/lib/admin/use-admin-fetch";
+import { useAdminFetch } from "@/hooks/use-admin-fetch";
 
 /**
  * Section 3a — borough breakdown table.
