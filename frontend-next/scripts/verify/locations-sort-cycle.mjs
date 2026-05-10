@@ -33,7 +33,7 @@
  */
 
 import { fileURLToPath } from "node:url";
-import { dirname, resolve } from "node:path";
+import { dirname } from "node:path";
 
 import {
   defaultSortDirForField,
