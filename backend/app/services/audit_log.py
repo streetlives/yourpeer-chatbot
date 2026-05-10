@@ -475,7 +475,7 @@ def get_stats() -> dict:
         "time_of_day": time_of_day,
         "post_results_engagement": post_results_eng,
         # --- P2 metrics (Run 23+) ---
-        "geographic_demand": _compute_geographic_demand(queries),
+        "geographic_demand": _compute_geographic_demand(turns, queries),
         "frustration_tiers": _compute_frustration_tiers(turns),
         "session_duration": _compute_session_duration(all_events),
         "repetition_rate": _compute_repetition_rate(all_events),
@@ -849,36 +849,128 @@ def _compute_post_results_engagement(turns: list, queries: list) -> dict:
 # P2: GEOGRAPHIC DEMAND DISTRIBUTION
 # ---------------------------------------------------------------------------
 
-def _compute_geographic_demand(queries: list) -> dict:
-    """Session count and service type breakdown by location.
+def _compute_geographic_demand(turns: list, queries: list) -> dict:
+    """Session count and service-type breakdown by user-stated location.
 
     Identifies underserved areas: if 40% of searches are for Brooklyn
     but only 15% of database entries are Brooklyn locations, there's a
     coverage gap.
+
+    HISTORICAL BUG (May 2026): the original implementation read
+    ``q.get("params", {}).get("location", "")`` from query_execution
+    events. That key never exists on those events — by the time a
+    request reaches SQL, the user-stated "Brooklyn" has been
+    transformed into one of ``city`` / ``city_list`` / ``city_pattern``
+    / ``lat``+``lon`` (depending on which filter the template uses), and
+    none of those is named "location." So the dict-build always
+    produced ``{}`` and the Where widget always rendered its empty
+    state regardless of how much data was in the system.
+
+    Fix: read user-stated locations from ``conversation_turn.slots``,
+    where the LLM extractor stores them under the "location" key
+    before downstream code translates to query params. Pair with
+    query events for no-result-rate signal: a query is associated
+    with the location stated in the most-recent prior turn of the
+    same session.
+
+    Args:
+        turns: conversation_turn events. Each may have ``slots.location``.
+        queries: query_execution events. Each has timestamp, session_id,
+                 result_count.
+
+    Returns:
+        Dict keyed by lowercased location string. Each value:
+            total_queries: int — how many queries fired for this location
+            share: float — fraction of all located queries (0-1)
+            no_result_rate: float — fraction of queries with 0 results
+            top_services: dict — service_type → count, top 5
     """
-    by_location: dict[str, dict] = {}
-    for q in queries:
-        loc = q.get("params", {}).get("location", "")
-        if not loc:
+    # Step 1: build a per-session timeline of (timestamp, location)
+    # so we can attribute each query to the user-stated location that
+    # was in scope at query time. Sort by timestamp ascending so
+    # bisect_right finds the most-recent prior location.
+    by_session: dict[str, list[tuple[str, str]]] = {}
+    for t in turns:
+        slots = t.get("slots") or {}
+        loc = slots.get("location")
+        if not loc or not isinstance(loc, str):
             continue
         loc = loc.lower().strip()
-        if loc not in by_location:
-            by_location[loc] = {"total": 0, "services": {}, "no_result": 0}
-        by_location[loc]["total"] += 1
-        if q.get("result_count", 0) == 0:
-            by_location[loc]["no_result"] += 1
-        svc = q.get("params", {}).get("service_type", "unknown")
-        by_location[loc]["services"][svc] = by_location[loc]["services"].get(svc, 0) + 1
+        if not loc:
+            continue
+        sid = t.get("session_id") or ""
+        ts = t.get("timestamp") or ""
+        by_session.setdefault(sid, []).append((ts, loc))
+    for sid in by_session:
+        by_session[sid].sort()
 
+    # Step 2: walk queries in time order and attribute each to the
+    # session's most-recent prior stated location. Aggregate by
+    # location.
+    by_location: dict[str, dict] = {}
+    for q in queries:
+        sid = q.get("session_id") or ""
+        if sid not in by_session:
+            continue
+        q_ts = q.get("timestamp") or ""
+        # Find the most-recent stated location at or before q_ts.
+        # Linear scan is fine — turn lists are typically <50 entries
+        # per session and queries are <10.
+        loc = None
+        for ts, candidate in by_session[sid]:
+            if ts <= q_ts:
+                loc = candidate
+            else:
+                break
+        if not loc:
+            # Query fired before the user stated a location (e.g. a
+            # default-borough fallback search). Don't attribute it
+            # — would distort the "what are users asking for" signal.
+            continue
+        bucket = by_location.setdefault(
+            loc, {"total": 0, "services": {}, "no_result": 0}
+        )
+        bucket["total"] += 1
+        if q.get("result_count", 0) == 0:
+            bucket["no_result"] += 1
+        params = q.get("params") or {}
+        # Service type lives in bound_params under taxonomy_name (the
+        # SQL bind key) — same naming gotcha as the location bug above.
+        # Fall back to template_name on the event itself for events
+        # without a taxonomy_name param.
+        svc = (
+            params.get("taxonomy_name")
+            or q.get("template_name")
+            or "unknown"
+        )
+        bucket["services"][svc] = bucket["services"].get(svc, 0) + 1
+
+    # Step 3: shape the response.
     total_queries = sum(v["total"] for v in by_location.values())
     result = {}
-    for loc in sorted(by_location, key=lambda x: by_location[x]["total"], reverse=True):
+    for loc in sorted(
+        by_location, key=lambda x: by_location[x]["total"], reverse=True
+    ):
         info = by_location[loc]
         result[loc] = {
             "total_queries": info["total"],
-            "share": round(info["total"] / total_queries, 2) if total_queries else 0,
-            "no_result_rate": round(info["no_result"] / info["total"], 2) if info["total"] else 0,
-            "top_services": dict(sorted(info["services"].items(), key=lambda x: x[1], reverse=True)[:5]),
+            "share": (
+                round(info["total"] / total_queries, 2)
+                if total_queries
+                else 0
+            ),
+            "no_result_rate": (
+                round(info["no_result"] / info["total"], 2)
+                if info["total"]
+                else 0
+            ),
+            "top_services": dict(
+                sorted(
+                    info["services"].items(),
+                    key=lambda x: x[1],
+                    reverse=True,
+                )[:5]
+            ),
         }
     return result
 

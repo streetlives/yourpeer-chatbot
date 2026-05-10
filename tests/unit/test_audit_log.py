@@ -1320,3 +1320,182 @@ def test_contextvar_isolation_across_coroutines():
         f"Expected each coroutine to record its own session_id; got {sids}"
     )
 
+
+
+# -----------------------------------------------------------------------
+# GEOGRAPHIC DEMAND
+#
+# Regression coverage for the May 2026 fix: previously the function read
+# `params.location` from query_execution events, but that key never
+# existed on those events (the bound_params dict has `city`/`city_list`/
+# `lat`+`lon`, never `location`). The widget always rendered its empty
+# state. Tests below lock in the new behavior: read user-stated location
+# from conversation_turn slots and attribute queries to the most-recent
+# prior stated location of the same session.
+# -----------------------------------------------------------------------
+
+def test_geographic_demand_basic_aggregation():
+    """User states Brooklyn, fires a query with a result → should appear
+    under 'brooklyn' with total=1 and no_result_rate=0."""
+    clear_audit_log()
+    log_conversation_turn(
+        session_id="s1", user_message_redacted="food in Brooklyn",
+        slots={"service_type": "food", "location": "Brooklyn"},
+    )
+    log_query_execution(
+        session_id="s1", template_name="food",
+        params={"taxonomy_name": "Food", "city": "brooklyn"},
+        result_count=5, execution_ms=42,
+    )
+    geo = get_stats()["geographic_demand"]
+    assert "brooklyn" in geo
+    assert geo["brooklyn"]["total_queries"] == 1
+    assert geo["brooklyn"]["no_result_rate"] == 0
+
+
+def test_geographic_demand_no_result_rate():
+    """A query that returned 0 results is reflected in no_result_rate."""
+    clear_audit_log()
+    log_conversation_turn(
+        session_id="s1", slots={"service_type": "food", "location": "Bronx"},
+    )
+    log_query_execution(
+        session_id="s1", template_name="food",
+        params={"city": "bronx"}, result_count=0, execution_ms=15,
+    )
+    log_query_execution(
+        session_id="s1", template_name="food",
+        params={"city": "bronx"}, result_count=2, execution_ms=18,
+    )
+    geo = get_stats()["geographic_demand"]
+    assert geo["bronx"]["total_queries"] == 2
+    assert geo["bronx"]["no_result_rate"] == 0.5  # 1 of 2 had no results
+
+
+def test_geographic_demand_multiple_sessions_multiple_locations():
+    """Three sessions, two locations — Brooklyn (2 queries) and Queens
+    (1 query). Brooklyn should rank first by total."""
+    clear_audit_log()
+    log_conversation_turn(
+        session_id="s1", slots={"location": "Brooklyn"},
+    )
+    log_query_execution(
+        session_id="s1", template_name="food",
+        params={"city": "brooklyn"}, result_count=3, execution_ms=20,
+    )
+    log_conversation_turn(
+        session_id="s2", slots={"location": "Brooklyn"},
+    )
+    log_query_execution(
+        session_id="s2", template_name="shelter",
+        params={"city": "brooklyn"}, result_count=2, execution_ms=25,
+    )
+    log_conversation_turn(
+        session_id="s3", slots={"location": "Queens"},
+    )
+    log_query_execution(
+        session_id="s3", template_name="food",
+        params={"city": "queens"}, result_count=1, execution_ms=22,
+    )
+    geo = get_stats()["geographic_demand"]
+    assert list(geo.keys())[0] == "brooklyn"  # ranked first
+    assert geo["brooklyn"]["total_queries"] == 2
+    assert geo["queens"]["total_queries"] == 1
+    assert geo["brooklyn"]["share"] == round(2 / 3, 2)
+
+
+def test_geographic_demand_session_changes_location():
+    """User says 'food in Brooklyn', searches, then says 'try Queens' and
+    searches again. Each query should be attributed to the location
+    stated immediately before it."""
+    clear_audit_log()
+    log_conversation_turn(
+        session_id="s1", slots={"location": "Brooklyn"},
+    )
+    log_query_execution(
+        session_id="s1", template_name="food",
+        params={"city": "brooklyn"}, result_count=3, execution_ms=20,
+    )
+    log_conversation_turn(
+        session_id="s1", slots={"location": "Queens"},
+    )
+    log_query_execution(
+        session_id="s1", template_name="food",
+        params={"city": "queens"}, result_count=2, execution_ms=22,
+    )
+    geo = get_stats()["geographic_demand"]
+    assert geo["brooklyn"]["total_queries"] == 1
+    assert geo["queens"]["total_queries"] == 1
+
+
+def test_geographic_demand_query_before_location_stated_is_dropped():
+    """A query that fires before the user states a location (e.g. a
+    default-borough fallback) should NOT be attributed to anyone —
+    we don't know what they wanted. Drop it from the aggregation."""
+    clear_audit_log()
+    # Query first — no location stated yet
+    log_query_execution(
+        session_id="s1", template_name="food",
+        params={"city": "manhattan"},  # default fallback
+        result_count=10, execution_ms=15,
+    )
+    # User states location AFTER the query (e.g. via post-results refinement)
+    log_conversation_turn(
+        session_id="s1", slots={"location": "Brooklyn"},
+    )
+    geo = get_stats()["geographic_demand"]
+    # The pre-location query should NOT be attributed to brooklyn —
+    # the user hadn't said brooklyn yet at query time.
+    assert "brooklyn" not in geo
+    assert geo == {}
+
+
+def test_geographic_demand_normalizes_case_and_whitespace():
+    """Locations should be normalized to lowercase + stripped so 'Brooklyn',
+    'brooklyn ', and 'BROOKLYN' aggregate as one."""
+    clear_audit_log()
+    for sid, loc in [("s1", "Brooklyn"), ("s2", "brooklyn "), ("s3", " BROOKLYN")]:
+        log_conversation_turn(session_id=sid, slots={"location": loc})
+        log_query_execution(
+            session_id=sid, template_name="food",
+            params={"city": "brooklyn"}, result_count=1, execution_ms=20,
+        )
+    geo = get_stats()["geographic_demand"]
+    assert list(geo.keys()) == ["brooklyn"]
+    assert geo["brooklyn"]["total_queries"] == 3
+
+
+def test_geographic_demand_top_services_breakdown():
+    """top_services should reflect the taxonomy_name distribution per
+    location, capped at top 5."""
+    clear_audit_log()
+    log_conversation_turn(session_id="s1", slots={"location": "Brooklyn"})
+    for _ in range(3):
+        log_query_execution(
+            session_id="s1", template_name="food",
+            params={"taxonomy_name": "Food", "city": "brooklyn"},
+            result_count=2, execution_ms=20,
+        )
+    log_query_execution(
+        session_id="s1", template_name="shelter",
+        params={"taxonomy_name": "Shelter", "city": "brooklyn"},
+        result_count=1, execution_ms=20,
+    )
+    geo = get_stats()["geographic_demand"]
+    top = geo["brooklyn"]["top_services"]
+    assert list(top.keys())[0] == "Food"  # most common first
+    assert top["Food"] == 3
+    assert top["Shelter"] == 1
+
+
+def test_geographic_demand_empty_slots_does_not_crash():
+    """A turn with slots={} or no location key should be ignored, not crash."""
+    clear_audit_log()
+    log_conversation_turn(session_id="s1", slots={"service_type": "food"})
+    log_query_execution(
+        session_id="s1", template_name="food",
+        params={"city": "brooklyn"}, result_count=1, execution_ms=20,
+    )
+    # No location was stated → query has nothing to attribute to → empty
+    geo = get_stats()["geographic_demand"]
+    assert geo == {}
