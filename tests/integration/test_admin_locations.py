@@ -24,6 +24,7 @@ from datetime import datetime, timezone, timedelta
 from unittest.mock import patch
 from typing import Any
 
+import pytest
 from fastapi.testclient import TestClient
 from app.main import app
 from app.services.audit_log import (
@@ -31,10 +32,21 @@ from app.services.audit_log import (
     log_location_feedback,
     log_query_execution,
 )
-# Helper context manager — pytest's caplog fixture has subtle behavior
-# around logger propagation in deeply-nested loggers; a simple
-# capture context is cleaner for these tests.
-from contextlib import contextmanager
+from app.services.locations_admin.cache import clear_locations_admin_cache
+
+
+# Cache-clearing fixture. The locations admin aggregations are
+# wrapped in @ttl_cached() — without resetting between tests, the
+# second test of a given endpoint would hit the cache from the first
+# test, bypass the mocked _execute_sql, and produce surprising
+# assertions ("nothing was queried but the response is populated").
+# autouse=True keeps it invisible at the call site; matches the
+# existing clear_audit_log() pattern at the start of every test.
+@pytest.fixture(autouse=True)
+def _clear_admin_cache_between_tests():
+    clear_locations_admin_cache()
+    yield
+    clear_locations_admin_cache()
 
 
 # Mirror the _AdminClient pattern from test_admin_api_routes.py — see
@@ -2258,6 +2270,12 @@ def test_list_all_invalid_categories_produces_empty_filter_and_warns():
     )
 
 
+# Helper context manager — pytest's caplog fixture has subtle behavior
+# around logger propagation in deeply-nested loggers; a simple
+# capture context is cleaner for these tests.
+from contextlib import contextmanager
+
+
 @contextmanager
 def caplog_for(logger_name: str):
     """Capture logs from the named logger as a context manager.
@@ -2370,6 +2388,107 @@ def test_timeseries_buckets_events_by_et_week_not_utc_week():
         f"bug M9 is supposed to fix. last_week={last_week_bucket['feedback_events']}, "
         f"this_week={this_week_bucket['feedback_events']}"
     )
+
+
+def test_timeseries_handles_dst_spring_forward_correctly():
+    """DST edge case: the spring-forward Sunday is a 23-hour day in ET.
+    A feedback event at 9pm EDT on that Sunday must still bucket into
+    the Monday-before week, not the Monday-after week.
+
+    The M9 implementation uses calendar-date arithmetic for bucket
+    assignment (`dt.weekday()`, `timedelta(days=N)`), which is
+    DST-immune for date math. The WHERE bound has a 1-day buffer
+    beyond the earliest expected event, so no events are accidentally
+    excluded near the boundary. This test proves both invariants by
+    pinning "now" to a fixed post-DST date and injecting an event at
+    the exact DST-Sunday-evening boundary.
+
+    Spring-forward 2024-03-10: at 02:00 EST the clock jumps to 03:00
+    EDT. An event at 9pm EDT on Sunday 2024-03-10 corresponds to
+    01:00 UTC on Monday 2024-03-11 — UTC bucketing would put it in
+    the week of 2024-03-11 (wrong; one week off from the admin's
+    wall clock).
+    """
+    from datetime import datetime as real_datetime
+    from app.services.locations_admin.aggregations import DISPLAY_TIMEZONE
+    from app.services import audit_log
+
+    # Fixed "now": Wednesday after the 2024-03-10 spring-forward.
+    # The 26-week window from here looks back to ~Sep 2023; the DST
+    # Sunday (2024-03-10) is comfortably within that range.
+    FAKE_NOW_DATE = real_datetime(2024, 3, 13, 12, 0, 0)
+
+    class MockedDateTime(real_datetime):
+        @classmethod
+        def now(cls, tz=None):
+            if tz is None:
+                return FAKE_NOW_DATE
+            return FAKE_NOW_DATE.replace(tzinfo=tz)
+
+    # 9pm EDT on the DST-transition Sunday.
+    dst_sunday_9pm_et = real_datetime(
+        2024, 3, 10, 21, 0, 0, tzinfo=DISPLAY_TIMEZONE
+    )
+    # Sanity-check the test fixture: 9pm EDT on 2024-03-10 should be
+    # 01:00 UTC on 2024-03-11 (i.e., the UTC weekday is Monday).
+    dst_sunday_9pm_utc = dst_sunday_9pm_et.astimezone(timezone.utc)
+    assert dst_sunday_9pm_utc.weekday() == 0 and dst_sunday_9pm_utc.day == 11, (
+        "Test fixture error: 9pm EDT 2024-03-10 should map to UTC "
+        f"Monday 2024-03-11. Got {dst_sunday_9pm_utc.isoformat()}. "
+        "Likely DST rules changed (unlikely) or the test date is wrong."
+    )
+
+    clear_audit_log()
+    with audit_log._lock:
+        audit_log._events.append({
+            "type": "location_feedback",
+            "timestamp": dst_sunday_9pm_et.isoformat(),
+            "session_id": "dst-spring",
+            "location_id": "loc-dst-spring",
+            "location_name": "DST Spring",
+            "ratings": {"safety": False},
+        })
+
+    responder = _make_sql_responder({})
+    with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}), \
+         patch("app.services.locations_admin.aggregations.datetime", MockedDateTime), \
+         patch("app.services.locations_admin.aggregations._execute_sql",
+               side_effect=responder):
+        body = admin_client.get("/admin/api/locations/timeseries").json()
+
+    # The DST Sunday (2024-03-10) is in the week of Monday 2024-03-04.
+    week_of_march_4 = next(
+        (w for w in body["weeks"] if w["week_start"] == "2024-03-04"),
+        None,
+    )
+    assert week_of_march_4 is not None, (
+        "Couldn't find bucket for week starting 2024-03-04. Either "
+        "the 26-week window is wrong, or the mocked 'now' isn't taking "
+        "effect. Got week starts: "
+        f"{[w['week_start'] for w in body['weeks']]}"
+    )
+    assert week_of_march_4["feedback_events"] == 1, (
+        f"DST-Sunday event (9pm EDT 2024-03-10 = 01:00 UTC 2024-03-11) "
+        f"should be in the week of 2024-03-04 from a NYC admin's view. "
+        f"Got feedback_events={week_of_march_4['feedback_events']}. "
+        f"If this is 0, UTC bucketing won (regression). If it's >1, "
+        f"something else is in the audit log."
+    )
+
+    # Sanity-check the adjacent week: 2024-03-11 should NOT have the event.
+    # Catches a regression where DST handling inverts the boundary.
+    week_of_march_11 = next(
+        (w for w in body["weeks"] if w["week_start"] == "2024-03-11"),
+        None,
+    )
+    if week_of_march_11 is not None:
+        assert week_of_march_11["feedback_events"] == 0, (
+            f"DST-Sunday event leaked into the week-of-2024-03-11 bucket. "
+            f"This is the UTC-bucketing regression that M9 was supposed to "
+            f"fix at the DST boundary specifically. "
+            f"week_of_march_4={week_of_march_4['feedback_events']}, "
+            f"week_of_march_11={week_of_march_11['feedback_events']}"
+        )
 
 
 # -----------------------------------------------------------------------
@@ -2557,4 +2676,159 @@ def test_admin_error_response_does_not_leak_exception_type_or_message():
     assert sentinel_msg in log_blob, (
         f"Internal error message should have been logged server-side. "
         f"Logs: {log_messages}"
+    )
+
+
+# -----------------------------------------------------------------------
+# Server-side TTL cache. Eleven of the twelve admin aggregations are
+# wrapped in @ttl_cached() — these tests prove the cache does its job
+# (subsequent calls skip SQL within the TTL window) without breaking
+# correctness (fresh data still comes through after explicit invalidation).
+# -----------------------------------------------------------------------
+
+def test_cache_dedupes_repeated_calls_to_same_endpoint():
+    """Within the TTL window, repeated calls to a cached endpoint
+    should hit SQL exactly once. The autouse fixture clears the
+    cache before each test, so this test's first call is guaranteed
+    to be a MISS.
+    """
+    sql_call_count = 0
+    stats_row = _stats_row()
+
+    def counting_responder(sql, params):
+        nonlocal sql_call_count
+        sql_call_count += 1
+        return stats_row
+
+    with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}), \
+         patch("app.services.locations_admin.aggregations._execute_sql",
+               side_effect=counting_responder):
+        # First call — MISS, executes SQL.
+        r1 = admin_client.get("/admin/api/locations/stats")
+        assert r1.status_code == 200
+        first_call_sql_count = sql_call_count
+        assert first_call_sql_count > 0, (
+            f"First call should have executed SQL. Got "
+            f"sql_call_count={first_call_sql_count}"
+        )
+
+        # Second call — HIT, no additional SQL.
+        r2 = admin_client.get("/admin/api/locations/stats")
+        assert r2.status_code == 200
+        assert sql_call_count == first_call_sql_count, (
+            f"Second call should have been served from cache (zero new "
+            f"SQL calls). Got {sql_call_count - first_call_sql_count} "
+            f"new SQL calls."
+        )
+
+        # Response bodies should be identical — cache returns the
+        # same payload, not just any 200.
+        assert r1.json() == r2.json(), (
+            "Cached response body differs from original. The cache "
+            "should be a pure read-through, not a re-render."
+        )
+
+
+def test_cache_clear_forces_fresh_query():
+    """clear_locations_admin_cache() should invalidate all entries.
+    After clearing, the next call should re-execute SQL.
+    """
+    sql_call_count = 0
+    stats_row = _stats_row()
+
+    def counting_responder(sql, params):
+        nonlocal sql_call_count
+        sql_call_count += 1
+        return stats_row
+
+    with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}), \
+         patch("app.services.locations_admin.aggregations._execute_sql",
+               side_effect=counting_responder):
+        admin_client.get("/admin/api/locations/stats")
+        before_clear_count = sql_call_count
+        assert before_clear_count > 0
+
+        # Confirm cache is doing its job (second call is HIT).
+        admin_client.get("/admin/api/locations/stats")
+        assert sql_call_count == before_clear_count, (
+            "Cache HIT precondition failed — second call ran SQL."
+        )
+
+        # Explicit flush.
+        clear_locations_admin_cache()
+
+        # Now the next call should MISS and re-execute SQL.
+        admin_client.get("/admin/api/locations/stats")
+        assert sql_call_count > before_clear_count, (
+            f"After cache flush, SQL should re-execute. "
+            f"sql_call_count went from {before_clear_count} → "
+            f"{sql_call_count} (expected increase)."
+        )
+
+
+def test_cache_does_not_leak_state_across_distinct_endpoints():
+    """The cache keys on function name + args. Stats and timeseries
+    are different functions and shouldn't collide. A call to one
+    should NOT serve the other from cache.
+    """
+    sql_call_count = 0
+
+    def counting_responder(sql, params):
+        nonlocal sql_call_count
+        sql_call_count += 1
+        if "COUNT(*) AS total" in sql:
+            return [{"total": 0}]
+        return []
+
+    with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}), \
+         patch("app.services.locations_admin.aggregations._execute_sql",
+               side_effect=counting_responder):
+        admin_client.get("/admin/api/locations/stats")
+        after_stats = sql_call_count
+
+        admin_client.get("/admin/api/locations/timeseries")
+        after_timeseries = sql_call_count
+
+    assert after_timeseries > after_stats, (
+        f"Timeseries call should have run its own SQL (different "
+        f"cache key from stats). Got: after_stats={after_stats}, "
+        f"after_timeseries={after_timeseries}. If equal, the cache "
+        f"is dangerously collapsing distinct endpoints into one entry."
+    )
+
+
+def test_cache_list_endpoint_intentionally_not_cached():
+    """The /list endpoint takes high-cardinality filter args (page,
+    sort, borough, age_bucket, search, category, has_issues). Caching
+    it would mean one cache entry per filter combination, which is
+    unbounded in practice. It's also the most admin-interactive
+    endpoint — admins click filters expecting fresh results.
+
+    Confirm /list is NOT cached: two identical requests should run
+    the SQL twice.
+    """
+    sql_call_count = 0
+
+    def counting_responder(sql, params):
+        nonlocal sql_call_count
+        sql_call_count += 1
+        if "COUNT(*) AS total" in sql:
+            return [{"total": 0}]
+        return []
+
+    with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}), \
+         patch("app.services.locations_admin.aggregations._execute_sql",
+               side_effect=counting_responder):
+        admin_client.get("/admin/api/locations/list?page=1")
+        first_count = sql_call_count
+
+        admin_client.get("/admin/api/locations/list?page=1")
+        second_count = sql_call_count
+
+    assert second_count > first_count, (
+        f"/list should NOT be cached — two identical requests should "
+        f"run SQL twice. Got first_count={first_count}, "
+        f"second_count={second_count}. If they're equal, someone "
+        f"added @ttl_cached() to get_locations_list — see the docstring "
+        f"on this test for why that's a bad idea at high filter cardinality."
     )

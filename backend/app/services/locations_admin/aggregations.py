@@ -37,14 +37,16 @@ AUDIT_LOG_CAP events becomes a visible signal in production logs
 rather than a quietly-undercounting aggregation.
 """
 from __future__ import annotations
-import zoneinfo
+
 import logging
+import zoneinfo
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from app.rag.query_executor import _execute_sql
 from app.services.audit_log import get_recent_events
+from app.services.locations_admin.cache import ttl_cached
 
 logger = logging.getLogger(__name__)
 
@@ -160,6 +162,7 @@ def _get_events_capped(event_type: str) -> list:
 # SECTION 1 — TOP STAT STRIP
 # ---------------------------------------------------------------------------
 
+@ttl_cached()
 def get_locations_stats() -> dict:
     """Six-card stat strip + 7-day trend deltas.
 
@@ -753,6 +756,7 @@ _FRESHNESS_BUCKETS = (
 )
 
 
+@ttl_cached()
 def get_freshness_histogram() -> dict:
     """Section 2a: freshness distribution as 6 buckets.
 
@@ -823,6 +827,7 @@ def get_freshness_histogram() -> dict:
 # SECTION 3a — BOROUGH BREAKDOWN TABLE
 # ---------------------------------------------------------------------------
 
+@ttl_cached()
 def get_locations_by_borough() -> dict:
     """Section 3a: per-borough rollup.
 
@@ -973,6 +978,7 @@ def get_locations_by_borough() -> dict:
 # SECTION 3b — SERVICE-CATEGORY × BOROUGH HEAT MAP
 # ---------------------------------------------------------------------------
 
+@ttl_cached()
 def get_service_borough_heatmap() -> dict:
     """Section 3b: 39-categories × 5-boroughs (+ Other) coverage heatmap.
 
@@ -1062,6 +1068,7 @@ def get_service_borough_heatmap() -> dict:
 # SECTION 3c — COORDINATE VALIDATION TABLE
 # ---------------------------------------------------------------------------
 
+@ttl_cached()
 def get_coordinate_issues() -> dict:
     """Section 3c: locations whose lat/lon doesn't match their declared city.
 
@@ -1300,6 +1307,7 @@ _TEMPLATE_TO_TAXONOMIES: dict[str, list[str]] = {
 }
 
 
+@ttl_cached()
 def get_category_coverage() -> dict:
     """Section 4a: per-taxonomy coverage table with demand:supply ratio.
 
@@ -1476,6 +1484,7 @@ STALE_CATEGORY_LOOKBACK_DAYS = 180
 STALE_CATEGORIES_TOP_N = 10
 
 
+@ttl_cached()
 def get_stale_categories() -> dict:
     """Section 4b: top-N taxonomies where every offering location is stale.
 
@@ -1573,6 +1582,7 @@ _FEEDBACK_CRITERIA = ("safety", "friendliness", "cleanliness", "queer_friendly")
 MOST_FLAGGED_TOP_N = 10
 
 
+@ttl_cached()
 def get_location_feedback_aggregates() -> dict:
     """Sections 5a + 5b: location-feedback aggregation in one response.
 
@@ -1795,6 +1805,7 @@ RECENT_COMMENTS_DEFAULT_LIMIT = 50
 RECENT_COMMENTS_MAX_LIMIT = 200
 
 
+@ttl_cached()
 def get_recent_feedback_comments(limit: int = RECENT_COMMENTS_DEFAULT_LIMIT) -> dict:
     """Section 5c: reverse-chronological list of recent location_feedback
     events that include a non-empty comment.
@@ -1911,6 +1922,7 @@ _VALID_PHONE_RE = r"^\(?\d{3}\)?[-. ]?\d{3}[-. ]?\d{4}( ?(x|ext\.?) ?\d+)?$"
 _PHONELIKE_RE = r"[0-9].*[0-9].*[0-9].*[0-9].*[0-9].*[0-9].*[0-9]"
 
 
+@ttl_cached()
 def get_data_integrity_callouts() -> dict:
     """Section 6: data-integrity callouts.
 
@@ -2110,6 +2122,7 @@ def _scalar_count(sql: str, params: Optional[dict] = None) -> int:
 # weeks. No tz conversion issues since everything is server-local.
 
 
+@ttl_cached()
 def get_locations_timeseries() -> dict:
     """Section 7: weekly locations-added / verified / feedback time series.
 

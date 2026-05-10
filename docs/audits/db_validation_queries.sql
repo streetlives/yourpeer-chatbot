@@ -172,3 +172,147 @@ WHERE t.parent_name = 'Clothing'
    OR t.name = 'Clothing'
 GROUP BY t.name, t.parent_name
 ORDER BY services_tagged DESC;
+
+
+-- ═══════════════════════════════════════════════════════════════
+-- QUERY 5: Index coverage check for the Locations admin endpoints
+--
+-- The admin endpoints (PR #93) execute aggregations across these
+-- tables. The PR description claims sub-5s response times, which
+-- assumes the following indexes exist:
+--
+--   service_at_locations(location_id)   — heatmap, list enrichment,
+--                                          M8 enrichment CTE
+--   service_at_locations(service_id)   — heatmap, category coverage
+--   service_taxonomy(service_id)       — heatmap, category coverage,
+--                                          stale-categories
+--   service_taxonomy(taxonomy_id)      — same group
+--   taxonomies(name)                   — M7 taxonomy validation,
+--                                          category filter on /list
+--   locations(last_validated_at)       — stat strip, freshness
+--                                          histogram, timeseries
+--   physical_addresses(location_id)    — list query JOIN
+--   phones(location_id)                — list query LATERAL
+--   regular_schedules(service_id)      — has_hours EXISTS subquery
+--
+-- Run this query against staging or prod to confirm each. Any row
+-- in the second result set (missing indexes) is a candidate
+-- explanation for slow endpoints. Streetlives is a third-party DB,
+-- so we can't assume any of these — verify before complaining
+-- about latency.
+-- ═══════════════════════════════════════════════════════════════
+
+-- Part A: list existing indexes on the tables the admin queries hit.
+-- Useful to see what's actually there, including indexes that
+-- weren't anticipated but might still help.
+SELECT
+    schemaname,
+    tablename,
+    indexname,
+    indexdef
+FROM pg_indexes
+WHERE schemaname = 'public'
+  AND tablename IN (
+    'service_at_locations',
+    'service_taxonomy',
+    'taxonomies',
+    'locations',
+    'physical_addresses',
+    'phones',
+    'regular_schedules'
+  )
+ORDER BY tablename, indexname;
+
+-- Part B: list the EXPECTED column-coverages and flag any that are
+-- missing. Returns one row per missing index. Empty result = all
+-- expected indexes present.
+WITH expected AS (
+    SELECT 'service_at_locations'::text AS tablename, 'location_id'::text AS col
+    UNION ALL SELECT 'service_at_locations', 'service_id'
+    UNION ALL SELECT 'service_taxonomy',     'service_id'
+    UNION ALL SELECT 'service_taxonomy',     'taxonomy_id'
+    UNION ALL SELECT 'taxonomies',           'name'
+    UNION ALL SELECT 'locations',            'last_validated_at'
+    UNION ALL SELECT 'physical_addresses',   'location_id'
+    UNION ALL SELECT 'phones',               'location_id'
+    UNION ALL SELECT 'regular_schedules',    'service_id'
+),
+covered AS (
+    SELECT
+        t.relname AS tablename,
+        a.attname AS col
+    FROM pg_index ix
+    JOIN pg_class t ON t.oid = ix.indrelid
+    JOIN pg_attribute a ON a.attrelid = t.oid
+                       AND a.attnum = ANY(ix.indkey)
+    JOIN pg_namespace n ON n.oid = t.relnamespace
+    WHERE n.nspname = 'public'
+)
+SELECT
+    e.tablename,
+    e.col AS expected_indexed_column,
+    'MISSING' AS status
+FROM expected e
+LEFT JOIN covered c USING (tablename, col)
+WHERE c.tablename IS NULL
+ORDER BY e.tablename, e.col;
+
+-- Part C: EXPLAIN ANALYZE for the heaviest queries the admin hits.
+-- Replace :TODAY with today's date before running. These are the
+-- three queries most likely to be slow if an index is missing.
+
+-- Heatmap aggregation (admin section 3b) — 39 categories × 5
+-- boroughs = 195 grouped cells across service_taxonomy joined to
+-- service_at_locations.
+-- EXPLAIN ANALYZE
+-- SELECT t.name AS category, pa.city AS borough,
+--        COUNT(DISTINCT l.id) AS location_count
+-- FROM taxonomies t
+-- JOIN service_taxonomy st ON st.taxonomy_id = t.id
+-- JOIN service_at_locations sal ON sal.service_id = st.service_id
+-- JOIN locations l ON l.id = sal.location_id
+-- JOIN physical_addresses pa ON pa.location_id = l.id
+-- WHERE t.parent_name IS NULL
+-- GROUP BY t.name, pa.city;
+
+-- Category coverage (admin section 4a) — per-taxonomy rollup
+-- with freshness ratio. Touches the same join tree plus
+-- locations.last_validated_at for the time filter.
+-- EXPLAIN ANALYZE
+-- SELECT t.name AS category,
+--        COUNT(DISTINCT s.id) AS total_services,
+--        COUNT(DISTINCT sal.location_id) AS total_locations,
+--        COUNT(DISTINCT CASE
+--            WHEN l.last_validated_at >= NOW() - INTERVAL '90 days'
+--            THEN sal.location_id END
+--        ) AS fresh_locations
+-- FROM taxonomies t
+-- LEFT JOIN service_taxonomy st ON st.taxonomy_id = t.id
+-- LEFT JOIN service_at_locations sal ON sal.service_id = st.service_id
+-- LEFT JOIN locations l ON l.id = sal.location_id
+-- LEFT JOIN services s ON s.id = st.service_id
+-- WHERE t.parent_name IS NULL
+-- GROUP BY t.name;
+
+-- List enrichment (admin section 2b, M8 fix) — runs once per page
+-- with the page's location_ids in a bind param. Returns top_categories
+-- and distinct_categories_count.
+-- EXPLAIN ANALYZE
+-- WITH ranked AS (
+--     SELECT sal.location_id, t.name,
+--            COUNT(*) AS n,
+--            ROW_NUMBER() OVER (
+--                PARTITION BY sal.location_id
+--                ORDER BY COUNT(*) DESC, t.name
+--            ) AS rn
+--     FROM service_at_locations sal
+--     JOIN service_taxonomy st ON st.service_id = sal.service_id
+--     JOIN taxonomies t ON t.id = st.taxonomy_id
+--     WHERE sal.location_id::text = ANY(ARRAY['1','2','3','4','5'])
+--     GROUP BY sal.location_id, t.name
+-- )
+-- SELECT location_id::text,
+--        ARRAY_AGG(name ORDER BY rn) FILTER (WHERE rn <= 3) AS top_categories,
+--        COUNT(DISTINCT name) AS distinct_categories_count
+-- FROM ranked
+-- GROUP BY location_id;
