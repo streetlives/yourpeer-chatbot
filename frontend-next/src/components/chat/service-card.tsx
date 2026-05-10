@@ -3,7 +3,7 @@
 
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { MapPin, Phone, Mail, Clock, CheckCircle, AlertTriangle, ChevronDown, ExternalLink } from "lucide-react";
 import type { ServiceResult } from "@/lib/chat/types";
 import { LocationFeedbackRow } from "./location-feedback-row";
@@ -41,8 +41,62 @@ function extractDomain(url: string): string | null {
   }
 }
 
-const REVIEW_TRUNCATE_AT = 120;
-const REVIEW_TRUNCATE_TO = 117;
+// Review preview thresholds.
+//
+// On mobile, vertical space is precious — every line on the service
+// card matters because users have to scroll past N cards to evaluate
+// options, and reviews that take 3+ lines compound into a real cost.
+// The "Read more" dialog is the right surface for the full text.
+//
+// Both mobile and desktop card widths wrap reviews at ~35 chars/line.
+// The difference isn't horizontal — it's visual context: on mobile
+// the card is one of many that fill the chat region; on desktop the
+// card sits in a roomier carousel with more whitespace around it.
+// So mobile gets the tight threshold, desktop gets the original.
+//
+// Mobile: 80 chars ≈ 2 lines of preview before "Read more". Combined
+// with line-clamp-2 below, even a low-character-count review with no
+// natural break points can't exceed 2 lines visually.
+//
+// Desktop: 120 chars ≈ 3 lines, the original behavior. Plenty of card
+// real estate to host that.
+const REVIEW_TRUNCATE_AT_MOBILE = 80;
+const REVIEW_TRUNCATE_TO_MOBILE = 77;
+const REVIEW_TRUNCATE_AT_DESKTOP = 120;
+const REVIEW_TRUNCATE_TO_DESKTOP = 117;
+
+/**
+ * Hook returning the right truncation threshold for the current viewport.
+ *
+ * SSR-safe by design: the initial value is the desktop threshold (which
+ * is what the SSR-rendered HTML will use), then a layout effect after
+ * mount reads the real viewport and re-renders if it's mobile. The
+ * intermediate "show desktop preview, then re-render to mobile preview"
+ * step happens in a single tick, before the user sees anything, so
+ * there's no visible flash. This pattern avoids the hydration mismatch
+ * that would result from reading window.innerWidth directly in render.
+ *
+ * Threshold matches Tailwind's `sm:` breakpoint (640px) for consistency
+ * with the rest of the responsive layout — same boundary used by the
+ * header layout, chat region min-height, and quick-reply padding fixes.
+ *
+ * Doesn't subscribe to resize events. The viewport doesn't change
+ * frequently in practice (orientation change or window resize), and
+ * the cost of subscribing — adding a listener per service card on
+ * the page — outweighs the rare benefit. If a user resizes mid-session
+ * across the breakpoint, their reviews stay at the previous size until
+ * the next message arrives and re-renders the card. Acceptable.
+ */
+function useReviewTruncate(): { at: number; to: number } {
+  const [isMobile, setIsMobile] = useState(false);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- window.innerWidth is undefined during SSR; one-time bridge from SSR default (desktop) to real client viewport
+    setIsMobile(window.innerWidth < 640);
+  }, []);
+  return isMobile
+    ? { at: REVIEW_TRUNCATE_AT_MOBILE, to: REVIEW_TRUNCATE_TO_MOBILE }
+    : { at: REVIEW_TRUNCATE_AT_DESKTOP, to: REVIEW_TRUNCATE_TO_DESKTOP };
+}
 
 interface ServiceCardProps {
   service: ServiceResult;
@@ -183,6 +237,7 @@ export function ServiceCard({ service, isActive, index, total }: ServiceCardProp
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [alsoExpanded, setAlsoExpanded] = useState(false);
   const [reviewOpen, setReviewOpen] = useState(false);
+  const reviewTruncate = useReviewTruncate();
 
   const name = service.service_name || "Service";
   const cardLabel =
@@ -245,13 +300,24 @@ export function ServiceCard({ service, isActive, index, total }: ServiceCardProp
 
       {/* Review highlight — visible by default (builds trust). When the
           full text exceeds the inline preview length, render as a button
-          that opens the detail dialog so users can read the rest. */}
+          that opens the detail dialog so users can read the rest.
+
+          Two-layer truncation:
+            1. Character-count truncate (REVIEW_TRUNCATE_AT_MOBILE/DESKTOP)
+               cuts the preview text at a natural prose length.
+            2. CSS line-clamp-2 on mobile is a defensive cap: if the
+               truncated text still wraps to more than 2 lines (long
+               unbreakable words, very narrow viewports, etc.), clamp
+               kicks in and shows ellipsis at line 2. sm:line-clamp-none
+               restores normal text flow on desktop where vertical
+               space is plentiful. */}
       {service.review_highlight && (() => {
-        const truncated = service.review_highlight.length > REVIEW_TRUNCATE_AT;
+        const { at, to } = reviewTruncate;
+        const truncated = service.review_highlight.length > at;
         const preview = truncated
-          ? service.review_highlight.slice(0, REVIEW_TRUNCATE_TO) + "…"
+          ? service.review_highlight.slice(0, to) + "…"
           : service.review_highlight;
-        const baseCls = "text-xs text-neutral-500 dark:text-neutral-400 leading-relaxed bg-neutral-50 border border-neutral-100 rounded-lg px-3 py-2 italic dark:bg-neutral-700/60 dark:border-neutral-700";
+        const baseCls = "text-xs text-neutral-500 dark:text-neutral-400 leading-relaxed bg-neutral-50 border border-neutral-100 rounded-lg px-3 py-2 italic dark:bg-neutral-700/60 dark:border-neutral-700 line-clamp-2 sm:line-clamp-none";
         if (!truncated) {
           return (
             <div className={baseCls}>
@@ -477,13 +543,7 @@ function ActionButtons({ service, name }: { service: ServiceResult; name: string
             aria-label={`Get directions to ${name} (opens in new tab)`}
             className="flex-1 min-w-0 py-2 rounded-lg border border-amber-300 bg-amber-300 text-center text-xs font-semibold text-neutral-900 transition hover:bg-amber-400 hover:border-amber-400 dark:border-[rgba(255,213,79,0.75)] dark:bg-[rgba(255,213,79,0.75)] dark:hover:bg-[rgba(255,213,79,0.95)] dark:hover:border-[rgba(255,213,79,0.95)]"
           >
-            <span className="block leading-tight">
-              Directions
-            </span>
-              <span
-                className="block text-[0.65rem] font-normal text-neutral-500 dark:text-neutral-400 leading-tight mt-0.5 truncate px-1">
-                Google Maps
-              </span>
+            Directions
           </a>
         )}
         {service.website && (
@@ -541,6 +601,7 @@ interface LocationCardProps {
 export function LocationCard({ services, isActive, index, total }: LocationCardProps) {
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [reviewOpen, setReviewOpen] = useState(false);
+  const reviewTruncate = useReviewTruncate();
 
   const primary = services[0];
   const orgName = primary.organization || "Location";
@@ -684,13 +745,16 @@ export function LocationCard({ services, isActive, index, total }: LocationCardP
       </div>
 
       {/* Review highlight — clickable to open the full text when
-          truncated. See ServiceCard above for the same pattern. */}
+          truncated. See ServiceCard above for the same pattern,
+          including the rationale for the two-layer truncate
+          (character count + line-clamp). */}
       {review && (() => {
-        const truncated = review.length > REVIEW_TRUNCATE_AT;
+        const { at, to } = reviewTruncate;
+        const truncated = review.length > at;
         const preview = truncated
-          ? review.slice(0, REVIEW_TRUNCATE_TO) + "…"
+          ? review.slice(0, to) + "…"
           : review;
-        const baseCls = "text-xs text-neutral-500 dark:text-neutral-400 leading-relaxed bg-neutral-50 border border-neutral-100 rounded-lg px-3 py-2 italic dark:bg-neutral-700/60 dark:border-neutral-700";
+        const baseCls = "text-xs text-neutral-500 dark:text-neutral-400 leading-relaxed bg-neutral-50 border border-neutral-100 rounded-lg px-3 py-2 italic dark:bg-neutral-700/60 dark:border-neutral-700 line-clamp-2 sm:line-clamp-none";
         if (!truncated) {
           return (
             <div className={baseCls}>
