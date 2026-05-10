@@ -368,16 +368,18 @@ export function ChatContainer() {
         </div>
       )}
 
-      {/* Backend degraded — AI features limited but service search works */}
+      {/* Backend degraded — desktop only. On mobile this renders below
+          the chat log (closer to the input). See the sm:hidden copy. */}
       {connectionState === "degraded" && (
-        <div role="status" className="mx-1 mb-2 px-3 py-2 rounded-lg bg-amber-50 border border-amber-200 text-sm text-amber-700 dark:bg-amber-950/40 dark:border-amber-800 dark:text-amber-300">
-          {statusDetail.includes("API key")
-            ? "Running in basic mode — service search still works."
-            : statusDetail.includes("Rate limit")
-              ? "Temporarily limited — service search still works."
-              : statusDetail.includes("Anthropic") || statusDetail.includes("API")
-                ? "AI features temporarily limited — service search still works."
-                : "Some features may be limited — service search still works."}
+        <div
+          role="status"
+          className="hidden sm:block mx-1 mb-2 px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-700 dark:bg-amber-950/40 dark:border-amber-800 dark:text-amber-300"
+        >
+          {statusDetail.includes("Rate limit")
+            ? "Temporarily rate-limited — try again in a moment, or use simple phrases like \u201cfood in Brooklyn\u201d."
+            : statusDetail.includes("Anthropic") || statusDetail.includes("API")
+              ? "AI features temporarily limited — service search still works."
+              : "Running in basic mode — try simple phrases like \u201cfood in Brooklyn\u201d for best results."}
         </div>
       )}
 
@@ -456,12 +458,18 @@ export function ChatContainer() {
         </div>
       </div>
 
+      {/* Backend degraded — mobile only. On desktop this renders above
+          the chat log. See the hidden sm:block copy above. */}
       {connectionState === "degraded" && (
         <div
           role="status"
-          className="mx-1 my-2 px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-700 dark:bg-amber-950/40 dark:border-amber-800 dark:text-amber-300"
+          className="sm:hidden mx-1 my-2 px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-700 dark:bg-amber-950/40 dark:border-amber-800 dark:text-amber-300"
         >
-          Running in basic mode — try simple phrases like &ldquo;food in Brooklyn&rdquo; for best results.
+          {statusDetail.includes("Rate limit")
+            ? "Temporarily rate-limited — try again in a moment, or use simple phrases like \u201cfood in Brooklyn\u201d."
+            : statusDetail.includes("Anthropic") || statusDetail.includes("API")
+              ? "AI features temporarily limited — service search still works."
+              : "Running in basic mode — try simple phrases like \u201cfood in Brooklyn\u201d for best results."}
         </div>
       )}
 

@@ -138,6 +138,7 @@ export function ChatInput({ onSend, disabled }: ChatInputProps) {
           maxLength={MAX_MESSAGE_LENGTH}
           placeholder="What do you need help with?"
           autoComplete="off"
+          enterKeyHint="send"
           disabled={disabled}
           className="flex-1 px-4 py-3 border border-neutral-200 rounded-xl bg-white text-neutral-900 text-base outline-none transition-all focus:border-neutral-300 focus:ring-2 focus:ring-amber-300/30 placeholder:text-neutral-400 disabled:opacity-50 dark:bg-neutral-900 dark:border-neutral-700 dark:text-neutral-100 dark:focus:border-neutral-600 dark:placeholder:text-neutral-500"
         />

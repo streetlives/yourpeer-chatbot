@@ -88,7 +88,7 @@ const REVIEW_TRUNCATE_TO_DESKTOP = 117;
  * across the breakpoint, their reviews stay at the previous size until
  * the next message arrives and re-renders the card. Acceptable.
  */
-function useReviewTruncate(): { at: number; to: number } {
+export function useReviewTruncate(): { at: number; to: number } {
   const [isMobile, setIsMobile] = useState(false);
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- window.innerWidth is undefined during SSR; one-time bridge from SSR default (desktop) to real client viewport
@@ -104,6 +104,7 @@ interface ServiceCardProps {
   isActive?: boolean;
   index?: number;
   total?: number;
+  reviewTruncate: { at: number; to: number };
 }
 
 function StatusBadge({ status, allDay }: { status?: string; allDay?: boolean }) {
@@ -253,11 +254,10 @@ const ALSO_EMOJI: Record<string, string> = {
 
 const ALSO_HERE_VISIBLE = 3;
 
-export function ServiceCard({ service, isActive, index, total }: ServiceCardProps) {
+export function ServiceCard({ service, isActive, index, total, reviewTruncate }: ServiceCardProps) {
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [alsoExpanded, setAlsoExpanded] = useState(false);
   const [reviewOpen, setReviewOpen] = useState(false);
-  const reviewTruncate = useReviewTruncate();
 
   const name = service.service_name || "Service";
   const cardLabel =
@@ -422,7 +422,7 @@ export function ServiceCard({ service, isActive, index, total }: ServiceCardProp
               <button
                 type="button"
                 onClick={() => setAlsoExpanded(true)}
-                className="inline-block text-[0.68rem] font-medium px-2 py-0.5 rounded-md bg-neutral-50 border border-neutral-200 text-blue-600 hover:bg-blue-50 hover:border-blue-200 transition-colors dark:bg-neutral-700 dark:border-neutral-600 dark:text-blue-300 dark:hover:bg-blue-950/40 dark:hover:border-blue-900"
+                className="inline-flex items-center min-h-[2rem] text-[0.68rem] font-medium px-2 py-1 rounded-md bg-neutral-50 border border-neutral-200 text-blue-600 hover:bg-blue-50 hover:border-blue-200 transition-colors dark:bg-neutral-700 dark:border-neutral-600 dark:text-blue-300 dark:hover:bg-blue-950/40 dark:hover:border-blue-900"
               >
                 +{alsoHiddenCount} more
               </button>
@@ -489,9 +489,14 @@ function DetailsSection({ service, hasDetails, detailsOpen, setDetailsOpen }: {
             </div>
           )}
           {service.email && (
-            <div className="flex items-start gap-2 text-sm text-neutral-500 dark:text-neutral-400">
+            <div className="flex items-start gap-2 text-xs text-neutral-500 dark:text-neutral-400">
               <Mail size={14} className="text-neutral-400 dark:text-neutral-500 mt-0.5 flex-shrink-0" aria-hidden="true" />
-              <span>{service.email}</span>
+              <a
+                href={`mailto:${service.email}`}
+                className="underline underline-offset-2 hover:text-neutral-700 dark:hover:text-neutral-200 break-all"
+              >
+                {service.email}
+              </a>
             </div>
           )}
           {service.accessibility && (
@@ -625,12 +630,12 @@ interface LocationCardProps {
   isActive?: boolean;
   index?: number;
   total?: number;
+  reviewTruncate: { at: number; to: number };
 }
 
-export function LocationCard({ services, isActive, index, total }: LocationCardProps) {
+export function LocationCard({ services, isActive, index, total, reviewTruncate }: LocationCardProps) {
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [reviewOpen, setReviewOpen] = useState(false);
-  const reviewTruncate = useReviewTruncate();
 
   const primary = services[0];
   const orgName = primary.organization || "Location";
