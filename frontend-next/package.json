@@ -18,7 +18,9 @@
     "verify:globals-css": "node scripts/verify/globals-css.mjs",
     "verify:safe-html": "node scripts/verify/safe-html.mjs",
     "verify:format-phone": "node scripts/verify/format-phone.mjs",
-    "verify": "npm run verify:redaction && npm run verify:pending && npm run verify:pii && npm run verify:theme && npm run verify:time && npm run verify:bucket-keys && npm run verify:contract && npm run verify:backend-url && npm run verify:globals-css && npm run verify:safe-html && npm run verify:format-phone"
+    "verify:locations-contract": "node scripts/verify/locations-contract.mjs",
+    "verify:locations-sort-cycle": "node scripts/verify/locations-sort-cycle.mjs",
+    "verify": "npm run verify:redaction && npm run verify:pending && npm run verify:pii && npm run verify:theme && npm run verify:time && npm run verify:bucket-keys && npm run verify:contract && npm run verify:backend-url && npm run verify:globals-css && npm run verify:safe-html && npm run verify:format-phone && npm run verify:locations-contract && npm run verify:locations-sort-cycle"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.5",

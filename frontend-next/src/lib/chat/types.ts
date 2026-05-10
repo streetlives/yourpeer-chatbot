@@ -361,6 +361,32 @@ export interface AuditEvent {
     organizations?: string[];
     bot_response?: string;
   };
+
+  // ---------------------------------------------------------------
+  // location_feedback-specific fields
+  //
+  // The backend's log_location_feedback persists these alongside the
+  // generic comment/rating/context, but they used to be untyped here
+  // and silently dropped by frontend renderers. Adding them lets the
+  // event-feed, transcript-drawer, and the new Locations admin page
+  // render the full per-criterion data.
+  //
+  // Optional because they only appear on `type: "location_feedback"`
+  // events. Renderers should narrow on `ev.type === "location_feedback"`
+  // before reading.
+  // ---------------------------------------------------------------
+  /** UUID of the physical service location the user rated. */
+  location_id?: string;
+  /** Human-readable location name at the time of feedback (snapshot). */
+  location_name?: string | null;
+  /** Per-criterion booleans. true = positive, false = negative; absent = not asked.
+   *  Renderers count `false` values to display "flag" indicators. */
+  ratings?: {
+    safety?: boolean;
+    friendliness?: boolean;
+    cleanliness?: boolean;
+    queer_friendly?: boolean;
+  };
 }
 
 export interface QueryLogEntry {

@@ -313,6 +313,39 @@ def _stated_borough_from_city(city: Optional[str]) -> Optional[str]:
     return _get_city_to_borough().get(city.strip().lower())
 
 
+# Public alias for the city→borough resolver.
+#
+# Originally `_stated_borough_from_city` was private to this module
+# because only `_annotate_geographic_borough` (below) consumed it.
+# The locations admin section then started reading it directly for
+# its coordinate-validation table, which created an awkward
+# private-import dependency across modules. Exposing this name as
+# the public-facing form (no leading underscore) gives external
+# consumers a stable symbol to import without reaching into the
+# module's internals.
+#
+# If the implementation ever needs to change shape (cached differently,
+# moved to boundaries.py, etc.), the private name can move while this
+# alias stays as the import-stable surface.
+stated_borough_from_city = _stated_borough_from_city
+
+
+# Public alias for the full city→borough dict (lowercased keys).
+#
+# The locations admin's `_borough_case_sql` builds a SQL CASE statement
+# from this mapping so the deployed heatmap and borough-breakdown
+# bucket raw `pa.city` values to the right borough — without it, the
+# helper falls back to exact-string, case-sensitive matching on five
+# names, which silently routes case variants ("BROOKLYN"), aliases
+# ("The Bronx"), and Queens neighborhoods ("Astoria", "Flushing",
+# "Jamaica", "Long Island City") into "Other".
+#
+# Same rationale as stated_borough_from_city above: keeping the public
+# alias here means the admin code imports a stable symbol instead of
+# reaching past the underscore.
+get_nyc_city_to_borough = _get_city_to_borough
+
+
 # Services we've already warned about this process. Rate-limits the
 # borough_mismatch WARNING log so a popular wrong-borough service doesn't
 # flood the logs each time it's returned from a search. Set membership is

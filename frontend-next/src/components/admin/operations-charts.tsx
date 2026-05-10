@@ -48,21 +48,27 @@ function WidgetCard({
   children?: React.ReactNode;
 }) {
   return (
-    <div className="bg-white border border-neutral-200 rounded-lg p-4">
+    <div className="bg-white border border-neutral-200 rounded-lg p-4 dark:bg-neutral-900 dark:border-neutral-800">
       <div className="flex items-baseline justify-between gap-2 mb-3">
         <div>
-          <div className="text-xs uppercase tracking-wider text-neutral-500 font-semibold">
+          {/* Title typography: was `text-xs uppercase tracking-wider`
+           *  which read like a form-label, not a chart title. Bumped
+           *  to text-sm semibold (no uppercase), matching the section
+           *  headings used elsewhere in admin (the locations page,
+           *  conversation table). Better hierarchy contrast against
+           *  body text and against the subtitle. */}
+          <div className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">
             {title}
           </div>
           {subtitle && (
-            <div className="text-[0.7rem] text-neutral-400 mt-0.5">
+            <div className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">
               {subtitle}
             </div>
           )}
         </div>
       </div>
       {emptyHint ? (
-        <div className="text-sm text-neutral-400 italic py-3">
+        <div className="text-sm text-neutral-400 italic py-3 dark:text-neutral-500">
           {emptyHint}
         </div>
       ) : (
@@ -137,10 +143,10 @@ function VerticalBars({
                 title={`${it.label}: ${it.value}`}
                 className={`w-full rounded-t-[2px] transition-all ${
                   isHighlight
-                    ? "bg-amber-400"
+                    ? "bg-amber-400 dark:bg-amber-500"
                     : it.value === 0
-                      ? "bg-neutral-100"
-                      : "bg-amber-300/70 hover:bg-amber-400"
+                      ? "bg-neutral-100 dark:bg-neutral-800"
+                      : "bg-amber-300/70 hover:bg-amber-400 dark:bg-amber-400/60 dark:hover:bg-amber-400"
                 }`}
                 style={{ height: heightStyle }}
               />
@@ -151,7 +157,16 @@ function VerticalBars({
       {/* Labels row — only render labels at sparse intervals on long
           rows so they don't crowd. The chart is still informative as a
           shape; the title attribute on each bar carries the precise
-          value/label. */}
+          value/label.
+
+          Labels are intentionally NOT truncated — they're short (≤5
+          chars) and benefitted from being readable. Old truncate-on-
+          column-width logic produced the "12..." / "12..." collision
+          bug where midnight and noon both rendered as "12..." because
+          each label's column was only ~30px wide on a 24-bar chart.
+          Allowing horizontal overflow + center-alignment puts the
+          full text under the bar without clipping; with sparse
+          labeling there's no neighbor to collide with. */}
       <div className="flex items-start gap-[2px] mt-1.5">
         {items.map((it, i) => {
           // For 24-bucket charts, label every 6th bar (midnight, 6am,
@@ -164,17 +179,26 @@ function VerticalBars({
           return (
             <div
               key={i}
-              className="flex-1 min-w-0 text-center"
+              className="flex-1 min-w-0 text-center relative"
               style={{ visibility: showLabel ? "visible" : "hidden" }}
             >
-              <div className="text-[0.6rem] text-neutral-400 leading-tight truncate">
+              {/* Absolute-positioned label is immune to flex column
+                  width — overflows its 30px slot freely. With sparse
+                  labeling (every 6th column on a 24-bar chart), there
+                  are no neighbors to collide with. */}
+              <div className="text-[0.65rem] text-neutral-500 leading-tight whitespace-nowrap absolute left-1/2 -translate-x-1/2 top-0">
                 {it.label}
               </div>
               {it.sublabel && showLabel && (
-                <div className="text-[0.55rem] text-neutral-300 leading-tight truncate">
+                <div className="text-[0.55rem] text-neutral-400 leading-tight whitespace-nowrap absolute left-1/2 -translate-x-1/2 top-3">
                   {it.sublabel}
                 </div>
               )}
+              {/* Spacer to give the label-row container its height since
+                  the label itself is now absolute-positioned. */}
+              <div className="text-[0.65rem] leading-tight invisible" aria-hidden="true">
+                {it.label}
+              </div>
             </div>
           );
         })}
@@ -215,21 +239,36 @@ function HorizontalBars({
         const pct = (it.value / maxValue) * 100;
         const secondaryClass =
           it.secondaryColor === "danger"
-            ? "text-red-600"
+            ? "text-red-600 dark:text-red-400"
             : it.secondaryColor === "warn"
-              ? "text-amber-600"
-              : "text-neutral-400";
+              ? "text-amber-600 dark:text-amber-400"
+              : "text-neutral-400 dark:text-neutral-500";
         return (
           <div key={i} className="flex items-center gap-2 text-xs">
-            <div className="w-[100px] flex-shrink-0 truncate text-neutral-700 font-medium" title={it.label}>
+            {/* Label column. Was fixed `w-[100px] truncate` which
+             *  produced "Domestic Viole..." and "Suicide / Self-..."
+             *  truncations on the all-time crisis breakdown — labels
+             *  in CRISIS_DISPLAY_LABELS run up to 19 chars and 100px
+             *  at text-xs only fits ~11-13.
+             *
+             *  min-w/max-w lets labels claim the room they need up to
+             *  a sensible cap; whitespace-nowrap prevents mid-word
+             *  wrapping. Beyond max-w (rare — only "Suicide / Self-
+             *  Harm" approaches it) labels still get an ellipsis via
+             *  truncate, but the cap is generous enough to fit every
+             *  current crisis category fully. */}
+            <div
+              className="min-w-[120px] max-w-[160px] flex-shrink-0 truncate whitespace-nowrap text-neutral-700 font-medium dark:text-neutral-300"
+              title={it.label}
+            >
               {it.label}
             </div>
-            <div className="flex-1 h-[18px] bg-neutral-100 rounded overflow-hidden relative">
+            <div className="flex-1 h-[18px] bg-neutral-100 rounded overflow-hidden relative dark:bg-neutral-800">
               <div
-                className="h-full bg-amber-300/70 rounded"
+                className="h-full bg-amber-300/70 rounded dark:bg-amber-400/60"
                 style={{ width: `${pct}%` }}
               />
-              <div className="absolute inset-0 flex items-center pl-2 text-[0.7rem] font-mono text-neutral-700 font-semibold">
+              <div className="absolute inset-0 flex items-center pl-2 text-[0.7rem] font-mono text-neutral-700 font-semibold dark:text-neutral-200">
                 {it.value}
               </div>
             </div>
@@ -446,12 +485,44 @@ export function HowLongWidget({ stats }: { stats: AdminStats }) {
   const median = sd.median_duration_sec;
   const medianStr = median != null ? `${Math.round(median)}s` : null;
 
+  // % of multi-turn sessions in the 3-7m "peer navigator handoff
+  // target" range — the band this widget's docstring calls out as
+  // operationally meaningful. Derived from existing bucket data, not
+  // a new backend field. Renders as a footer paired with Engagement's
+  // post-results-rate footer so the two widgets visually balance and
+  // both end with a single bold metric.
+  const handoffCount = buckets["3_7min"] ?? 0;
+  const totalSessions = sd.total_multi_turn_sessions;
+  const handoffPct = totalSessions > 0
+    ? `${Math.round((handoffCount / totalSessions) * 100)}%`
+    : "—";
+
   return (
     <WidgetCard
       title="How Long (Session Duration)"
       subtitle={`${sd.total_multi_turn_sessions} multi-turn session${sd.total_multi_turn_sessions !== 1 ? "s" : ""}${medianStr ? ` · median ${medianStr}` : ""}`}
     >
-      <VerticalBars items={items} height={88} />
+      <VerticalBars items={items} height={80} />
+
+      {/* Handoff-range footer — paired with Engagement's post-results
+          footer below for visual balance. Both widgets end with a
+          single bold metric; the row reads as a paired shape rather
+          than one widget feeling shorter than the other. */}
+      <div className="mt-4 pt-3 border-t border-neutral-100 dark:border-neutral-800">
+        <div className="flex items-baseline justify-between gap-3">
+          <div>
+            <div className="text-xs font-medium text-neutral-700 dark:text-neutral-300">
+              In handoff range (3-7m)
+            </div>
+            <div className="text-[0.7rem] text-neutral-500 dark:text-neutral-400 mt-0.5">
+              Peer-navigator target window
+            </div>
+          </div>
+          <div className="text-xl font-bold tracking-tight text-neutral-900 dark:text-neutral-100">
+            {handoffPct}
+          </div>
+        </div>
+      </div>
     </WidgetCard>
   );
 }
@@ -531,17 +602,17 @@ export function EngagementWidget({ stats }: { stats: AdminStats }) {
       {/* Post-results engagement — rendered as a paired stat below the
           distribution bars. Same widget, two related signals; users
           read this as a unit. */}
-      <div className="mt-4 pt-3 border-t border-neutral-100">
+      <div className="mt-4 pt-3 border-t border-neutral-100 dark:border-neutral-800">
         <div className="flex items-baseline justify-between gap-3">
           <div>
-            <div className="text-[0.7rem] uppercase tracking-wider text-neutral-400">
-              Post-Results Follow-up Rate
+            <div className="text-xs font-medium text-neutral-700 dark:text-neutral-300">
+              Post-results follow-up rate
             </div>
-            <div className="text-[0.65rem] text-neutral-400 mt-0.5">
+            <div className="text-[0.7rem] text-neutral-500 dark:text-neutral-400 mt-0.5">
               {postSubtitle}
             </div>
           </div>
-          <div className="text-xl font-bold tracking-tight text-neutral-900">
+          <div className="text-xl font-bold tracking-tight text-neutral-900 dark:text-neutral-100">
             {postPct}
           </div>
         </div>
@@ -613,14 +684,14 @@ function CrisisPanel({
 }) {
   if (total === 0) {
     return (
-      <div className="bg-white border border-neutral-200 rounded-lg p-4">
-        <div className="text-xs uppercase tracking-wider text-neutral-500 font-semibold">
+      <div className="bg-white border border-neutral-200 rounded-lg p-4 dark:bg-neutral-900 dark:border-neutral-800">
+        <div className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">
           {title}
         </div>
-        <div className="text-[0.7rem] text-neutral-400 mt-0.5 mb-3">
+        <div className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5 mb-3">
           {subtitle}
         </div>
-        <div className="flex items-center gap-2 text-sm text-emerald-700 py-2">
+        <div className="flex items-center gap-2 text-sm text-emerald-700 py-2 dark:text-emerald-400">
           <span className="text-base">✓</span>
           <span>{emptyText}</span>
         </div>
@@ -638,16 +709,16 @@ function CrisisPanel({
     }));
 
   return (
-    <div className="bg-white border border-neutral-200 rounded-lg p-4">
-      <div className="text-xs uppercase tracking-wider text-neutral-500 font-semibold">
+    <div className="bg-white border border-neutral-200 rounded-lg p-4 dark:bg-neutral-900 dark:border-neutral-800">
+      <div className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">
         {title}
       </div>
-      <div className="text-[0.7rem] text-neutral-400 mt-0.5 mb-3">
+      <div className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5 mb-3">
         {subtitle}
       </div>
       <HorizontalBars items={items} maxRows={8} />
       {showFooterHint && (
-        <div className="mt-3 pt-2 border-t border-neutral-100 text-[0.65rem] text-neutral-400">
+        <div className="mt-3 pt-2 border-t border-neutral-100 text-[0.7rem] text-neutral-500 dark:border-neutral-800 dark:text-neutral-400">
           See the Recent Activity feed below for individual crisis events.
         </div>
       )}
@@ -679,13 +750,13 @@ function CrisisPanel({
  */
 export function CrisisActivityBlock({ stats }: { stats: AdminStats }) {
   return (
-    <div className="bg-neutral-50 border border-neutral-200 rounded-lg p-4">
+    <div className="bg-neutral-50 border border-neutral-200 rounded-lg p-4 dark:bg-neutral-900/50 dark:border-neutral-800">
       <div className="flex items-baseline justify-between gap-2 mb-3">
         <div>
-          <div className="text-xs uppercase tracking-wider text-neutral-500 font-semibold">
+          <div className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">
             Crisis Activity
           </div>
-          <div className="text-[0.7rem] text-neutral-400 mt-0.5">
+          <div className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">
             Detection running · breakdown by category
           </div>
         </div>

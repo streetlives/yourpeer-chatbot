@@ -11,6 +11,11 @@ import { X } from "lucide-react";
 import { useMemo } from "react";
 import type { AuditEvent } from "@/lib/chat/types";
 import { formatTimeOfDayWithSeconds } from "@/lib/admin/format-time";
+import {
+  FEEDBACK_CRITERIA,
+  FEEDBACK_CRITERION_LABELS,
+  type FeedbackCriterion,
+} from "@/lib/admin/locations-types";
 
 interface TranscriptDrawerProps {
   sessionId: string;
@@ -205,7 +210,6 @@ function renderEvent(e: AuditEvent, i: number, diff: SlotDiff | undefined) {
         </div>
       );
     case "feedback":
-    case "location_feedback":
       return (
         <div
           key={i}
@@ -217,9 +221,96 @@ function renderEvent(e: AuditEvent, i: number, diff: SlotDiff | undefined) {
           {e.comment && <div className="text-neutral-600">{e.comment}</div>}
         </div>
       );
+    case "location_feedback":
+      return <LocationFeedbackEvent key={i} e={e} />;
     default:
       return null;
   }
+}
+
+/**
+ * Location feedback event — shows the location name, per-criterion
+ * chips, and any free-text comment.
+ *
+ * Originally fell through the generic feedback case, which only knew
+ * about `rating` and `comment`. The AuditEvent type was extended on
+ * day 1 of the locations admin build with `location_id`, `location_name`,
+ * and `ratings` (per-criterion booleans), but no renderer was updated
+ * to use them — so clicking a row in the new section 5c stream opened
+ * the drawer to a generic-feedback event without the location attribution.
+ * This dedicated case closes that gap.
+ *
+ * Chip rendering mirrors `<CriterionBadge>` from feedback-comments-stream:
+ * negative ratings get a red pill with "Not …" prefix, positive get an
+ * emerald pill, unrated criteria are omitted entirely (a hollow chip
+ * row would be visual noise). Sorted criterion order matches the
+ * FEEDBACK_CRITERIA constant so chips render in a stable order.
+ */
+function LocationFeedbackEvent({ e }: { e: AuditEvent }) {
+  const ratings = e.ratings ?? {};
+  // FEEDBACK_CRITERIA encodes the canonical order. Build chip data
+  // by walking that array so the chip order matches the feedback
+  // aggregates and the comments stream — admins see the same four
+  // criteria in the same order everywhere.
+  const negativeCrits = FEEDBACK_CRITERIA.filter(
+    (c) => ratings[c] === false,
+  );
+  const positiveCrits = FEEDBACK_CRITERIA.filter(
+    (c) => ratings[c] === true,
+  );
+  const hasCriteria = negativeCrits.length + positiveCrits.length > 0;
+  const locationLabel = e.location_name || (e.location_id ? `#${e.location_id.slice(0, 8)}` : null);
+
+  return (
+    <div className="bg-blue-50/60 border-l-[3px] border-blue-300 px-3.5 py-2 rounded-r-lg text-sm">
+      <div className="text-[0.7rem] font-semibold uppercase tracking-wider text-blue-600 mb-0.5">
+        Location feedback{e.rating ? ` · ${e.rating}` : ""}
+      </div>
+      {locationLabel && (
+        <div className="text-xs text-neutral-700 dark:text-neutral-300 mb-1">
+          {locationLabel}
+        </div>
+      )}
+      {hasCriteria && (
+        <div className="flex flex-wrap gap-1 mb-1">
+          {negativeCrits.map((c) => (
+            <CriterionChip key={`n-${c}`} criterion={c} negative />
+          ))}
+          {positiveCrits.map((c) => (
+            <CriterionChip key={`p-${c}`} criterion={c} negative={false} />
+          ))}
+        </div>
+      )}
+      {e.comment && <div className="text-neutral-600">{e.comment}</div>}
+    </div>
+  );
+}
+
+/**
+ * Criterion chip — same visual language as `<CriterionBadge>` in
+ * feedback-comments-stream. Duplicated here rather than imported
+ * because the chat-side transcript-drawer shouldn't depend on the
+ * admin/locations component tree; the styling is small enough to
+ * carry locally. If it ever grows, lift to a shared module under
+ * `lib/admin/`.
+ */
+function CriterionChip({
+  criterion,
+  negative,
+}: {
+  criterion: FeedbackCriterion;
+  negative: boolean;
+}) {
+  const label = FEEDBACK_CRITERION_LABELS[criterion];
+  const cls = negative
+    ? "bg-red-100 text-red-700 dark:bg-red-950/50 dark:text-red-300"
+    : "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300";
+  const prefix = negative ? "Not " : "";
+  return (
+    <span className={`text-[0.7rem] px-1.5 py-0.5 rounded ${cls}`}>
+      {prefix}{label.toLowerCase()}
+    </span>
+  );
 }
 
 function TurnEvent({ e, diff }: { e: AuditEvent; diff: SlotDiff | undefined }) {
