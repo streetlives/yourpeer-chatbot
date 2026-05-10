@@ -313,6 +313,23 @@ def _stated_borough_from_city(city: Optional[str]) -> Optional[str]:
     return _get_city_to_borough().get(city.strip().lower())
 
 
+# Public alias for the city→borough resolver.
+#
+# Originally `_stated_borough_from_city` was private to this module
+# because only `_annotate_geographic_borough` (below) consumed it.
+# The locations admin section then started reading it directly for
+# its coordinate-validation table, which created an awkward
+# private-import dependency across modules. Exposing this name as
+# the public-facing form (no leading underscore) gives external
+# consumers a stable symbol to import without reaching into the
+# module's internals.
+#
+# If the implementation ever needs to change shape (cached differently,
+# moved to boundaries.py, etc.), the private name can move while this
+# alias stays as the import-stable surface.
+stated_borough_from_city = _stated_borough_from_city
+
+
 # Services we've already warned about this process. Rate-limits the
 # borough_mismatch WARNING log so a popular wrong-borough service doesn't
 # flood the logs each time it's returned from a search. Set membership is
