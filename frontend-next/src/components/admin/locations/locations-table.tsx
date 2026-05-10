@@ -20,6 +20,10 @@ import type {
   BoroughLabel,
 } from "@/lib/admin/locations-types";
 import { isAdminApiError } from "@/lib/admin/locations-types";
+import {
+  defaultSortDirForField,
+  cycleSortDirForField,
+} from "@/lib/admin/locations-sort-cycle";
 
 /**
  * Section 2b — paginated, sortable, filterable triage table.
@@ -134,21 +138,24 @@ export function LocationsTable({
 
   // Sort header click — toggles direction within the same key, or
   // switches to a fresh key with that key's "natural" default direction.
+  //
+  // The cycle is column-specific:
+  //   • last_validated_at: asc_nulls_first ↔ desc. In both directions
+  //     never-verified rows stay clustered at one end (the backend's
+  //     `desc` maps to "DESC NULLS LAST"). This column has a meaningful
+  //     "missing" category that admins want grouped, not interleaved.
+  //   • All other columns: asc ↔ desc. No nulls in practice; nulls
+  //     handling would be visual noise.
+  //
+  // Previous version cycled asc_nulls_first → desc → asc → desc → asc
+  // and never returned to asc_nulls_first — the never-verified rows
+  // could only be re-clustered by switching columns and switching back.
   function handleSortClick(field: LocationsSortKey) {
     if (sortKey === field) {
-      setSortDir((d) => {
-        // Cycle: asc_nulls_first → desc_nulls_last → asc_nulls_first
-        // For non-default keys (no nulls in practice) just asc ↔ desc.
-        if (d === "asc_nulls_first") return "desc";
-        if (d === "desc") return "asc";
-        if (d === "asc") return "desc";
-        return "asc";
-      });
+      setSortDir((d) => cycleSortDirForField(field, d));
     } else {
       setSortKey(field);
-      // last_validated_at defaults to nulls-first (most-stale first);
-      // every other column defaults to plain asc.
-      setSortDir(field === "last_validated_at" ? "asc_nulls_first" : "asc");
+      setSortDir(defaultSortDirForField(field));
     }
     setPage(1);
   }

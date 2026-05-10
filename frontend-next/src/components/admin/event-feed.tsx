@@ -7,6 +7,10 @@ import type { AuditEvent } from "@/lib/chat/types";
 import { useSortableTable } from "@/hooks/use-sortable-table";
 import { SortableHeader } from "./sortable-header";
 import { formatRelativeTime, formatAbsoluteTooltip } from "@/lib/admin/format-time";
+import {
+  FEEDBACK_CRITERIA,
+  FEEDBACK_CRITERION_LABELS,
+} from "@/lib/admin/locations-types";
 
 function typeBadge(type: string) {
   const label = type.replace(/_/g, " ");
@@ -131,18 +135,57 @@ export function EventFeed({ events }: EventFeedProps) {
                 </span>
               );
             } else if (ev.type === "location_feedback") {
-              // Location-specific feedback events carry per-location details
-              // (location_id, location_name, criteria flags) that aren't on
-              // AuditEvent today — only rating + comment + context are typed.
-              // Render the typed fields; if the backend extends AuditEvent
-              // later, this branch can show structured criteria.
+              // location_feedback events carry per-location details
+              // (location_id, location_name, ratings dict) that were
+              // added to AuditEvent on day 1 of the locations admin
+              // build. Render the structured criteria alongside the
+              // existing rating + comment so the feed row tells the
+              // full story without the user needing to open the
+              // transcript drawer.
+              const ratings = ev.ratings ?? {};
+              // Build a compact criterion summary: count negatives and
+              // list them by short name. e.g. "2 flagged: safety,
+              // cleanliness". Positive-only events show "all positive".
+              // Skipping unrated criteria entirely — a chip per criterion
+              // would crowd the feed table.
+              const negativeCrits = FEEDBACK_CRITERIA.filter(
+                (c) => ratings[c] === false,
+              );
+              const positiveCrits = FEEDBACK_CRITERIA.filter(
+                (c) => ratings[c] === true,
+              );
+              const totalRated = negativeCrits.length + positiveCrits.length;
+              let criteriaLine: React.ReactNode = null;
+              if (negativeCrits.length > 0) {
+                const labels = negativeCrits
+                  .map((c) => FEEDBACK_CRITERION_LABELS[c].toLowerCase())
+                  .join(", ");
+                criteriaLine = (
+                  <span className="text-[0.65rem] text-red-600 dark:text-red-400">
+                    {negativeCrits.length} flagged: {labels}
+                  </span>
+                );
+              } else if (totalRated > 0) {
+                criteriaLine = (
+                  <span className="text-[0.65rem] text-emerald-600 dark:text-emerald-400">
+                    all positive ({totalRated})
+                  </span>
+                );
+              }
               detail = (
                 <span className="flex flex-col gap-1">
-                  <span className="flex items-center gap-2">
+                  <span className="flex items-center gap-2 flex-wrap">
                     {feedbackBadge(ev.rating)}
-                    <span className="text-[0.65rem] text-neutral-400 italic">
-                      location feedback
-                    </span>
+                    {ev.location_name ? (
+                      <span className="text-[0.7rem] text-neutral-600 dark:text-neutral-300 max-w-[180px] truncate">
+                        {ev.location_name}
+                      </span>
+                    ) : (
+                      <span className="text-[0.65rem] text-neutral-400 italic">
+                        location feedback
+                      </span>
+                    )}
+                    {criteriaLine}
                     {ev.comment && (
                       <span className="text-neutral-500 max-w-[200px] truncate block">
                         &quot;{ev.comment}&quot;

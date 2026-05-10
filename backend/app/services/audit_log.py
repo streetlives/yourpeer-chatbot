@@ -754,7 +754,27 @@ def _compute_session_metrics(turns: list) -> dict:
 # ---------------------------------------------------------------------------
 
 def _compute_no_result_by_service(queries: list) -> dict:
-    """Break down no-result rate by service category."""
+    """Break down no-result rate by service category.
+
+    ⚠️  DOWNSTREAM CONSUMER WARNING — READ BEFORE EDITING ⚠️
+    The KEYS of the returned dict are read by section 4a of the
+    Locations admin page (get_category_coverage in
+    locations_admin/aggregations.py) to attribute query demand to
+    taxonomies via the _TEMPLATE_TO_TAXONOMIES map.
+
+    Today the dict's keys are TEMPLATE NAMES (e.g. "FoodQuery"),
+    because the fall-through path on the next line — `q.get("params",
+    {}).get("service_type") or q.get("template_name", "")` — kicks
+    in for every query event (no event currently logs a service_type
+    param). The downstream map is keyed by template names to match.
+
+    If you change the keying behavior (e.g. by logging a service_type
+    param on query events, or by removing the template_name fall-
+    through), you'll silently break section 4a's demand attribution.
+    Fix downstream as part of the same change — see
+    _TEMPLATE_TO_TAXONOMIES in locations_admin/aggregations.py for
+    the migration notes.
+    """
     by_service: dict[str, dict] = {}  # {svc: {total: N, no_result: N}}
     for q in queries:
         svc = q.get("params", {}).get("service_type") or q.get("template_name", "")

@@ -1014,6 +1014,36 @@ def get_coordinate_issues() -> dict:
 # requiring query_templates to also know about admin-stats reverse
 # lookups would muddle its purpose. If the coupling becomes painful,
 # lift to a shared module.
+#
+# ⚠️  KEY-SHAPE DEPENDENCY — READ BEFORE EDITING ⚠️
+# This map's KEYS must match the keys emitted by
+# `_compute_no_result_by_service(queries)` in audit_log.py. Today
+# those keys ARE template names ("FoodQuery", "HousingEligibilityQuery"
+# etc.) because of a behavior in that function: it tries
+# `q["params"]["service_type"]` first but falls through to
+# `q["template_name"]` since no query event currently logs a
+# `service_type` param. The fall-through path is the de-facto
+# contract this map relies on.
+#
+# That fall-through behavior is also documented as P3 in the metrics
+# audit ("Crisis Detection Count says 'X sessions' but counts events"
+# family). If anyone fixes _compute_no_result_by_service to truly key
+# by service_type — by logging a service_type param on query events,
+# or by removing the template_name fall-through — section 4a's
+# demand attribution silently breaks: every template's demand falls
+# into uncategorized_demand and the chart shows zero demand
+# everywhere.
+#
+# Mitigations when that change lands:
+#   1. Refactor demand attribution to log resolved taxonomy names
+#      directly per query event (v1.5 plan).
+#   2. Or: re-key this map by whatever the new service_type values
+#      are. The taxonomy lists in each value should mostly stay the
+#      same; only the keys would change.
+#
+# Cross-reference: audit_log.py :: _compute_no_result_by_service.
+# That function has a matching comment pointing back here so the
+# dependency is visible from both ends.
 _TEMPLATE_TO_TAXONOMIES: dict[str, list[str]] = {
     "FoodQuery": [
         "Food", "Food Pantry", "Food Benefits", "Mobile Pantry",
@@ -1593,4 +1623,341 @@ def get_recent_feedback_comments(limit: int = RECENT_COMMENTS_DEFAULT_LIMIT) -> 
         "comments": out,
         "total_with_comments": total_with_comments,
         "limit": limit,
+    }
+
+
+# ---------------------------------------------------------------------------
+# SECTION 6 — DATA INTEGRITY CALLOUTS
+# ---------------------------------------------------------------------------
+#
+# Six query-driven callouts surface when COUNT > 0. Each callout has
+# a severity ("warning" / "info"), a title, a count, and a short
+# action hint telling admins what to do about it.
+#
+# The callouts are computed in one endpoint rather than six because:
+#   1. Most of them are < 10ms each at this catalog size — six round
+#      trips to the DB still total < 100ms.
+#   2. Rendering them as a single panel is easier when they arrive as
+#      a single response.
+#   3. If we later need to optimize, parallel-running them inside the
+#      function is one local change — vs. coordinating six separate
+#      endpoint calls on the frontend.
+# ---------------------------------------------------------------------------
+
+# Phone format the chatbot's formatPhone TS helper produces — matches
+# the regex used in `frontend-next/src/lib/chat/format-phone.ts`. Values
+# that DON'T match this and aren't empty are flagged as malformed.
+# Tolerant of optional extension suffix (' x123', 'ext 4567').
+_VALID_PHONE_RE = r"^\(?\d{3}\)?[-. ]?\d{3}[-. ]?\d{4}( ?(x|ext\.?) ?\d+)?$"
+
+# Heuristic for "looks like phone-shaped data" — anything with at least
+# 7 digits in it. Used to filter out genuinely-empty / placeholder
+# values before applying the strict regex check; a "0" or "n/a" in
+# the phone column is a different bug class than a malformed real
+# number, and we don't want section 6 to flag every empty-ish row.
+_PHONELIKE_RE = r"[0-9].*[0-9].*[0-9].*[0-9].*[0-9].*[0-9].*[0-9]"
+
+
+def get_data_integrity_callouts() -> dict:
+    """Section 6: data-integrity callouts.
+
+    Returns shape:
+        {
+            "callouts": [
+                {
+                    "id": str,           # stable key for the frontend
+                    "severity": "warning" | "info",
+                    "title": str,
+                    "count": int,
+                    "action_hint": str,
+                    "ref": str | None,   # "see section 3c" etc, or null
+                },
+                ...
+            ],
+            "total_callouts": int,       # only counts firing ones
+            "all_clear": bool,           # True iff no callout fired
+        }
+
+    The `all_clear: True` case lets the frontend render a positive
+    "✓ no integrity issues found" state instead of an empty list —
+    which is the preferred outcome and worth surfacing positively.
+
+    Each callout is a separate SQL query. They're listed in display
+    order; the frontend renders them in that order so the visual
+    grouping is consistent across runs.
+    """
+    callouts: list[dict[str, Any]] = []
+
+    # ---- Callout 1: orphaned locations (no services attached) ----
+    # These show up in the catalog but produce 0 results in any
+    # service-type search. Almost always a stale import or a
+    # location whose services have all been hidden.
+    orphan_loc_sql = """
+    SELECT COUNT(DISTINCT l.id) AS n
+    FROM locations l
+    LEFT JOIN service_at_locations sal ON sal.location_id = l.id
+    WHERE sal.id IS NULL
+    """
+    n = _scalar_count(orphan_loc_sql)
+    if n > 0:
+        callouts.append({
+            "id": "orphaned_locations",
+            "severity": "warning",
+            "title": "Orphaned locations",
+            "count": n,
+            "action_hint": (
+                "These locations have no services attached and won't appear "
+                "in any chat results. Likely stale imports or hidden-service "
+                "remnants — review for deletion or relink."
+            ),
+            "ref": None,
+        })
+
+    # ---- Callout 2: services with no location attached ----
+    # Mirror of #1: services that exist but aren't reachable through
+    # any location-anchored query. The chat does proximity-search
+    # against l.position; services here are invisible to it.
+    orphan_svc_sql = """
+    SELECT COUNT(DISTINCT s.id) AS n
+    FROM services s
+    LEFT JOIN service_at_locations sal ON sal.service_id = s.id
+    WHERE sal.id IS NULL
+    """
+    n = _scalar_count(orphan_svc_sql)
+    if n > 0:
+        callouts.append({
+            "id": "orphaned_services",
+            "severity": "warning",
+            "title": "Services with no location",
+            "count": n,
+            "action_hint": (
+                "These services exist but aren't tied to any location, so "
+                "they can't be returned by location-aware searches. Either "
+                "attach to a location or hide."
+            ),
+            "ref": None,
+        })
+
+    # ---- Callout 3: malformed phone formats ----
+    # PostgreSQL POSIX regex with ~* (case-insensitive). The strict
+    # regex is the same shape formatPhone produces; phones that don't
+    # match AND look phone-shaped (≥7 digits) are flagged. Empty /
+    # 'n/a' / 'tbd' values are out of scope for this callout.
+    bad_phones_sql = """
+    SELECT COUNT(*) AS n
+    FROM phones p
+    WHERE p.number IS NOT NULL
+      AND p.number ~ %(phonelike)s
+      AND p.number !~* %(strict)s
+    """
+    n = _scalar_count(bad_phones_sql, {
+        "phonelike": _PHONELIKE_RE,
+        "strict": _VALID_PHONE_RE,
+    })
+    if n > 0:
+        callouts.append({
+            "id": "malformed_phones",
+            "severity": "warning",
+            "title": "Malformed phone formats",
+            "count": n,
+            "action_hint": (
+                "These phone numbers don't match the standard "
+                "(NNN) NNN-NNNN pattern. The chat reformats them at "
+                "render time, but bad source data risks ambiguity in "
+                "the admin views."
+            ),
+            "ref": None,
+        })
+
+    # ---- Callout 4: entity-encoded HTML in descriptions ----
+    # Known issue: some import paths double-encoded their HTML so
+    # the literal text "&lt;br&gt;" ends up in description fields.
+    # The frontend strips these via safe_html_entity_decode at
+    # render time, but the underlying data quality is still wrong.
+    encoded_html_sql = """
+    SELECT COUNT(*) AS n
+    FROM services s
+    WHERE s.description ILIKE '%&lt;br%' OR s.description ILIKE '%&amp;%'
+    """
+    n = _scalar_count(encoded_html_sql)
+    if n > 0:
+        callouts.append({
+            "id": "entity_encoded_html",
+            "severity": "info",
+            "title": "Entity-encoded HTML in descriptions",
+            "count": n,
+            "action_hint": (
+                "Service descriptions containing literal '&lt;br&gt;' or "
+                "'&amp;' tokens — likely double-encoded during import. "
+                "Frontend handles these at render time, but worth fixing "
+                "at source for cleaner downstream consumption."
+            ),
+            "ref": None,
+        })
+
+    # ---- Callout 5: cross-reference to section 3c ----
+    # We don't duplicate section 3c's per-row coordinate validation
+    # here; instead we check whether section 3c has anything to show
+    # and link to it. Avoids data-shape divergence between sections.
+    coord_issues = get_coordinate_issues()
+    n_outside_nyc = coord_issues["outside_nyc_count"]
+    n_total_issues = len(coord_issues["issues"])
+    if n_total_issues > 0:
+        callouts.append({
+            "id": "coordinate_issues_ref",
+            "severity": "warning" if n_outside_nyc > 0 else "info",
+            "title": "Coordinate validation issues",
+            "count": n_total_issues,
+            "action_hint": (
+                f"{n_outside_nyc} location"
+                f"{'s' if n_outside_nyc != 1 else ''} with coordinates "
+                "outside NYC, plus borough mismatches. See the "
+                "Coordinate validation section above for details."
+            ) if n_outside_nyc > 0 else (
+                "Locations whose coordinates disagree with their stated "
+                "city. See the Coordinate validation section above."
+            ),
+            "ref": "section_3c_coordinate_validation",
+        })
+
+    return {
+        "callouts": callouts,
+        "total_callouts": len(callouts),
+        "all_clear": len(callouts) == 0,
+    }
+
+
+def _scalar_count(sql: str, params: Optional[dict] = None) -> int:
+    """Execute a SQL query that returns a single column 'n' on a
+    single row, return the int. Used by the integrity callouts —
+    each query is a COUNT(*) with no ranking / grouping.
+
+    Defensive against an empty result set (returns 0) and against
+    None counts (also 0) so callout queries never cause the section
+    to crash on edge cases."""
+    rows = _execute_sql(sql, params or {})
+    if not rows:
+        return 0
+    return int(rows[0].get("n") or 0)
+
+
+# ---------------------------------------------------------------------------
+# SECTION 7 — TIME SERIES (last 26 weeks)
+# ---------------------------------------------------------------------------
+#
+# Three weekly series: locations added, locations verified, location
+# feedback events. All bucketed into ISO weeks for the last
+# TIMESERIES_WEEKS (=26 by default). The series share an x-axis so
+# the frontend can render them in three small charts that read as
+# a temporal scan of "what's happening on the catalog."
+#
+# Why ISO weeks (Mon-Sun) and not calendar weeks: Mon-Sun is
+# operationally sensible (ops cycles run Mon-Fri, "this week" is
+# unambiguous). PostgreSQL's date_trunc('week', x) defaults to ISO
+# weeks. No tz conversion issues since everything is server-local.
+
+
+def get_locations_timeseries() -> dict:
+    """Section 7: weekly locations-added / verified / feedback time series.
+
+    Returns shape:
+        {
+            "weeks": [
+                {
+                    "week_start": "2025-11-10",     # ISO date, Monday
+                    "locations_added": int,
+                    "locations_verified": int,
+                    "feedback_events": int,
+                },
+                ...
+            ],
+            "total_weeks": int,                   # = TIMESERIES_WEEKS
+        }
+
+    Always returns exactly TIMESERIES_WEEKS rows in chronological
+    order, oldest-first. Empty weeks render as zeros (not missing) so
+    the frontend can draw a continuous line / sparkline without
+    interpolation logic.
+
+    Three separate SQL queries (one per series) bucketed by
+    date_trunc('week', x). Could be one big UNION — the small saving
+    isn't worth the complexity given the per-query times are < 5ms.
+    """
+    today = datetime.now(timezone.utc).date()
+    # Compute the Monday-of-the-week for `TIMESERIES_WEEKS` weeks ago.
+    # ISO weekday(): Monday = 0 in Python's weekday(), so we move
+    # back to the most recent Monday and then back another N-1 weeks.
+    days_since_monday = today.weekday()    # Mon=0, Sun=6
+    this_monday = today - timedelta(days=days_since_monday)
+    earliest_monday = this_monday - timedelta(weeks=TIMESERIES_WEEKS - 1)
+
+    # Pre-build the canonical week list so empty weeks aren't missing.
+    all_weeks = [
+        earliest_monday + timedelta(weeks=i)
+        for i in range(TIMESERIES_WEEKS)
+    ]
+    week_keys = [w.isoformat() for w in all_weeks]
+    series: dict[str, dict[str, int]] = {
+        wk: {"locations_added": 0, "locations_verified": 0, "feedback_events": 0}
+        for wk in week_keys
+    }
+    earliest_iso = earliest_monday.isoformat()
+
+    # ---- Series 1: locations added ----
+    added_sql = """
+    SELECT date_trunc('week', l.created_at)::date AS week_start,
+           COUNT(*) AS n
+    FROM locations l
+    WHERE l.created_at >= %(since)s
+    GROUP BY week_start
+    """
+    for r in _execute_sql(added_sql, {"since": earliest_iso}):
+        wk = r.get("week_start")
+        wk_iso = wk.isoformat() if hasattr(wk, "isoformat") else str(wk)
+        if wk_iso in series:
+            series[wk_iso]["locations_added"] = int(r.get("n") or 0)
+
+    # ---- Series 2: locations verified (last_validated_at touched) ----
+    verified_sql = """
+    SELECT date_trunc('week', l.last_validated_at)::date AS week_start,
+           COUNT(*) AS n
+    FROM locations l
+    WHERE l.last_validated_at >= %(since)s
+    GROUP BY week_start
+    """
+    for r in _execute_sql(verified_sql, {"since": earliest_iso}):
+        wk = r.get("week_start")
+        wk_iso = wk.isoformat() if hasattr(wk, "isoformat") else str(wk)
+        if wk_iso in series:
+            series[wk_iso]["locations_verified"] = int(r.get("n") or 0)
+
+    # ---- Series 3: feedback events ----
+    # Pulled from the audit log, not the DB — feedback lives in the
+    # event store, not Postgres. Walk events, bucket into weeks.
+    feedback_events = get_recent_events(limit=10000, event_type="location_feedback")
+    for ev in feedback_events:
+        ts = ev.get("timestamp") or ""
+        if not ts:
+            continue
+        try:
+            dt = datetime.fromisoformat(ts.replace("Z", "+00:00")).date()
+        except (ValueError, AttributeError):
+            continue
+        if dt < earliest_monday:
+            continue
+        # Snap to Monday of the event's week
+        days_back = dt.weekday()
+        wk = dt - timedelta(days=days_back)
+        wk_iso = wk.isoformat()
+        if wk_iso in series:
+            series[wk_iso]["feedback_events"] += 1
+
+    # Emit in chronological order, oldest first.
+    weeks_out = [
+        {"week_start": wk, **series[wk]}
+        for wk in week_keys
+    ]
+    return {
+        "weeks": weeks_out,
+        "total_weeks": TIMESERIES_WEEKS,
     }
