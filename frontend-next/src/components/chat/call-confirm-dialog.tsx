@@ -5,6 +5,7 @@
 
 import { useEffect, useRef } from "react";
 import { Phone } from "lucide-react";
+import { formatPhone, phoneToTelHref } from "@/lib/chat/format-phone";
 
 interface CallConfirmDialogProps {
   phone: string;
@@ -95,7 +96,7 @@ export function CallConfirmDialog({ phone, name, onConfirm, onCancel }: CallConf
           </div>
           <div className="min-w-0">
             <p className="text-sm font-semibold text-neutral-900 truncate dark:text-neutral-100">{name}</p>
-            <p className="text-sm text-neutral-500 font-mono dark:text-neutral-400">{phone}</p>
+            <p className="text-sm text-neutral-500 font-mono dark:text-neutral-400">{formatPhone(phone)}</p>
           </div>
         </div>
 
@@ -113,7 +114,7 @@ export function CallConfirmDialog({ phone, name, onConfirm, onCancel }: CallConf
           </button>
           <a
             ref={callRef}
-            href={`tel:${phone.split(/\s*ext/i)[0].replace(/\D/g, "")}`}
+            href={`tel:${phoneToTelHref(phone)}`}
             onClick={onConfirm}
             className="flex-1 py-3 rounded-lg border border-neutral-900 bg-neutral-900 text-center text-sm font-semibold text-white transition hover:bg-neutral-700 dark:border-neutral-400 dark:bg-neutral-400 dark:text-neutral-900 dark:hover:bg-neutral-300 dark:hover:border-neutral-300"
           >

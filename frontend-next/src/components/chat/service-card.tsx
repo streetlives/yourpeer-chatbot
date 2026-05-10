@@ -3,13 +3,14 @@
 
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { MapPin, Phone, Mail, Clock, CheckCircle, AlertTriangle, ChevronDown, ExternalLink } from "lucide-react";
 import type { ServiceResult } from "@/lib/chat/types";
 import { LocationFeedbackRow } from "./location-feedback-row";
 import { CallConfirmDialog } from "./call-confirm-dialog";
 import { ReviewDetailDialog } from "./review-detail-dialog";
 import { SafeHtml } from "./safe-html";
+import { formatPhone } from "@/lib/chat/format-phone";
 
 /**
  * Extract a display-friendly domain from a website URL. Used by the
@@ -41,17 +42,84 @@ function extractDomain(url: string): string | null {
   }
 }
 
-const REVIEW_TRUNCATE_AT = 120;
-const REVIEW_TRUNCATE_TO = 117;
+// Review preview thresholds.
+//
+// On mobile, vertical space is precious — every line on the service
+// card matters because users have to scroll past N cards to evaluate
+// options, and reviews that take 3+ lines compound into a real cost.
+// The "Read more" dialog is the right surface for the full text.
+//
+// Both mobile and desktop card widths wrap reviews at ~35 chars/line.
+// The difference isn't horizontal — it's visual context: on mobile
+// the card is one of many that fill the chat region; on desktop the
+// card sits in a roomier carousel with more whitespace around it.
+// So mobile gets the tight threshold, desktop gets the original.
+//
+// Mobile: 80 chars ≈ 2 lines of preview before "Read more". Combined
+// with line-clamp-2 below, even a low-character-count review with no
+// natural break points can't exceed 2 lines visually.
+//
+// Desktop: 120 chars ≈ 3 lines, the original behavior. Plenty of card
+// real estate to host that.
+const REVIEW_TRUNCATE_AT_MOBILE = 80;
+const REVIEW_TRUNCATE_TO_MOBILE = 77;
+const REVIEW_TRUNCATE_AT_DESKTOP = 120;
+const REVIEW_TRUNCATE_TO_DESKTOP = 117;
+
+/**
+ * Hook returning the right truncation threshold for the current viewport.
+ *
+ * SSR-safe by design: the initial value is the desktop threshold (which
+ * is what the SSR-rendered HTML will use), then a layout effect after
+ * mount reads the real viewport and re-renders if it's mobile. The
+ * intermediate "show desktop preview, then re-render to mobile preview"
+ * step happens in a single tick, before the user sees anything, so
+ * there's no visible flash. This pattern avoids the hydration mismatch
+ * that would result from reading window.innerWidth directly in render.
+ *
+ * Threshold matches Tailwind's `sm:` breakpoint (640px) for consistency
+ * with the rest of the responsive layout — same boundary used by the
+ * header layout, chat region min-height, and quick-reply padding fixes.
+ *
+ * Doesn't subscribe to resize events. The viewport doesn't change
+ * frequently in practice (orientation change or window resize), and
+ * the cost of subscribing — adding a listener per service card on
+ * the page — outweighs the rare benefit. If a user resizes mid-session
+ * across the breakpoint, their reviews stay at the previous size until
+ * the next message arrives and re-renders the card. Acceptable.
+ */
+export function useReviewTruncate(): { at: number; to: number } {
+  const [isMobile, setIsMobile] = useState(false);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- window.innerWidth is undefined during SSR; one-time bridge from SSR default (desktop) to real client viewport
+    setIsMobile(window.innerWidth < 640);
+  }, []);
+  return isMobile
+    ? { at: REVIEW_TRUNCATE_AT_MOBILE, to: REVIEW_TRUNCATE_TO_MOBILE }
+    : { at: REVIEW_TRUNCATE_AT_DESKTOP, to: REVIEW_TRUNCATE_TO_DESKTOP };
+}
 
 interface ServiceCardProps {
   service: ServiceResult;
   isActive?: boolean;
   index?: number;
   total?: number;
+  reviewTruncate: { at: number; to: number };
 }
 
-function StatusBadge({ status }: { status?: string }) {
+function StatusBadge({ status, allDay }: { status?: string; allDay?: boolean }) {
+  // All-day case: collapse "Open now" + "12:00 AM – 11:59 PM" into a
+  // single "Open 24 hours" pill. The redundant hours line is hidden by
+  // the caller. Backend signals all-day by returning the literal
+  // string "Open 24 hours" as `hours_today`; see
+  // _compute_schedule_status in backend/app/rag/query_templates.py.
+  if (allDay) {
+    return (
+      <span className="inline-block text-xs font-semibold px-2.5 py-0.5 rounded-lg bg-green-100 text-green-800 dark:bg-green-300 dark:text-green-950">
+        Open 24 hours
+      </span>
+    );
+  }
   if (status === "open") {
     return (
       <span className="inline-block text-xs font-semibold px-2.5 py-0.5 rounded-lg bg-green-100 text-green-800 dark:bg-green-300 dark:text-green-950">
@@ -72,6 +140,13 @@ function StatusBadge({ status }: { status?: string }) {
     </span>
   );
 }
+
+// Sentinel for the all-day case. Must match the literal string the
+// backend emits in _compute_schedule_status. If the backend's wording
+// ever changes, update this constant — TypeScript won't catch the
+// drift since both ends are plain strings. The `verify:contract`
+// sentinel covers the related is_open enum but not this string.
+const HOURS_ALL_DAY_SENTINEL = "Open 24 hours";
 
 function ValidatedBadge({ dateStr }: { dateStr?: string }) {
   if (!dateStr) {
@@ -179,7 +254,7 @@ const ALSO_EMOJI: Record<string, string> = {
 
 const ALSO_HERE_VISIBLE = 3;
 
-export function ServiceCard({ service, isActive, index, total }: ServiceCardProps) {
+export function ServiceCard({ service, isActive, index, total, reviewTruncate }: ServiceCardProps) {
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [alsoExpanded, setAlsoExpanded] = useState(false);
   const [reviewOpen, setReviewOpen] = useState(false);
@@ -232,10 +307,19 @@ export function ServiceCard({ service, isActive, index, total }: ServiceCardProp
         <ValidatedBadge dateStr={service.last_validated_at} />
       </div>
 
-      {/* Hours + status */}
+      {/* Hours + status. When the location is open all day, the
+       * StatusBadge renders "Open 24 hours" and the separate hours
+       * line is suppressed — showing "Open 24 hours" alongside
+       * "12:00 AM – 11:59 PM" reads as redundant and confusing
+       * (the literal endpoints suggest "narrowly NOT 24 hours").
+       * The all-day sentinel is set by the backend; see
+       * HOURS_ALL_DAY_SENTINEL above. */}
       <div className="flex items-center gap-2">
-        <StatusBadge status={service.is_open} />
-        {service.hours_today && (
+        <StatusBadge
+          status={service.is_open}
+          allDay={service.hours_today === HOURS_ALL_DAY_SENTINEL}
+        />
+        {service.hours_today && service.hours_today !== HOURS_ALL_DAY_SENTINEL && (
           <span className="inline-flex items-center gap-1 text-xs text-neutral-500 dark:text-neutral-400 whitespace-nowrap">
             <Clock size={14} className="text-neutral-400 dark:text-neutral-500 flex-shrink-0" aria-hidden="true" />
             <span>{service.hours_today}</span>
@@ -245,13 +329,24 @@ export function ServiceCard({ service, isActive, index, total }: ServiceCardProp
 
       {/* Review highlight — visible by default (builds trust). When the
           full text exceeds the inline preview length, render as a button
-          that opens the detail dialog so users can read the rest. */}
+          that opens the detail dialog so users can read the rest.
+
+          Two-layer truncation:
+            1. Character-count truncate (REVIEW_TRUNCATE_AT_MOBILE/DESKTOP)
+               cuts the preview text at a natural prose length.
+            2. CSS line-clamp-2 on mobile is a defensive cap: if the
+               truncated text still wraps to more than 2 lines (long
+               unbreakable words, very narrow viewports, etc.), clamp
+               kicks in and shows ellipsis at line 2. sm:line-clamp-none
+               restores normal text flow on desktop where vertical
+               space is plentiful. */}
       {service.review_highlight && (() => {
-        const truncated = service.review_highlight.length > REVIEW_TRUNCATE_AT;
+        const { at, to } = reviewTruncate;
+        const truncated = service.review_highlight.length > at;
         const preview = truncated
-          ? service.review_highlight.slice(0, REVIEW_TRUNCATE_TO) + "…"
+          ? service.review_highlight.slice(0, to) + "…"
           : service.review_highlight;
-        const baseCls = "text-xs text-neutral-500 dark:text-neutral-400 leading-relaxed bg-neutral-50 border border-neutral-100 rounded-lg px-3 py-2 italic dark:bg-neutral-700/60 dark:border-neutral-700";
+        const baseCls = "text-xs text-neutral-500 dark:text-neutral-400 leading-relaxed bg-neutral-50 border border-neutral-100 rounded-lg px-3 py-2 italic dark:bg-neutral-700/60 dark:border-neutral-700 line-clamp-2 sm:line-clamp-none";
         if (!truncated) {
           return (
             <div className={baseCls}>
@@ -327,7 +422,7 @@ export function ServiceCard({ service, isActive, index, total }: ServiceCardProp
               <button
                 type="button"
                 onClick={() => setAlsoExpanded(true)}
-                className="inline-block text-[0.68rem] font-medium px-2 py-0.5 rounded-md bg-neutral-50 border border-neutral-200 text-blue-600 hover:bg-blue-50 hover:border-blue-200 transition-colors dark:bg-neutral-700 dark:border-neutral-600 dark:text-blue-300 dark:hover:bg-blue-950/40 dark:hover:border-blue-900"
+                className="inline-flex items-center min-h-[2rem] text-[0.68rem] font-medium px-2 py-1 rounded-md bg-neutral-50 border border-neutral-200 text-blue-600 hover:bg-blue-50 hover:border-blue-200 transition-colors dark:bg-neutral-700 dark:border-neutral-600 dark:text-blue-300 dark:hover:bg-blue-950/40 dark:hover:border-blue-900"
               >
                 +{alsoHiddenCount} more
               </button>
@@ -390,13 +485,18 @@ function DetailsSection({ service, hasDetails, detailsOpen, setDetailsOpen }: {
           {service.phone && (
             <div className="flex items-start gap-2 text-xs text-neutral-500 dark:text-neutral-400">
               <Phone size={14} className="text-neutral-400 dark:text-neutral-500 mt-0.5 flex-shrink-0" aria-hidden="true" />
-              <span>{service.phone}</span>
+              <span>{formatPhone(service.phone)}</span>
             </div>
           )}
           {service.email && (
-            <div className="flex items-start gap-2 text-sm text-neutral-500 dark:text-neutral-400">
+            <div className="flex items-start gap-2 text-xs text-neutral-500 dark:text-neutral-400">
               <Mail size={14} className="text-neutral-400 dark:text-neutral-500 mt-0.5 flex-shrink-0" aria-hidden="true" />
-              <span>{service.email}</span>
+              <a
+                href={`mailto:${service.email}`}
+                className="underline underline-offset-2 hover:text-neutral-700 dark:hover:text-neutral-200 break-all"
+              >
+                {service.email}
+              </a>
             </div>
           )}
           {service.accessibility && (
@@ -442,12 +542,29 @@ function ActionButtons({ service, name }: { service: ServiceResult; name: string
   return (
     <>
       <div className="flex gap-1.5 pt-1 mt-auto" role="group" aria-label={`Actions for ${name}`}>
+        {/* All three action buttons get `flex-1 min-w-0`. flex-1 alone
+         * gives `flex: 1 1 0%` but flex items default to `min-width:
+         * auto` (= min-content), so an item with long unbreakable
+         * content can refuse to shrink below that — pushing the row
+         * out of equal thirds and starving the other buttons.
+         *
+         * Specifically: when service.website is something like
+         * `agapehome.churchtrac.com`, the domain string has no break
+         * opportunities, so its min-content width is the full string.
+         * Without min-w-0, the website button keeps that width and
+         * the inner `truncate` span never has a constrained parent to
+         * ellipsize against.
+         *
+         * `min-w-0` on each item overrides the default and lets flex
+         * actually distribute width. The inner truncate then engages
+         * inside the website button's 1/3 share.
+         */}
         {service.phone && (
           <button
             type="button"
             onClick={() => setShowCallConfirm(true)}
             aria-label={`Call ${name}`}
-            className="flex-1 py-2 rounded-lg border border-neutral-900 bg-neutral-900 text-center text-xs font-semibold text-white transition hover:bg-neutral-700 dark:border-neutral-400 dark:bg-neutral-400 dark:text-neutral-900 dark:hover:bg-neutral-300 dark:hover:border-neutral-300"
+            className="flex-1 min-w-0 py-2 rounded-lg border border-neutral-900 bg-neutral-900 text-center text-xs font-semibold text-white transition hover:bg-neutral-700 dark:border-neutral-400 dark:bg-neutral-400 dark:text-neutral-900 dark:hover:bg-neutral-300 dark:hover:border-neutral-300"
           >
             Call
           </button>
@@ -458,7 +575,7 @@ function ActionButtons({ service, name }: { service: ServiceResult; name: string
             target="_blank"
             rel="noopener noreferrer"
             aria-label={`Get directions to ${name} (opens in new tab)`}
-            className="flex-1 py-2 rounded-lg border border-amber-300 bg-amber-300 text-center text-xs font-semibold text-neutral-900 transition hover:bg-amber-400 hover:border-amber-400 dark:border-[rgba(255,213,79,0.75)] dark:bg-[rgba(255,213,79,0.75)] dark:hover:bg-[rgba(255,213,79,0.95)] dark:hover:border-[rgba(255,213,79,0.95)]"
+            className="flex-1 min-w-0 py-2 rounded-lg border border-amber-300 bg-amber-300 text-center text-xs font-semibold text-neutral-900 transition hover:bg-amber-400 hover:border-amber-400 dark:border-[rgba(255,213,79,0.75)] dark:bg-[rgba(255,213,79,0.75)] dark:hover:bg-[rgba(255,213,79,0.95)] dark:hover:border-[rgba(255,213,79,0.95)]"
           >
             Directions
           </a>
@@ -473,7 +590,7 @@ function ActionButtons({ service, name }: { service: ServiceResult; name: string
                 ? `Visit ${name} website at ${websiteDomain} (opens in new tab)`
                 : `Visit ${name} website (opens in new tab)`
             }
-            className="flex-1 py-2 rounded-lg border border-neutral-200 bg-neutral-50 text-center text-xs font-semibold text-neutral-900 transition hover:bg-neutral-100 hover:border-neutral-300 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-100 dark:hover:bg-neutral-800 dark:hover:border-neutral-600"
+            className="flex-1 min-w-0 py-2 rounded-lg border border-neutral-200 bg-neutral-50 text-center text-xs font-semibold text-neutral-900 transition hover:bg-neutral-100 hover:border-neutral-300 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-100 dark:hover:bg-neutral-800 dark:hover:border-neutral-600"
           >
             <span className="block leading-tight">
               Website
@@ -513,9 +630,10 @@ interface LocationCardProps {
   isActive?: boolean;
   index?: number;
   total?: number;
+  reviewTruncate: { at: number; to: number };
 }
 
-export function LocationCard({ services, isActive, index, total }: LocationCardProps) {
+export function LocationCard({ services, isActive, index, total, reviewTruncate }: LocationCardProps) {
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [reviewOpen, setReviewOpen] = useState(false);
 
@@ -569,11 +687,16 @@ export function LocationCard({ services, isActive, index, total }: LocationCardP
         <ValidatedBadge dateStr={bestVerified ?? undefined} />
       </div>
 
-      {/* Shared hours — shown once when identical */}
+      {/* Shared hours — shown once when identical. All-day handling
+       * mirrors ServiceCard: pill says "Open 24 hours" and the
+       * literal range is suppressed. See HOURS_ALL_DAY_SENTINEL. */}
       {allSameHours && (
         <div className="flex items-center gap-2">
-          <StatusBadge status={primary.is_open} />
-          {primary.hours_today && (
+          <StatusBadge
+            status={primary.is_open}
+            allDay={primary.hours_today === HOURS_ALL_DAY_SENTINEL}
+          />
+          {primary.hours_today && primary.hours_today !== HOURS_ALL_DAY_SENTINEL && (
             <span className="inline-flex items-center gap-1 text-xs text-neutral-500 dark:text-neutral-400 whitespace-nowrap">
               <Clock size={14} className="text-neutral-400 dark:text-neutral-500 flex-shrink-0" aria-hidden="true" />
               <span>{primary.hours_today}</span>
@@ -621,11 +744,16 @@ export function LocationCard({ services, isActive, index, total }: LocationCardP
                   {ALSO_EMOJI[svc.service_name || ""] ? `${ALSO_EMOJI[svc.service_name || ""]} ` : ""}{svc.service_name || "Service"}
                 </div>
 
-                {/* Per-service hours — only when they differ */}
+                {/* Per-service hours — only when they differ.
+                 * All-day handling identical to ServiceCard; see
+                 * HOURS_ALL_DAY_SENTINEL. */}
                 {!allSameHours && (
                   <div className="flex items-center gap-2">
-                    <StatusBadge status={svc.is_open} />
-                    {svc.hours_today && (
+                    <StatusBadge
+                      status={svc.is_open}
+                      allDay={svc.hours_today === HOURS_ALL_DAY_SENTINEL}
+                    />
+                    {svc.hours_today && svc.hours_today !== HOURS_ALL_DAY_SENTINEL && (
                       <span className="inline-flex items-center gap-1 text-xs text-neutral-500 dark:text-neutral-400 whitespace-nowrap">
                         <Clock size={12} className="text-neutral-400 dark:text-neutral-500 flex-shrink-0" aria-hidden="true" />
                         <span>{svc.hours_today}</span>
@@ -661,13 +789,16 @@ export function LocationCard({ services, isActive, index, total }: LocationCardP
       </div>
 
       {/* Review highlight — clickable to open the full text when
-          truncated. See ServiceCard above for the same pattern. */}
+          truncated. See ServiceCard above for the same pattern,
+          including the rationale for the two-layer truncate
+          (character count + line-clamp). */}
       {review && (() => {
-        const truncated = review.length > REVIEW_TRUNCATE_AT;
+        const { at, to } = reviewTruncate;
+        const truncated = review.length > at;
         const preview = truncated
-          ? review.slice(0, REVIEW_TRUNCATE_TO) + "…"
+          ? review.slice(0, to) + "…"
           : review;
-        const baseCls = "text-xs text-neutral-500 dark:text-neutral-400 leading-relaxed bg-neutral-50 border border-neutral-100 rounded-lg px-3 py-2 italic dark:bg-neutral-700/60 dark:border-neutral-700";
+        const baseCls = "text-xs text-neutral-500 dark:text-neutral-400 leading-relaxed bg-neutral-50 border border-neutral-100 rounded-lg px-3 py-2 italic dark:bg-neutral-700/60 dark:border-neutral-700 line-clamp-2 sm:line-clamp-none";
         if (!truncated) {
           return (
             <div className={baseCls}>

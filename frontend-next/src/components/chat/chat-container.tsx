@@ -191,12 +191,75 @@ export function ChatContainer() {
     window.history.replaceState(null, "", window.location.pathname);
   }, [hydrated, send]);
 
-  // Auto-scroll on new messages
+  // Auto-scroll on new messages.
+  //
+  // Old behavior: always set scrollTop = scrollHeight on every messages
+  // change. That worked for short replies but broke two cases:
+  //   (1) A bot reply taller than the visible region landed the user at
+  //       the END of the reply, missing the beginning. Users had to
+  //       scroll up to read what was said — bad UX.
+  //   (2) A status update on an existing message (e.g. pending → sent)
+  //       triggered an unwanted scroll-to-bottom even though no new
+  //       message arrived, jumping the user away from whatever they
+  //       were reading mid-scroll.
+  //
+  // New behavior:
+  //   • Track the last message id we've already scrolled for. If the
+  //     last id hasn't changed (status flip on an existing message,
+  //     no new addition), skip scrolling entirely.
+  //   • For user messages: scroll to bottom (user expects their
+  //     message to land at the input edge).
+  //   • For bot messages that fit in the visible region: scroll to
+  //     bottom (whole message visible, same as before).
+  //   • For bot messages taller than the visible region: align the
+  //     TOP of the bot bubble to the top of the visible region, so
+  //     the user reads from the start. Falls back to scroll-to-
+  //     bottom if the message DOM node isn't found (defensive).
+  const lastScrolledIdRef = useRef<string | null>(null);
   useEffect(() => {
+    if (!chatRef.current || messages.length === 0) return;
+
+    const lastMsg = messages[messages.length - 1];
+    if (lastScrolledIdRef.current === lastMsg.id) return; // status flip; no new message
+    lastScrolledIdRef.current = lastMsg.id;
+
     requestAnimationFrame(() => {
-      if (chatRef.current) {
-        chatRef.current.scrollTop = chatRef.current.scrollHeight;
+      const region = chatRef.current;
+      if (!region) return;
+
+      // For bot messages, decide between "top of message" and "bottom
+      // of region" based on whether the message fits.
+      if (lastMsg.role === "bot") {
+        const node = region.querySelector<HTMLElement>(
+          `[data-message-id="${lastMsg.id}"]`,
+        );
+        if (node) {
+          const messageHeight = node.offsetHeight;
+          const visibleHeight = region.clientHeight;
+          if (messageHeight > visibleHeight) {
+            // Long reply — anchor the top. Compute the y-offset of
+            // the message within the scroll region using bounding
+            // rects rather than offsetTop. offsetTop walks the
+            // offsetParent chain, which for these messages may NOT
+            // terminate at the scroll region (depends on which
+            // ancestors establish a containing block); using rects
+            // sidesteps that subtlety entirely.
+            //
+            // Math: messageRect.top is relative to the viewport.
+            // regionRect.top is also relative to the viewport. The
+            // message's y-position within the region is therefore
+            // (messageRect.top - regionRect.top) + region.scrollTop.
+            const regionRect = region.getBoundingClientRect();
+            const nodeRect = node.getBoundingClientRect();
+            region.scrollTop = (nodeRect.top - regionRect.top) + region.scrollTop;
+            return;
+          }
+        }
       }
+
+      // Short bot replies, user messages, and the missing-DOM-node
+      // fallback all scroll to bottom — the original behavior.
+      region.scrollTop = region.scrollHeight;
     });
   }, [messages]);
 
@@ -220,25 +283,64 @@ export function ChatContainer() {
         paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 1.75rem)",
       }}
     >
-      <div className="flex items-baseline gap-2.5 px-1 pt-5 pb-3.5 flex-wrap">
-        <h1 className="text-xl font-bold tracking-tight text-neutral-900 dark:text-neutral-100">
-          YourPeer AI Chat
-        </h1>
-        <span
-          title={dotLabel}
-          aria-label={dotLabel}
-          className={`inline-block w-2 h-2 rounded-full shrink-0 ${dotColor}`}
-        />
-        <span className="text-sm text-neutral-400 dark:text-neutral-500">
+      {/* Header layout — responsive:
+       *   • Mobile (< sm, ~640px): two rows.
+       *       Row 1: [title] [dot]    [theme] [Leave site]   (right cluster pinned via ml-auto)
+       *       Row 2: [subtitle]
+       *   • Desktop (sm+): single row.
+       *       [title] [dot] [subtitle]    [theme] [Leave site]
+       *
+       * Mobile vertical spacing is intentionally tight:
+       *   • pt-3 pb-2 (was pt-5 pb-3.5): the original padding was
+       *     sized for a one-row header. With two rows on mobile,
+       *     the same padding compounds with the extra row height
+       *     and pushes chat content too far down — wasted real
+       *     estate on a screen that's already small. sm: bumps
+       *     the padding back up to the original values for desktop.
+       *   • gap-0 between rows (was gap-1): the subtitle sits
+       *     directly under the title with only the natural line
+       *     height as separation. Reads as a sub-header rather
+       *     than a separate paragraph.
+       *   • text-xs on the subtitle (was text-sm): 12px tag-line
+       *     weight rather than 14px sub-header weight, since the
+       *     subtitle is supplementary on mobile, not equal-weight
+       *     to the title. sm:text-sm restores the original size
+       *     on desktop where it sits inline with the title.
+       *
+       * Why not just flex-wrap the original single row: at narrow
+       * widths flex-wrap split the five children arbitrarily, so
+       * the right cluster could land on a wrap line BELOW the
+       * subtitle. Two parallel renderings of the right cluster
+       * (one inside the title row for mobile, one as a sibling
+       * for desktop) give deterministic placement at every width.
+       * sm:contents on the mobile row dissolves it into the outer
+       * flex on desktop so children become direct descendants.
+       */}
+      <div className="flex flex-col sm:flex-row sm:items-baseline gap-0 sm:gap-2.5 px-1 pt-3 pb-2 sm:pt-5 sm:pb-3.5">
+        <div className="flex items-center gap-2.5 sm:contents">
+          <h1 className="text-xl font-bold tracking-tight text-neutral-900 dark:text-neutral-100">
+            YourPeer AI Chat
+          </h1>
+          <span
+            title={dotLabel}
+            aria-label={dotLabel}
+            className={`inline-block w-2 h-2 rounded-full shrink-0 ${dotColor}`}
+          />
+          {/* Right cluster on MOBILE only — pinned to the right edge
+           * of row 1 via ml-auto. Hidden on desktop; the desktop
+           * instance below sits at the trailing edge of the single
+           * header row. */}
+          <div className="ml-auto flex items-center gap-2 sm:hidden">
+            <ThemeToggle />
+            <QuickExit />
+          </div>
+        </div>
+        <span className="text-xs sm:text-sm text-neutral-400 dark:text-neutral-500 leading-tight">
           Find services near you
         </span>
-        {/* Header right cluster: ThemeToggle + QuickExit, pushed to
-            the right edge by ml-auto. items-baseline on the parent
-            keeps the h1 + status aligned; self-center keeps the
-            buttons vertically centered to the header row rather
-            than inheriting the text baseline. The gap matches the
-            inter-element spacing of the rest of the header. */}
-        <div className="ml-auto self-center flex items-center gap-2">
+        {/* Right cluster on DESKTOP only — sits at the trailing edge
+         * of the single header row via sm:ml-auto. Hidden on mobile. */}
+        <div className="hidden sm:ml-auto sm:flex items-center gap-2">
           <ThemeToggle />
           <QuickExit />
         </div>
@@ -266,16 +368,18 @@ export function ChatContainer() {
         </div>
       )}
 
-      {/* Backend degraded — AI features limited but service search works */}
+      {/* Backend degraded — desktop only. On mobile this renders below
+          the chat log (closer to the input). See the sm:hidden copy. */}
       {connectionState === "degraded" && (
-        <div role="status" className="mx-1 mb-2 px-3 py-2 rounded-lg bg-amber-50 border border-amber-200 text-sm text-amber-700 dark:bg-amber-950/40 dark:border-amber-800 dark:text-amber-300">
-          {statusDetail.includes("API key")
-            ? "Running in basic mode — service search still works."
-            : statusDetail.includes("Rate limit")
-              ? "Temporarily limited — service search still works."
-              : statusDetail.includes("Anthropic") || statusDetail.includes("API")
-                ? "AI features temporarily limited — service search still works."
-                : "Some features may be limited — service search still works."}
+        <div
+          role="status"
+          className="hidden sm:block mx-1 mb-2 px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-700 dark:bg-amber-950/40 dark:border-amber-800 dark:text-amber-300"
+        >
+          {statusDetail.includes("Rate limit")
+            ? "Temporarily rate-limited — try again in a moment, or use simple phrases like \u201cfood in Brooklyn\u201d."
+            : statusDetail.includes("Anthropic") || statusDetail.includes("API")
+              ? "AI features temporarily limited — service search still works."
+              : "Running in basic mode — try simple phrases like \u201cfood in Brooklyn\u201d for best results."}
         </div>
       )}
 
@@ -295,7 +399,7 @@ export function ChatContainer() {
           feedback row; the feedback row now renders inline inside
           the latest bot message instead, but the wrapper stays for
           layout consistency. */}
-      <div className="relative flex-1">
+      <div className="relative flex-1 min-h-0">
         <div
           ref={chatRef}
           role="log"
@@ -303,7 +407,26 @@ export function ChatContainer() {
           aria-live="polite"
           aria-relevant="additions"
           tabIndex={0}
-          className="bg-white border border-neutral-200 rounded-2xl min-h-[400px] max-h-[75dvh] overflow-y-auto p-3 sm:p-5 flex flex-col gap-2.5 shadow-sm focus:outline-none focus:ring-2 focus:ring-amber-300/30 dark:bg-neutral-900 dark:border-neutral-800"
+          // Height policy:
+          //   • Mobile (< sm): no min-height. The chat region uses
+          //     `flex-1` from the parent + h-full here to fill the
+          //     space the header and ChatInput leave behind. Quick
+          //     replies (rendered inside this scroll region) used
+          //     to push the region's content past the 400px minimum
+          //     and add ~80px of pill height on top, which combined
+          //     with the always-on `min-h-[400px]` made the *total*
+          //     of header + chat region + input + safe-area exceed
+          //     100dvh — the small phantom mobile scroll the user
+          //     was reporting on iPhone 12 (844px viewport).
+          //   • Desktop (sm+): keep min-h-[400px] so the region
+          //     doesn't visually collapse on empty state. Plenty of
+          //     viewport on desktop, no overflow risk.
+          //
+          // max-h-[75dvh] on both breakpoints prevents the region
+          // from filling the whole screen on tall viewports and
+          // crowding out the input. (The flex layout would respect
+          // sibling sizes anyway, but max-h is a defensive cap.)
+          className="bg-white border border-neutral-200 rounded-2xl h-full sm:min-h-[400px] max-h-[75dvh] overflow-y-auto p-3 sm:p-5 flex flex-col gap-2.5 shadow-sm focus:outline-none focus:ring-2 focus:ring-amber-300/30 dark:bg-neutral-900 dark:border-neutral-800"
         >
           {!hydrated ? (
             <p className="text-neutral-400 text-sm">Loading…</p>
@@ -335,12 +458,18 @@ export function ChatContainer() {
         </div>
       </div>
 
+      {/* Backend degraded — mobile only. On desktop this renders above
+          the chat log. See the hidden sm:block copy above. */}
       {connectionState === "degraded" && (
         <div
           role="status"
-          className="mx-1 my-2 px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-700 dark:bg-amber-950/40 dark:border-amber-800 dark:text-amber-300"
+          className="sm:hidden mx-1 my-2 px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-700 dark:bg-amber-950/40 dark:border-amber-800 dark:text-amber-300"
         >
-          Running in basic mode — try simple phrases like &ldquo;food in Brooklyn&rdquo; for best results.
+          {statusDetail.includes("Rate limit")
+            ? "Temporarily rate-limited — try again in a moment, or use simple phrases like \u201cfood in Brooklyn\u201d."
+            : statusDetail.includes("Anthropic") || statusDetail.includes("API")
+              ? "AI features temporarily limited — service search still works."
+              : "Running in basic mode — try simple phrases like \u201cfood in Brooklyn\u201d for best results."}
         </div>
       )}
 

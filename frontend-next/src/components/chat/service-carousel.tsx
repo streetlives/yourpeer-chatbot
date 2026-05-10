@@ -8,7 +8,7 @@
 
 import { useRef, useState, useCallback, useEffect } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
-import { ServiceCard, LocationCard } from "./service-card";
+import { ServiceCard, LocationCard, useReviewTruncate } from "./service-card";
 import type { ServiceResult } from "@/lib/chat/types";
 
 interface ServiceCarouselProps {
@@ -42,6 +42,11 @@ export function ServiceCarousel({ services }: ServiceCarouselProps) {
   // by comparing scrollLeft to maxScrollLeft is the reliable signal.
   const [atStart, setAtStart] = useState(true);
   const [atEnd, setAtEnd] = useState(false);
+
+  // Computed once here and passed to each card so the hook's
+  // window.innerWidth read + effect firing happens once per carousel
+  // rather than once per card.
+  const reviewTruncate = useReviewTruncate();
 
   const groups = groupByLocation(services);
 
@@ -135,7 +140,7 @@ export function ServiceCarousel({ services }: ServiceCarouselProps) {
             disabled={atStart}
             onClick={() => scrollByCards(-1)}
             aria-label="Previous result"
-            className="w-8 h-8 rounded-full border border-neutral-200 bg-white text-neutral-500 flex items-center justify-center transition hover:bg-neutral-50 hover:border-neutral-300 disabled:opacity-30 disabled:cursor-default dark:bg-neutral-900 dark:border-neutral-700 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:border-neutral-600"
+            className="w-11 h-11 sm:w-8 sm:h-8 rounded-full border border-neutral-200 bg-white text-neutral-500 flex items-center justify-center transition hover:bg-neutral-50 hover:border-neutral-300 disabled:opacity-30 disabled:cursor-default dark:bg-neutral-900 dark:border-neutral-700 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:border-neutral-600"
           >
             <ChevronLeft size={16} />
           </button>
@@ -144,7 +149,7 @@ export function ServiceCarousel({ services }: ServiceCarouselProps) {
             disabled={atEnd}
             onClick={() => scrollByCards(1)}
             aria-label="Next result"
-            className="w-8 h-8 rounded-full border border-neutral-200 bg-white text-neutral-500 flex items-center justify-center transition hover:bg-neutral-50 hover:border-neutral-300 disabled:opacity-30 disabled:cursor-default dark:bg-neutral-900 dark:border-neutral-700 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:border-neutral-600"
+            className="w-11 h-11 sm:w-8 sm:h-8 rounded-full border border-neutral-200 bg-white text-neutral-500 flex items-center justify-center transition hover:bg-neutral-50 hover:border-neutral-300 disabled:opacity-30 disabled:cursor-default dark:bg-neutral-900 dark:border-neutral-700 dark:text-neutral-400 dark:hover:bg-neutral-800 dark:hover:border-neutral-600"
           >
             <ChevronRight size={16} />
           </button>
@@ -168,6 +173,7 @@ export function ServiceCarousel({ services }: ServiceCarouselProps) {
               isActive={i === currentIndex}
               index={i}
               total={groups.length}
+              reviewTruncate={reviewTruncate}
             />
           ) : (
             <LocationCard
@@ -176,6 +182,7 @@ export function ServiceCarousel({ services }: ServiceCarouselProps) {
               isActive={i === currentIndex}
               index={i}
               total={groups.length}
+              reviewTruncate={reviewTruncate}
             />
           ),
         )}

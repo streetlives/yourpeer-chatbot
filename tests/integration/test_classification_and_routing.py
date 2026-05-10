@@ -1871,6 +1871,76 @@ def test_no_results_message_includes_navigator_option():
     assert "peer navigator" in msg.lower() or "real person" in msg.lower()
 
 
+def test_no_results_message_citywide_does_not_leak_sentinel():
+    """When the user searched citywide ("all five boroughs", "NYC"), the
+    location slot holds the CITYWIDE_SENTINEL ('__citywide__'). The
+    no-results path must NOT pass that sentinel through _display_location
+    and produce '__Citywide__' in the user-facing message — which is what
+    was being shown before this fix."""
+    from app.services.slot_extraction_regex import CITYWIDE_SENTINEL
+    msg = _no_results_message({
+        "service_type": "food",
+        "location": CITYWIDE_SENTINEL,
+    })
+    assert "__citywide__" not in msg.lower()
+    assert "__Citywide__" not in msg
+    # And the message should mention NYC / citywide scope honestly.
+    assert "nyc" in msg.lower() or "across" in msg.lower()
+
+
+def test_no_results_message_citywide_does_not_suggest_different_borough():
+    """A citywide search has already cast the widest net — telling the
+    user to 'try a different neighborhood or borough' is unhelpful (there
+    is no different one). The fix message instead points at filter
+    relaxation + peer navigator."""
+    from app.services.slot_extraction_regex import CITYWIDE_SENTINEL
+    msg = _no_results_message({
+        "service_type": "food",
+        "location": CITYWIDE_SENTINEL,
+    })
+    # The "different neighborhood or borough" line is fundamentally
+    # inactionable here — should not appear.
+    assert "different neighborhood" not in msg.lower()
+    assert "different borough" not in msg.lower()
+    # But peer navigator should still be offered as a real path.
+    assert "peer navigator" in msg.lower()
+
+
+def test_no_results_message_no_location_does_not_mislead():
+    """When the user gave no location at all (slot empty), the previous
+    code passed 'your area' to _display_location, producing 'I wasn't
+    able to find food services in Your Area' — which falsely implies
+    a location-bounded search. The fix re-phrases honestly."""
+    msg = _no_results_message({"service_type": "food", "location": None})
+    # Should not echo the placeholder string.
+    assert "your area" not in msg.lower()
+    # Should not echo the citywide sentinel either — different code path.
+    assert "__citywide__" not in msg.lower()
+    # Should suggest sharing a borough to narrow.
+    assert "borough" in msg.lower() or "neighborhood" in msg.lower()
+    assert "peer navigator" in msg.lower()
+
+
+def test_no_results_message_empty_string_location_treated_as_missing():
+    """Some upstream paths set location to '' rather than None. Should
+    behave the same as None — not 'in '' matching your criteria'."""
+    msg = _no_results_message({"service_type": "shelter", "location": ""})
+    assert "''" not in msg
+    assert '""' not in msg
+    assert "your area" not in msg.lower()
+    assert "borough" in msg.lower() or "neighborhood" in msg.lower()
+
+
+def test_no_results_message_borough_path_still_suggests_nearby():
+    """Regression: the citywide/missing-location branches should NOT
+    have changed the existing behavior for actual borough searches."""
+    msg = _no_results_message({"service_type": "food", "location": "Staten Island"})
+    # Existing nearby-borough suggestion should still fire.
+    assert "brooklyn" in msg.lower() or "queens" in msg.lower()
+    # And peer navigator is still offered.
+    assert "peer navigator" in msg.lower()
+
+
 def test_get_nearby_boroughs_all_boroughs_covered():
     """Every borough should have nearby suggestions for common service types."""
     from app.services.confirmation import _get_nearby_boroughs

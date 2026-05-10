@@ -8,6 +8,8 @@ Handles:
   - Borough suggestion logic (service-type aware)
 """
 
+import logging
+
 from app.services.slot_extraction_regex import CITYWIDE_SENTINEL, NEAR_ME_SENTINEL
 from app.privacy.pii_redactor import redact_pii
 from app.services.phrase_lists import (
@@ -18,6 +20,9 @@ from app.services.phrase_lists import (
     _GEOGRAPHIC_NEIGHBORS_BY_BOROUGH,
     _SERVICE_TO_BOROUGH_KEY,
 )
+
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -430,14 +435,65 @@ def _get_geographically_nearby_boroughs(borough: str) -> list[str]:
 
 
 def _no_results_message(slots: dict) -> str:
-    """Helpful message when no services match the query."""
+    """Helpful message when no services match the query.
+
+    Branches by the type of location the user provided:
+
+    1. **Citywide** (CITYWIDE_SENTINEL — "all five boroughs", "NYC",
+       "the city"): the user's already cast the widest net the system
+       offers, so suggesting "try a different neighborhood or borough"
+       is unhelpful. Instead the message acknowledges the citywide
+       scope and points at peer navigator + filter relaxation.
+
+       Worth flagging upstream too: a citywide search returning 0
+       results almost always means a filter mismatch (rare population,
+       overspecified service detail) or a connectivity issue caught
+       upstream by DatabaseUnreachableError. If neither, the dataset
+       genuinely has 0 matches, which is operationally interesting —
+       the log line below makes that visible.
+
+    2. **No location at all** (slot empty): the user said "I need food"
+       and we ran the broadest possible query. "Citywide" leaks the
+       internal sentinel; "your area" misleads (we have no idea where
+       they are). The right phrasing is "anywhere in NYC" — honest
+       about the scope, no false specificity.
+
+    3. **Borough**: keep the existing nearby-borough suggestion.
+
+    4. **Neighborhood / specific address**: keep the "try a different
+       neighborhood or borough" advice; it's actionable here.
+    """
     service = slots.get("service_type", "services")
-    location = slots.get("location", "your area")
+    location = slots.get("location") or ""
 
     from app.rag.query_executor import normalize_location, is_borough
     normalized = normalize_location(location) if location else None
 
-    # Only suggest nearby boroughs if the user searched at the borough level
+    # Citywide branch — user explicitly asked for all of NYC.
+    if location == CITYWIDE_SENTINEL:
+        logger.warning(
+            f"Citywide search for '{service}' returned 0 results. "
+            f"Likely cause: rare-population filter, overspecified "
+            f"service_detail, or genuine 0-row case worth investigating. "
+            f"slots={ {k: v for k, v in slots.items() if not k.startswith('_')} }"
+        )
+        return (
+            f"I wasn't able to find any {service} services across NYC right "
+            f"now matching what you described. This usually means the "
+            f"filter is too specific — you can try removing requirements, "
+            f'or say "connect with peer navigator" to talk to a real person.'
+        )
+
+    # No-location branch — user gave no borough/neighborhood. Don't
+    # echo "Citywide" or "your area"; both mislead.
+    if not location:
+        return (
+            f"I wasn't able to find any {service} services matching what "
+            f"you described. Try sharing a borough or neighborhood — "
+            f'or say "connect with peer navigator" to talk to a real person.'
+        )
+
+    # Borough branch — actionable nearby-borough suggestions.
     nearby = []
     if normalized and is_borough(location):
         nearby = _get_nearby_boroughs(service, normalized)
