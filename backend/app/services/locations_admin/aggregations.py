@@ -322,28 +322,169 @@ _SORT_KEY_TO_SQL = {
 NYC_BOROUGHS = ("Manhattan", "Brooklyn", "Queens", "Bronx", "Staten Island")
 
 
+# Per-column cache for the generated CASE SQL. Two call sites
+# ("pa.city" and "pa2.city") would otherwise rebuild the ~80-branch
+# string on every page load. Built lazily on first use rather than
+# at import time because _get_city_to_borough's lazy singleton is
+# itself constructed on first call.
+_BOROUGH_CASE_SQL_CACHE: dict[str, str] = {}
+
+# Cached admin-extended city→borough mapping. Built lazily.
+_ADMIN_CITY_TO_BOROUGH: Optional[dict[str, str]] = None
+
+
+# Admin-only supplements to the chat-side city→borough mapping.
+#
+# The chat side's NYC_LOCATION_ALIASES is built for user queries —
+# users say "New York", "BK", "the village", etc. — and doesn't need
+# to recognize literal borough names like "Manhattan" or some Queens
+# neighborhood names that show up in raw pa.city values in the
+# Streetlives DB. The admin module needs to bucket every pa.city
+# value that appears in production, so we supplement here.
+#
+# Adding entries upstream in NYC_LOCATION_ALIASES would also work,
+# but the chat side hasn't needed them so far and changing a heavily-
+# exercised constant is more invasive than a local supplement. If a
+# future chat-side feature needs any of these, promote them up.
+#
+# Source: pa.city values observed in the Query 5 Part C audit
+# (May 2026 production data dump). Borough assignments are
+# unambiguous geography.
+_ADMIN_EXTRA_CITY_ALIASES: dict[str, str] = {
+    # Queens neighborhoods that the chat-side alias map doesn't carry.
+    "forest hills": "Queens",
+    "rego park": "Queens",
+    "kew gardens": "Queens",
+    "richmond hill": "Queens",
+    "south richmond hill": "Queens",
+    "south ozone park": "Queens",
+    "bayside": "Queens",
+    "sunnyside": "Queens",
+    "arverne": "Queens",
+    "laurelton": "Queens",
+    # Parenthetical variant in the data.
+    "corona (queens)": "Queens",
+}
+
+
+def _get_admin_city_to_borough() -> dict[str, str]:
+    """Admin-extended city→borough mapping. Single source of truth
+    used by both `_borough_case_sql` (for SQL generation) and
+    `_bucket_city_to_borough` (for Python parity).
+
+    Composition:
+        1. Chat-side `get_nyc_city_to_borough()` (NYC_LOCATION_ALIASES
+           inverted to lowercased-city → canonical-borough).
+        2. The five canonical borough names as keys mapping to
+           themselves — for when pa.city is literally "Manhattan",
+           "Queens", etc. The chat side doesn't need these because
+           users don't type them, but the DB does store them.
+        3. `_ADMIN_EXTRA_CITY_ALIASES` (above) for production
+           pa.city values not covered by the chat-side aliases.
+
+    Memoized — the merge runs at most once per process.
+    """
+    global _ADMIN_CITY_TO_BOROUGH
+    if _ADMIN_CITY_TO_BOROUGH is not None:
+        return _ADMIN_CITY_TO_BOROUGH
+
+    from app.rag.query_executor import get_nyc_city_to_borough
+    mapping = dict(get_nyc_city_to_borough())
+
+    # Borough names as their own keys. Use setdefault so we don't
+    # accidentally clobber a chat-side entry (none should exist for
+    # these lowercased borough names, but be defensive).
+    for borough in NYC_BOROUGHS:
+        mapping.setdefault(borough.lower(), borough)
+
+    # Admin-specific Queens neighborhoods.
+    for alias, borough in _ADMIN_EXTRA_CITY_ALIASES.items():
+        mapping.setdefault(alias, borough)
+
+    _ADMIN_CITY_TO_BOROUGH = mapping
+    return mapping
+
+
+def _bucket_city_to_borough(city: Optional[str]) -> str:
+    """Python equivalent of the SQL CASE produced by `_borough_case_sql`.
+
+    Same input → same output as evaluating the CASE inside Postgres.
+    Use this when bucketing in Python rather than SQL (e.g. unit tests
+    that want to pin the bucketing behavior end-to-end without
+    spinning up a DB, or any future caller that's already iterating
+    rows in Python).
+
+    Returns one of NYC_BOROUGHS or "Other"; never returns None.
+    """
+    if not city or not city.strip():
+        return "Other"
+    mapping = _get_admin_city_to_borough()
+    return mapping.get(city.strip().lower(), "Other")
+
+
 def _borough_case_sql(city_col: str) -> str:
     """Generate the SQL CASE expression that maps a `city` column to
     one of NYC_BOROUGHS or "Other".
 
     Returns a bare CASE expression — caller adds AS borough or wraps
-    in a JOIN. The string literals are produced from NYC_BOROUGHS so
-    the SQL stays in lockstep with the Python constant; previously the
-    list was hand-typed in four separate SQL blocks and drift was a
-    real maintenance risk.
+    in a JOIN. The expression uses the same ~80-entry city→borough
+    mapping `_bucket_city_to_borough` uses (chat-side aliases plus
+    admin-specific supplements), so case variants ("BROOKLYN"),
+    aliases ("The Bronx"), and Queens neighborhoods that appear
+    directly in `pa.city` ("Astoria", "Flushing", "Jamaica", "Long
+    Island City", "Forest Hills", and so on) bucket to their canonical
+    borough rather than collapsing into "Other".
+
+    Without this comprehensive mapping (the previous implementation
+    did an exact-string, case-sensitive IN against five canonical
+    borough names), the deployed heatmap silently routed:
+        - Every case variant ("BROOKLYN", "STATEN ISLAND", ...) to Other
+        - Every alias ("The Bronx") to Other
+        - Every Queens neighborhood to Other (the Queens column in the
+          heatmap showed only locations where pa.city was the literal
+          string "Queens" — almost none in production)
+        - Every Manhattan location where pa.city was "New York" (the
+          common Streetlives value) to Other
+    The visible symptom was a heatmap with a tiny Queens column, a
+    near-empty Manhattan column, and an "Other" bucket that conflated
+    real-NYC-by-neighborhood with genuinely non-NYC cities.
 
     `city_col` is interpolated into the SQL unescaped — pass it from
     a fixed call site, never from user input. (All callers in this
     module pass literal column references like "pa.city" or "pa2.city".)
+    City names and borough names come from the hand-curated Python
+    constants in NYC_LOCATION_ALIASES + _ADMIN_EXTRA_CITY_ALIASES; we
+    still single-quote-escape each one as defense in depth.
+
+    Build is cached per `city_col` value: with two call sites in the
+    module, the generated string is built at most twice per process
+    lifetime.
     """
-    # NYC_BOROUGHS contents are hard-coded Python strings — no user
-    # input — so concatenating into a SQL IN-list is safe. We still
-    # wrap each in single quotes for SQL literal syntax.
-    quoted = ", ".join(f"'{b}'" for b in NYC_BOROUGHS)
-    return (
-        f"CASE WHEN {city_col} IN ({quoted}) "
-        f"THEN {city_col} ELSE 'Other' END"
-    )
+    cached = _BOROUGH_CASE_SQL_CACHE.get(city_col)
+    if cached is not None:
+        return cached
+
+    mapping = _get_admin_city_to_borough()
+
+    # Sort for deterministic output — easier to diff in logs and
+    # snapshot tests, and gives the SQL planner a stable string to
+    # hash for plan reuse.
+    cases: list[str] = []
+    for city in sorted(mapping.keys()):
+        borough = mapping[city]
+        # The keys in `mapping` are already lowercase. Escape single
+        # quotes defensively even though current data has none; one
+        # rogue entry later shouldn't break the SQL.
+        safe_city = city.replace("'", "''")
+        safe_borough = borough.replace("'", "''")
+        cases.append(
+            f"WHEN LOWER(TRIM({city_col})) = '{safe_city}' "
+            f"THEN '{safe_borough}'"
+        )
+
+    sql = f"CASE {' '.join(cases)} ELSE 'Other' END"
+    _BOROUGH_CASE_SQL_CACHE[city_col] = sql
+    return sql
 
 
 def get_locations_list(
