@@ -49,7 +49,6 @@ from __future__ import annotations
 import argparse
 import os
 import sys
-from typing import Iterable
 
 
 def _load_mapping() -> dict[str, str]:

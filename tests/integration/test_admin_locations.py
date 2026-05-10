@@ -3211,7 +3211,8 @@ def test_co_op_city_variant_spellings():
 def test_check_city_coverage_generates_valid_sql():
     """The generated SQL must include every mapping entry as a VALUES
     row, plus the standard query body."""
-    import sys, os
+    import sys
+    import os
     repo_root = os.path.dirname(os.path.dirname(os.path.dirname(
         os.path.abspath(__file__)
     )))
@@ -3274,7 +3275,8 @@ def test_check_city_coverage_sql_file_in_sync():
     Fix: run the regen command. The test output below repeats it
     for convenience.
     """
-    import sys, os
+    import sys
+    import os
     repo_root = os.path.dirname(os.path.dirname(os.path.dirname(
         os.path.abspath(__file__)
     )))
