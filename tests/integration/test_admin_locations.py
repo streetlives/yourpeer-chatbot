@@ -1714,6 +1714,39 @@ def test_all_locations_endpoints_reachable_when_wired():
         "/admin/api/locations/integrity-callouts",
         "/admin/api/locations/timeseries",
     ]
+    # Pre-flight check: count routes registered on the locations
+    # sub-router. If this is < 12, the wiring failure is the
+    # decorators themselves — not the responder / auth / etc. —
+    # and naming the missing ones in the failure message saves the
+    # reader from running the diagnostic manually.
+    from app.routes.admin_locations import router as _locations_router
+    registered_paths = sorted({r.path for r in _locations_router.routes})
+    expected_paths = sorted([
+        "/api/locations/stats",
+        "/api/locations/list",
+        "/api/locations/freshness-histogram",
+        "/api/locations/by-borough",
+        "/api/locations/heatmap",
+        "/api/locations/coordinate-issues",
+        "/api/locations/category-coverage",
+        "/api/locations/stale-categories",
+        "/api/locations/feedback-aggregates",
+        "/api/locations/feedback-comments",
+        "/api/locations/integrity-callouts",
+        "/api/locations/timeseries",
+    ])
+    missing_at_router = [p for p in expected_paths if p not in registered_paths]
+    assert not missing_at_router, (
+        f"locations sub-router is missing {len(missing_at_router)} route(s): "
+        f"{missing_at_router}. "
+        "Check `backend/app/routes/admin_locations.py` for the @router.get "
+        "decorators — the test file expects 12 endpoints, the router has "
+        f"{len(registered_paths)}. Likely a partial checkout / merge where "
+        "the route file is stale relative to aggregations.py + __init__.py "
+        "(both of which would otherwise fail at module import time, not "
+        "silently 404 a subset)."
+    )
+
     with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}), \
          patch("app.services.locations_admin.aggregations._execute_sql", side_effect=responder):
         for path in paths:
