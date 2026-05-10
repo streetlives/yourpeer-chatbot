@@ -3,13 +3,13 @@
 
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
 import { AlertCircle } from "lucide-react";
 import type {
   TimeseriesResponse,
   TimeseriesWeek,
 } from "@/lib/admin/locations-types";
-import { isAdminApiError } from "@/lib/admin/locations-types";
+import { useAdminFetch } from "@/lib/admin/use-admin-fetch";
 
 /**
  * Section 7 — weekly time series charts.
@@ -30,34 +30,10 @@ import { isAdminApiError } from "@/lib/admin/locations-types";
  * the system is genuinely just new / sparse.
  */
 export function LocationsTimeseries() {
-  const [data, setData] = useState<TimeseriesResponse | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const { data, loading, error } = useAdminFetch<TimeseriesResponse>(
+    "/api/admin/locations/timeseries",
+  );
 
-  useEffect(() => {
-    let cancelled = false;
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- mount-time fetch needs to mark loading state; standard pattern in this codebase
-    setLoading(true);
-    fetch("/api/admin/locations/timeseries")
-      .then((r) => r.json())
-      .then((body) => {
-        if (cancelled) return;
-        if (isAdminApiError(body)) {
-          setError(body.detail);
-        } else {
-          setData(body as TimeseriesResponse);
-        }
-        setLoading(false);
-      })
-      .catch((err) => {
-        if (cancelled) return;
-        setError(String(err));
-        setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   // Pre-compute totals across the window — surfaced as a row total
   // beneath each chart so admins see the "what's the absolute scale

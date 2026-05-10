@@ -3,7 +3,7 @@
 
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { ExternalLink, AlertCircle, AlertTriangle } from "lucide-react";
 import {
   TablePagination,
@@ -19,7 +19,7 @@ import type {
   LocationsAgeBucket,
   BoroughLabel,
 } from "@/lib/admin/locations-types";
-import { isAdminApiError } from "@/lib/admin/locations-types";
+import { useAdminFetch } from "@/lib/admin/use-admin-fetch";
 import {
   defaultSortDirForField,
   cycleSortDirForField,
@@ -75,11 +75,6 @@ export function LocationsTable({
   const [hasIssuesOnly, setHasIssuesOnly] = useState(false);
   const [search, setSearch] = useState("");
 
-  // ---------------- fetch state ----------------
-  const [data, setData] = useState<LocationsListResponse | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
   // Build query string from the param state. Memoized so the effect
   // only fires when something actually changes, not on every render.
   const queryString = useMemo(() => {
@@ -109,32 +104,11 @@ export function LocationsTable({
     return qs.toString();
   }, [page, pageSize, sortKey, sortDir, boroughFilter, effectiveAgeBucket, hasIssuesOnly, search]);
 
-  useEffect(() => {
-    let cancelled = false;
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetching effect needs to mark loading state on every queryString change; this is the standard pattern for parameterized fetches
-    setLoading(true);
-    setError(null);
-    fetch(`/api/admin/locations/list?${queryString}`)
-      .then((r) => r.json())
-      .then((body) => {
-        if (cancelled) return;
-        if (isAdminApiError(body)) {
-          setError(body.detail);
-          setData(null);
-        } else {
-          setData(body as LocationsListResponse);
-        }
-        setLoading(false);
-      })
-      .catch((err) => {
-        if (cancelled) return;
-        setError(String(err));
-        setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [queryString]);
+  // useAdminFetch handles the loading/error/data state and re-fetches
+  // when queryString changes. Centralizes the cancelled-on-unmount
+  // pattern and isAdminApiError handling — see L8 in v1_review.md.
+  const url = `/api/admin/locations/list?${queryString}`;
+  const { data, loading, error } = useAdminFetch<LocationsListResponse>(url);
 
   // Sort header click — toggles direction within the same key, or
   // switches to a fresh key with that key's "natural" default direction.
@@ -163,7 +137,7 @@ export function LocationsTable({
   // Reset to page 1 whenever any filter changes — otherwise an admin
   // who's on page 5 of an unfiltered view would suddenly see a stale
   // "page 5 of 1" empty state when they apply a filter.
-  function setBorougbResetPage(next: BoroughLabel[]) {
+  function setBoroughResetPage(next: BoroughLabel[]) {
     setBoroughFilter(next);
     setPage(1);
   }
@@ -184,7 +158,7 @@ export function LocationsTable({
     <div>
       <FilterBar
         boroughFilter={boroughFilter}
-        setBoroughFilter={setBorougbResetPage}
+        setBoroughFilter={setBoroughResetPage}
         ageBucket={effectiveAgeBucket}
         setAgeBucket={setAgeBucketResetPage}
         hasIssuesOnly={hasIssuesOnly}
@@ -372,9 +346,14 @@ function SortHeader({
   const active = current === field;
   const arrow = active ? (dir.startsWith("asc") ? " ▲" : " ▼") : "";
   return (
+    // className applies to the inner button only — the button is
+    // `w-full` and holds the visible padding + label, so its alignment
+    // (text-left default, text-right when passed) is what's actually
+    // rendered. Previously also applied to the th, which was either
+    // redundant (button overrides) or accidentally double-applied.
     <th
       scope="col"
-      className={`px-0 py-0 border-b border-neutral-200 dark:border-neutral-800 ${className}`}
+      className="px-0 py-0 border-b border-neutral-200 dark:border-neutral-800"
       aria-sort={active ? (dir.startsWith("asc") ? "ascending" : "descending") : "none"}
     >
       <button

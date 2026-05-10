@@ -37,7 +37,7 @@ AUDIT_LOG_CAP events becomes a visible signal in production logs
 rather than a quietly-undercounting aggregation.
 """
 from __future__ import annotations
-import zoneinfo
+
 import logging
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
@@ -107,6 +107,7 @@ TIMESERIES_WEEKS = 26
 # would invalidate cached query plans. The timezone correction only
 # applies where the human-week boundary actually matters: the
 # timeseries.
+import zoneinfo
 DISPLAY_TIMEZONE = zoneinfo.ZoneInfo("America/New_York")
 
 # How many audit-log events of one type we read in a single pass.
@@ -1730,7 +1731,15 @@ def get_location_feedback_aggregates() -> dict:
         eligible_count += 1
         total_rated = bucket["total_ratings_count"]
         neg = bucket["negative_ratings_count"]
-        smoothed = (neg + 1) / (total_rated + 2) if total_rated >= 0 else 0.5
+        # Laplace add-one smoothing: (neg + 1) / (total_rated + 2).
+        # Denominator is always >= 2 by construction (the +2 ensures
+        # it; total_rated itself is a count that's always >= 0). No
+        # division-by-zero guard needed, and no defensive fallback —
+        # any non-trivial fallback value would be misleading because
+        # smoothing's purpose is to give a meaningful answer even at
+        # 0 ratings (1/2 = 0.5 is the neutral prior, which the formula
+        # produces naturally when neg=total=0).
+        smoothed = (neg + 1) / (total_rated + 2)
         raw = neg / total_rated if total_rated > 0 else 0.0
         rows.append({
             "location_id": loc_id,

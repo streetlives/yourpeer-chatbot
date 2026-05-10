@@ -3,15 +3,15 @@
 
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { AlertCircle, MessageSquare, ExternalLink } from "lucide-react";
 import type {
   FeedbackCommentsResponse,
   FeedbackComment,
   FeedbackCriterion,
 } from "@/lib/admin/locations-types";
+import { useAdminFetch } from "@/lib/admin/use-admin-fetch";
 import {
-  isAdminApiError,
   FEEDBACK_CRITERION_LABELS,
 } from "@/lib/admin/locations-types";
 import type { AuditEvent } from "@/lib/chat/types";
@@ -44,9 +44,9 @@ import { TranscriptDrawer } from "@/components/admin/transcript-drawer";
  * fetchConversationDetail; the drawer renders the full event list.
  */
 export function FeedbackCommentsStream() {
-  const [data, setData] = useState<FeedbackCommentsResponse | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const { data, loading, error } = useAdminFetch<FeedbackCommentsResponse>(
+    "/api/admin/locations/feedback-comments",
+  );
 
   // Drawer state — same pattern as conversation-table.tsx.
   // selectedSessionId drives drawer visibility; transcript holds the
@@ -55,30 +55,6 @@ export function FeedbackCommentsStream() {
   const [transcript, setTranscript] = useState<AuditEvent[] | null>(null);
   const [transcriptLoading, setTranscriptLoading] = useState(false);
 
-  useEffect(() => {
-    let cancelled = false;
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- mount-time fetch needs to mark loading state; standard pattern in this codebase
-    setLoading(true);
-    fetch("/api/admin/locations/feedback-comments")
-      .then((r) => r.json())
-      .then((body) => {
-        if (cancelled) return;
-        if (isAdminApiError(body)) {
-          setError(body.detail);
-        } else {
-          setData(body as FeedbackCommentsResponse);
-        }
-        setLoading(false);
-      })
-      .catch((err) => {
-        if (cancelled) return;
-        setError(String(err));
-        setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   async function openTranscript(sessionId: string) {
     setSelectedSessionId(sessionId);

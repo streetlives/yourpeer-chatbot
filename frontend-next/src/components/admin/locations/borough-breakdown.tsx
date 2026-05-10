@@ -3,10 +3,9 @@
 
 "use client";
 
-import { useEffect, useState } from "react";
 import { AlertCircle } from "lucide-react";
 import type { BoroughBreakdownResponse } from "@/lib/admin/locations-types";
-import { isAdminApiError } from "@/lib/admin/locations-types";
+import { useAdminFetch } from "@/lib/admin/use-admin-fetch";
 
 /**
  * Section 3a — borough breakdown table.
@@ -37,34 +36,10 @@ import { isAdminApiError } from "@/lib/admin/locations-types";
  * easier to scan than raw numbers when comparing 6 rows.
  */
 export function BoroughBreakdownTable() {
-  const [data, setData] = useState<BoroughBreakdownResponse | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const { data, loading, error } = useAdminFetch<BoroughBreakdownResponse>(
+    "/api/admin/locations/by-borough",
+  );
 
-  useEffect(() => {
-    let cancelled = false;
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- mount-time fetch needs to mark loading state; standard pattern in this codebase
-    setLoading(true);
-    fetch("/api/admin/locations/by-borough")
-      .then((r) => r.json())
-      .then((body) => {
-        if (cancelled) return;
-        if (isAdminApiError(body)) {
-          setError(body.detail);
-        } else {
-          setData(body as BoroughBreakdownResponse);
-        }
-        setLoading(false);
-      })
-      .catch((err) => {
-        if (cancelled) return;
-        setError(String(err));
-        setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   if (error) {
     return (

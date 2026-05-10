@@ -3,7 +3,6 @@
 
 "use client";
 
-import { useEffect, useState } from "react";
 import { AlertCircle, AlertTriangle, MessageSquare } from "lucide-react";
 import type {
   FeedbackAggregatesResponse,
@@ -11,8 +10,8 @@ import type {
   CriterionSummaryRow,
   FeedbackCriterion,
 } from "@/lib/admin/locations-types";
+import { useAdminFetch } from "@/lib/admin/use-admin-fetch";
 import {
-  isAdminApiError,
   FEEDBACK_CRITERIA,
   FEEDBACK_CRITERION_LABELS,
 } from "@/lib/admin/locations-types";
@@ -36,34 +35,10 @@ import {
  * fetch, paired layout out of the box.
  */
 export function FeedbackAggregatesPanel() {
-  const [data, setData] = useState<FeedbackAggregatesResponse | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const { data, loading, error } = useAdminFetch<FeedbackAggregatesResponse>(
+    "/api/admin/locations/feedback-aggregates",
+  );
 
-  useEffect(() => {
-    let cancelled = false;
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- mount-time fetch needs to mark loading state; standard pattern in this codebase
-    setLoading(true);
-    fetch("/api/admin/locations/feedback-aggregates")
-      .then((r) => r.json())
-      .then((body) => {
-        if (cancelled) return;
-        if (isAdminApiError(body)) {
-          setError(body.detail);
-        } else {
-          setData(body as FeedbackAggregatesResponse);
-        }
-        setLoading(false);
-      })
-      .catch((err) => {
-        if (cancelled) return;
-        setError(String(err));
-        setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   if (error) {
     return (

@@ -25,10 +25,18 @@ import type { LocationsStats } from "@/lib/admin/locations-types";
  */
 export function LocationsTopStatStrip({ stats }: { stats: LocationsStats }) {
   const fmt = (n: number) => n.toLocaleString();
-  const trendPill = (delta: number) => {
+  // direction tells us whether a positive delta is good news for THIS
+  // metric. For "Total locations", "Verified <90d", and "With
+  // feedback", rising = good (green). For "Never verified" or
+  // "Stale", rising = bad (red). The footgun this prop catches:
+  // copy-pasting a trend onto a bad-metric card and forgetting to
+  // flip the polarity — the rising-bad-number quietly shows green.
+  type TrendDirection = "up_is_good" | "up_is_bad";
+  const trendPill = (delta: number, direction: TrendDirection = "up_is_good") => {
     if (delta === 0) return null;
     const positive = delta > 0;
-    const cls = positive
+    const isGood = direction === "up_is_good" ? positive : !positive;
+    const cls = isGood
       ? "text-green-700 dark:text-green-400"
       : "text-red-700 dark:text-red-400";
     return (
@@ -43,7 +51,7 @@ export function LocationsTopStatStrip({ stats }: { stats: LocationsStats }) {
       <StatCardWithTrend
         label="Total locations"
         value={fmt(stats.total_locations)}
-        trend={trendPill(stats.trends.total_locations)}
+        trend={trendPill(stats.trends.total_locations, "up_is_good")}
       />
       <StatCardWithTrend
         label="Total services"
@@ -53,7 +61,7 @@ export function LocationsTopStatStrip({ stats }: { stats: LocationsStats }) {
       <StatCardWithTrend
         label="Verified <90d"
         value={fmt(stats.fresh_count)}
-        trend={trendPill(stats.trends.fresh_count)}
+        trend={trendPill(stats.trends.fresh_count, "up_is_good")}
         valueColor="text-green-700 dark:text-green-400"
       />
       <StatCardWithTrend
@@ -71,7 +79,7 @@ export function LocationsTopStatStrip({ stats }: { stats: LocationsStats }) {
       <StatCardWithTrend
         label="With feedback"
         value={fmt(stats.with_feedback_count)}
-        trend={trendPill(stats.trends.with_feedback_count)}
+        trend={trendPill(stats.trends.with_feedback_count, "up_is_good")}
       />
     </div>
   );

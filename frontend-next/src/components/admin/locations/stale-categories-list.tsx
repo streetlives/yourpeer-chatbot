@@ -3,10 +3,9 @@
 
 "use client";
 
-import { useEffect, useState } from "react";
 import { AlertCircle, Clock } from "lucide-react";
 import type { StaleCategoriesResponse } from "@/lib/admin/locations-types";
-import { isAdminApiError } from "@/lib/admin/locations-types";
+import { useAdminFetch } from "@/lib/admin/use-admin-fetch";
 
 /**
  * Section 4b — categories with no recently-verified offering location.
@@ -23,34 +22,10 @@ import { isAdminApiError } from "@/lib/admin/locations-types";
  * so surfacing it positively gives them a visible win.
  */
 export function StaleCategoriesList() {
-  const [data, setData] = useState<StaleCategoriesResponse | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const { data, loading, error } = useAdminFetch<StaleCategoriesResponse>(
+    "/api/admin/locations/stale-categories",
+  );
 
-  useEffect(() => {
-    let cancelled = false;
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- mount-time fetch needs to mark loading state; standard pattern in this codebase
-    setLoading(true);
-    fetch("/api/admin/locations/stale-categories")
-      .then((r) => r.json())
-      .then((body) => {
-        if (cancelled) return;
-        if (isAdminApiError(body)) {
-          setError(body.detail);
-        } else {
-          setData(body as StaleCategoriesResponse);
-        }
-        setLoading(false);
-      })
-      .catch((err) => {
-        if (cancelled) return;
-        setError(String(err));
-        setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   if (error) {
     return (

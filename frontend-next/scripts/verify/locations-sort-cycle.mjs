@@ -33,7 +33,7 @@
  */
 
 import { fileURLToPath } from "node:url";
-import { dirname } from "node:path";
+import { dirname, resolve } from "node:path";
 
 import {
   defaultSortDirForField,
@@ -163,6 +163,45 @@ for (const field of [
     reachedAgain,
     `current dir after 5 clicks: ${dir}`,
   );
+}
+
+// -----------------------------------------------------------------------
+// 5. Cycle-length cap — pin the EXACT click count to round-trip
+// -----------------------------------------------------------------------
+//
+// The "5 clicks" check above is generous and catches catastrophic
+// regressions (infinite cycles, broken paths back). This block is
+// stricter: it pins the exact cycle length for each field shape. If
+// someone introduces a 3-state cycle on a column expected to be
+// 2-state, the round-trip check still passes (3 ≤ 5) but the cycle
+// is now twice as many clicks as users learned. That'd be a usability
+// regression; this assertion catches it.
+//
+// Expected cycle lengths:
+//   last_validated_at: 2 (asc_nulls_first ↔ desc)
+//   all others:        2 (asc ↔ desc)
+// All columns currently use 2-state cycles. If we ever introduce a
+// 3-state cycle (e.g. asc → desc → unsorted → asc), update both
+// the cycle helper AND this assertion together.
+
+function clicksToRoundTrip(field) {
+  const def = defaultSortDirForField(field);
+  let dir = def;
+  for (let i = 1; i <= 10; i += 1) {
+    dir = cycleSortDirForField(field, dir);
+    if (dir === def) return i;
+  }
+  return -1; // infinite cycle or broken — should never happen
+}
+
+console.log("\nCycle length cap (exact click count, not just 'eventually'):");
+{
+  const lastValClicks = clicksToRoundTrip("last_validated_at");
+  assertEqual("last_validated_at cycle length", lastValClicks, 2);
+
+  for (const field of ["name", "organization", "city", "service_count", "recent_flags"]) {
+    assertEqual(`${field} cycle length`, clicksToRoundTrip(field), 2);
+  }
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

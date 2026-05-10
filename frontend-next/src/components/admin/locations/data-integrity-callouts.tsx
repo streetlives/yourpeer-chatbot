@@ -3,13 +3,12 @@
 
 "use client";
 
-import { useEffect, useState } from "react";
 import { AlertCircle, AlertTriangle, Info, CheckCircle2 } from "lucide-react";
 import type {
   IntegrityCalloutsResponse,
   IntegrityCallout,
 } from "@/lib/admin/locations-types";
-import { isAdminApiError } from "@/lib/admin/locations-types";
+import { useAdminFetch } from "@/lib/admin/use-admin-fetch";
 
 /**
  * Section 6 — data integrity callouts.
@@ -23,34 +22,10 @@ import { isAdminApiError } from "@/lib/admin/locations-types";
  * (cosmetic / handled-at-render-time issue).
  */
 export function DataIntegrityCallouts() {
-  const [data, setData] = useState<IntegrityCalloutsResponse | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const { data, loading, error } = useAdminFetch<IntegrityCalloutsResponse>(
+    "/api/admin/locations/integrity-callouts",
+  );
 
-  useEffect(() => {
-    let cancelled = false;
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- mount-time fetch needs to mark loading state; standard pattern in this codebase
-    setLoading(true);
-    fetch("/api/admin/locations/integrity-callouts")
-      .then((r) => r.json())
-      .then((body) => {
-        if (cancelled) return;
-        if (isAdminApiError(body)) {
-          setError(body.detail);
-        } else {
-          setData(body as IntegrityCalloutsResponse);
-        }
-        setLoading(false);
-      })
-      .catch((err) => {
-        if (cancelled) return;
-        setError(String(err));
-        setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   if (error) {
     return (

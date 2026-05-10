@@ -214,15 +214,30 @@ function extractTupleStrings(source, markerRegex) {
 }
 
 /**
- * Extract the literal `"id"` values from `callouts.append({...})`
- * blocks in the integrity callouts function. Each block contains an
- * "id": "..." line; we collect them all.
+ * Extract the callout id strings from the body of the
+ * `get_data_integrity_callouts` function in aggregations.py.
  *
- * Why this shape: the integrity callouts aren't defined as a single
- * dict-of-ids — they're scattered across 5 separate `.append({...})`
- * blocks, each emitting a callout when a count check fires. So the
- * regex looks for the pattern ' "id": "..." ' inside the function
- * body.
+ * Strategy: structural parse, not pattern scan.
+ *
+ *   1. Locate the function start.
+ *   2. Locate every `callouts.append({` within its body.
+ *   3. For each, scan forward with a balanced-brace counter to find
+ *      the closing `})`.
+ *   4. Extract the `"id": "value"` from inside that bounded block.
+ *
+ * Why not a single regex: the function body contains docstrings
+ * documenting the response shape (with `"id": str` lines that look
+ * superficially like callouts), helper SQL strings with curly braces,
+ * and potentially nested helper closures. A flat regex either
+ * picks up false positives (docstring lines) or has to fight Python
+ * structure with lookbehinds that don't generalize. The structural
+ * walk is verbose but predictable — and crucially, it surfaces an
+ * intent error (unbalanced brace, no id found in an append block)
+ * with a clear message rather than silently dropping the id.
+ *
+ * Accepts ids with any non-quote character (previously \w_ only),
+ * so future callouts can use hyphens, dots, etc. without the verify
+ * script silently missing them.
  */
 function extractIntegrityCalloutIds(source) {
   const fnStart = source.search(/def get_data_integrity_callouts/);
@@ -235,11 +250,52 @@ function extractIntegrityCalloutIds(source) {
   const tail = source.slice(fnStart);
   const nextDef = tail.slice(1).search(/\ndef /);
   const body = nextDef >= 0 ? tail.slice(0, nextDef + 1) : tail;
-  const idRegex = /["']id["']\s*:\s*["']([\w_]+)["']/g;
+
   const ids = [];
-  let match;
-  while ((match = idRegex.exec(body)) !== null) {
-    ids.push(match[1]);
+  const appendMarker = "callouts.append({";
+  let cursor = 0;
+  while (true) {
+    const blockStart = body.indexOf(appendMarker, cursor);
+    if (blockStart < 0) break;
+    // Scan from the opening brace of the dict, balancing { and }.
+    const dictStart = blockStart + appendMarker.length - 1; // points at `{`
+    let depth = 0;
+    let dictEnd = -1;
+    for (let i = dictStart; i < body.length; i += 1) {
+      const ch = body[i];
+      if (ch === "{") depth += 1;
+      else if (ch === "}") {
+        depth -= 1;
+        if (depth === 0) {
+          dictEnd = i;
+          break;
+        }
+      }
+    }
+    if (dictEnd < 0) {
+      console.error(
+        "extractIntegrityCalloutIds: unbalanced braces in callouts.append " +
+        `block starting at offset ${blockStart} in function body. ` +
+        "The source file is malformed or this regex is missing context.",
+      );
+      process.exit(2);
+    }
+    // Extract the id from inside this bounded block. The id pattern
+    // accepts any chars except the surrounding quote — supports
+    // hyphen, dot, underscore, digits, etc.
+    const dictBody = body.slice(dictStart, dictEnd + 1);
+    const idMatch = dictBody.match(/["']id["']\s*:\s*"([^"]+)"|["']id["']\s*:\s*'([^']+)'/);
+    if (!idMatch) {
+      console.error(
+        "extractIntegrityCalloutIds: found a callouts.append({...}) " +
+        `block at offset ${blockStart} that doesn't contain an "id" key. ` +
+        "Every callout dict must have an id; the contract verifier " +
+        "relies on it.",
+      );
+      process.exit(2);
+    }
+    ids.push(idMatch[1] || idMatch[2]);
+    cursor = dictEnd + 1;
   }
   return ids;
 }

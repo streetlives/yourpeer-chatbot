@@ -3,13 +3,12 @@
 
 "use client";
 
-import { useEffect, useState } from "react";
 import { AlertCircle } from "lucide-react";
 import type {
   FreshnessHistogramResponse,
   FreshnessBucketKey,
 } from "@/lib/admin/locations-types";
-import { isAdminApiError } from "@/lib/admin/locations-types";
+import { useAdminFetch } from "@/lib/admin/use-admin-fetch";
 
 /**
  * Section 2a — freshness distribution histogram.
@@ -41,34 +40,10 @@ export function FreshnessHistogram({
    *  is handled by the caller — this prop is presentation only. */
   activeBucket?: FreshnessBucketKey | "";
 }) {
-  const [data, setData] = useState<FreshnessHistogramResponse | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const { data, loading, error } = useAdminFetch<FreshnessHistogramResponse>(
+    "/api/admin/locations/freshness-histogram",
+  );
 
-  useEffect(() => {
-    let cancelled = false;
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- mount-time fetch needs to mark loading state; standard pattern in this codebase
-    setLoading(true);
-    fetch("/api/admin/locations/freshness-histogram")
-      .then((r) => r.json())
-      .then((body) => {
-        if (cancelled) return;
-        if (isAdminApiError(body)) {
-          setError(body.detail);
-        } else {
-          setData(body as FreshnessHistogramResponse);
-        }
-        setLoading(false);
-      })
-      .catch((err) => {
-        if (cancelled) return;
-        setError(String(err));
-        setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   if (error) {
     return (

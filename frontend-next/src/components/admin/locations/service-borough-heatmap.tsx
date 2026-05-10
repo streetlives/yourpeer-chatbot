@@ -3,10 +3,10 @@
 
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { AlertCircle, ChevronDown, ChevronUp } from "lucide-react";
 import type { HeatmapResponse, HeatmapCategory, BoroughLabel } from "@/lib/admin/locations-types";
-import { isAdminApiError } from "@/lib/admin/locations-types";
+import { useAdminFetch } from "@/lib/admin/use-admin-fetch";
 
 // Default top-N matching the backend constant. Surfaced here as a
 // const so future tuning lives in one place. Backend's
@@ -37,50 +37,47 @@ const DEFAULT_VISIBLE_CATEGORIES = 10;
  * is decoration; the number is the truth.
  */
 export function ServiceBoroughHeatmap() {
-  const [data, setData] = useState<HeatmapResponse | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const { data, loading, error } = useAdminFetch<HeatmapResponse>(
+    "/api/admin/locations/heatmap",
+  );
   const [expanded, setExpanded] = useState(false);
 
-  useEffect(() => {
-    let cancelled = false;
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- mount-time fetch needs to mark loading state; standard pattern in this codebase
-    setLoading(true);
-    fetch("/api/admin/locations/heatmap")
-      .then((r) => r.json())
-      .then((body) => {
-        if (cancelled) return;
-        if (isAdminApiError(body)) {
-          setError(body.detail);
-        } else {
-          setData(body as HeatmapResponse);
-        }
-        setLoading(false);
-      })
-      .catch((err) => {
-        if (cancelled) return;
-        setError(String(err));
-        setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
-  // Per-row minimums: visible categories vs. total. We also compute
-  // the matrix maximum cell value here so the color scale anchors to
-  // it — across-row comparison is the entire point. Memoized so toggle
-  // expand/collapse doesn't recompute the constant maximum.
+  // expand/collapse needs to recompute the maximum because the
+  // basis is the visible cells, not the full matrix. See the
+  // useMemo for matrixMax below for the rationale.
+  const visible = useMemo(
+    () => (
+      !data ? []
+        : expanded
+          ? data.categories
+          : data.categories.slice(0, DEFAULT_VISIBLE_CATEGORIES)
+    ),
+    [data, expanded],
+  );
+
+  // Per-row minimums: visible categories vs. total. We compute the
+  // matrix maximum cell value over the VISIBLE subset only — color
+  // intensity should reflect relative strength within what the user
+  // is actually looking at.
+  //
+  // Alternative we considered: anchor matrixMax to the full data set
+  // so colors stayed stable across expand/collapse. We chose against
+  // it because the typical case is that hidden categories include
+  // unusually-bright cells (rare taxonomies clustered in one
+  // borough), and anchoring to those made the visible cells look
+  // uniformly washed out. The default top-10 view especially needs
+  // the strongest signal within its 10 rows; users can expand to
+  // see the long tail.
   const matrixMax = useMemo(() => {
-    if (!data) return 1;
     let m = 1;
-    for (const c of data.categories) {
+    for (const c of visible) {
       for (const v of Object.values(c.by_borough)) {
         if (v > m) m = v;
       }
     }
     return m;
-  }, [data]);
+  }, [visible]);
 
   if (error) {
     return (
@@ -110,9 +107,8 @@ export function ServiceBoroughHeatmap() {
     );
   }
 
-  const visible = expanded
-    ? data.categories
-    : data.categories.slice(0, DEFAULT_VISIBLE_CATEGORIES);
+  // `visible` is computed above (via useMemo) so it's available to
+  // matrixMax. Use it directly here.
   const hidden = data.categories.length - visible.length;
 
   return (

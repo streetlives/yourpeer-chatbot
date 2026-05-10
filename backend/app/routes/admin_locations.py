@@ -66,6 +66,14 @@ def _admin_error(endpoint: str, e: Exception) -> JSONResponse:
     admin module ever imports from here. The duplication is small and
     the bodies are identical; either both change together (fine) or
     one is a deliberate divergence (also fine).
+
+    Response shape is intentionally generic — Python class names
+    (RuntimeError, OperationalError, etc.) and exception strings can
+    surface internal details (DB column names, file paths, library
+    versions) that don't help a calling admin and shouldn't be in the
+    wire response. The actual error type + message goes to the log
+    via logger.exception, which is where ops needs it. Callers should
+    look at logs, not the response body, for the root cause.
     """
     logger.exception(f"Locations admin API error in {endpoint}")
     return JSONResponse(
@@ -73,7 +81,10 @@ def _admin_error(endpoint: str, e: Exception) -> JSONResponse:
         content={
             "error": True,
             "endpoint": endpoint,
-            "detail": f"{type(e).__name__}: {e}",
+            "detail": (
+                "Internal error processing the request. "
+                "See server logs for diagnostic details."
+            ),
         },
     )
 

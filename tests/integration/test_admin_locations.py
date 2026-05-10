@@ -31,10 +31,6 @@ from app.services.audit_log import (
     log_location_feedback,
     log_query_execution,
 )
-# Helper context manager — pytest's caplog fixture has subtle behavior
-# around logger propagation in deeply-nested loggers; a simple
-# capture context is cleaner for these tests.
-from contextlib import contextmanager
 
 
 # Mirror the _AdminClient pattern from test_admin_api_routes.py — see
@@ -2257,6 +2253,13 @@ def test_list_all_invalid_categories_produces_empty_filter_and_warns():
         f"Expected a warning naming all invalid names. Got: {warnings}"
     )
 
+
+# Helper context manager — pytest's caplog fixture has subtle behavior
+# around logger propagation in deeply-nested loggers; a simple
+# capture context is cleaner for these tests.
+from contextlib import contextmanager
+
+
 @contextmanager
 def caplog_for(logger_name: str):
     """Capture logs from the named logger as a context manager.
@@ -2496,4 +2499,64 @@ def test_list_handles_empty_page_skips_enrichment_query():
     assert "enrich" not in seen_sql_types, (
         f"Enrichment query fired on an empty page — wasted round-trip. "
         f"SQL sequence: {seen_sql_types}"
+    )
+
+
+# -----------------------------------------------------------------------
+# L3 — error response sanitization. Internal error types and messages
+# should be in the server log (where ops needs them), not in the wire
+# response (where they expose DB column names, library versions, file
+# paths, etc.).
+# -----------------------------------------------------------------------
+
+def test_admin_error_response_does_not_leak_exception_type_or_message():
+    """When an endpoint raises, the JSON response should NOT contain
+    the Python exception class name or the raw exception message.
+    Catches regressions like ``"detail": f"{type(e).__name__}: {e}"``
+    that surface internal details.
+
+    The actual error type + message is checked to live in the server
+    log via logger.exception (caplog assertion).
+    """
+    import logging
+    clear_audit_log()
+
+    sentinel_msg = "SECRET_INTERNAL_DETAIL_e7f3a9"
+
+    def boom(sql, params):
+        # Mimic a real DB error — driver classes often have very
+        # specific names that would be informative to an attacker.
+        raise RuntimeError(sentinel_msg)
+
+    with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}), \
+         patch("app.services.locations_admin.aggregations._execute_sql",
+               side_effect=boom), \
+         caplog_for("app.routes.admin_locations") as captured_logs:
+        r = admin_client.get("/admin/api/locations/stats")
+
+    # Response should be 500 with sanitized detail.
+    assert r.status_code == 500
+    body = r.json()
+    assert body.get("error") is True
+    detail = body.get("detail", "")
+    assert sentinel_msg not in detail, (
+        f"Internal error message leaked into wire response. "
+        f"detail={detail!r}"
+    )
+    assert "RuntimeError" not in detail, (
+        f"Internal exception type name leaked into wire response. "
+        f"detail={detail!r}"
+    )
+
+    # But it SHOULD have been logged for ops to find.
+    log_messages = [r.getMessage() for r in captured_logs.records
+                    if r.levelno >= logging.ERROR]
+    # logger.exception() emits the message + traceback; the traceback
+    # text contains the exception type and message.
+    log_blob = "\n".join(log_messages) + "\n".join(
+        str(r.exc_info[1]) for r in captured_logs.records if r.exc_info
+    )
+    assert sentinel_msg in log_blob, (
+        f"Internal error message should have been logged server-side. "
+        f"Logs: {log_messages}"
     )

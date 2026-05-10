@@ -3,13 +3,13 @@
 
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { AlertCircle, AlertTriangle, Info } from "lucide-react";
 import type {
   CategoryCoverageResponse,
   CategoryCoverageRow,
 } from "@/lib/admin/locations-types";
-import { isAdminApiError } from "@/lib/admin/locations-types";
+import { useAdminFetch } from "@/lib/admin/use-admin-fetch";
 
 // Categories to show by default. Anything beyond surfaces under a
 // "Show all" toggle so admins can drill into the long tail when
@@ -35,35 +35,11 @@ const DEFAULT_VISIBLE_CATEGORIES = 12;
  * distinction matters for ops triage.
  */
 export function CategoryCoverageTable() {
-  const [data, setData] = useState<CategoryCoverageResponse | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const { data, loading, error } = useAdminFetch<CategoryCoverageResponse>(
+    "/api/admin/locations/category-coverage",
+  );
   const [expanded, setExpanded] = useState(false);
 
-  useEffect(() => {
-    let cancelled = false;
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- mount-time fetch needs to mark loading state; standard pattern in this codebase
-    setLoading(true);
-    fetch("/api/admin/locations/category-coverage")
-      .then((r) => r.json())
-      .then((body) => {
-        if (cancelled) return;
-        if (isAdminApiError(body)) {
-          setError(body.detail);
-        } else {
-          setData(body as CategoryCoverageResponse);
-        }
-        setLoading(false);
-      })
-      .catch((err) => {
-        if (cancelled) return;
-        setError(String(err));
-        setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   const visibleRows = useMemo(() => {
     if (!data) return [];

@@ -3,13 +3,12 @@
 
 "use client";
 
-import { useEffect, useState } from "react";
 import { AlertCircle, AlertTriangle, ExternalLink, MapPin } from "lucide-react";
 import type {
   CoordinateIssuesResponse,
   CoordinateIssue,
 } from "@/lib/admin/locations-types";
-import { isAdminApiError } from "@/lib/admin/locations-types";
+import { useAdminFetch } from "@/lib/admin/use-admin-fetch";
 
 /**
  * Section 3c — coordinate validation table.
@@ -38,34 +37,10 @@ import { isAdminApiError } from "@/lib/admin/locations-types";
  * positively gives the team a visible win when the queue clears.
  */
 export function CoordinateIssuesTable() {
-  const [data, setData] = useState<CoordinateIssuesResponse | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const { data, loading, error } = useAdminFetch<CoordinateIssuesResponse>(
+    "/api/admin/locations/coordinate-issues",
+  );
 
-  useEffect(() => {
-    let cancelled = false;
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- mount-time fetch needs to mark loading state; standard pattern in this codebase
-    setLoading(true);
-    fetch("/api/admin/locations/coordinate-issues")
-      .then((r) => r.json())
-      .then((body) => {
-        if (cancelled) return;
-        if (isAdminApiError(body)) {
-          setError(body.detail);
-        } else {
-          setData(body as CoordinateIssuesResponse);
-        }
-        setLoading(false);
-      })
-      .catch((err) => {
-        if (cancelled) return;
-        setError(String(err));
-        setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   if (error) {
     return (
