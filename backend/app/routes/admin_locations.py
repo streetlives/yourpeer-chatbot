@@ -26,6 +26,8 @@ from fastapi.responses import JSONResponse
 from app.services.locations_admin import (
     get_locations_stats,
     get_locations_list,
+    get_freshness_histogram,
+    get_locations_by_borough,
 )
 
 logger = logging.getLogger(__name__)
@@ -140,3 +142,33 @@ def locations_list(
         )
     except Exception as e:
         return _admin_error("/api/locations/list", e)
+
+
+@router.get("/freshness-histogram")
+def locations_freshness_histogram():
+    """Section 2a: 6-bucket histogram of last_validated_at age.
+
+    Buckets are stable across calls (same keys, same labels, same
+    order); only the counts change. Bucket keys match the
+    `age_bucket` filter values on `/list` so a histogram-bar click
+    can drive the table filter without translation.
+    """
+    try:
+        return get_freshness_histogram()
+    except Exception as e:
+        return _admin_error("/api/locations/freshness-histogram", e)
+
+
+@router.get("/by-borough")
+def locations_by_borough():
+    """Section 3a: per-borough rollup table.
+
+    Returns one row per borough (5 NYC boroughs + Other), always
+    in the canonical display order regardless of which boroughs
+    appear in the data. Empty boroughs render with zeros, never
+    missing — gives ops a stable shape across query runs.
+    """
+    try:
+        return get_locations_by_borough()
+    except Exception as e:
+        return _admin_error("/api/locations/by-borough", e)

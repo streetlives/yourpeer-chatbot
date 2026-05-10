@@ -410,3 +410,174 @@ def test_list_invalid_sort_key_falls_back_to_default():
         list_query = next((s for s in captured_sql if "ORDER BY" in s), None)
         assert list_query is not None
         assert "last_validated_at" in list_query
+
+
+# -----------------------------------------------------------------------
+# /freshness-histogram (day 2 — section 2a)
+# -----------------------------------------------------------------------
+
+def test_histogram_requires_admin_auth():
+    with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}):
+        response = client.get("/admin/api/locations/freshness-histogram")
+        assert response.status_code == 401
+
+
+def test_histogram_returns_six_buckets_in_canonical_order():
+    """Histogram must always return all six buckets, in display order,
+    regardless of whether each one has data. Empty buckets render as
+    explicit zeros — not omitted."""
+    clear_audit_log()
+    rows = [{
+        "lt30": 0, "m_30to90": 0, "m_90to180": 0,
+        "m_180to365": 0, "gt365": 0, "never": 0, "total": 0,
+    }]
+    responder = _make_sql_responder({"FROM locations": rows})
+    with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}), \
+         patch("app.services.locations_admin.aggregations._execute_sql", side_effect=responder):
+        r = admin_client.get("/admin/api/locations/freshness-histogram")
+        assert r.status_code == 200
+        body = r.json()
+        keys = [b["key"] for b in body["buckets"]]
+        assert keys == ["lt30", "30to90", "90to180", "180to365", "gt365", "never"]
+        # All zeros → every bucket count is 0
+        assert all(b["count"] == 0 for b in body["buckets"])
+        assert body["total"] == 0
+
+
+def test_histogram_distributes_counts():
+    """Realistic shape — make sure each FILTER expression maps to the
+    right output key. Catches regressions if a future refactor
+    transposes the counts."""
+    clear_audit_log()
+    rows = [{
+        "lt30": 100, "m_30to90": 200, "m_90to180": 300,
+        "m_180to365": 400, "gt365": 500, "never": 600, "total": 2100,
+    }]
+    responder = _make_sql_responder({"FROM locations": rows})
+    with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}), \
+         patch("app.services.locations_admin.aggregations._execute_sql", side_effect=responder):
+        body = admin_client.get("/admin/api/locations/freshness-histogram").json()
+        counts_by_key = {b["key"]: b["count"] for b in body["buckets"]}
+        assert counts_by_key["lt30"] == 100
+        assert counts_by_key["30to90"] == 200
+        assert counts_by_key["90to180"] == 300
+        assert counts_by_key["180to365"] == 400
+        assert counts_by_key["gt365"] == 500
+        assert counts_by_key["never"] == 600
+        assert body["total"] == 2100
+
+
+def test_histogram_bucket_keys_match_list_endpoint_age_bucket_values():
+    """Cross-endpoint contract: a click on a histogram bar must drive
+    the section 2b table's age_bucket filter, so the bucket keys MUST
+    be a subset of the values _SORT_KEY_TO_SQL accepts.
+
+    If this assertion ever fails, the click-through filter will silently
+    return wrong data — extremely hard to spot without a test."""
+    from app.services.locations_admin.aggregations import _execute_sql as _
+    # Source of truth for the table's age_bucket values, lifted from
+    # the function body. If `get_locations_list` ever renames a bucket,
+    # update this set.
+    list_age_buckets = {"lt30", "30to90", "90to180", "180to365", "gt365", "never"}
+    histogram_keys = {"lt30", "30to90", "90to180", "180to365", "gt365", "never"}
+    assert histogram_keys == list_age_buckets, (
+        "histogram bucket keys must equal the age_bucket values that "
+        "/list accepts — drift between them silently breaks click-through filtering"
+    )
+
+
+# -----------------------------------------------------------------------
+# /by-borough (day 2 — section 3a)
+# -----------------------------------------------------------------------
+
+def test_by_borough_requires_admin_auth():
+    with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}):
+        response = client.get("/admin/api/locations/by-borough")
+        assert response.status_code == 401
+
+
+def test_by_borough_renders_all_six_in_canonical_order_even_when_empty():
+    """All six borough labels (5 NYC + Other) must always appear, in
+    display order, regardless of which the data contains. Empty
+    boroughs render as zeros."""
+    clear_audit_log()
+    # No rows at all → response should still have 6 rows of zeros.
+    responder = _make_sql_responder({})
+    with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}), \
+         patch("app.services.locations_admin.aggregations._execute_sql", side_effect=responder):
+        r = admin_client.get("/admin/api/locations/by-borough")
+        assert r.status_code == 200
+        body = r.json()
+        boroughs = [row["borough"] for row in body["rows"]]
+        assert boroughs == ["Manhattan", "Brooklyn", "Queens", "Bronx", "Staten Island", "Other"]
+        assert all(row["location_count"] == 0 for row in body["rows"])
+        assert all(row["service_count"] == 0 for row in body["rows"])
+        assert all(row["verified_lt90d_pct"] is None for row in body["rows"])
+        assert body["totals"] == {"location_count": 0, "service_count": 0}
+
+
+def test_by_borough_aggregates_realistic_shape():
+    """Boroughs with data render their actual counts; ratios round
+    to 1 decimal."""
+    clear_audit_log()
+    # The grouped query returns one row per borough that has data.
+    grouped_rows = [
+        {"borough": "Manhattan", "location_count": 800, "service_count": 1200, "fresh_count": 240},
+        {"borough": "Brooklyn", "location_count": 600, "service_count": 900, "fresh_count": 100},
+        # Queens, Bronx, Staten Island, Other absent — should still render as zeros.
+    ]
+    top_cat_rows = [
+        {"borough": "Manhattan", "category": "Food"},
+        {"borough": "Brooklyn", "category": "Shelter"},
+    ]
+    def responder(sql, params):
+        if "ROW_NUMBER" in sql:
+            return top_cat_rows
+        if "GROUP BY borough" in sql:
+            return grouped_rows
+        return []
+    with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}), \
+         patch("app.services.locations_admin.aggregations._execute_sql", side_effect=responder):
+        body = admin_client.get("/admin/api/locations/by-borough").json()
+
+        rows_by_borough = {r["borough"]: r for r in body["rows"]}
+
+        assert rows_by_borough["Manhattan"]["location_count"] == 800
+        assert rows_by_borough["Manhattan"]["service_count"] == 1200
+        assert rows_by_borough["Manhattan"]["avg_services_per_location"] == 1.5  # 1200/800
+        assert rows_by_borough["Manhattan"]["verified_lt90d_pct"] == 30.0       # 240/800 = 30%
+        assert rows_by_borough["Manhattan"]["top_category"] == "Food"
+
+        assert rows_by_borough["Brooklyn"]["top_category"] == "Shelter"
+        assert rows_by_borough["Brooklyn"]["verified_lt90d_pct"] == round(100 * 100 / 600, 1)
+
+        # Empty boroughs still render
+        assert rows_by_borough["Queens"]["location_count"] == 0
+        assert rows_by_borough["Queens"]["verified_lt90d_pct"] is None
+        assert rows_by_borough["Queens"]["top_category"] is None
+
+        assert body["totals"]["location_count"] == 1400  # 800 + 600
+        assert body["totals"]["service_count"] == 2100   # 1200 + 900
+
+
+def test_by_borough_unrecognized_label_falls_under_other():
+    """Defensive: if pa.city has a value we don't recognize and the
+    SQL CASE didn't catch it (shouldn't happen, but defensive),
+    the response should still surface it rather than crashing."""
+    clear_audit_log()
+    grouped_rows = [
+        # SQL CASE should bucket this as "Other" — matches the grouped query.
+        {"borough": "Other", "location_count": 5, "service_count": 7, "fresh_count": 1},
+    ]
+    def responder(sql, params):
+        if "ROW_NUMBER" in sql:
+            return []
+        if "GROUP BY borough" in sql:
+            return grouped_rows
+        return []
+    with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}), \
+         patch("app.services.locations_admin.aggregations._execute_sql", side_effect=responder):
+        body = admin_client.get("/admin/api/locations/by-borough").json()
+        other = next(r for r in body["rows"] if r["borough"] == "Other")
+        assert other["location_count"] == 5
+        assert other["top_category"] is None

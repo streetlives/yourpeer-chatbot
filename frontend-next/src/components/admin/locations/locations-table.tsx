@@ -34,12 +34,23 @@ import { isAdminApiError } from "@/lib/admin/locations-types";
  * never-verified rows at the top of the queue. Matches the spec's
  * triage-first answer to question 2.
  *
+ * `ageBucket` is a controlled prop (parent owns the value, passes
+ * it down + a setter). This is what lets the page's freshness
+ * histogram drive the table filter on bar click. Other filters
+ * stay table-local since nothing outside drives them.
+ *
  * The row-level "issue badges" (missing phone / address / hours,
  * recent flags) are derived from booleans returned by the backend.
  * No client-side calculation; all logic lives in
  * `aggregations.get_locations_list`.
  */
-export function LocationsTable() {
+export function LocationsTable({
+  ageBucket = "",
+  onAgeBucketChange,
+}: {
+  ageBucket?: LocationsAgeBucket | "";
+  onAgeBucketChange?: (next: LocationsAgeBucket | "") => void;
+} = {}) {
   // ---------------- table state ----------------
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState<PageSize>(DEFAULT_PAGE_SIZE);
@@ -50,7 +61,13 @@ export function LocationsTable() {
 
   // ---------------- filter state ----------------
   const [boroughFilter, setBoroughFilter] = useState<BoroughLabel[]>([]);
-  const [ageBucket, setAgeBucket] = useState<LocationsAgeBucket | "">("");
+  // Internal age bucket state, defaulting to controlled value if provided.
+  // The parent's value, if controlling, takes precedence on change.
+  const [internalAgeBucket, setInternalAgeBucket] = useState<LocationsAgeBucket | "">("");
+  const effectiveAgeBucket = onAgeBucketChange ? ageBucket : internalAgeBucket;
+  const setEffectiveAgeBucket = onAgeBucketChange
+    ? (next: LocationsAgeBucket | "") => onAgeBucketChange(next)
+    : setInternalAgeBucket;
   const [hasIssuesOnly, setHasIssuesOnly] = useState(false);
   const [search, setSearch] = useState("");
 
@@ -69,7 +86,7 @@ export function LocationsTable() {
       sort_dir: sortDir,
     };
     if (boroughFilter.length) params.borough = boroughFilter;
-    if (ageBucket) params.age_bucket = ageBucket;
+    if (effectiveAgeBucket) params.age_bucket = effectiveAgeBucket;
     if (hasIssuesOnly) params.has_issues = true;
     if (search.trim()) params.search = search.trim();
 
@@ -86,7 +103,7 @@ export function LocationsTable() {
     if (params.has_issues) qs.set("has_issues", "true");
     if (params.search) qs.set("search", params.search);
     return qs.toString();
-  }, [page, pageSize, sortKey, sortDir, boroughFilter, ageBucket, hasIssuesOnly, search]);
+  }, [page, pageSize, sortKey, sortDir, boroughFilter, effectiveAgeBucket, hasIssuesOnly, search]);
 
   useEffect(() => {
     let cancelled = false;
@@ -144,7 +161,7 @@ export function LocationsTable() {
     setPage(1);
   }
   function setAgeBucketResetPage(next: LocationsAgeBucket | "") {
-    setAgeBucket(next);
+    setEffectiveAgeBucket(next);
     setPage(1);
   }
   function setHasIssuesResetPage(next: boolean) {
@@ -161,7 +178,7 @@ export function LocationsTable() {
       <FilterBar
         boroughFilter={boroughFilter}
         setBoroughFilter={setBorougbResetPage}
-        ageBucket={ageBucket}
+        ageBucket={effectiveAgeBucket}
         setAgeBucket={setAgeBucketResetPage}
         hasIssuesOnly={hasIssuesOnly}
         setHasIssuesOnly={setHasIssuesResetPage}

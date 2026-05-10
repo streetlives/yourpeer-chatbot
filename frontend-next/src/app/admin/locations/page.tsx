@@ -3,38 +3,52 @@
 
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { LocationsTopStatStrip } from "@/components/admin/locations/top-stat-strip";
+import { FreshnessHistogram } from "@/components/admin/locations/freshness-histogram";
+import { BoroughBreakdownTable } from "@/components/admin/locations/borough-breakdown";
 import { LocationsTable } from "@/components/admin/locations/locations-table";
 import { StatCardSkeleton } from "@/components/admin/loading-skeleton";
-import type { LocationsStats } from "@/lib/admin/locations-types";
+import type {
+  LocationsStats,
+  LocationsAgeBucket,
+} from "@/lib/admin/locations-types";
 import { isAdminApiError } from "@/lib/admin/locations-types";
 import { AlertCircle } from "lucide-react";
 
 /**
- * Locations admin page (v1, day 1 scope).
+ * Locations admin page (v1, days 1-2 scope).
  *
- * Day 1 surfaces the top stat strip (section 1) and the triage
- * table (section 2b). Subsequent days add the freshness histogram,
- * geographic distribution, service-type coverage, location feedback,
- * data integrity callouts, and time series — all defined in the
- * spec at /mnt/user-data/outputs/locations_page_spec/SPEC.md.
+ * Layout:
+ *   1. Stat strip (section 1)
+ *   2. Freshness histogram (section 2a) — clicking a bar drives
+ *      the table's age_bucket filter via lifted state
+ *   3. Borough breakdown table (section 3a)
+ *   4. Triage table (section 2b)
  *
- * Page state design:
- *   * Stats are fetched once on mount (small payload, slow to change).
- *   * Table state lives entirely inside <LocationsTable/> so it can
- *     re-fetch independently on filter/sort/page changes without
- *     triggering a stats refetch.
+ * The histogram → table click-through works by lifting the table's
+ * age_bucket filter up to the page. The table accepts ageBucket as
+ * an optional controlled prop; when the page passes it (along with
+ * a setter), the histogram's onBucketClick callback can update the
+ * page state and the table re-renders with the new filter applied.
  *
- * Both fetches go through the catch-all admin proxy at
- * /api/admin/[...slug] which forwards to /admin/api/locations/<endpoint>
- * with the server-side admin key. No special wiring needed — every
- * /api/admin/locations/<x> route Just Works.
+ * Other section 2b filters stay table-internal — only age_bucket
+ * needs cross-component coordination today. If section 4 (category
+ * coverage) ever wants to drive the table's category filter via
+ * click-through, the same lifting pattern applies.
  */
 export default function LocationsPage() {
   const [stats, setStats] = useState<LocationsStats | null>(null);
   const [statsLoading, setStatsLoading] = useState(true);
   const [statsError, setStatsError] = useState<string | null>(null);
+
+  // Lifted age_bucket — driven by the histogram's bar click.
+  const [ageBucket, setAgeBucket] = useState<LocationsAgeBucket | "">("");
+
+  // Ref to the triage table heading so we can scroll to it on
+  // histogram click. Without this the user clicks a bar and nothing
+  // visibly happens until they scroll down.
+  const tableHeadingRef = useRef<HTMLHeadingElement>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -61,6 +75,16 @@ export default function LocationsPage() {
     };
   }, []);
 
+  function handleHistogramClick(bucket: LocationsAgeBucket) {
+    // Toggle: clicking the same bucket again clears the filter.
+    // Standard pattern across data-viz click-through filters; users
+    // expect "click on, click off" symmetry.
+    setAgeBucket((current) => (current === bucket ? "" : bucket));
+    // Smooth-scroll the triage section into view so the user sees
+    // the filter took effect.
+    tableHeadingRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
   return (
     <>
       <div className="mb-2">
@@ -73,6 +97,7 @@ export default function LocationsPage() {
         </p>
       </div>
 
+      {/* Section 1: top stat strip */}
       <div className="mt-6">
         {statsError && (
           <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:bg-red-950/30 dark:border-red-900 dark:text-red-300">
@@ -84,16 +109,39 @@ export default function LocationsPage() {
         {stats && <LocationsTopStatStrip stats={stats} />}
       </div>
 
+      {/* Section 2a: freshness histogram. Clicking a bar drives the
+       *  triage table's age_bucket filter (see handleHistogramClick). */}
       <div className="mt-6">
         <h2 className="text-base font-semibold mb-3 text-neutral-900 dark:text-neutral-100">
+          Data freshness
+        </h2>
+        <FreshnessHistogram onBucketClick={handleHistogramClick} />
+      </div>
+
+      {/* Section 3a: borough breakdown */}
+      <div className="mt-6">
+        <h2 className="text-base font-semibold mb-3 text-neutral-900 dark:text-neutral-100">
+          Locations by borough
+        </h2>
+        <BoroughBreakdownTable />
+      </div>
+
+      {/* Section 2b: triage table. ageBucket is controlled by the page
+       *  so the histogram can drive it. Other filters stay internal. */}
+      <div className="mt-6">
+        <h2
+          ref={tableHeadingRef}
+          className="text-base font-semibold mb-3 text-neutral-900 dark:text-neutral-100 scroll-mt-6"
+        >
           Locations needing review
         </h2>
         <p className="text-xs text-neutral-500 dark:text-neutral-400 mb-3">
           Default view shows least-recently-verified locations first
           (never-verified at the top). Use filters to narrow by borough,
-          age bucket, or data-quality issues.
+          age bucket, or data-quality issues. The histogram above also
+          drives the age filter — click a bar to apply, click again to clear.
         </p>
-        <LocationsTable />
+        <LocationsTable ageBucket={ageBucket} onAgeBucketChange={setAgeBucket} />
       </div>
     </>
   );

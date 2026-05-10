@@ -125,6 +125,62 @@ export interface LocationsListResponse {
 }
 
 // -----------------------------------------------------------------
+// GET /api/admin/locations/freshness-histogram — section 2a
+// -----------------------------------------------------------------
+
+/** Bucket key — canonical 6-bucket histogram, matching the
+ *  age_bucket values accepted by /list so a click on a bar can
+ *  drive the table filter without translation. */
+export type FreshnessBucketKey =
+  | "lt30"
+  | "30to90"
+  | "90to180"
+  | "180to365"
+  | "gt365"
+  | "never";
+
+export interface FreshnessHistogramBucket {
+  key: FreshnessBucketKey;
+  /** Display label, e.g. "<30d", "Never". Localizable in v2 if needed. */
+  label: string;
+  count: number;
+}
+
+export interface FreshnessHistogramResponse {
+  /** Always 6 buckets in display order, regardless of which have data. */
+  buckets: FreshnessHistogramBucket[];
+  total: number;
+}
+
+// -----------------------------------------------------------------
+// GET /api/admin/locations/by-borough — section 3a
+// -----------------------------------------------------------------
+
+export interface BoroughBreakdownRow {
+  borough: BoroughLabel;
+  location_count: number;
+  service_count: number;
+  /** Rounded to 1 decimal. 0 when location_count is 0. */
+  avg_services_per_location: number;
+  /** % of locations in this borough verified within 90 days.
+   *  null when location_count is 0 (avoids 0/0 = NaN). */
+  verified_lt90d_pct: number | null;
+  /** Most-common taxonomy category in this borough; null when
+   *  no services exist. */
+  top_category: string | null;
+}
+
+export interface BoroughBreakdownResponse {
+  /** Always 6 rows in canonical order (5 NYC boroughs + Other),
+   *  regardless of which have data. Empty boroughs render as zeros. */
+  rows: BoroughBreakdownRow[];
+  totals: {
+    location_count: number;
+    service_count: number;
+  };
+}
+
+// -----------------------------------------------------------------
 // API error shape — shared with other admin endpoints
 // -----------------------------------------------------------------
 

@@ -515,3 +515,240 @@ def _has_negative_criterion(event: dict) -> bool:
     None = not asked. We count False values."""
     ratings = event.get("ratings") or {}
     return any(v is False for v in ratings.values())
+
+
+# ---------------------------------------------------------------------------
+# SECTION 2a — FRESHNESS HISTOGRAM
+# ---------------------------------------------------------------------------
+
+# Bucket boundaries for the histogram, in days. Each tuple is
+# (bucket_key, max_days_inclusive, label_for_display). The "never"
+# bucket is appended separately since it's a NULL test rather than
+# a numeric range. Cumulative-style boundaries (every row counts in
+# exactly one bucket) — the SQL CASE is structured to make that true.
+_FRESHNESS_BUCKETS = (
+    ("lt30",      30,  "<30d"),
+    ("30to90",    90,  "30–90d"),
+    ("90to180",  180,  "90–180d"),
+    ("180to365", 365,  "180d–1y"),
+    ("gt365",   None,  ">1y"),       # None = no upper bound
+)
+
+
+def get_freshness_histogram() -> dict:
+    """Section 2a: freshness distribution as 6 buckets.
+
+    Returns shape:
+        {
+            "buckets": [
+                {"key": "lt30",      "label": "<30d",     "count": int},
+                {"key": "30to90",    "label": "30-90d",   "count": int},
+                {"key": "90to180",   "label": "90-180d",  "count": int},
+                {"key": "180to365",  "label": "180d-1y",  "count": int},
+                {"key": "gt365",     "label": ">1y",      "count": int},
+                {"key": "never",     "label": "Never",    "count": int},
+            ],
+            "total": int,
+        }
+
+    Single-query implementation using SQL CASE so each location is
+    counted in exactly one bucket. The bucket keys match the
+    `age_bucket` filter values on `/list`, so a click on a bar can
+    drive the table filter without translation. Order is preserved
+    by listing buckets in the response array — the frontend renders
+    in array order.
+    """
+    sql = """
+    SELECT
+      COUNT(*) FILTER (
+        WHERE last_validated_at >= CURRENT_DATE - INTERVAL '30 days'
+      ) AS lt30,
+      COUNT(*) FILTER (
+        WHERE last_validated_at <  CURRENT_DATE - INTERVAL '30 days'
+          AND last_validated_at >= CURRENT_DATE - INTERVAL '90 days'
+      ) AS m_30to90,
+      COUNT(*) FILTER (
+        WHERE last_validated_at <  CURRENT_DATE - INTERVAL '90 days'
+          AND last_validated_at >= CURRENT_DATE - INTERVAL '180 days'
+      ) AS m_90to180,
+      COUNT(*) FILTER (
+        WHERE last_validated_at <  CURRENT_DATE - INTERVAL '180 days'
+          AND last_validated_at >= CURRENT_DATE - INTERVAL '365 days'
+      ) AS m_180to365,
+      COUNT(*) FILTER (
+        WHERE last_validated_at < CURRENT_DATE - INTERVAL '365 days'
+      ) AS gt365,
+      COUNT(*) FILTER (WHERE last_validated_at IS NULL) AS never,
+      COUNT(*) AS total
+    FROM locations
+    """
+
+    rows = _execute_sql(sql, {})
+    if not rows:
+        raise RuntimeError("freshness histogram query returned no rows")
+    row = rows[0]
+
+    return {
+        "buckets": [
+            {"key": "lt30",     "label": "<30d",      "count": int(row.get("lt30") or 0)},
+            {"key": "30to90",   "label": "30–90d",    "count": int(row.get("m_30to90") or 0)},
+            {"key": "90to180",  "label": "90–180d",   "count": int(row.get("m_90to180") or 0)},
+            {"key": "180to365", "label": "180d–1y",   "count": int(row.get("m_180to365") or 0)},
+            {"key": "gt365",    "label": ">1y",       "count": int(row.get("gt365") or 0)},
+            {"key": "never",    "label": "Never",     "count": int(row.get("never") or 0)},
+        ],
+        "total": int(row.get("total") or 0),
+    }
+
+
+# ---------------------------------------------------------------------------
+# SECTION 3a — BOROUGH BREAKDOWN TABLE
+# ---------------------------------------------------------------------------
+
+def get_locations_by_borough() -> dict:
+    """Section 3a: per-borough rollup.
+
+    Returns shape:
+        {
+            "rows": [
+                {
+                    "borough": "Manhattan",
+                    "location_count": int,
+                    "service_count": int,
+                    "avg_services_per_location": float,
+                    "verified_lt90d_pct": float | None,    # null when location_count == 0
+                    "top_category": str | None,            # most common service-category at this borough
+                },
+                ...   # 5 boroughs + "Other"
+            ],
+            "totals": {
+                "location_count": int,
+                "service_count": int,
+            },
+        }
+
+    Single SQL pass with GROUP BY on the same case-statement that the
+    `borough` field returns in section 2b. Top-category is computed
+    via a per-borough subquery — small per-borough count (6 outputs)
+    so the N+1 pattern is acceptable and readable.
+
+    Boroughs always render in a consistent order (Manhattan, Brooklyn,
+    Queens, Bronx, Staten Island, Other) regardless of which appear
+    in the data. Empty boroughs render with zeros, never missing.
+    """
+    # Group locations by their effective borough label. Bind the NYC
+    # borough list so the CASE doesn't have to repeat string literals.
+    grouped_sql = """
+    WITH labeled AS (
+        SELECT
+            l.id,
+            CASE
+                WHEN pa.city IN ('Manhattan', 'Brooklyn', 'Queens', 'Bronx', 'Staten Island')
+                    THEN pa.city
+                ELSE 'Other'
+            END AS borough,
+            l.last_validated_at
+        FROM locations l
+        LEFT JOIN physical_addresses pa ON pa.location_id = l.id
+    )
+    SELECT
+        borough,
+        COUNT(*) AS location_count,
+        COUNT(*) FILTER (
+            WHERE last_validated_at >= CURRENT_DATE - INTERVAL '%(fresh)s days'
+        ) AS fresh_count,
+        (SELECT COUNT(*) FROM service_at_locations sal
+         JOIN locations l2 ON sal.location_id = l2.id
+         LEFT JOIN physical_addresses pa2 ON pa2.location_id = l2.id
+         WHERE CASE
+                  WHEN pa2.city IN ('Manhattan', 'Brooklyn', 'Queens', 'Bronx', 'Staten Island')
+                       THEN pa2.city
+                  ELSE 'Other'
+               END = labeled.borough
+        ) AS service_count
+    FROM labeled
+    GROUP BY borough
+    """ % {"fresh": FRESHNESS_THRESHOLD_DAYS}
+
+    grouped_rows = _execute_sql(grouped_sql, {})
+
+    # Index by borough for the assemble step. Initialize all 6 borough
+    # labels to zero so empty boroughs still render.
+    by_borough: dict[str, dict[str, Any]] = {
+        b: {"location_count": 0, "service_count": 0, "fresh_count": 0}
+        for b in (*NYC_BOROUGHS, "Other")
+    }
+    for r in grouped_rows:
+        b = r.get("borough") or "Other"
+        if b not in by_borough:
+            # Defensive — if pa.city has a value we don't recognize and
+            # the CASE fell through to 'Other', we still group it
+            # there. But this branch handles the unexpected case where
+            # the SQL returns a label outside our predefined set.
+            by_borough[b] = {"location_count": 0, "service_count": 0, "fresh_count": 0}
+        by_borough[b]["location_count"] = int(r.get("location_count") or 0)
+        by_borough[b]["service_count"] = int(r.get("service_count") or 0)
+        by_borough[b]["fresh_count"] = int(r.get("fresh_count") or 0)
+
+    # Top-category per borough. Run as a separate query because the
+    # per-borough top-N is tricky to express cleanly inside the main
+    # GROUP BY without window functions; this is more readable. Cost
+    # is one extra DB round-trip — fine.
+    top_cat_sql = """
+    WITH labeled AS (
+        SELECT
+            l.id AS location_id,
+            CASE
+                WHEN pa.city IN ('Manhattan', 'Brooklyn', 'Queens', 'Bronx', 'Staten Island')
+                    THEN pa.city
+                ELSE 'Other'
+            END AS borough
+        FROM locations l
+        LEFT JOIN physical_addresses pa ON pa.location_id = l.id
+    ),
+    counts AS (
+        SELECT
+            labeled.borough,
+            t.name AS category,
+            COUNT(*) AS n,
+            ROW_NUMBER() OVER (PARTITION BY labeled.borough ORDER BY COUNT(*) DESC, t.name) AS rn
+        FROM labeled
+        JOIN service_at_locations sal ON sal.location_id = labeled.location_id
+        JOIN service_taxonomy st ON st.service_id = sal.service_id
+        JOIN taxonomies t ON t.id = st.taxonomy_id
+        GROUP BY labeled.borough, t.name
+    )
+    SELECT borough, category FROM counts WHERE rn = 1
+    """
+    top_cat_rows = _execute_sql(top_cat_sql, {})
+    top_cat_by_borough = {r.get("borough"): r.get("category") for r in top_cat_rows}
+
+    # Assemble the response in display order.
+    response_rows: list[dict[str, Any]] = []
+    total_loc = 0
+    total_svc = 0
+    for b in (*NYC_BOROUGHS, "Other"):
+        bb = by_borough[b]
+        loc = bb["location_count"]
+        svc = bb["service_count"]
+        fresh = bb["fresh_count"]
+        avg = round(svc / loc, 1) if loc else 0.0
+        verified_pct = round(100.0 * fresh / loc, 1) if loc else None
+        response_rows.append({
+            "borough": b,
+            "location_count": loc,
+            "service_count": svc,
+            "avg_services_per_location": avg,
+            "verified_lt90d_pct": verified_pct,
+            "top_category": top_cat_by_borough.get(b),
+        })
+        total_loc += loc
+        total_svc += svc
+
+    return {
+        "rows": response_rows,
+        "totals": {
+            "location_count": total_loc,
+            "service_count": total_svc,
+        },
+    }

@@ -12,6 +12,8 @@ locks the surface in place.
 from app.services.locations_admin.aggregations import (
     get_locations_stats,
     get_locations_list,
+    get_freshness_histogram,
+    get_locations_by_borough,
     FRESHNESS_THRESHOLD_DAYS,
     RECENT_FLAGS_LOOKBACK_DAYS,
     HEATMAP_TOP_N_CATEGORIES,
@@ -23,6 +25,8 @@ from app.services.locations_admin.aggregations import (
 __all__ = [
     "get_locations_stats",
     "get_locations_list",
+    "get_freshness_histogram",
+    "get_locations_by_borough",
     "FRESHNESS_THRESHOLD_DAYS",
     "RECENT_FLAGS_LOOKBACK_DAYS",
     "HEATMAP_TOP_N_CATEGORIES",
