@@ -12,6 +12,7 @@ import { CoordinateIssuesTable } from "@/components/admin/locations/coordinate-i
 import { CategoryCoverageTable } from "@/components/admin/locations/category-coverage-table";
 import { StaleCategoriesList } from "@/components/admin/locations/stale-categories-list";
 import { FeedbackAggregatesPanel } from "@/components/admin/locations/feedback-aggregates";
+import { FeedbackCommentsStream } from "@/components/admin/locations/feedback-comments-stream";
 import { LocationsTable } from "@/components/admin/locations/locations-table";
 import { StatCardSkeleton } from "@/components/admin/loading-skeleton";
 import type {
@@ -203,6 +204,22 @@ export default function LocationsPage() {
           events to qualify for the ranking.
         </p>
         <FeedbackAggregatesPanel />
+      </div>
+
+      {/* Section 5c: recent comments stream — qualitative companion
+       *  to the quantitative feedback aggregates above. Each row is
+       *  clickable and opens the originating session's transcript in
+       *  the standard admin TranscriptDrawer. */}
+      <div className="mt-6">
+        <h2 className="text-base font-semibold mb-3 text-neutral-900 dark:text-neutral-100">
+          Recent feedback comments
+        </h2>
+        <p className="text-xs text-neutral-500 dark:text-neutral-400 mb-3">
+          The qualitative companion — comments often surface things that don&apos;t
+          fit any criterion checkbox. Click a row to view the full chat session
+          for context.
+        </p>
+        <FeedbackCommentsStream />
       </div>
 
       {/* Section 2b: triage table. ageBucket is controlled by the page

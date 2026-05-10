@@ -33,6 +33,9 @@ from app.services.locations_admin import (
     get_category_coverage,
     get_stale_categories,
     get_location_feedback_aggregates,
+    get_recent_feedback_comments,
+    RECENT_COMMENTS_DEFAULT_LIMIT,
+    RECENT_COMMENTS_MAX_LIMIT,
 )
 
 logger = logging.getLogger(__name__)
@@ -286,3 +289,34 @@ def locations_feedback_aggregates():
         return get_location_feedback_aggregates()
     except Exception as e:
         return _admin_error("/api/locations/feedback-aggregates", e)
+
+
+@router.get("/feedback-comments")
+def locations_feedback_comments(
+    limit: int = Query(
+        RECENT_COMMENTS_DEFAULT_LIMIT,
+        ge=1,
+        le=RECENT_COMMENTS_MAX_LIMIT,
+        description=(
+            "Max number of comments to return. Defaults to 50; capped "
+            "at 200 to avoid pulling the entire event log in one go."
+        ),
+    ),
+):
+    """Section 5c: reverse-chronological list of recent location_feedback
+    events that include a non-empty comment.
+
+    The qualitative companion to /feedback-aggregates — comments
+    often surface things that don't fit any criterion checkbox.
+    Each item carries enough context (session_id, location_id,
+    criteria-flagged) for the frontend to deep-link into the
+    originating session's transcript drawer.
+
+    Filters out empty / whitespace-only comments before counting,
+    so total_with_comments reads as "events with content," not
+    "events that had a comment field."
+    """
+    try:
+        return get_recent_feedback_comments(limit=limit)
+    except Exception as e:
+        return _admin_error("/api/locations/feedback-comments", e)

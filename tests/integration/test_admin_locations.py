@@ -1269,3 +1269,152 @@ def test_feedback_aggregates_top_n_truncation():
         body = admin_client.get("/admin/api/locations/feedback-aggregates").json()
         assert len(body["most_flagged"]) == 10    # truncated
         assert body["total_eligible"] == 12       # full count surfaced
+
+
+# -----------------------------------------------------------------------
+# /feedback-comments (day 6 — section 5c)
+# -----------------------------------------------------------------------
+
+def test_feedback_comments_requires_admin_auth():
+    with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}):
+        response = client.get("/admin/api/locations/feedback-comments")
+        assert response.status_code == 401
+
+
+def test_feedback_comments_empty_returns_empty_list():
+    """No feedback events at all → empty comments array, zeros."""
+    clear_audit_log()
+    with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}):
+        r = admin_client.get("/admin/api/locations/feedback-comments")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["comments"] == []
+        assert body["total_with_comments"] == 0
+        assert body["limit"] == 50    # default
+
+
+def test_feedback_comments_filters_empty_and_whitespace():
+    """Events without comments (None, empty, whitespace-only) should
+    NOT appear. Only the ones with real content surface."""
+    clear_audit_log()
+    log_location_feedback(session_id="s1", location_id="loc-A", location_name="A",
+                          safety=False, comment="really helpful staff")
+    log_location_feedback(session_id="s2", location_id="loc-B", location_name="B",
+                          safety=True)    # no comment kwarg → None
+    log_location_feedback(session_id="s3", location_id="loc-C", location_name="C",
+                          cleanliness=False, comment="")
+    log_location_feedback(session_id="s4", location_id="loc-D", location_name="D",
+                          friendliness=False, comment="   \n  \t  ")    # whitespace-only
+    log_location_feedback(session_id="s5", location_id="loc-E", location_name="E",
+                          safety=False, comment="ran out of food")
+    with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}):
+        body = admin_client.get("/admin/api/locations/feedback-comments").json()
+        # Only s1 + s5 have real comments
+        assert body["total_with_comments"] == 2
+        ids = [c["session_id"] for c in body["comments"]]
+        assert set(ids) == {"s1", "s5"}
+
+
+def test_feedback_comments_reverse_chronological_order():
+    """Most-recent comment first."""
+    clear_audit_log()
+    # Log in oldest-first order; expect them returned newest-first.
+    log_location_feedback(session_id="oldest", location_id="loc-A",
+                          location_name="A", comment="first comment")
+    log_location_feedback(session_id="middle", location_id="loc-B",
+                          location_name="B", comment="second comment")
+    log_location_feedback(session_id="newest", location_id="loc-C",
+                          location_name="C", comment="third comment")
+    with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}):
+        body = admin_client.get("/admin/api/locations/feedback-comments").json()
+        ids = [c["session_id"] for c in body["comments"]]
+        assert ids == ["newest", "middle", "oldest"]
+
+
+def test_feedback_comments_strips_whitespace_from_comment_text():
+    """The returned comment string should be stripped of leading/
+    trailing whitespace — internal newlines preserved."""
+    clear_audit_log()
+    log_location_feedback(
+        session_id="s1", location_id="loc-A", location_name="A",
+        comment="  \n  staff was nice\n\nbut wait was long  \n  ",
+    )
+    with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}):
+        body = admin_client.get("/admin/api/locations/feedback-comments").json()
+        comment = body["comments"][0]["comment"]
+        assert comment == "staff was nice\n\nbut wait was long"
+
+
+def test_feedback_comments_separates_negative_and_positive_criteria():
+    """negative_criteria / positive_criteria arrays separate True/False
+    ratings, sorted in canonical _FEEDBACK_CRITERIA order regardless
+    of the order users provided ratings."""
+    clear_audit_log()
+    log_location_feedback(
+        session_id="s1", location_id="loc-A", location_name="A",
+        # Provide ratings in a non-canonical order
+        queer_friendly=True, safety=False, friendliness=True, cleanliness=False,
+        comment="mixed bag",
+    )
+    with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}):
+        c = admin_client.get("/admin/api/locations/feedback-comments").json()["comments"][0]
+        # Canonical order: safety, friendliness, cleanliness, queer_friendly
+        assert c["negative_criteria"] == ["safety", "cleanliness"]
+        assert c["positive_criteria"] == ["friendliness", "queer_friendly"]
+
+
+def test_feedback_comments_no_criteria_when_only_comment_provided():
+    """A comment without any criterion ratings still appears (the
+    qualitative content is the value); negative/positive arrays
+    are empty."""
+    clear_audit_log()
+    log_location_feedback(
+        session_id="s1", location_id="loc-A", location_name="A",
+        comment="some general feedback without rating any specific thing",
+    )
+    with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}):
+        c = admin_client.get("/admin/api/locations/feedback-comments").json()["comments"][0]
+        assert c["comment"]
+        assert c["negative_criteria"] == []
+        assert c["positive_criteria"] == []
+
+
+def test_feedback_comments_limit_param_truncates():
+    """The limit query param caps the response. total_with_comments
+    still reports the full filtered count."""
+    clear_audit_log()
+    for i in range(8):
+        log_location_feedback(
+            session_id=f"s{i}", location_id=f"loc-{i}",
+            location_name=f"Loc {i}", comment=f"comment {i}",
+        )
+    with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}):
+        r = admin_client.get("/admin/api/locations/feedback-comments?limit=3")
+        body = r.json()
+        assert len(body["comments"]) == 3
+        assert body["total_with_comments"] == 8
+        assert body["limit"] == 3
+
+
+def test_feedback_comments_limit_above_max_rejected():
+    """Limits above RECENT_COMMENTS_MAX_LIMIT (200) → 422 from FastAPI."""
+    clear_audit_log()
+    with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}):
+        r = admin_client.get("/admin/api/locations/feedback-comments?limit=500")
+        assert r.status_code == 422
+
+
+def test_feedback_comments_session_id_preserved_for_drilldown():
+    """session_id and location_id must round-trip exactly so the
+    frontend can deep-link into the transcript drawer."""
+    clear_audit_log()
+    log_location_feedback(
+        session_id="abc-123-def", location_id="loc-uuid-456",
+        location_name="Some Location",
+        safety=False, comment="needs fixing",
+    )
+    with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}):
+        c = admin_client.get("/admin/api/locations/feedback-comments").json()["comments"][0]
+        assert c["session_id"] == "abc-123-def"
+        assert c["location_id"] == "loc-uuid-456"
+        assert c["location_name"] == "Some Location"

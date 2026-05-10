@@ -311,7 +311,7 @@ function FilterBar({
           id="age-bucket"
           value={ageBucket}
           onChange={(e) => setAgeBucket(e.target.value as LocationsAgeBucket | "")}
-          className="text-xs px-2 py-1 rounded border border-neutral-200 bg-white dark:bg-neutral-900 dark:border-neutral-700 dark:text-neutral-200"
+          className="text-xs pl-2 pr-7 py-1 rounded border border-neutral-200 bg-white dark:bg-neutral-900 dark:border-neutral-700 dark:text-neutral-200"
         >
           <option value="">All</option>
           <option value="lt30">&lt; 30 days</option>

@@ -1494,3 +1494,103 @@ def get_location_feedback_aggregates() -> dict:
         "criterion_summary": criterion_summary,
         "total_events_overall": total_events_overall,
     }
+
+
+# ---------------------------------------------------------------------------
+# SECTION 5c — RECENT COMMENTS STREAM
+# ---------------------------------------------------------------------------
+
+# Default cap on how many comments to surface. Most-recent first.
+# 50 is a balance: enough to give a useful qualitative read of
+# "what are users actually saying," not so many that the page
+# becomes a comment-firehose to scroll through.
+RECENT_COMMENTS_DEFAULT_LIMIT = 50
+
+# Hard ceiling on the limit query param. Above this and we'd
+# need to think about pagination; below this the simple "fetch and
+# render" pattern works.
+RECENT_COMMENTS_MAX_LIMIT = 200
+
+
+def get_recent_feedback_comments(limit: int = RECENT_COMMENTS_DEFAULT_LIMIT) -> dict:
+    """Section 5c: reverse-chronological list of recent location_feedback
+    events that include a non-empty comment.
+
+    Returns shape:
+        {
+            "comments": [
+                {
+                    "session_id": str,
+                    "location_id": str,
+                    "location_name": str | None,
+                    "timestamp": str,         # ISO8601
+                    "comment": str,           # the user's text
+                    "negative_criteria": list[str],   # criteria flagged False (sorted by _FEEDBACK_CRITERIA order)
+                    "positive_criteria": list[str],   # criteria flagged True
+                },
+                ...
+            ],
+            "total_with_comments": int,       # count across the full event log
+            "limit": int,                     # echo of effective limit
+        }
+
+    The negative/positive criteria split is pre-computed on the
+    backend so the frontend doesn't have to walk the ratings dict
+    per row. Sorted in canonical _FEEDBACK_CRITERIA order so the
+    UI renders consistently across rows.
+
+    Empty / whitespace-only comments are filtered out — those don't
+    have qualitative content to surface. The total_with_comments
+    count is computed from the FILTERED set, not the raw event log,
+    so admins see "5 of 5 with comments" rather than "5 of 200
+    events" (which would conflate the two questions).
+    """
+    # Clamp limit defensively. The route also Query()-validates this,
+    # but defending here too means the function is safe to call from
+    # other code paths.
+    limit = max(1, min(RECENT_COMMENTS_MAX_LIMIT, int(limit)))
+
+    events = get_recent_events(limit=10000, event_type="location_feedback")
+
+    # Filter to events with non-empty comments. Whitespace-only
+    # comments are treated as empty.
+    with_comments = [
+        ev for ev in events
+        if (ev.get("comment") or "").strip()
+    ]
+    total_with_comments = len(with_comments)
+
+    # Most-recent first. get_recent_events returns oldest-first within
+    # the limit window; reverse here so the response leads with the
+    # newest activity.
+    with_comments.reverse()
+
+    out: list[dict[str, Any]] = []
+    for ev in with_comments[:limit]:
+        ratings = ev.get("ratings") or {}
+        # Walk in canonical order so list ordering is deterministic
+        # — frontend can rely on the array order matching the badge
+        # order it expects.
+        negative_criteria = [
+            crit for crit in _FEEDBACK_CRITERIA
+            if ratings.get(crit) is False
+        ]
+        positive_criteria = [
+            crit for crit in _FEEDBACK_CRITERIA
+            if ratings.get(crit) is True
+        ]
+        out.append({
+            "session_id": str(ev.get("session_id") or ""),
+            "location_id": str(ev.get("location_id") or ""),
+            "location_name": ev.get("location_name"),
+            "timestamp": ev.get("timestamp") or "",
+            "comment": (ev.get("comment") or "").strip(),
+            "negative_criteria": negative_criteria,
+            "positive_criteria": positive_criteria,
+        })
+
+    return {
+        "comments": out,
+        "total_with_comments": total_with_comments,
+        "limit": limit,
+    }

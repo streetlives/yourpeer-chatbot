@@ -388,6 +388,39 @@ export interface FeedbackAggregatesResponse {
 }
 
 // -----------------------------------------------------------------
+// GET /api/admin/locations/feedback-comments — section 5c
+// -----------------------------------------------------------------
+
+export interface FeedbackComment {
+  /** Originating session — used for the deep-link to TranscriptDrawer. */
+  session_id: string;
+  location_id: string;
+  /** Snapshot at feedback time. May be null if the chat couldn't
+   *  capture a name (rare). */
+  location_name: string | null;
+  /** ISO8601 of the event. */
+  timestamp: string;
+  /** User-provided text. Trimmed of leading/trailing whitespace
+   *  on the backend; internal newlines preserved. */
+  comment: string;
+  /** Criteria the user flagged False — sorted in canonical
+   *  FEEDBACK_CRITERIA order so badge rendering is consistent. */
+  negative_criteria: FeedbackCriterion[];
+  /** Criteria the user flagged True — same canonical order. */
+  positive_criteria: FeedbackCriterion[];
+}
+
+export interface FeedbackCommentsResponse {
+  /** Reverse-chronological (newest first). Capped at `limit`. */
+  comments: FeedbackComment[];
+  /** Total events with non-empty comments. May exceed comments.length
+   *  when truncated. */
+  total_with_comments: number;
+  /** Echo of the effective limit used. */
+  limit: number;
+}
+
+// -----------------------------------------------------------------
 // API error shape — shared with other admin endpoints
 // -----------------------------------------------------------------
 

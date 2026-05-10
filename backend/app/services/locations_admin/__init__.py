@@ -19,6 +19,7 @@ from app.services.locations_admin.aggregations import (
     get_category_coverage,
     get_stale_categories,
     get_location_feedback_aggregates,
+    get_recent_feedback_comments,
     FRESHNESS_THRESHOLD_DAYS,
     RECENT_FLAGS_LOOKBACK_DAYS,
     HEATMAP_TOP_N_CATEGORIES,
@@ -28,6 +29,8 @@ from app.services.locations_admin.aggregations import (
     STALE_CATEGORY_LOOKBACK_DAYS,
     STALE_CATEGORIES_TOP_N,
     MOST_FLAGGED_TOP_N,
+    RECENT_COMMENTS_DEFAULT_LIMIT,
+    RECENT_COMMENTS_MAX_LIMIT,
 )
 
 __all__ = [
@@ -40,6 +43,7 @@ __all__ = [
     "get_category_coverage",
     "get_stale_categories",
     "get_location_feedback_aggregates",
+    "get_recent_feedback_comments",
     "FRESHNESS_THRESHOLD_DAYS",
     "RECENT_FLAGS_LOOKBACK_DAYS",
     "HEATMAP_TOP_N_CATEGORIES",
@@ -49,4 +53,6 @@ __all__ = [
     "STALE_CATEGORY_LOOKBACK_DAYS",
     "STALE_CATEGORIES_TOP_N",
     "MOST_FLAGGED_TOP_N",
+    "RECENT_COMMENTS_DEFAULT_LIMIT",
+    "RECENT_COMMENTS_MAX_LIMIT",
 ]
