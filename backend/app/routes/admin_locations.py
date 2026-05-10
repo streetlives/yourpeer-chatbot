@@ -28,7 +28,7 @@ shared _admin_error helper. No business logic lives here.
 from __future__ import annotations
 
 import logging
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import APIRouter, Query
 from fastapi.responses import JSONResponse
@@ -91,35 +91,59 @@ def locations_stats():
 def locations_list(
     page: int = Query(1, ge=1),
     page_size: int = Query(25, ge=1, le=100),
-    sort_key: str = Query(
+    sort_key: Literal[
+        "name",
+        "organization",
+        "city",
+        "service_count",
+        "last_validated_at",
+        "recent_flags",
+    ] = Query(
         "last_validated_at",
         description=(
-            "Column to sort by. Allowed: name, organization, city, "
-            "service_count, last_validated_at, recent_flags. Other "
-            "values fall back to last_validated_at."
+            "Column to sort by. Invalid values get a 422 with the "
+            "list of accepted values."
         ),
     ),
-    sort_dir: str = Query(
+    sort_dir: Literal[
+        "asc",
+        "desc",
+        "asc_nulls_first",
+        "desc_nulls_first",
+    ] = Query(
         "asc_nulls_first",
         description=(
-            "Sort direction. Allowed: asc, desc, asc_nulls_first, "
-            "desc_nulls_first. Default surfaces never-verified rows "
+            "Sort direction. Default surfaces never-verified rows "
             "at the top of the triage view."
         ),
     ),
-    borough: Optional[list[str]] = Query(
+    borough: Optional[
+        list[
+            Literal[
+                "Manhattan",
+                "Brooklyn",
+                "Queens",
+                "Bronx",
+                "Staten Island",
+                "Other",
+            ]
+        ]
+    ] = Query(
         None,
         description=(
-            "Filter to one or more borough labels. Allowed values: "
-            "Manhattan, Brooklyn, Queens, Bronx, Staten Island, Other. "
-            "Multiple values are OR'd."
+            "Filter to one or more borough labels. Multiple values "
+            "are OR'd. 'Other' matches anything outside the 5 NYC "
+            "boroughs (typically out-of-NYC data quality issues)."
         ),
     ),
-    age_bucket: Optional[str] = Query(
+    age_bucket: Optional[
+        Literal["lt30", "30to90", "90to180", "180to365", "gt365", "never"]
+    ] = Query(
         None,
         description=(
-            "Filter by last_validated_at bucket. Allowed: lt30, "
-            "30to90, 90to180, 180to365, gt365, never."
+            "Filter by last_validated_at bucket. Buckets match the "
+            "freshness histogram's bar keys — clicking a bar drives "
+            "this param."
         ),
     ),
     has_issues: bool = Query(
@@ -133,7 +157,12 @@ def locations_list(
     ),
     category: Optional[list[str]] = Query(
         None,
-        description="Filter to locations offering at least one service in any of the named taxonomy categories.",
+        description=(
+            "Filter to locations offering at least one service in any of "
+            "the named taxonomy categories. Free-form strings (taxonomies "
+            "are DB-driven, not enumerable at the route layer); unknown "
+            "values match nothing and degrade silently."
+        ),
     ),
     search: Optional[str] = Query(
         None, description="Free-text match on location name or organization (case-insensitive substring).",

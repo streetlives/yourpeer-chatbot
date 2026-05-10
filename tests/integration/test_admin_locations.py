@@ -392,25 +392,45 @@ def test_list_page_size_capped_at_100():
         assert r.status_code == 422
 
 
-def test_list_invalid_sort_key_falls_back_to_default():
-    """Unknown sort_key values should fall back to last_validated_at,
-    not 500. Defensive against frontend drift or URL tampering."""
-    clear_audit_log()
+def test_list_invalid_sort_key_falls_back_to_default_at_aggregation_layer():
+    """Defense-in-depth: even if the route-layer Literal[] check is
+    somehow bypassed (direct call to get_locations_list, future
+    refactor that drops the type, etc.), the aggregation function's
+    `_SORT_KEY_TO_SQL` whitelist should fall back to the default sort
+    rather than crashing or injecting raw SQL.
+
+    This used to test the route layer's behavior, but with L6 in
+    place the route returns 422 for invalid sort_key — see
+    test_list_returns_422_for_invalid_sort_key. This test now covers
+    the inner layer.
+    """
+    from app.services.locations_admin.aggregations import get_locations_list
     captured_sql: list = []
     def capturing(sql, params):
         captured_sql.append(sql)
         if "COUNT(*) AS total" in sql:
             return [{"total": 0}]
         return []
-    with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}), \
-         patch("app.services.locations_admin.aggregations._execute_sql", side_effect=capturing):
-        r = admin_client.get("/admin/api/locations/list?sort_key=NOT_A_REAL_KEY")
-        assert r.status_code == 200
-        # The list query (the one that actually orders) should reference
-        # last_validated_at — the fallback default.
-        list_query = next((s for s in captured_sql if "ORDER BY" in s), None)
-        assert list_query is not None
-        assert "last_validated_at" in list_query
+    with patch("app.services.locations_admin.aggregations._execute_sql",
+               side_effect=capturing):
+        # Call the function directly with a bogus sort_key.
+        result = get_locations_list(sort_key="NOT_A_REAL_KEY")
+    assert result["locations"] == []
+    # The ORDER BY in the actual list query should fall back to the
+    # default sort column (last_validated_at), not crash, and not
+    # contain the bogus key as raw SQL.
+    list_query = next((s for s in captured_sql if "ORDER BY" in s), None)
+    assert list_query is not None, (
+        "Expected a query with ORDER BY in the captured SQL"
+    )
+    assert "last_validated_at" in list_query, (
+        f"Expected fallback to last_validated_at; got ORDER BY in: "
+        f"{list_query[:200]}"
+    )
+    assert "NOT_A_REAL_KEY" not in list_query, (
+        f"Bogus sort_key leaked into SQL — defense-in-depth whitelist "
+        f"is broken. SQL: {list_query[:200]}"
+    )
 
 
 # -----------------------------------------------------------------------
@@ -1917,4 +1937,174 @@ def test_has_issues_filter_omits_flagged_loc_ids_param_when_off():
     assert "flagged_loc_ids" not in captured_params, (
         "flagged_loc_ids should only be bound when has_issues=true; "
         f"got params: {list(captured_params)}"
+    )
+
+
+# -----------------------------------------------------------------------
+# Enum validation on /list — Literal[...] types should produce 422 on
+# invalid values rather than silently degrading to default behavior.
+# Catches the case where a typo'd filter URL gets misleadingly empty
+# results instead of a clear "that value isn't allowed" response.
+# -----------------------------------------------------------------------
+
+def test_list_returns_422_for_invalid_sort_key():
+    """Invalid sort_key values are rejected at the route layer with a
+    helpful 422 listing the accepted values. Previously the aggregation
+    function whitelisted these internally and silently fell back to the
+    default — which made typos look like degraded results, not a user
+    error.
+    """
+    with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}):
+        r = admin_client.get("/admin/api/locations/list?sort_key=not_a_real_column")
+    assert r.status_code == 422, (
+        f"Expected 422 on invalid sort_key; got {r.status_code}. "
+        f"Body: {r.text[:200]}"
+    )
+    # FastAPI's 422 body includes the field name and accepted values
+    # so users / clients can self-correct.
+    body = r.json()
+    assert "sort_key" in r.text or any(
+        "sort_key" in str(err.get("loc", "")) for err in body.get("detail", [])
+    ), f"422 body should name the failing field. Got: {body}"
+
+
+def test_list_returns_422_for_invalid_sort_dir():
+    with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}):
+        r = admin_client.get("/admin/api/locations/list?sort_dir=sideways")
+    assert r.status_code == 422
+
+
+def test_list_returns_422_for_invalid_borough():
+    with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}):
+        r = admin_client.get("/admin/api/locations/list?borough=Atlantis")
+    assert r.status_code == 422
+
+
+def test_list_returns_422_for_invalid_age_bucket():
+    with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}):
+        r = admin_client.get("/admin/api/locations/list?age_bucket=lt7")
+    assert r.status_code == 422
+
+
+def test_list_accepts_valid_closed_set_values():
+    """Sanity check: every value in the closed-set enums should be
+    accepted by the route layer. If this fails, the Literal[...] type
+    is too restrictive (or the value in `paths` is wrong)."""
+    # Each tuple: (param_name, valid_value)
+    valid_cases = [
+        ("sort_key", "name"),
+        ("sort_key", "organization"),
+        ("sort_key", "city"),
+        ("sort_key", "service_count"),
+        ("sort_key", "last_validated_at"),
+        ("sort_key", "recent_flags"),
+        ("sort_dir", "asc"),
+        ("sort_dir", "desc"),
+        ("sort_dir", "asc_nulls_first"),
+        ("sort_dir", "desc_nulls_first"),
+        ("borough", "Manhattan"),
+        ("borough", "Brooklyn"),
+        ("borough", "Queens"),
+        ("borough", "Bronx"),
+        ("borough", "Staten Island"),
+        ("borough", "Other"),
+        ("age_bucket", "lt30"),
+        ("age_bucket", "30to90"),
+        ("age_bucket", "90to180"),
+        ("age_bucket", "180to365"),
+        ("age_bucket", "gt365"),
+        ("age_bucket", "never"),
+    ]
+    # SQL responder that returns empty results so the endpoint completes
+    # rather than crashing on the missing DB. We only care that the route
+    # ACCEPTED the param, not what came back.
+    def responder(sql, params):
+        if "COUNT(*) AS total" in sql:
+            return [{"total": 0}]
+        return []
+    with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}), \
+         patch("app.services.locations_admin.aggregations._execute_sql", side_effect=responder):
+        for param, value in valid_cases:
+            from urllib.parse import quote
+            r = admin_client.get(f"/admin/api/locations/list?{param}={quote(value)}")
+            assert r.status_code == 200, (
+                f"Valid {param}={value!r} got {r.status_code} — the Literal[] "
+                f"type at the route layer is rejecting a value the aggregation "
+                f"function accepts. Body: {r.text[:200]}"
+            )
+
+
+# -----------------------------------------------------------------------
+# L4 regression — last_event_at picks the chronologically latest event,
+# not the lexicographically-largest timestamp string. Catches the case
+# where the audit log writes timestamps with different fractional-second
+# precision (e.g. millisecond-truncated vs microsecond-full) and the old
+# string-compare would pick the wrong one.
+# -----------------------------------------------------------------------
+
+def test_last_event_at_uses_datetime_compare_not_string_compare():
+    """Two events for the same location written in different ISO sub-
+    formats. Event A: `Z` suffix, no fractional seconds. Event B:
+    `+00:00` suffix, half-second past A. Chronologically B is later,
+    but the `Z` character (codepoint 90) sorts AFTER `.` (codepoint 46),
+    so lexicographic compare picks A. Datetime compare correctly picks B.
+
+    This is the format-drift case the L4 fix defends against — today
+    every log entry comes from `datetime.now(timezone.utc).isoformat()`
+    which produces consistent `+00:00` output, but the moment any
+    future code path writes a `Z`-suffixed timestamp (or a naive one,
+    or a different fractional precision), the lex compare silently
+    gives the wrong answer. This test pins the correct behavior so
+    a future regression to string-compare fires a clear test failure.
+    """
+    clear_audit_log()
+    from app.services import audit_log
+    earlier = {
+        "type": "location_feedback",
+        "timestamp": "2026-05-01T10:00:00Z",        # parses to 10:00:00.0 UTC
+        "session_id": "s1",
+        "location_id": "loc-precision-test",
+        "location_name": "Test Loc",
+        "ratings": {"safety": True},
+        "comment": "earlier",
+    }
+    later = {
+        "type": "location_feedback",
+        "timestamp": "2026-05-01T10:00:00.5+00:00", # parses to 10:00:00.5 UTC
+        "session_id": "s2",
+        "location_id": "loc-precision-test",
+        "location_name": "Test Loc",
+        "ratings": {"safety": False},
+        "comment": "later",
+    }
+    # Setup-correctness check: confirm the test premise.
+    # String compare must pick `earlier` (the WRONG choice) so the
+    # test can prove datetime compare picks differently.
+    assert earlier["timestamp"] > later["timestamp"], (
+        "Test setup error: chosen timestamps don't reproduce the "
+        "lexicographic-vs-chronological mismatch. "
+        f"{earlier['timestamp']!r} should be lex-greater than "
+        f"{later['timestamp']!r}."
+    )
+
+    with audit_log._lock:
+        audit_log._events.append(earlier)
+        audit_log._events.append(later)
+
+    from app.services.locations_admin.aggregations import (
+        get_location_feedback_aggregates,
+    )
+    result = get_location_feedback_aggregates()
+    most_flagged = {row["location_id"]: row for row in result["most_flagged"]}
+    assert "loc-precision-test" in most_flagged, (
+        f"Expected loc-precision-test in most_flagged; got "
+        f"{list(most_flagged)}. FEEDBACK_MIN_SAMPLE may have changed."
+    )
+    last_at = most_flagged["loc-precision-test"]["last_event_at"]
+    assert last_at == later["timestamp"], (
+        f"last_event_at picked the wrong event. Got {last_at!r}, "
+        f"expected {later['timestamp']!r} (the chronologically later "
+        f"event). String-compare would have picked {earlier['timestamp']!r} "
+        f"because `Z` > `.` lexicographically. L4 should be enforcing "
+        f"datetime compare."
     )

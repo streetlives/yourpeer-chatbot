@@ -175,12 +175,12 @@ def get_locations_stats() -> dict:
       (SELECT COUNT(*) FROM locations) AS total_locations,
       (SELECT COUNT(*) FROM services) AS total_services,
       (SELECT COUNT(*) FROM locations
-        WHERE last_validated_at >= CURRENT_DATE - INTERVAL '%(fresh)s days'
+        WHERE last_validated_at >= CURRENT_DATE - :fresh_days * INTERVAL '1 day'
       ) AS fresh_count,
       (SELECT COUNT(*) FROM locations WHERE last_validated_at IS NULL
       ) AS never_verified_count,
       (SELECT COUNT(*) FROM locations
-        WHERE last_validated_at < CURRENT_DATE - INTERVAL '%(fresh)s days'
+        WHERE last_validated_at < CURRENT_DATE - :fresh_days * INTERVAL '1 day'
       ) AS stale_count,
       (SELECT COUNT(*) FROM locations
         WHERE last_validated_at >= CURRENT_DATE - INTERVAL '7 days'
@@ -189,9 +189,9 @@ def get_locations_stats() -> dict:
         WHERE last_validated_at >= CURRENT_DATE - INTERVAL '14 days'
           AND last_validated_at <  CURRENT_DATE - INTERVAL '7 days'
       ) AS fresh_prev_7d
-    """ % {"fresh": FRESHNESS_THRESHOLD_DAYS}
+    """
 
-    rows = _execute_sql(counts_sql, {})
+    rows = _execute_sql(counts_sql, {"fresh_days": FRESHNESS_THRESHOLD_DAYS})
     if not rows:
         # Defensive — _execute_sql returns [] on connection failure.
         # Caller wraps in try/except and surfaces a structured 500.
@@ -231,6 +231,36 @@ def get_locations_stats() -> dict:
     }
 
 
+def _parse_iso_ts(ts: Optional[str]) -> Optional[datetime]:
+    """Parse an ISO-8601 timestamp string into a tz-aware datetime.
+
+    Returns None for empty/None/malformed inputs — callers decide how
+    to handle the absent case (typically "treat as long ago" or "skip
+    this event"). Always returns tz-aware: naive timestamps get tagged
+    UTC (matches the convention in `_now_iso()` in audit_log.py,
+    which always writes tz-aware values).
+
+    Exists so the audit-log walks can do datetime comparisons rather
+    than string comparisons. String compare happens to give the right
+    answer when both sides come from `datetime.now(timezone.utc).isoformat()`
+    (same format → same lexicographic ordering as chronological), but
+    silently breaks the moment any one timestamp has different
+    fractional-second precision, a different tz-suffix shape, or a
+    space separator instead of T. Defensive against future drift.
+    """
+    if not ts:
+        return None
+    try:
+        # `Z` suffix isn't accepted by fromisoformat() pre-3.11 — replace
+        # for backward compatibility. No-op on already-correct strings.
+        dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+    except (ValueError, AttributeError, TypeError):
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
 def _ev_after(ev: dict, cutoff: datetime) -> bool:
     """Helper: did `ev` happen after `cutoff`?
 
@@ -239,15 +269,9 @@ def _ev_after(ev: dict, cutoff: datetime) -> bool:
     Naive timestamps are assumed to be UTC, matching the convention
     in `_now_iso()` in audit_log.py.
     """
-    ts = ev.get("timestamp")
-    if not ts:
+    dt = _parse_iso_ts(ev.get("timestamp"))
+    if dt is None:
         return False
-    try:
-        dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
-    except (ValueError, AttributeError):
-        return False
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
     return dt >= cutoff
 
 
@@ -752,7 +776,7 @@ def get_locations_by_borough() -> dict:
         borough,
         COUNT(*) AS location_count,
         COUNT(*) FILTER (
-            WHERE last_validated_at >= CURRENT_DATE - INTERVAL '%(fresh)s days'
+            WHERE last_validated_at >= CURRENT_DATE - :fresh_days * INTERVAL '1 day'
         ) AS fresh_count,
         (SELECT COUNT(*) FROM service_at_locations sal
          JOIN locations l2 ON sal.location_id = l2.id
@@ -762,12 +786,17 @@ def get_locations_by_borough() -> dict:
     FROM labeled
     GROUP BY borough
     """ % {
-        "fresh": FRESHNESS_THRESHOLD_DAYS,
+        # SQL-fragment substitution (not value interpolation): both
+        # `borough_case` substitutions are SQL text returned by the
+        # _borough_case_sql() helper, NOT user input. Composition like
+        # this can't go through bind params because :name only handles
+        # values. The helper builds its output from the NYC_BOROUGHS
+        # constant so there's no injection surface.
         "borough_case": _borough_case_sql("pa.city"),
         "borough_case_pa2": _borough_case_sql("pa2.city"),
     }
 
-    grouped_rows = _execute_sql(grouped_sql, {})
+    grouped_rows = _execute_sql(grouped_sql, {"fresh_days": FRESHNESS_THRESHOLD_DAYS})
 
     # Index by borough for the assemble step. Initialize all 6 borough
     # labels to zero so empty boroughs still render.
@@ -1229,7 +1258,7 @@ def get_category_coverage() -> dict:
         COUNT(DISTINCT s.id)        AS service_count,
         COUNT(DISTINCT l.id)        AS location_count,
         COUNT(DISTINCT l.id) FILTER (
-            WHERE l.last_validated_at >= CURRENT_DATE - INTERVAL '%(fresh)s days'
+            WHERE l.last_validated_at >= CURRENT_DATE - :fresh_days * INTERVAL '1 day'
         ) AS fresh_location_count
     FROM taxonomies t
     JOIN service_taxonomy st ON st.taxonomy_id = t.id
@@ -1237,8 +1266,8 @@ def get_category_coverage() -> dict:
     JOIN service_at_locations sal ON sal.service_id = s.id
     JOIN locations l         ON l.id = sal.location_id
     GROUP BY t.name
-    """ % {"fresh": FRESHNESS_THRESHOLD_DAYS}
-    rows = _execute_sql(sql, {})
+    """
+    rows = _execute_sql(sql, {"fresh_days": FRESHNESS_THRESHOLD_DAYS})
 
     # Step 2: gather demand from no_result_by_service.
     #
@@ -1395,11 +1424,11 @@ def get_stale_categories() -> dict:
     GROUP BY t.name
     HAVING (
         MAX(l.last_validated_at) IS NULL
-        OR MAX(l.last_validated_at) < CURRENT_DATE - INTERVAL '%(stale)s days'
+        OR MAX(l.last_validated_at) < CURRENT_DATE - :stale_days * INTERVAL '1 day'
     )
     ORDER BY MAX(l.last_validated_at) ASC NULLS FIRST
-    """ % {"stale": STALE_CATEGORY_LOOKBACK_DAYS}
-    rows = _execute_sql(sql, {})
+    """
+    rows = _execute_sql(sql, {"stale_days": STALE_CATEGORY_LOOKBACK_DAYS})
 
     today = datetime.now(timezone.utc).date()
     categories: list[dict[str, Any]] = []
@@ -1548,8 +1577,27 @@ def get_location_feedback_aggregates() -> dict:
         if loc_name:
             bucket["location_name"] = loc_name
 
+        # Update the bucket's last_event_at — the timestamp of the
+        # most-recent event seen for this location. The bucket value
+        # stays an ISO string (it's exposed verbatim in the response),
+        # but the comparison goes through _parse_iso_ts so we're
+        # comparing datetimes, not strings. Lexicographic string
+        # compare happens to work today because every event's
+        # timestamp comes from `datetime.now(timezone.utc).isoformat()`
+        # with consistent precision — but that's coincidental, not
+        # guaranteed. The moment any timestamp source uses a
+        # different fractional-second precision or tz suffix, string
+        # compare gives the wrong answer.
         ts = ev.get("timestamp") or ""
-        if ts > bucket["last_event_at"]:
+        ts_dt = _parse_iso_ts(ts)
+        cur_dt = _parse_iso_ts(bucket["last_event_at"])
+        # Replace when:
+        #   - we have a parseable new ts AND
+        #   - either there's no current value, or the new ts is later
+        # An unparseable ts is treated as "skip this update," leaving
+        # whatever's already in the bucket. Defensive: don't let a
+        # garbage ts wipe out a good one.
+        if ts_dt is not None and (cur_dt is None or ts_dt > cur_dt):
             bucket["last_event_at"] = ts
 
         if (ev.get("comment") or "").strip():
