@@ -103,7 +103,8 @@ export function ServiceBoroughHeatmap() {
     return (
       <div className="bg-white border border-neutral-200 rounded-lg p-4 dark:bg-neutral-900 dark:border-neutral-800">
         <p className="text-sm text-neutral-500 italic dark:text-neutral-400">
-          No services tagged with taxonomies yet.
+          No taxonomy categories with location data yet — the heatmap populates
+          as services are imported and tagged.
         </p>
       </div>
     );

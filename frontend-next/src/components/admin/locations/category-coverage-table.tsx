@@ -93,7 +93,8 @@ export function CategoryCoverageTable() {
     return (
       <div className="bg-white border border-neutral-200 rounded-lg p-4 dark:bg-neutral-900 dark:border-neutral-800">
         <p className="text-sm text-neutral-500 italic dark:text-neutral-400">
-          No taxonomy data available yet.
+          No taxonomy data available yet — the table populates as services
+          are imported and tagged.
         </p>
       </div>
     );

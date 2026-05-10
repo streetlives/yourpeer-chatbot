@@ -1418,3 +1418,335 @@ def test_feedback_comments_session_id_preserved_for_drilldown():
         assert c["session_id"] == "abc-123-def"
         assert c["location_id"] == "loc-uuid-456"
         assert c["location_name"] == "Some Location"
+
+
+# -----------------------------------------------------------------------
+# /integrity-callouts (day 7 — section 6)
+# -----------------------------------------------------------------------
+
+def test_integrity_callouts_requires_admin_auth():
+    with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}):
+        response = client.get("/admin/api/locations/integrity-callouts")
+        assert response.status_code == 401
+
+
+def test_integrity_callouts_all_clear():
+    """When every count check returns 0, all_clear=True and the
+    callouts array is empty."""
+    clear_audit_log()
+    # All count queries return 0
+    responder = _make_sql_responder({"COUNT": [{"n": 0}]})
+    with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}), \
+         patch("app.services.locations_admin.aggregations._execute_sql", side_effect=responder):
+        body = admin_client.get("/admin/api/locations/integrity-callouts").json()
+        assert body["all_clear"] is True
+        assert body["callouts"] == []
+        assert body["total_callouts"] == 0
+
+
+def test_integrity_callouts_orphaned_locations_fires():
+    """When orphan-locations count > 0 → callout appears with the
+    expected severity and id."""
+    clear_audit_log()
+    # Marker-substring routing: each callout SQL has a unique substring.
+    # We respond with non-zero only for the orphan-locations query.
+    def responder(sql, params):
+        if "service_at_locations sal ON sal.location_id = l.id" in sql:
+            return [{"n": 7}]
+        return [{"n": 0}]
+    with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}), \
+         patch("app.services.locations_admin.aggregations._execute_sql", side_effect=responder):
+        body = admin_client.get("/admin/api/locations/integrity-callouts").json()
+        assert body["all_clear"] is False
+        assert body["total_callouts"] == 1
+        c = body["callouts"][0]
+        assert c["id"] == "orphaned_locations"
+        assert c["severity"] == "warning"
+        assert c["count"] == 7
+
+
+def test_integrity_callouts_orphaned_services_fires():
+    """When orphaned-services count > 0 → callout appears."""
+    clear_audit_log()
+    def responder(sql, params):
+        if "service_at_locations sal ON sal.service_id = s.id" in sql:
+            return [{"n": 3}]
+        return [{"n": 0}]
+    with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}), \
+         patch("app.services.locations_admin.aggregations._execute_sql", side_effect=responder):
+        body = admin_client.get("/admin/api/locations/integrity-callouts").json()
+        ids = [c["id"] for c in body["callouts"]]
+        assert "orphaned_services" in ids
+
+
+def test_integrity_callouts_malformed_phones_fires():
+    """When malformed-phones count > 0 → callout appears."""
+    clear_audit_log()
+    def responder(sql, params):
+        if "FROM phones" in sql:
+            return [{"n": 12}]
+        return [{"n": 0}]
+    with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}), \
+         patch("app.services.locations_admin.aggregations._execute_sql", side_effect=responder):
+        body = admin_client.get("/admin/api/locations/integrity-callouts").json()
+        c = next(c for c in body["callouts"] if c["id"] == "malformed_phones")
+        assert c["count"] == 12
+        assert c["severity"] == "warning"
+
+
+def test_integrity_callouts_entity_encoded_html_is_info_severity():
+    """Encoded-HTML callout is 'info' rather than 'warning' —
+    frontend strips it at render time, so it's a "fix at source"
+    note, not an active bug."""
+    clear_audit_log()
+    def responder(sql, params):
+        if "&lt;br" in sql:
+            return [{"n": 4}]
+        return [{"n": 0}]
+    with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}), \
+         patch("app.services.locations_admin.aggregations._execute_sql", side_effect=responder):
+        body = admin_client.get("/admin/api/locations/integrity-callouts").json()
+        c = next(c for c in body["callouts"] if c["id"] == "entity_encoded_html")
+        assert c["severity"] == "info"
+
+
+def test_integrity_callouts_coord_issues_ref_with_outside_nyc():
+    """Section 3c reference fires with 'warning' severity when
+    outside-NYC count > 0."""
+    clear_audit_log()
+    # Coordinate-issues query returns a row that triggers section-3c
+    # outside-NYC counter. Other count queries return 0.
+    def responder(sql, params):
+        if "l.position IS NOT NULL" in sql:
+            return [{
+                "location_id": "outside-nyc-loc",
+                "location_name": "Far Away",
+                "location_slug": "far-away",
+                "organization": "Org",
+                "stated_city": "Manhattan",
+                "latitude": 39.0, "longitude": -75.0,
+            }]
+        return [{"n": 0}]
+    with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}), \
+         patch("app.services.locations_admin.aggregations._execute_sql", side_effect=responder), \
+         patch("app.rag.boundaries.borough_from_coords", return_value=None), \
+         patch("app.rag.query_executor._stated_borough_from_city", return_value="Manhattan"):
+        body = admin_client.get("/admin/api/locations/integrity-callouts").json()
+        c = next(c for c in body["callouts"] if c["id"] == "coordinate_issues_ref")
+        assert c["severity"] == "warning"   # outside_nyc_count > 0
+        assert c["ref"] == "section_3c_coordinate_validation"
+
+
+def test_integrity_callouts_multiple_fire_in_display_order():
+    """When multiple count checks fire, callouts appear in their
+    declared display order — orphans first, then phones, then HTML.
+    (Coord-issues last when applicable.) Tests stable ordering."""
+    clear_audit_log()
+    def responder(sql, params):
+        # Fire orphan-locations, malformed-phones, entity-encoded-HTML
+        if "service_at_locations sal ON sal.location_id = l.id" in sql:
+            return [{"n": 1}]
+        if "FROM phones" in sql:
+            return [{"n": 2}]
+        if "&lt;br" in sql:
+            return [{"n": 3}]
+        return [{"n": 0}]
+    with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}), \
+         patch("app.services.locations_admin.aggregations._execute_sql", side_effect=responder):
+        body = admin_client.get("/admin/api/locations/integrity-callouts").json()
+        ids = [c["id"] for c in body["callouts"]]
+        assert ids == ["orphaned_locations", "malformed_phones", "entity_encoded_html"]
+
+
+# -----------------------------------------------------------------------
+# /timeseries (day 8 — section 7)
+# -----------------------------------------------------------------------
+
+def test_timeseries_requires_admin_auth():
+    with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}):
+        response = client.get("/admin/api/locations/timeseries")
+        assert response.status_code == 401
+
+
+def test_timeseries_returns_canonical_week_count():
+    """Always returns exactly TIMESERIES_WEEKS rows (=26 in v1) in
+    chronological order, regardless of how much data exists."""
+    clear_audit_log()
+    responder = _make_sql_responder({})
+    with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}), \
+         patch("app.services.locations_admin.aggregations._execute_sql", side_effect=responder):
+        body = admin_client.get("/admin/api/locations/timeseries").json()
+        assert body["total_weeks"] == 26
+        assert len(body["weeks"]) == 26
+        # Weeks are ascending dates
+        dates = [w["week_start"] for w in body["weeks"]]
+        assert dates == sorted(dates)
+
+
+def test_timeseries_empty_data_renders_zeros_not_missing():
+    """Weeks with no activity should render as 0s, not be missing
+    from the response. Frontend depends on this for plotting."""
+    clear_audit_log()
+    responder = _make_sql_responder({})
+    with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}), \
+         patch("app.services.locations_admin.aggregations._execute_sql", side_effect=responder):
+        body = admin_client.get("/admin/api/locations/timeseries").json()
+        for w in body["weeks"]:
+            assert w["locations_added"] == 0
+            assert w["locations_verified"] == 0
+            assert w["feedback_events"] == 0
+
+
+def test_timeseries_aggregates_added_and_verified_by_week():
+    """Bucketed counts from the SQL queries land in the correct week."""
+    from datetime import date, timedelta as td
+    clear_audit_log()
+    today = date.today()
+    days_since_monday = today.weekday()
+    this_monday = today - td(days=days_since_monday)
+    last_monday = this_monday - td(weeks=1)
+
+    def responder(sql, params):
+        if "FROM locations l" in sql and "l.created_at" in sql:
+            return [
+                {"week_start": this_monday, "n": 5},
+                {"week_start": last_monday, "n": 3},
+            ]
+        if "FROM locations l" in sql and "l.last_validated_at" in sql:
+            return [{"week_start": this_monday, "n": 2}]
+        return []
+
+    with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}), \
+         patch("app.services.locations_admin.aggregations._execute_sql", side_effect=responder):
+        body = admin_client.get("/admin/api/locations/timeseries").json()
+        # Find the relevant weeks
+        this_week = next(w for w in body["weeks"] if w["week_start"] == this_monday.isoformat())
+        last_week = next(w for w in body["weeks"] if w["week_start"] == last_monday.isoformat())
+        assert this_week["locations_added"] == 5
+        assert this_week["locations_verified"] == 2
+        assert last_week["locations_added"] == 3
+        assert last_week["locations_verified"] == 0
+
+
+def test_timeseries_feedback_events_aggregated_from_audit_log():
+    """Feedback events come from the audit log, not the DB. They
+    should be bucketed into the right ISO week."""
+    from datetime import date, timedelta as td
+    clear_audit_log()
+    log_location_feedback(
+        session_id="s1", location_id="loc-A", location_name="A",
+        safety=False, comment="not safe",
+    )
+    log_location_feedback(
+        session_id="s2", location_id="loc-B", location_name="B",
+        cleanliness=False, comment="not clean",
+    )
+    today = date.today()
+    days_since_monday = today.weekday()
+    this_monday = today - td(days=days_since_monday)
+
+    responder = _make_sql_responder({})
+    with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}), \
+         patch("app.services.locations_admin.aggregations._execute_sql", side_effect=responder):
+        body = admin_client.get("/admin/api/locations/timeseries").json()
+        this_week = next(w for w in body["weeks"] if w["week_start"] == this_monday.isoformat())
+        assert this_week["feedback_events"] == 2
+
+
+# -----------------------------------------------------------------------
+# ROUTE-WIRING SANITY (polish-day addition)
+#
+# Every locations admin endpoint should be reachable when the router is
+# wired correctly. Catches the kind of bug where a forgotten __init__
+# export or a typo'd @router.get decorator silently disables a section.
+# Per-aggregation tests cover the math; this catches the wiring.
+# -----------------------------------------------------------------------
+
+def test_all_locations_endpoints_reachable_when_wired():
+    """Every documented locations admin endpoint returns a 200 (or
+    its known auth response) under a clean audit log + minimal SQL
+    responder. Catches forgotten exports, typo'd routes, or
+    unregistered sub-router."""
+    clear_audit_log()
+    # Smart responder: returns the minimum shape each query expects.
+    # The goal isn't to test math correctness (per-aggregation tests
+    # already do that) — it's to confirm every endpoint successfully
+    # routes through the package, calls its function, and returns.
+    def responder(sql, params):
+        # Stats query: COALESCE with named columns; needs row-shaped
+        # response with all the column keys present.
+        if "total_locations" in sql and "fresh_count" in sql:
+            return [{
+                "total_locations": 0,
+                "total_services": 0,
+                "fresh_count": 0,
+                "never_verified_count": 0,
+                "stale_count": 0,
+                "fresh_last_7d": 0,
+                "fresh_prev_7d": 0,
+            }]
+        # /list count query — `SELECT COUNT(...) AS total`
+        if "AS total" in sql or " total\n" in sql:
+            return [{"total": 0}]
+        # Freshness histogram: COUNT FILTER on each bucket key.
+        if "FILTER" in sql and "lt30" in sql:
+            return [{
+                "lt30": 0, "30to90": 0, "90to180": 0,
+                "180to365": 0, "gt365": 0, "never": 0,
+            }]
+        # Count-shaped queries (COUNT(*) AS n) for integrity callouts.
+        if "COUNT" in sql:
+            return [{"n": 0}]
+        # Everything else: empty list. Aggregation functions all
+        # tolerate empty input.
+        return []
+    paths = [
+        "/admin/api/locations/stats",
+        "/admin/api/locations/list?limit=10",
+        "/admin/api/locations/freshness-histogram",
+        "/admin/api/locations/by-borough",
+        "/admin/api/locations/heatmap",
+        "/admin/api/locations/coordinate-issues",
+        "/admin/api/locations/category-coverage",
+        "/admin/api/locations/stale-categories",
+        "/admin/api/locations/feedback-aggregates",
+        "/admin/api/locations/feedback-comments",
+        "/admin/api/locations/integrity-callouts",
+        "/admin/api/locations/timeseries",
+    ]
+    with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}), \
+         patch("app.services.locations_admin.aggregations._execute_sql", side_effect=responder):
+        for path in paths:
+            r = admin_client.get(path)
+            assert r.status_code == 200, (
+                f"{path} returned {r.status_code} — likely a routing or "
+                f"export wiring issue. Body: {r.text[:200]}"
+            )
+
+
+def test_all_locations_endpoints_require_admin_auth():
+    """Every locations endpoint requires the admin Bearer token.
+    Catches a forgotten admin-auth dependency (would silently leak
+    catalog stats to anyone with the URL)."""
+    paths = [
+        "/admin/api/locations/stats",
+        "/admin/api/locations/list",
+        "/admin/api/locations/freshness-histogram",
+        "/admin/api/locations/by-borough",
+        "/admin/api/locations/heatmap",
+        "/admin/api/locations/coordinate-issues",
+        "/admin/api/locations/category-coverage",
+        "/admin/api/locations/stale-categories",
+        "/admin/api/locations/feedback-aggregates",
+        "/admin/api/locations/feedback-comments",
+        "/admin/api/locations/integrity-callouts",
+        "/admin/api/locations/timeseries",
+    ]
+    with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}):
+        for path in paths:
+            r = client.get(path)
+            assert r.status_code == 401, (
+                f"{path} returned {r.status_code} — expected 401 "
+                f"without the admin Bearer token. This endpoint may "
+                f"be missing its admin-auth dependency."
+            )
