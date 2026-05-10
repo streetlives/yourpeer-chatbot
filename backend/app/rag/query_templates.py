@@ -1430,6 +1430,33 @@ def _compute_schedule_status(opens_at, closes_at, now=None) -> dict:
     close_str = format_time(close_time)
     hours_today = f"{open_str} – {close_str}"
 
+    # All-day detection. Some Streetlives entries use `00:00:00 – 23:59:00`
+    # (or `:59:59`, or `00:00:00 – 00:00:00` interpreted as midnight-to-
+    # midnight) to mean "open all day." Showing those literal endpoints
+    # to users is confusing — `12:00 AM – 11:59 PM` reads as "narrowly
+    # not 24 hours" rather than "yes, all day," and the visual bulk
+    # competes with the actually-useful badge text. Replace the literal
+    # range with the friendlier "Open 24 hours" so users see one tidy
+    # label instead of two pieces of redundant information.
+    #
+    # Detection rules:
+    #   • opens_at == 00:00:00 (start-of-day exactly), AND
+    #   • closes_at is one of: 23:59:00, 23:59:59, 00:00:00.
+    #     The first two are end-of-day-rounded; the third is the
+    #     midnight-to-midnight wrap convention. Anything narrower
+    #     (e.g. 23:00:00 close) keeps the original literal range so
+    #     we don't over-claim 24-hour availability.
+    is_all_day = (
+        open_time == dt_time(0, 0, 0)
+        and (
+            close_time == dt_time(23, 59, 0)
+            or close_time == dt_time(23, 59, 59)
+            or close_time == dt_time(0, 0, 0)
+        )
+    )
+    if is_all_day:
+        hours_today = "Open 24 hours"
+
     # Determine if currently open. Default `now` to NYC time.
     # Tests inject `now` explicitly (see TestComputeScheduleStatus in
     # tests/unit/test_query_templates.py) so assertions don't depend on
@@ -1437,7 +1464,14 @@ def _compute_schedule_status(opens_at, closes_at, now=None) -> dict:
     if now is None:
         from zoneinfo import ZoneInfo
         now = datetime.now(ZoneInfo("America/New_York")).time()
-    if open_time <= close_time:
+    if is_all_day:
+        # All-day case is unambiguously open. The is_open determination
+        # below uses range comparison that misbehaves for the
+        # 00:00:00 – 00:00:00 wrap case (open <= now <= close yields
+        # False at most times since both bounds are 00:00:00). Short-
+        # circuit to avoid the false-closed result.
+        is_open = "open"
+    elif open_time <= close_time:
         is_open = "open" if open_time <= now <= close_time else "closed"
     else:
         # Wraps midnight (e.g. 8 PM – 6 AM)

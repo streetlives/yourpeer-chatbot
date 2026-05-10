@@ -105,7 +105,19 @@ interface ServiceCardProps {
   total?: number;
 }
 
-function StatusBadge({ status }: { status?: string }) {
+function StatusBadge({ status, allDay }: { status?: string; allDay?: boolean }) {
+  // All-day case: collapse "Open now" + "12:00 AM – 11:59 PM" into a
+  // single "Open 24 hours" pill. The redundant hours line is hidden by
+  // the caller. Backend signals all-day by returning the literal
+  // string "Open 24 hours" as `hours_today`; see
+  // _compute_schedule_status in backend/app/rag/query_templates.py.
+  if (allDay) {
+    return (
+      <span className="inline-block text-xs font-semibold px-2.5 py-0.5 rounded-lg bg-green-100 text-green-800 dark:bg-green-300 dark:text-green-950">
+        Open 24 hours
+      </span>
+    );
+  }
   if (status === "open") {
     return (
       <span className="inline-block text-xs font-semibold px-2.5 py-0.5 rounded-lg bg-green-100 text-green-800 dark:bg-green-300 dark:text-green-950">
@@ -126,6 +138,13 @@ function StatusBadge({ status }: { status?: string }) {
     </span>
   );
 }
+
+// Sentinel for the all-day case. Must match the literal string the
+// backend emits in _compute_schedule_status. If the backend's wording
+// ever changes, update this constant — TypeScript won't catch the
+// drift since both ends are plain strings. The `verify:contract`
+// sentinel covers the related is_open enum but not this string.
+const HOURS_ALL_DAY_SENTINEL = "Open 24 hours";
 
 function ValidatedBadge({ dateStr }: { dateStr?: string }) {
   if (!dateStr) {
@@ -287,10 +306,19 @@ export function ServiceCard({ service, isActive, index, total }: ServiceCardProp
         <ValidatedBadge dateStr={service.last_validated_at} />
       </div>
 
-      {/* Hours + status */}
+      {/* Hours + status. When the location is open all day, the
+       * StatusBadge renders "Open 24 hours" and the separate hours
+       * line is suppressed — showing "Open 24 hours" alongside
+       * "12:00 AM – 11:59 PM" reads as redundant and confusing
+       * (the literal endpoints suggest "narrowly NOT 24 hours").
+       * The all-day sentinel is set by the backend; see
+       * HOURS_ALL_DAY_SENTINEL above. */}
       <div className="flex items-center gap-2">
-        <StatusBadge status={service.is_open} />
-        {service.hours_today && (
+        <StatusBadge
+          status={service.is_open}
+          allDay={service.hours_today === HOURS_ALL_DAY_SENTINEL}
+        />
+        {service.hours_today && service.hours_today !== HOURS_ALL_DAY_SENTINEL && (
           <span className="inline-flex items-center gap-1 text-xs text-neutral-500 dark:text-neutral-400 whitespace-nowrap">
             <Clock size={14} className="text-neutral-400 dark:text-neutral-500 flex-shrink-0" aria-hidden="true" />
             <span>{service.hours_today}</span>
@@ -653,11 +681,16 @@ export function LocationCard({ services, isActive, index, total }: LocationCardP
         <ValidatedBadge dateStr={bestVerified ?? undefined} />
       </div>
 
-      {/* Shared hours — shown once when identical */}
+      {/* Shared hours — shown once when identical. All-day handling
+       * mirrors ServiceCard: pill says "Open 24 hours" and the
+       * literal range is suppressed. See HOURS_ALL_DAY_SENTINEL. */}
       {allSameHours && (
         <div className="flex items-center gap-2">
-          <StatusBadge status={primary.is_open} />
-          {primary.hours_today && (
+          <StatusBadge
+            status={primary.is_open}
+            allDay={primary.hours_today === HOURS_ALL_DAY_SENTINEL}
+          />
+          {primary.hours_today && primary.hours_today !== HOURS_ALL_DAY_SENTINEL && (
             <span className="inline-flex items-center gap-1 text-xs text-neutral-500 dark:text-neutral-400 whitespace-nowrap">
               <Clock size={14} className="text-neutral-400 dark:text-neutral-500 flex-shrink-0" aria-hidden="true" />
               <span>{primary.hours_today}</span>
@@ -705,11 +738,16 @@ export function LocationCard({ services, isActive, index, total }: LocationCardP
                   {ALSO_EMOJI[svc.service_name || ""] ? `${ALSO_EMOJI[svc.service_name || ""]} ` : ""}{svc.service_name || "Service"}
                 </div>
 
-                {/* Per-service hours — only when they differ */}
+                {/* Per-service hours — only when they differ.
+                 * All-day handling identical to ServiceCard; see
+                 * HOURS_ALL_DAY_SENTINEL. */}
                 {!allSameHours && (
                   <div className="flex items-center gap-2">
-                    <StatusBadge status={svc.is_open} />
-                    {svc.hours_today && (
+                    <StatusBadge
+                      status={svc.is_open}
+                      allDay={svc.hours_today === HOURS_ALL_DAY_SENTINEL}
+                    />
+                    {svc.hours_today && svc.hours_today !== HOURS_ALL_DAY_SENTINEL && (
                       <span className="inline-flex items-center gap-1 text-xs text-neutral-500 dark:text-neutral-400 whitespace-nowrap">
                         <Clock size={12} className="text-neutral-400 dark:text-neutral-500 flex-shrink-0" aria-hidden="true" />
                         <span>{svc.hours_today}</span>

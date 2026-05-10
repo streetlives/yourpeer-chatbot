@@ -643,6 +643,82 @@ def test_schedule_mixed_types():
     assert result["hours_today"] == "9:00 AM – 5:00 PM"
 
 
+# -----------------------------------------------------------------------
+# All-day detection — May 2026 user-facing fix.
+#
+# Some Streetlives entries store all-day availability as
+# `00:00:00 – 23:59:00` (or `:59:59`, or `00:00:00 – 00:00:00`).
+# Showing those literal endpoints to users is confusing — `12:00 AM
+# – 11:59 PM` reads as "narrowly NOT 24 hours" when the intent is
+# "yes, all day." The backend collapses these to a friendly
+# "Open 24 hours" sentinel; the frontend renders the pill with that
+# label and suppresses the redundant range. Tests below lock in
+# (a) which input shapes get collapsed, (b) which don't, and
+# (c) that the is_open determination still works for the all-day
+# wrap case (00:00:00 – 00:00:00 would otherwise misread as closed).
+# -----------------------------------------------------------------------
+
+def test_schedule_all_day_endpoint_2359():
+    """`00:00:00 – 23:59:00` should collapse to the all-day sentinel."""
+    result = _compute_schedule_status(time(0, 0, 0), time(23, 59, 0))
+    assert result["hours_today"] == "Open 24 hours"
+    assert result["is_open"] == "open"
+
+
+def test_schedule_all_day_endpoint_235959():
+    """`00:00:00 – 23:59:59` should also collapse — same intent, different
+    convention. Both are observed in production data."""
+    result = _compute_schedule_status(time(0, 0, 0), time(23, 59, 59))
+    assert result["hours_today"] == "Open 24 hours"
+    assert result["is_open"] == "open"
+
+
+def test_schedule_all_day_midnight_to_midnight():
+    """`00:00:00 – 00:00:00` is the midnight-to-midnight wrap convention.
+    Must collapse to the sentinel AND short-circuit the is_open
+    range comparison (which would otherwise yield 'closed' for any
+    time except exactly midnight, since open == close == 00:00:00)."""
+    result = _compute_schedule_status(time(0, 0, 0), time(0, 0, 0))
+    assert result["hours_today"] == "Open 24 hours"
+    assert result["is_open"] == "open"
+
+
+def test_schedule_almost_all_day_does_not_collapse():
+    """A close time even slightly earlier than 23:59:00 should NOT
+    collapse — we don't want to over-claim 24-hour availability for a
+    location that actually closes at 11pm (`23:00:00`)."""
+    result = _compute_schedule_status(time(0, 0, 0), time(23, 0, 0))
+    assert result["hours_today"] == "12:00 AM – 11:00 PM"
+    # is_open depends on current time; just confirm we're NOT in the
+    # all-day branch.
+    assert result["hours_today"] != "Open 24 hours"
+
+
+def test_schedule_late_open_does_not_collapse():
+    """An open time even slightly after midnight should NOT collapse
+    — opens_at must be exactly 00:00:00 to qualify as all-day."""
+    result = _compute_schedule_status(time(0, 1, 0), time(23, 59, 0))
+    assert result["hours_today"] == "12:01 AM – 11:59 PM"
+    assert result["hours_today"] != "Open 24 hours"
+
+
+def test_schedule_all_day_string_inputs():
+    """Same all-day handling when inputs come as string (the typical
+    DB-row shape).
+    """
+    result = _compute_schedule_status("00:00:00", "23:59:00")
+    assert result["hours_today"] == "Open 24 hours"
+    assert result["is_open"] == "open"
+
+
+def test_schedule_all_day_is_open_at_arbitrary_time():
+    """The all-day short-circuit should mark the location as open
+    regardless of `now`. Test with a few representative times."""
+    for now in (time(3, 0), time(12, 0), time(15, 30), time(23, 30)):
+        result = _compute_schedule_status(time(0, 0, 0), time(0, 0, 0), now=now)
+        assert result["is_open"] == "open", f"is_open should be 'open' at {now}"
+
+
 def test_schedule_with_card():
     """Schedule data should flow through to the service card."""
     card = format_service_card(_mock_row(
