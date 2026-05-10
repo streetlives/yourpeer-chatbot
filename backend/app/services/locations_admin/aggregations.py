@@ -90,6 +90,26 @@ FEEDBACK_MIN_SAMPLE = 2
 # time series visually busy.
 TIMESERIES_WEEKS = 26
 
+# Display timezone for human-facing temporal buckets (week boundaries
+# in the time series, "today" in date-driven cutoffs that humans
+# read against a calendar).
+#
+# Streetlives operates in NYC, so admins read the dashboard against
+# an ET calendar — "events this week" should match their wall clock.
+# Without this, week boundaries default to UTC and events near the
+# UTC-day boundary land in the wrong bucket from a NYC admin's view
+# (e.g. a Sunday-evening feedback event in ET = 4am Monday UTC =
+# bucketed into the next week).
+#
+# Note we DON'T retroactively apply this to the 7-day / 90-day
+# windows in the stat strip and freshness queries — a 5-hour TZ
+# offset is immaterial for windows that large, and switching them
+# would invalidate cached query plans. The timezone correction only
+# applies where the human-week boundary actually matters: the
+# timeseries.
+import zoneinfo
+DISPLAY_TIMEZONE = zoneinfo.ZoneInfo("America/New_York")
+
 # How many audit-log events of one type we read in a single pass.
 # `get_recent_events` returns the most-recent N events of the given
 # type, silently truncating older ones when there are more. Set high
@@ -457,6 +477,35 @@ def get_locations_list(
         # Category filter: location must have AT LEAST ONE service in
         # any of the named categories. EXISTS subquery so the predicate
         # short-circuits per location.
+        #
+        # Validate names against the taxonomies table first — admins
+        # type these from URL bars / saved filters / autocomplete, and
+        # a typo silently produces zero results with no signal that
+        # the filter itself was wrong. Validation isn't enforced at
+        # the route layer (taxonomy names are DB-driven, not enumerable
+        # at typing time), so it goes here.
+        #
+        # Strategy: query the taxonomies table for the supplied names,
+        # log a warning for unmatched ones, and use only the matched
+        # subset in the actual filter. If the user supplied N names and
+        # none matched, the resulting filter binds an empty array →
+        # Postgres matches no rows → empty result page. That's the
+        # right semantic (user asked to filter, filter has no valid
+        # values, so nothing passes) but the warning makes the cause
+        # visible in logs.
+        validation_sql = "SELECT name FROM taxonomies WHERE name = ANY(:names)"
+        validation_rows = _execute_sql(validation_sql, {"names": list(category)})
+        valid_names = {r.get("name") for r in validation_rows if r.get("name")}
+        invalid_names = [c for c in category if c not in valid_names]
+        if invalid_names:
+            logger.warning(
+                "locations_admin: /list received unknown category name(s) %r — "
+                "filter will use only the %d valid name(s) %r. Likely a "
+                "typo or stale UI value; check the taxonomies table.",
+                invalid_names,
+                len(valid_names),
+                sorted(valid_names),
+            )
         where_clauses.append("""
         EXISTS (
             SELECT 1 FROM service_at_locations sal_cat
@@ -466,7 +515,9 @@ def get_locations_list(
               AND t_cat.name = ANY(:category_list)
         )
         """)
-        params["category_list"] = list(category)
+        # Use the validated subset. Preserves the order/duplicates of
+        # the user's input for valid names; drops invalid ones.
+        params["category_list"] = [c for c in category if c in valid_names]
 
     # has_issues toggle: missing phone OR missing address OR missing
     # hours OR has any negative recent feedback (recent_flags > 0).
@@ -504,9 +555,20 @@ def get_locations_list(
     #   * best_phone is the same pattern used by the chat-side query
     #     to pick a single phone per location; reused here for
     #     consistency. Inlined below as a LATERAL — easier to read.
-    #   * service_count is computed inline via a correlated subquery
-    #     (small per-row cost, fine at this scale; could be moved
-    #     to a CTE if perf demands).
+    #   * service_count stays inline as a scalar subquery because
+    #     it's also a sort key (ORDER BY service_count means the
+    #     value has to be visible in the SELECT projection at sort
+    #     time). Cheap when service_at_locations.location_id is
+    #     indexed; bounded by page_size at evaluation time.
+    #   * has_hours stays inline as an EXISTS — cheap because of
+    #     early-exit on the first matching row.
+    #   * The HEAVIER per-row aggregates (top_categories and
+    #     distinct_categories_count) used to live here as scalar
+    #     subqueries too, but they walked service_taxonomy ×
+    #     taxonomies × service_at_locations per row. They've been
+    #     extracted into a single `enrich_sql` query below, keyed
+    #     by the page's location_ids — replacing O(page_size × ~5
+    #     joins) subquery work with one O(1) query.
     list_sql = f"""
     SELECT
         l.id::text                 AS location_id,
@@ -520,23 +582,6 @@ def get_locations_list(
 
         (SELECT COUNT(*) FROM service_at_locations sal2
          WHERE sal2.location_id = l.id) AS service_count,
-
-        -- Top 3 distinct taxonomy names + remainder
-        (SELECT ARRAY(
-           SELECT t_cat.name FROM service_at_locations sal_t
-           JOIN service_taxonomy st_t ON sal_t.service_id = st_t.service_id
-           JOIN taxonomies t_cat ON st_t.taxonomy_id = t_cat.id
-           WHERE sal_t.location_id = l.id
-           GROUP BY t_cat.name
-           ORDER BY COUNT(*) DESC, t_cat.name
-           LIMIT 3
-        )) AS top_categories,
-
-        (SELECT COUNT(DISTINCT t_cat.name) FROM service_at_locations sal_tc
-         JOIN service_taxonomy st_tc ON sal_tc.service_id = st_tc.service_id
-         JOIN taxonomies t_cat ON st_tc.taxonomy_id = t_cat.id
-         WHERE sal_tc.location_id = l.id
-        ) AS distinct_categories_count,
 
         EXISTS (
             SELECT 1 FROM service_at_locations sal_h
@@ -583,6 +628,51 @@ def get_locations_list(
     count_rows = _execute_sql(count_sql, {k: v for k, v in params.items() if k not in ("limit", "offset")})
     total = int(count_rows[0]["total"]) if count_rows else 0
 
+    # Enrichment query: fetch top_categories + distinct_categories_count
+    # for this page's locations in a SINGLE query, keyed by the page's
+    # location_ids. Used to be two correlated subqueries in list_sql
+    # (each one ran per row of the result page); pulling them out
+    # makes the cost predictable and lets the planner do a single
+    # well-indexed scan of service_taxonomy.
+    #
+    # The CTE ranks taxonomies per location by service count (most
+    # common first), then ARRAY_AGGs the top 3 names and counts the
+    # distinct total. One row out per page location.
+    page_ids = [str(r.get("location_id")) for r in list_rows if r.get("location_id")]
+    enrichment_by_loc: dict[str, dict[str, Any]] = {}
+    if page_ids:
+        enrich_sql = """
+        WITH ranked AS (
+            SELECT
+                sal.location_id,
+                t.name,
+                COUNT(*) AS n,
+                ROW_NUMBER() OVER (
+                    PARTITION BY sal.location_id
+                    ORDER BY COUNT(*) DESC, t.name
+                ) AS rn
+            FROM service_at_locations sal
+            JOIN service_taxonomy st ON st.service_id = sal.service_id
+            JOIN taxonomies t ON t.id = st.taxonomy_id
+            WHERE sal.location_id::text = ANY(:page_ids)
+            GROUP BY sal.location_id, t.name
+        )
+        SELECT
+            location_id::text AS location_id,
+            ARRAY_AGG(name ORDER BY rn) FILTER (WHERE rn <= 3) AS top_categories,
+            COUNT(DISTINCT name) AS distinct_categories_count
+        FROM ranked
+        GROUP BY location_id
+        """
+        for r in _execute_sql(enrich_sql, {"page_ids": page_ids}):
+            loc_id = str(r.get("location_id", ""))
+            if not loc_id:
+                continue
+            enrichment_by_loc[loc_id] = {
+                "top_categories": list(r.get("top_categories") or []),
+                "distinct_categories_count": int(r.get("distinct_categories_count") or 0),
+            }
+
     # recent_flags_by_loc + has_reviews_by_loc were computed upfront
     # so the has_issues filter could feed flagged ids into the WHERE
     # clause. They're re-used here for the per-row response columns.
@@ -592,8 +682,12 @@ def get_locations_list(
         loc_id = str(r.get("location_id", ""))
         city = r.get("city")
         borough_label = city if city in NYC_BOROUGHS else "Other"
-        top_cats: list[str] = list(r.get("top_categories") or [])
-        distinct_total = int(r.get("distinct_categories_count") or 0)
+        # Per-location enrichments — defaults handle the "location has
+        # no service_at_locations rows" case (rare; means the catalog
+        # lists the location but with zero offered services).
+        enrich = enrichment_by_loc.get(loc_id, {})
+        top_cats: list[str] = enrich.get("top_categories", [])
+        distinct_total = enrich.get("distinct_categories_count", 0)
         more = max(0, distinct_total - len(top_cats))
 
         last_v = r.get("last_validated_at")
@@ -2035,12 +2129,19 @@ def get_locations_timeseries() -> dict:
     date_trunc('week', x). Could be one big UNION — the small saving
     isn't worth the complexity given the per-query times are < 5ms.
     """
-    today = datetime.now(timezone.utc).date()
-    # Compute the Monday-of-the-week for `TIMESERIES_WEEKS` weeks ago.
-    # ISO weekday(): Monday = 0 in Python's weekday(), so we move
-    # back to the most recent Monday and then back another N-1 weeks.
-    days_since_monday = today.weekday()    # Mon=0, Sun=6
-    this_monday = today - timedelta(days=days_since_monday)
+    # Compute the canonical week list in DISPLAY_TIMEZONE (ET).
+    # Admins read this chart against an NYC wall clock; week
+    # boundaries that drift by 4-5 hours into UTC produce confusing
+    # "Sunday evening's events got counted in next week" effects.
+    #
+    # The bucketing happens in Python rather than via SQL
+    # `AT TIME ZONE` because the DB's column type (timestamptz vs
+    # naive timestamp) affects `AT TIME ZONE` semantics, and we don't
+    # want correctness to depend on a schema detail. Python ownership
+    # also makes the timezone logic directly testable.
+    today_et = datetime.now(DISPLAY_TIMEZONE).date()
+    days_since_monday = today_et.weekday()    # Mon=0, Sun=6
+    this_monday = today_et - timedelta(days=days_since_monday)
     earliest_monday = this_monday - timedelta(weeks=TIMESERIES_WEEKS - 1)
 
     # Pre-build the canonical week list so empty weeks aren't missing.
@@ -2053,55 +2154,82 @@ def get_locations_timeseries() -> dict:
         wk: {"locations_added": 0, "locations_verified": 0, "feedback_events": 0}
         for wk in week_keys
     }
-    earliest_iso = earliest_monday.isoformat()
+
+    # WHERE cutoff: the UTC instant corresponding to midnight ET on
+    # earliest_monday. A timestamp before this instant is definitely
+    # in an earlier week than any we'll display. (We err slightly
+    # earlier — by 1 day — to make sure no rows close to the boundary
+    # are missed; redundant rows just won't find a bucket and get
+    # discarded by the `if wk_iso in series` check below.)
+    earliest_utc = datetime.combine(
+        earliest_monday - timedelta(days=1),
+        datetime.min.time(),
+        tzinfo=DISPLAY_TIMEZONE,
+    ).astimezone(timezone.utc)
+    earliest_utc_iso = earliest_utc.isoformat()
+
+    def _bucket_key_for(dt_utc: datetime) -> Optional[str]:
+        """Map a tz-aware UTC datetime to its ET-Monday-of-week ISO
+        date key. Returns None when the resulting date is outside
+        the canonical week list.
+        """
+        if dt_utc is None:
+            return None
+        dt_et = dt_utc.astimezone(DISPLAY_TIMEZONE).date()
+        days_back = dt_et.weekday()
+        wk = dt_et - timedelta(days=days_back)
+        wk_iso = wk.isoformat()
+        return wk_iso if wk_iso in series else None
 
     # ---- Series 1: locations added ----
+    # Ungrouped (no SQL date_trunc) — Python does the ET-aware bucketing.
+    # Cost is modest: at pilot scale, locations are added at a slow
+    # rate, so 26 weeks of adds is well under 100 rows.
     added_sql = """
-    SELECT date_trunc('week', l.created_at)::date AS week_start,
-           COUNT(*) AS n
+    SELECT l.created_at AS ts
     FROM locations l
-    WHERE l.created_at >= %(since)s
-    GROUP BY week_start
+    WHERE l.created_at >= :since
     """
-    for r in _execute_sql(added_sql, {"since": earliest_iso}):
-        wk = r.get("week_start")
-        wk_iso = wk.isoformat() if hasattr(wk, "isoformat") else str(wk)
-        if wk_iso in series:
-            series[wk_iso]["locations_added"] = int(r.get("n") or 0)
+    for r in _execute_sql(added_sql, {"since": earliest_utc_iso}):
+        ts = r.get("ts")
+        if ts is None:
+            continue
+        # SQLAlchemy returns timestamptz columns as tz-aware datetime;
+        # naive timestamp columns come back naive. Normalize.
+        if isinstance(ts, datetime) and ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        wk_iso = _bucket_key_for(ts)
+        if wk_iso is not None:
+            series[wk_iso]["locations_added"] += 1
 
-    # ---- Series 2: locations verified (last_validated_at touched) ----
+    # ---- Series 2: locations verified ----
     verified_sql = """
-    SELECT date_trunc('week', l.last_validated_at)::date AS week_start,
-           COUNT(*) AS n
+    SELECT l.last_validated_at AS ts
     FROM locations l
-    WHERE l.last_validated_at >= %(since)s
-    GROUP BY week_start
+    WHERE l.last_validated_at >= :since
     """
-    for r in _execute_sql(verified_sql, {"since": earliest_iso}):
-        wk = r.get("week_start")
-        wk_iso = wk.isoformat() if hasattr(wk, "isoformat") else str(wk)
-        if wk_iso in series:
-            series[wk_iso]["locations_verified"] = int(r.get("n") or 0)
+    for r in _execute_sql(verified_sql, {"since": earliest_utc_iso}):
+        ts = r.get("ts")
+        if ts is None:
+            continue
+        if isinstance(ts, datetime) and ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        wk_iso = _bucket_key_for(ts)
+        if wk_iso is not None:
+            series[wk_iso]["locations_verified"] += 1
 
     # ---- Series 3: feedback events ----
     # Pulled from the audit log, not the DB — feedback lives in the
-    # event store, not Postgres. Walk events, bucket into weeks.
+    # event store. Walk events, bucket into ET weeks via the same
+    # helper as the SQL series so all three sources agree on week
+    # boundaries.
     feedback_events = _get_events_capped("location_feedback")
     for ev in feedback_events:
-        ts = ev.get("timestamp") or ""
-        if not ts:
+        dt = _parse_iso_ts(ev.get("timestamp"))
+        if dt is None:
             continue
-        try:
-            dt = datetime.fromisoformat(ts.replace("Z", "+00:00")).date()
-        except (ValueError, AttributeError):
-            continue
-        if dt < earliest_monday:
-            continue
-        # Snap to Monday of the event's week
-        days_back = dt.weekday()
-        wk = dt - timedelta(days=days_back)
-        wk_iso = wk.isoformat()
-        if wk_iso in series:
+        wk_iso = _bucket_key_for(dt)
+        if wk_iso is not None:
             series[wk_iso]["feedback_events"] += 1
 
     # Emit in chronological order, oldest first.

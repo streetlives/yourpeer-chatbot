@@ -116,6 +116,11 @@ def _list_row(
     service_count=3, top_categories=("Food", "Clothing", "Health"),
     distinct_categories_count=4, has_hours=True,
 ):
+    """Build a list-query mock row. top_categories/distinct_categories_count
+    are kept on the same helper for test ergonomics — the test author
+    declares them once and `_enrichment_rows_from` slices them out for
+    the matching enrichment-query mock. See `_make_list_responder` for
+    the standard wiring."""
     return {
         "location_id": location_id,
         "location_name": location_name,
@@ -126,10 +131,40 @@ def _list_row(
         "last_validated_at": last_validated_at,
         "phone_number": phone_number,
         "service_count": service_count,
-        "top_categories": list(top_categories),
+        # Internal-only fields for the test infrastructure — the actual
+        # list_sql query doesn't return these post-M8 (they come from
+        # enrich_sql instead), but keeping them on the row dict lets
+        # tests configure them in one place and have the helpers split
+        # them to the right responder branch.
+        "top_categories": list(top_categories) if top_categories else [],
         "distinct_categories_count": distinct_categories_count,
         "has_hours": has_hours,
     }
+
+
+def _enrichment_rows_from(list_rows):
+    """Derive the enrichment-query mock rows from a list of _list_row
+    outputs. Use alongside `_list_row` to mock both queries with one
+    set of test data:
+
+        rows = [_list_row(...)]
+        responder = _make_sql_responder({
+            "COUNT(*) AS total": [{"total": len(rows)}],
+            "FROM locations l\\n    JOIN organizations": rows,
+            "WITH ranked AS": _enrichment_rows_from(rows),
+        })
+
+    Returns one enrichment row per list row, shaped like the real
+    enrich_sql output.
+    """
+    return [
+        {
+            "location_id": str(r.get("location_id", "")),
+            "top_categories": r.get("top_categories", []),
+            "distinct_categories_count": r.get("distinct_categories_count", 0),
+        }
+        for r in list_rows
+    ]
 
 
 # -----------------------------------------------------------------------
@@ -250,6 +285,7 @@ def test_list_full_row_shape():
     responder = _make_sql_responder({
         "COUNT(*) AS total": [{"total": 1}],
         "FROM locations l\n    JOIN organizations": rows,
+        "WITH ranked AS": _enrichment_rows_from(rows),
     })
 
     with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}), \
@@ -280,6 +316,7 @@ def test_list_borough_label_other_for_non_nyc_city():
     responder = _make_sql_responder({
         "COUNT(*) AS total": [{"total": 1}],
         "FROM locations l\n    JOIN organizations": rows,
+        "WITH ranked AS": _enrichment_rows_from(rows),
     })
     with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}), \
          patch("app.services.locations_admin.aggregations._execute_sql", side_effect=responder):
@@ -299,6 +336,7 @@ def test_list_missing_phone_address_hours_set_to_false():
     responder = _make_sql_responder({
         "COUNT(*) AS total": [{"total": 1}],
         "FROM locations l\n    JOIN organizations": rows,
+        "WITH ranked AS": _enrichment_rows_from(rows),
     })
     with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}), \
          patch("app.services.locations_admin.aggregations._execute_sql", side_effect=responder):
@@ -321,6 +359,7 @@ def test_list_recent_flags_count_from_audit_log():
     responder = _make_sql_responder({
         "COUNT(*) AS total": [{"total": 1}],
         "FROM locations l\n    JOIN organizations": rows,
+        "WITH ranked AS": _enrichment_rows_from(rows),
     })
     with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}), \
          patch("app.services.locations_admin.aggregations._execute_sql", side_effect=responder):
@@ -347,6 +386,7 @@ def test_list_recent_flags_excludes_old_events():
     responder = _make_sql_responder({
         "COUNT(*) AS total": [{"total": 1}],
         "FROM locations l\n    JOIN organizations": rows,
+        "WITH ranked AS": _enrichment_rows_from(rows),
     })
     with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}), \
          patch("app.services.locations_admin.aggregations._execute_sql", side_effect=responder):
@@ -1618,28 +1658,38 @@ def test_timeseries_empty_data_renders_zeros_not_missing():
 
 
 def test_timeseries_aggregates_added_and_verified_by_week():
-    """Bucketed counts from the SQL queries land in the correct week."""
+    """Raw timestamps from the SQL queries land in the correct ET week."""
     from datetime import date, timedelta as td
     clear_audit_log()
-    today = date.today()
-    days_since_monday = today.weekday()
-    this_monday = today - td(days=days_since_monday)
+    # Match the production code's ET-relative week math (M9). Tests
+    # were UTC-based before; switching to ET keeps them aligned with
+    # the function's now-ET-relative bucketing.
+    from app.services.locations_admin.aggregations import DISPLAY_TIMEZONE
+    today_et = datetime.now(DISPLAY_TIMEZONE).date()
+    days_since_monday = today_et.weekday()
+    this_monday = today_et - td(days=days_since_monday)
     last_monday = this_monday - td(weeks=1)
+
+    # Build raw tz-aware timestamps that fall into the right ET weeks.
+    # Mid-day timestamps avoid any boundary-of-day weirdness.
+    def at_et_noon(d):
+        return datetime.combine(d, datetime.min.time().replace(hour=12),
+                                tzinfo=DISPLAY_TIMEZONE)
 
     def responder(sql, params):
         if "FROM locations l" in sql and "l.created_at" in sql:
-            return [
-                {"week_start": this_monday, "n": 5},
-                {"week_start": last_monday, "n": 3},
-            ]
+            # 5 events in this_monday's week, 3 in last_monday's week
+            return (
+                [{"ts": at_et_noon(this_monday)}] * 5
+                + [{"ts": at_et_noon(last_monday)}] * 3
+            )
         if "FROM locations l" in sql and "l.last_validated_at" in sql:
-            return [{"week_start": this_monday, "n": 2}]
+            return [{"ts": at_et_noon(this_monday)}] * 2
         return []
 
     with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}), \
          patch("app.services.locations_admin.aggregations._execute_sql", side_effect=responder):
         body = admin_client.get("/admin/api/locations/timeseries").json()
-        # Find the relevant weeks
         this_week = next(w for w in body["weeks"] if w["week_start"] == this_monday.isoformat())
         last_week = next(w for w in body["weeks"] if w["week_start"] == last_monday.isoformat())
         assert this_week["locations_added"] == 5
@@ -1650,8 +1700,9 @@ def test_timeseries_aggregates_added_and_verified_by_week():
 
 def test_timeseries_feedback_events_aggregated_from_audit_log():
     """Feedback events come from the audit log, not the DB. They
-    should be bucketed into the right ISO week."""
-    from datetime import date, timedelta as td
+    should be bucketed into the right ET week (M9 — week boundaries
+    are display-timezone-relative)."""
+    from datetime import timedelta as td
     clear_audit_log()
     log_location_feedback(
         session_id="s1", location_id="loc-A", location_name="A",
@@ -1661,9 +1712,10 @@ def test_timeseries_feedback_events_aggregated_from_audit_log():
         session_id="s2", location_id="loc-B", location_name="B",
         cleanliness=False, comment="not clean",
     )
-    today = date.today()
-    days_since_monday = today.weekday()
-    this_monday = today - td(days=days_since_monday)
+    from app.services.locations_admin.aggregations import DISPLAY_TIMEZONE
+    today_et = datetime.now(DISPLAY_TIMEZONE).date()
+    days_since_monday = today_et.weekday()
+    this_monday = today_et - td(days=days_since_monday)
 
     responder = _make_sql_responder({})
     with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}), \
@@ -2107,4 +2159,344 @@ def test_last_event_at_uses_datetime_compare_not_string_compare():
         f"event). String-compare would have picked {earlier['timestamp']!r} "
         f"because `Z` > `.` lexicographically. L4 should be enforcing "
         f"datetime compare."
+    )
+
+
+# -----------------------------------------------------------------------
+# M7 — taxonomy name validation. Admins type categories from URL bars,
+# saved filters, or autocomplete; typos silently produce empty results
+# unless we validate. The fix runs a small query against the taxonomies
+# table at the start of /list, logs warnings for unmatched names, and
+# uses only the matched subset in the actual filter.
+# -----------------------------------------------------------------------
+
+def test_list_validates_category_names_and_filters_to_valid_subset():
+    """When some category names match taxonomies and others don't, the
+    actual filter should use only the valid subset and the bind param
+    should reflect that. Logs a warning naming the invalid values."""
+    clear_audit_log()
+    import logging
+    captured_params: dict[str, Any] = {}
+
+    def responder(sql, params):
+        # Taxonomy validation query — return only "Food" as valid.
+        if "FROM taxonomies WHERE name = ANY" in sql:
+            return [{"name": "Food"}]
+        # List query — capture params for assertion.
+        if "FROM locations l\n    JOIN organizations" in sql and "LIMIT" in sql:
+            captured_params.update(params)
+            return []
+        if "COUNT(*) AS total" in sql:
+            return [{"total": 0}]
+        return []
+
+    with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}), \
+         patch("app.services.locations_admin.aggregations._execute_sql",
+               side_effect=responder), \
+         caplog_for("app.services.locations_admin.aggregations") as captured_logs:
+        r = admin_client.get(
+            "/admin/api/locations/list?category=Food&category=BadName&category=AlsoBad"
+        )
+        assert r.status_code == 200
+
+    # Filter should contain only the valid one.
+    assert captured_params.get("category_list") == ["Food"], (
+        f"Expected category_list to be ['Food'] (only valid name), got "
+        f"{captured_params.get('category_list')!r}"
+    )
+    # Warning should fire mentioning the invalid names.
+    warnings = [r.getMessage() for r in captured_logs.records
+                if r.levelno >= logging.WARNING]
+    assert any(
+        "BadName" in w and "AlsoBad" in w for w in warnings
+    ), (
+        f"Expected a warning naming both invalid category names. Got: "
+        f"{warnings}"
+    )
+
+
+def test_list_all_invalid_categories_produces_empty_filter_and_warns():
+    """When EVERY supplied category is invalid, the filter binds an
+    empty array. Postgres matches no rows → empty result page, which is
+    the right semantic (user asked to filter, nothing valid → nothing
+    matches). The warning makes the cause visible in logs."""
+    clear_audit_log()
+    import logging
+    captured_params: dict[str, Any] = {}
+
+    def responder(sql, params):
+        if "FROM taxonomies WHERE name = ANY" in sql:
+            return []   # nothing matches
+        if "FROM locations l\n    JOIN organizations" in sql and "LIMIT" in sql:
+            captured_params.update(params)
+            return []
+        if "COUNT(*) AS total" in sql:
+            return [{"total": 0}]
+        return []
+
+    with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}), \
+         patch("app.services.locations_admin.aggregations._execute_sql",
+               side_effect=responder), \
+         caplog_for("app.services.locations_admin.aggregations") as captured_logs:
+        r = admin_client.get(
+            "/admin/api/locations/list?category=Junk1&category=Junk2"
+        )
+        assert r.status_code == 200
+
+    assert captured_params.get("category_list") == [], (
+        "Expected empty category_list bind when all input was invalid; "
+        f"got {captured_params.get('category_list')!r}"
+    )
+    warnings = [r.getMessage() for r in captured_logs.records
+                if r.levelno >= logging.WARNING]
+    assert any("Junk1" in w and "Junk2" in w for w in warnings), (
+        f"Expected a warning naming all invalid names. Got: {warnings}"
+    )
+
+
+# Helper context manager — pytest's caplog fixture has subtle behavior
+# around logger propagation in deeply-nested loggers; a simple
+# capture context is cleaner for these tests.
+from contextlib import contextmanager
+
+
+@contextmanager
+def caplog_for(logger_name: str):
+    """Capture logs from the named logger as a context manager.
+
+    Yields a stub object with `.records` attribute mirroring pytest's
+    caplog fixture. The locations_admin logger doesn't always propagate
+    to caplog reliably (depends on test ordering), so we attach a
+    handler directly.
+    """
+    import logging
+    logger_obj = logging.getLogger(logger_name)
+    records: list[logging.LogRecord] = []
+
+    class Capture(logging.Handler):
+        def emit(self, record):
+            records.append(record)
+
+    handler = Capture(level=logging.DEBUG)
+    logger_obj.addHandler(handler)
+    original_level = logger_obj.level
+    logger_obj.setLevel(logging.DEBUG)
+    try:
+        yield type("Captured", (), {"records": records})()
+    finally:
+        logger_obj.removeHandler(handler)
+        logger_obj.setLevel(original_level)
+
+
+# -----------------------------------------------------------------------
+# M9 — display-timezone-aware week boundaries. Without ET handling,
+# a Sunday-evening event in ET (= early Monday UTC) would land in the
+# wrong week from a NYC admin's perspective. This pins the correct
+# behavior using a constructed timestamp that's unambiguous: 9pm ET
+# Sunday = 2am UTC Monday. UTC bucketing → next week's bucket.
+# ET bucketing → current Sunday's week.
+# -----------------------------------------------------------------------
+
+def test_timeseries_buckets_events_by_et_week_not_utc_week():
+    """A feedback event logged at 9pm Sunday ET (= 2am Monday UTC) must
+    bucket into the SUNDAY-containing week, not the next week. The
+    test constructs the timestamp by hand so it doesn't depend on
+    when the test happens to run."""
+    from datetime import timedelta as td
+    clear_audit_log()
+    from app.services import audit_log
+    from app.services.locations_admin.aggregations import DISPLAY_TIMEZONE
+
+    # Build a tz-aware "this past Sunday at 9pm ET" timestamp.
+    today_et = datetime.now(DISPLAY_TIMEZONE).date()
+    days_since_monday = today_et.weekday()
+    this_monday_et = today_et - td(days=days_since_monday)
+    sunday_et = this_monday_et - td(days=1)         # Sunday of LAST week
+    last_monday_et = sunday_et - td(days=6)         # Monday of LAST week
+    sunday_9pm_et = datetime.combine(
+        sunday_et,
+        datetime.min.time().replace(hour=21),
+        tzinfo=DISPLAY_TIMEZONE,
+    )
+    # Sanity: this Sunday-9pm-ET timestamp converts to Monday-early-UTC.
+    sunday_9pm_utc = sunday_9pm_et.astimezone(timezone.utc)
+    assert sunday_9pm_utc.weekday() == 0, (
+        "Test setup error: Sunday 9pm ET should land on Monday in UTC. "
+        f"Got UTC weekday {sunday_9pm_utc.weekday()}. Likely the date "
+        "math is off; double-check ET vs UTC offsets."
+    )
+
+    # Inject the event with the boundary-straddling timestamp.
+    with audit_log._lock:
+        audit_log._events.append({
+            "type": "location_feedback",
+            "timestamp": sunday_9pm_et.isoformat(),
+            "session_id": "boundary",
+            "location_id": "loc-boundary",
+            "location_name": "Boundary",
+            "ratings": {"safety": False},
+        })
+
+    responder = _make_sql_responder({})
+    with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}), \
+         patch("app.services.locations_admin.aggregations._execute_sql",
+               side_effect=responder):
+        body = admin_client.get("/admin/api/locations/timeseries").json()
+
+    # Find the LAST week's bucket (the one containing the Sunday).
+    last_week_bucket = next(
+        (w for w in body["weeks"] if w["week_start"] == last_monday_et.isoformat()),
+        None,
+    )
+    assert last_week_bucket is not None, (
+        f"Couldn't find bucket for week starting {last_monday_et.isoformat()}. "
+        f"Got week starts: {[w['week_start'] for w in body['weeks']]}"
+    )
+    assert last_week_bucket["feedback_events"] == 1, (
+        f"Event at 9pm Sunday ET should be in last week's bucket "
+        f"(week of {last_monday_et}); UTC bucketing would have put it "
+        f"in this week's bucket (week of {this_monday_et}). Got "
+        f"feedback_events={last_week_bucket['feedback_events']} in "
+        f"last week."
+    )
+
+    # Sanity check the other direction: THIS week's bucket should NOT
+    # have the event (would indicate UTC bucketing).
+    this_week_bucket = next(
+        (w for w in body["weeks"] if w["week_start"] == this_monday_et.isoformat()),
+        None,
+    )
+    assert this_week_bucket is not None, "this_monday_et bucket missing"
+    assert this_week_bucket["feedback_events"] == 0, (
+        f"Event leaked into THIS week's bucket — that's the UTC-vs-ET "
+        f"bug M9 is supposed to fix. last_week={last_week_bucket['feedback_events']}, "
+        f"this_week={this_week_bucket['feedback_events']}"
+    )
+
+
+# -----------------------------------------------------------------------
+# M8 — heavy correlated subqueries moved to a single enrichment query.
+# Confirms that top_categories and distinct_categories_count come from
+# a single batched query keyed by the page's location_ids, NOT from
+# scalar subqueries running per row in list_sql.
+# -----------------------------------------------------------------------
+
+def test_list_runs_one_enrichment_query_per_page_not_per_row():
+    """The enrichment query (top_categories + distinct_categories_count)
+    should fire exactly once per /list call, regardless of how many
+    rows are on the page. The previous implementation had these as
+    scalar subqueries inside list_sql, which the planner would evaluate
+    per row.
+
+    Test by counting SQL invocations: with M8, /list should fire
+    {list, count, enrich} = 3 separate SQL queries for the locations
+    work, plus the taxonomy-validation query when categories are
+    supplied (we skip that here). The enrichment query is identified
+    by the "WITH ranked AS" CTE marker.
+    """
+    clear_audit_log()
+    # Set up a page of 25 fake rows.
+    rows = [
+        _list_row(location_id=f"loc-{i}", location_name=f"Loc {i}")
+        for i in range(25)
+    ]
+    seen_sql_types: list[str] = []
+
+    def responder(sql, params):
+        # Classify each invocation by the most-specific marker.
+        if "WITH ranked AS" in sql:
+            seen_sql_types.append("enrich")
+            return _enrichment_rows_from(rows)
+        if "COUNT(*) AS total" in sql:
+            seen_sql_types.append("count")
+            return [{"total": 25}]
+        if "FROM locations l\n    JOIN organizations" in sql:
+            seen_sql_types.append("list")
+            return rows
+        seen_sql_types.append("other")
+        return []
+
+    with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}), \
+         patch("app.services.locations_admin.aggregations._execute_sql",
+               side_effect=responder):
+        r = admin_client.get("/admin/api/locations/list?page_size=25")
+        assert r.status_code == 200
+
+    enrich_calls = seen_sql_types.count("enrich")
+    list_calls = seen_sql_types.count("list")
+    assert enrich_calls == 1, (
+        f"Enrichment query should fire exactly once per /list call. "
+        f"Fired {enrich_calls} times. SQL sequence: {seen_sql_types}"
+    )
+    assert list_calls == 1, (
+        f"List query should fire exactly once. Fired {list_calls} times. "
+        f"SQL sequence: {seen_sql_types}"
+    )
+
+
+def test_list_enrichment_query_keyed_by_page_location_ids():
+    """The enrichment query should receive ONLY the current page's
+    location_ids — not the full filtered set. Catches a regression where
+    someone moves the enrichment to a CTE inside list_sql (would re-fan
+    the filter through service_taxonomy) or otherwise loses the page-id
+    scoping that bounds cost."""
+    clear_audit_log()
+    rows = [
+        _list_row(location_id="loc-A"),
+        _list_row(location_id="loc-B"),
+    ]
+    captured_enrich_params: dict[str, Any] = {}
+
+    def responder(sql, params):
+        if "WITH ranked AS" in sql:
+            captured_enrich_params.update(params)
+            return _enrichment_rows_from(rows)
+        if "COUNT(*) AS total" in sql:
+            return [{"total": 2}]
+        if "FROM locations l\n    JOIN organizations" in sql:
+            return rows
+        return []
+
+    with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}), \
+         patch("app.services.locations_admin.aggregations._execute_sql",
+               side_effect=responder):
+        admin_client.get("/admin/api/locations/list")
+
+    page_ids = captured_enrich_params.get("page_ids", [])
+    assert sorted(page_ids) == ["loc-A", "loc-B"], (
+        f"Enrichment query should be bound with the page's location_ids. "
+        f"Got page_ids={page_ids!r}"
+    )
+
+
+def test_list_handles_empty_page_skips_enrichment_query():
+    """When the page is empty (no rows match the filter), the
+    enrichment query shouldn't fire — `WHERE location_id::text = ANY([])`
+    is a wasted round-trip. Skip it entirely. Catches a regression
+    where someone removes the `if page_ids:` guard."""
+    clear_audit_log()
+    seen_sql_types: list[str] = []
+
+    def responder(sql, params):
+        if "WITH ranked AS" in sql:
+            seen_sql_types.append("enrich")
+            return []
+        if "COUNT(*) AS total" in sql:
+            seen_sql_types.append("count")
+            return [{"total": 0}]
+        if "FROM locations l\n    JOIN organizations" in sql:
+            seen_sql_types.append("list")
+            return []
+        return []
+
+    with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}), \
+         patch("app.services.locations_admin.aggregations._execute_sql",
+               side_effect=responder):
+        r = admin_client.get("/admin/api/locations/list?search=__no_match__")
+        assert r.status_code == 200
+        assert r.json()["locations"] == []
+
+    assert "enrich" not in seen_sql_types, (
+        f"Enrichment query fired on an empty page — wasted round-trip. "
+        f"SQL sequence: {seen_sql_types}"
     )
