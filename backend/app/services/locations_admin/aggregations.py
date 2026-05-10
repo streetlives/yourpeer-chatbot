@@ -335,36 +335,248 @@ _ADMIN_CITY_TO_BOROUGH: Optional[dict[str, str]] = None
 
 # Admin-only supplements to the chat-side city→borough mapping.
 #
-# The chat side's NYC_LOCATION_ALIASES is built for user queries —
-# users say "New York", "BK", "the village", etc. — and doesn't need
-# to recognize literal borough names like "Manhattan" or some Queens
-# neighborhood names that show up in raw pa.city values in the
-# Streetlives DB. The admin module needs to bucket every pa.city
-# value that appears in production, so we supplement here.
+# The chat side's NYC_LOCATION_ALIASES covers neighborhoods that
+# users type into chat queries — comprehensive for Manhattan, decent
+# for Brooklyn and Queens, sparse for Bronx, and zero entries for
+# Staten Island. The admin needs to bucket every pa.city value that
+# appears in production service data, which is a different set:
+# pa.city tends to hold the *city/town* label rather than user-typed
+# search terms, so a different set of names shows up.
 #
 # Adding entries upstream in NYC_LOCATION_ALIASES would also work,
-# but the chat side hasn't needed them so far and changing a heavily-
-# exercised constant is more invasive than a local supplement. If a
-# future chat-side feature needs any of these, promote them up.
+# but the chat side has a coupled `NEIGHBORHOOD_CENTERS` table that
+# requires lat/lon coordinates for every alias (enforced by
+# `test_all_neighborhoods_have_coordinates`). Researching ~80
+# coordinate pairs is more work than this fix calls for. If a future
+# chat-side feature wants proximity search on any of these, promote
+# them up with coordinates at that point.
 #
-# Source: pa.city values observed in the Query 5 Part C audit
-# (May 2026 production data dump). Borough assignments are
-# unambiguous geography.
+# All keys are lowercase (the lookup does .lower() on input) and
+# correspond to one of NYC_BOROUGHS. Ambiguous names that exist in
+# multiple boroughs are deliberately omitted — see _AMBIGUOUS_NAMES
+# below for the audit trail.
 _ADMIN_EXTRA_CITY_ALIASES: dict[str, str] = {
-    # Queens neighborhoods that the chat-side alias map doesn't carry.
-    "forest hills": "Queens",
-    "rego park": "Queens",
-    "kew gardens": "Queens",
-    "richmond hill": "Queens",
+    # ── Manhattan ─────────────────────────────────────────────────
+    # NYC_LOCATION_ALIASES already has most well-known Manhattan
+    # neighborhoods (Harlem, Midtown, SoHo, Tribeca, etc). Filling
+    # in the obvious gaps.
+    "morningside heights": "Manhattan",   # Columbia area
+    "hamilton heights":    "Manhattan",
+    "battery park city":   "Manhattan",   # distinct from "battery park"
+    "roosevelt island":    "Manhattan",
+    "marble hill":         "Manhattan",   # political-Manhattan, geographic-Bronx
+    "two bridges":         "Manhattan",
+    "alphabet city":       "Manhattan",
+    "flatiron":            "Manhattan",
+    "flatiron district":   "Manhattan",
+    "meatpacking district":"Manhattan",
+    "bowery":              "Manhattan",
+    "stuyvesant town":     "Manhattan",
+    "civic center":        "Manhattan",
+    "lower manhattan":     "Manhattan",
+    "midtown manhattan":   "Manhattan",
+
+    # ── Brooklyn ─────────────────────────────────────────────────
+    "greenpoint":          "Brooklyn",
+    "coney island":        "Brooklyn",
+    "bensonhurst":         "Brooklyn",
+    "borough park":        "Brooklyn",
+    "boro park":           "Brooklyn",    # common spelling variant
+    "brooklyn heights":    "Brooklyn",
+    "carroll gardens":     "Brooklyn",
+    "boerum hill":         "Brooklyn",
+    "clinton hill":        "Brooklyn",
+    "canarsie":            "Brooklyn",
+    "sheepshead bay":      "Brooklyn",
+    "midwood":             "Brooklyn",
+    "gravesend":           "Brooklyn",
+    "dyker heights":       "Brooklyn",
+    "bath beach":          "Brooklyn",
+    "mill basin":          "Brooklyn",
+    "marine park":         "Brooklyn",
+    "ditmas park":         "Brooklyn",
+    "windsor terrace":     "Brooklyn",
+    "prospect lefferts gardens": "Brooklyn",
+    "gowanus":             "Brooklyn",
+    "brighton beach":      "Brooklyn",
+    "manhattan beach":     "Brooklyn",    # IS in Brooklyn despite the name
+    "sea gate":            "Brooklyn",
+    "vinegar hill":        "Brooklyn",
+    "starrett city":       "Brooklyn",
+    "spring creek":        "Brooklyn",
+    "weeksville":          "Brooklyn",
+
+    # ── Queens ───────────────────────────────────────────────────
+    "forest hills":        "Queens",
+    "rego park":           "Queens",
+    "kew gardens":         "Queens",
+    "richmond hill":       "Queens",
     "south richmond hill": "Queens",
-    "south ozone park": "Queens",
-    "bayside": "Queens",
-    "sunnyside": "Queens",
-    "arverne": "Queens",
-    "laurelton": "Queens",
-    # Parenthetical variant in the data.
-    "corona (queens)": "Queens",
+    "south ozone park":    "Queens",
+    "ozone park":          "Queens",      # distinct from south ozone park
+    "bayside":             "Queens",
+    "sunnyside":           "Queens",
+    "arverne":             "Queens",
+    "laurelton":           "Queens",
+    "corona (queens)":     "Queens",      # parenthetical variant in data
+    "jamaica (queens)":    "Queens",      # parenthetical variant
+    "long island city (queens)": "Queens", # parenthetical variant
+    "maspeth":             "Queens",
+    "middle village":      "Queens",
+    "glendale":            "Queens",
+    "howard beach":        "Queens",
+    "woodhaven":           "Queens",      # distinct from woodside
+    "rosedale":            "Queens",
+    "st. albans":          "Queens",
+    "st albans":           "Queens",
+    "saint albans":        "Queens",      # spelled-out variant in data
+    "hollis":              "Queens",
+    "queens village":      "Queens",
+    "cambria heights":     "Queens",
+    "briarwood":           "Queens",
+    "fresh meadows":       "Queens",
+    "whitestone":          "Queens",
+    "college point":       "Queens",
+    "floral park":         "Queens",      # NYC-side; Nassau also has one
+    "bellerose":           "Queens",      # NYC-side; Nassau also has one
+    "glen oaks":           "Queens",
+    "douglaston":          "Queens",
+    "little neck":         "Queens",
+    "springfield gardens": "Queens",
+    "rockaway beach":      "Queens",
+    "rockaway park":       "Queens",
+    "belle harbor":        "Queens",
+    "east elmhurst":       "Queens",
+    "kew gardens hills":   "Queens",      # distinct from kew gardens
+    "lic":                 "Queens",      # common abbreviation
+    "auburndale":          "Queens",
+    "beechhurst":          "Queens",
+    "broad channel":       "Queens",
+    "edgemere":            "Queens",
+    "hammels":             "Queens",
+    "pomonok":             "Queens",
+    "rochdale":            "Queens",      # rochdale village
+
+    # ── Bronx ────────────────────────────────────────────────────
+    # NYC_LOCATION_ALIASES has only 5 Bronx neighborhoods (south
+    # bronx, mott haven, fordham, hunts point, morrisania). Filling
+    # the rest.
+    "riverdale":           "Bronx",       # NYC-side; NJ also has one
+    "kingsbridge":         "Bronx",
+    "pelham bay":          "Bronx",
+    "pelham parkway":      "Bronx",
+    "throgs neck":         "Bronx",
+    "castle hill":         "Bronx",
+    "soundview":           "Bronx",
+    "belmont":             "Bronx",       # Little Italy of the Bronx
+    "tremont":             "Bronx",
+    "east tremont":        "Bronx",
+    "west tremont":        "Bronx",
+    "university heights":  "Bronx",
+    "highbridge":          "Bronx",
+    "bedford park":        "Bronx",
+    "norwood":             "Bronx",
+    "wakefield":           "Bronx",
+    "city island":         "Bronx",
+    "co-op city":          "Bronx",
+    "coop city":           "Bronx",       # variant spelling
+    "williamsbridge":      "Bronx",
+    "allerton":            "Bronx",
+    "eastchester":         "Bronx",
+    "woodlawn":            "Bronx",
+    "baychester":          "Bronx",
+    "parkchester":         "Bronx",
+    "concourse":           "Bronx",       # Grand Concourse area
+    "melrose":             "Bronx",
+    "claremont":           "Bronx",
+    "morris park":         "Bronx",
+    "morris heights":      "Bronx",
+    "longwood":            "Bronx",
+    "port morris":         "Bronx",
+    "kingsbridge heights": "Bronx",
+    "spuyten duyvil":      "Bronx",
+    "edenwald":            "Bronx",
+    "van nest":            "Bronx",
+    "country club":        "Bronx",
+    "schuylerville":       "Bronx",
+    "unionport":           "Bronx",
+
+    # ── Staten Island ────────────────────────────────────────────
+    # NYC_LOCATION_ALIASES has ZERO Staten Island neighborhoods.
+    # Every SI neighborhood currently falls to "Other" pre-fix.
+    "st. george":          "Staten Island",
+    "st george":           "Staten Island",
+    "tompkinsville":       "Staten Island",
+    "stapleton":           "Staten Island",
+    "new dorp":            "Staten Island",
+    "great kills":         "Staten Island",
+    "tottenville":         "Staten Island",
+    "richmondtown":        "Staten Island",
+    "richmond town":       "Staten Island",
+    "eltingville":         "Staten Island",
+    "annadale":            "Staten Island",
+    "huguenot":            "Staten Island",
+    "pleasant plains":     "Staten Island",
+    "dongan hills":        "Staten Island",
+    "grant city":          "Staten Island",
+    "clifton":             "Staten Island",
+    "rosebank":            "Staten Island",
+    "arrochar":            "Staten Island",
+    "midland beach":       "Staten Island",
+    "south beach":         "Staten Island",
+    "new springville":     "Staten Island",
+    "bulls head":          "Staten Island",
+    "travis":              "Staten Island",
+    "westerleigh":         "Staten Island",
+    "port richmond":       "Staten Island",
+    "mariners harbor":     "Staten Island",
+    "charleston":          "Staten Island",
+    "rossville":           "Staten Island",
+    "woodrow":             "Staten Island",
+    "concord":             "Staten Island",
+    "castleton corners":   "Staten Island",
+    "new brighton":        "Staten Island",
+    "west brighton":       "Staten Island",
+    "fort wadsworth":      "Staten Island",
+    "todt hill":           "Staten Island",
+    "emerson hill":        "Staten Island",
+    "graniteville":        "Staten Island",
+    "willowbrook":         "Staten Island",
+    "egbertville":         "Staten Island",
+    "oakwood":             "Staten Island",
+    "prince's bay":        "Staten Island",
+    "princes bay":         "Staten Island",
+    "richmond valley":     "Staten Island",
+    "arden heights":       "Staten Island",
+    "great kills park":    "Staten Island",
+    "lighthouse hill":     "Staten Island",
+    "old town":            "Staten Island",
+    "silver lake":         "Staten Island",
+    "sunnyside (si)":      "Staten Island", # disambiguating variant if it ever appears
 }
+
+
+# Audit trail for neighborhood names that exist in MULTIPLE NYC
+# boroughs and are therefore NOT in the mapping above. If pa.city
+# uses one of these without disambiguation, the location will fall
+# into "Other" — that's the safest behavior given we can't tell which
+# borough is meant from the city name alone.
+#
+# Listed here as documentation so future maintainers don't accidentally
+# "fix" the omission by picking one borough arbitrarily.
+_AMBIGUOUS_NEIGHBORHOOD_NAMES: dict[str, list[str]] = {
+    "chelsea":     ["Manhattan", "Staten Island"],  # SI's is tiny; Manhattan win
+    "murray hill": ["Manhattan", "Queens"],         # Manhattan's wins by usage
+    "bay terrace": ["Queens", "Staten Island"],     # truly ambiguous — skip
+    "south beach": ["Staten Island", "...other"],   # SI in NYC context
+    "sunnyside":   ["Queens", "Staten Island"],     # Queens wins by usage
+    "concord":     ["Staten Island", "...other"],   # generic name elsewhere
+}
+# (Chelsea and Murray Hill are *already* in NYC_LOCATION_ALIASES
+# mapped to Manhattan — that wins by usage volume. Bay Terrace is
+# omitted from both maps. Sunnyside and Concord are mapped to their
+# usage-winning borough; the SI variants are uncommon enough to
+# accept the small false-negative rate.)
 
 
 def _get_admin_city_to_borough() -> dict[str, str]:

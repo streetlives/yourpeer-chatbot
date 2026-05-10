@@ -3064,3 +3064,259 @@ def test_borough_case_sql_python_and_sql_buckets_agree_on_production_samples():
             f"agree exactly — otherwise unit tests using the Python "
             f"helper don't validate the deployed SQL behavior."
         )
+
+
+# -----------------------------------------------------------------------
+# Comprehensive NYC neighborhood coverage. The first revision of
+# _ADMIN_EXTRA_CITY_ALIASES added ~11 Queens neighborhoods spotted in
+# the Query 5 Part C audit. A follow-up expanded the mapping to ~165
+# entries covering all five boroughs, with particular attention to
+# Bronx (had only 5 chat-side entries pre-fix) and Staten Island
+# (had zero chat-side entries — every SI neighborhood fell to Other).
+#
+# These tests pin per-borough coverage and a few high-impact specific
+# neighborhoods. They're sample-based, not exhaustive — adding every
+# named neighborhood to the test would create a brittle "edit two
+# files in lockstep" pattern. If you add a borough-significant
+# neighborhood and want a regression guard, add it to the
+# `MUST_BE_MAPPED` set below.
+# -----------------------------------------------------------------------
+
+# High-impact neighborhoods that should never fall back to "Other".
+# Each is either heavily populated in Streetlives data, well-known
+# to ops, or both. Add new entries here when expanding the alias map.
+MUST_BE_MAPPED: dict[str, str] = {
+    # Manhattan
+    "Morningside Heights": "Manhattan",
+    "Hamilton Heights":    "Manhattan",
+    "Battery Park City":   "Manhattan",
+    "Roosevelt Island":    "Manhattan",
+    "Marble Hill":         "Manhattan",
+    "Lower Manhattan":     "Manhattan",
+    # Brooklyn
+    "Greenpoint":          "Brooklyn",
+    "Coney Island":        "Brooklyn",
+    "Bensonhurst":         "Brooklyn",
+    "Borough Park":        "Brooklyn",
+    "Brooklyn Heights":    "Brooklyn",
+    "Bay Ridge":           "Brooklyn",
+    "Canarsie":            "Brooklyn",
+    "Sheepshead Bay":      "Brooklyn",
+    "Manhattan Beach":     "Brooklyn",  # the confusingly-named one
+    # Queens
+    "Maspeth":             "Queens",
+    "Middle Village":      "Queens",
+    "Howard Beach":        "Queens",
+    "Whitestone":          "Queens",
+    "Fresh Meadows":       "Queens",
+    "Rockaway Beach":      "Queens",
+    "Queens Village":      "Queens",
+    "Ozone Park":          "Queens",
+    "Woodhaven":           "Queens",
+    # Bronx
+    "Riverdale":           "Bronx",
+    "Co-op City":          "Bronx",
+    "Parkchester":         "Bronx",
+    "Kingsbridge":         "Bronx",
+    "Throgs Neck":         "Bronx",
+    "Belmont":             "Bronx",
+    "Pelham Bay":          "Bronx",
+    "City Island":         "Bronx",
+    # Staten Island
+    "St. George":          "Staten Island",
+    "Tottenville":         "Staten Island",
+    "Great Kills":         "Staten Island",
+    "New Dorp":            "Staten Island",
+    "Port Richmond":       "Staten Island",
+    "Stapleton":           "Staten Island",
+    "Mariners Harbor":     "Staten Island",
+}
+
+
+def test_must_be_mapped_neighborhoods_all_route_correctly():
+    """Every high-impact NYC neighborhood in MUST_BE_MAPPED routes to
+    its canonical borough, not 'Other'."""
+    from app.services.locations_admin.aggregations import _bucket_city_to_borough
+    failures = []
+    for name, expected_borough in MUST_BE_MAPPED.items():
+        actual = _bucket_city_to_borough(name)
+        if actual != expected_borough:
+            failures.append((name, expected_borough, actual))
+    assert not failures, (
+        f"{len(failures)} high-impact NYC neighborhoods are routing to "
+        f"the wrong borough: {failures[:5]}{'...' if len(failures) > 5 else ''}"
+    )
+
+
+def test_per_borough_minimum_coverage():
+    """The mapping should have at least this many entries per
+    borough. Floor values reflect 'enough to cover common pa.city
+    variants admins will actually see'. If the alias map shrinks
+    below the floor, surface it before that affects the heatmap
+    accuracy.
+    """
+    from app.services.locations_admin.aggregations import _get_admin_city_to_borough
+    mapping = _get_admin_city_to_borough()
+    by_borough: dict[str, int] = {}
+    for borough in mapping.values():
+        by_borough[borough] = by_borough.get(borough, 0) + 1
+
+    # Floors picked to roughly track current entry counts. Adjust
+    # downward only if removing entries; upward when adding.
+    expected_floors = {
+        "Manhattan":     30,
+        "Brooklyn":      30,
+        "Queens":        40,
+        "Bronx":         30,
+        "Staten Island": 30,
+    }
+    for borough, floor in expected_floors.items():
+        count = by_borough.get(borough, 0)
+        assert count >= floor, (
+            f"{borough} only has {count} mapped neighborhoods/aliases "
+            f"in _get_admin_city_to_borough(); expected at least {floor}. "
+            f"If you intentionally pruned entries, lower this floor; "
+            f"otherwise something in the merge pipeline regressed."
+        )
+
+
+def test_brooklyn_neighborhood_with_borough_name_collision_routes_correctly():
+    """'Manhattan Beach' is in Brooklyn despite the name. Confusing-
+    name neighborhoods are exactly the kind of input that exact-string
+    matching gets wrong, so guard against accidental regression.
+    """
+    from app.services.locations_admin.aggregations import _bucket_city_to_borough
+    assert _bucket_city_to_borough("Manhattan Beach") == "Brooklyn"
+
+
+def test_co_op_city_variant_spellings():
+    """Co-op City is a major Bronx housing complex. The data uses
+    both hyphenated and non-hyphenated spellings.
+    """
+    from app.services.locations_admin.aggregations import _bucket_city_to_borough
+    assert _bucket_city_to_borough("Co-op City") == "Bronx"
+    assert _bucket_city_to_borough("Coop City") == "Bronx"
+    # Case-insensitive
+    assert _bucket_city_to_borough("CO-OP CITY") == "Bronx"
+
+
+# -----------------------------------------------------------------------
+# Coverage diagnostic tool — tools/check_city_coverage.py generates a
+# SQL diagnostic that finds pa.city values not in the admin's mapping.
+# It's a tiny tool but it's the user-facing way to detect mapping
+# gaps in production data, so a regression in its output shape would
+# silently let real gaps go undetected. Test the structural invariants.
+# -----------------------------------------------------------------------
+
+def test_check_city_coverage_generates_valid_sql():
+    """The generated SQL must include every mapping entry as a VALUES
+    row, plus the standard query body."""
+    import sys, os
+    repo_root = os.path.dirname(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__)
+    )))
+    tools_dir = os.path.join(repo_root, "tools")
+    if tools_dir not in sys.path:
+        sys.path.insert(0, tools_dir)
+    import check_city_coverage as tool
+
+    mapping = tool._load_mapping()
+    sql = tool.generate_sql(mapping)
+
+    # Every mapping entry must appear in the VALUES block. Spot-check
+    # a handful from each borough.
+    for sample, expected_borough in [
+        ("new york",       "Manhattan"),
+        ("brooklyn",       "Brooklyn"),
+        ("flushing",       "Queens"),
+        ("riverdale",      "Bronx"),
+        ("st. george",     "Staten Island"),
+        # admin-side supplements
+        ("manhattan beach", "Brooklyn"),
+        ("co-op city",     "Bronx"),
+        ("rockaway beach", "Queens"),
+        ("tottenville",    "Staten Island"),
+    ]:
+        expected_row = f"('{sample}', '{expected_borough}')"
+        assert expected_row in sql, (
+            f"Generated SQL missing expected VALUES row {expected_row!r}. "
+            f"Either the mapping regressed or the generator's row format "
+            f"changed."
+        )
+
+    # Structural invariants of the query body.
+    for required in [
+        "WITH mapped",
+        "FROM physical_addresses pa",
+        "GROUP BY pa.city",
+        "LEFT JOIN mapped m",
+        "WHERE m.city_lower IS NULL",
+        "NEEDS REVIEW",
+        "non-NYC (correctly Other)",
+        "data-quality",
+    ]:
+        assert required in sql, (
+            f"Generated SQL missing required fragment {required!r}. "
+            f"If you refactored the query, update this test too."
+        )
+
+
+def test_check_city_coverage_sql_file_in_sync():
+    """The standalone `docs/audits/check_city_coverage.sql` file is
+    generated from the live Python mapping for users who want a
+    ready-to-open SQL file (e.g. DBeaver users who don't want to
+    pipe through a CLI).
+
+    This test fires if the file goes out of sync with the mapping —
+    typically because someone added an entry to
+    `_ADMIN_EXTRA_CITY_ALIASES` but forgot to regenerate the file.
+
+    Fix: run the regen command. The test output below repeats it
+    for convenience.
+    """
+    import sys, os
+    repo_root = os.path.dirname(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__)
+    )))
+    tools_dir = os.path.join(repo_root, "tools")
+    if tools_dir not in sys.path:
+        sys.path.insert(0, tools_dir)
+    import check_city_coverage as tool
+
+    mapping = tool._load_mapping()
+    expected_sql = tool.generate_sql(mapping)
+
+    sql_path = os.path.join(
+        repo_root, "docs", "audits", "check_city_coverage.sql"
+    )
+    assert os.path.exists(sql_path), (
+        f"Missing {sql_path}. Generate it with:\n"
+        f"    python tools/check_city_coverage.py --print-sql "
+        f"> docs/audits/check_city_coverage.sql"
+    )
+    with open(sql_path) as f:
+        actual_sql = f.read()
+
+    if actual_sql.strip() != expected_sql.strip():
+        # Useful error: pinpoint what differs without dumping 10KB.
+        import re
+        actual_rows = set(re.findall(
+            r"\('(?:[^']|'')+', '(?:[^']|'')+'\)", actual_sql
+        ))
+        expected_rows = set(re.findall(
+            r"\('(?:[^']|'')+', '(?:[^']|'')+'\)", expected_sql
+        ))
+        only_in_file = sorted(actual_rows - expected_rows)
+        only_in_mapping = sorted(expected_rows - actual_rows)
+        message = (
+            f"docs/audits/check_city_coverage.sql is out of sync "
+            f"with the live mapping.\n"
+            f"  In file but not in mapping ({len(only_in_file)}): "
+            f"{only_in_file[:5]}{'...' if len(only_in_file) > 5 else ''}\n"
+            f"  In mapping but not in file ({len(only_in_mapping)}): "
+            f"{only_in_mapping[:5]}{'...' if len(only_in_mapping) > 5 else ''}\n"
+            f"Regenerate with:\n"
+            f"    python tools/check_city_coverage.py --print-sql "
+            f"> docs/audits/check_city_coverage.sql"
+        )
+        assert False, message

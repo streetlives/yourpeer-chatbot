@@ -395,3 +395,39 @@ ORDER BY e.tablename, e.col;
 --        COUNT(DISTINCT name) AS distinct_categories_count
 -- FROM ranked
 -- GROUP BY location_id;
+
+
+-- ═══════════════════════════════════════════════════════════════
+-- QUERY 6: City coverage diagnostic — find pa.city values not in
+-- the admin's city→borough mapping.
+--
+-- The locations admin's heatmap and borough-breakdown rely on
+-- `_get_admin_city_to_borough()` to route every `pa.city` value to
+-- one of the five NYC boroughs or "Other". If a real NYC
+-- neighborhood appears in pa.city but isn't in the mapping, it
+-- silently falls to "Other" — under-counting that borough.
+--
+-- This query is GENERATED from the live Python mapping and shipped
+-- as a standalone .sql file that you can open directly in DBeaver,
+-- pgAdmin, or any SQL client:
+--
+--     docs/audits/check_city_coverage.sql
+--
+-- If the mapping in aggregations.py changes, regenerate the file:
+--
+--     python tools/check_city_coverage.py --print-sql \
+--         > docs/audits/check_city_coverage.sql
+--
+-- A drift-check test (test_check_city_coverage_sql_file_in_sync)
+-- fires in CI if the file goes out of sync with the live mapping.
+-- If you see that fail, run the regeneration command above.
+--
+-- The query groups results into three triage buckets:
+--   1. NEEDS REVIEW — possibly missing NYC neighborhood
+--      (eyeball each, decide if it's NYC, add to mapping if so)
+--   2. non-NYC (correctly Other) — known Jersey/Westchester/LI/etc.
+--   3. data-quality — addresses or junk that ended up in pa.city
+--
+-- Sorted with NEEDS REVIEW first (highest priority) and by
+-- location_count DESC within each bucket.
+-- ═══════════════════════════════════════════════════════════════
