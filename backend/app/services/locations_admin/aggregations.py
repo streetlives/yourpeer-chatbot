@@ -37,7 +37,7 @@ AUDIT_LOG_CAP events becomes a visible signal in production logs
 rather than a quietly-undercounting aggregation.
 """
 from __future__ import annotations
-
+import zoneinfo
 import logging
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
@@ -107,7 +107,6 @@ TIMESERIES_WEEKS = 26
 # would invalidate cached query plans. The timezone correction only
 # applies where the human-week boundary actually matters: the
 # timeseries.
-import zoneinfo
 DISPLAY_TIMEZONE = zoneinfo.ZoneInfo("America/New_York")
 
 # How many audit-log events of one type we read in a single pass.
