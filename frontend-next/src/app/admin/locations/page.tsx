@@ -7,6 +7,8 @@ import { useEffect, useRef, useState } from "react";
 import { LocationsTopStatStrip } from "@/components/admin/locations/top-stat-strip";
 import { FreshnessHistogram } from "@/components/admin/locations/freshness-histogram";
 import { BoroughBreakdownTable } from "@/components/admin/locations/borough-breakdown";
+import { ServiceBoroughHeatmap } from "@/components/admin/locations/service-borough-heatmap";
+import { CoordinateIssuesTable } from "@/components/admin/locations/coordinate-issues-table";
 import { LocationsTable } from "@/components/admin/locations/locations-table";
 import { StatCardSkeleton } from "@/components/admin/loading-skeleton";
 import type {
@@ -124,6 +126,34 @@ export default function LocationsPage() {
           Locations by borough
         </h2>
         <BoroughBreakdownTable />
+      </div>
+
+      {/* Section 3b: service-category × borough heatmap. Top 10 by
+       *  default; expand toggle in the component reveals the rest. */}
+      <div className="mt-6">
+        <h2 className="text-base font-semibold mb-3 text-neutral-900 dark:text-neutral-100">
+          Service categories by borough
+        </h2>
+        <p className="text-xs text-neutral-500 dark:text-neutral-400 mb-3">
+          Cell color shows location count, anchored to the brightest cell across the matrix.
+          Use this to spot equity gaps — categories where a borough is empty (—) or near-empty
+          relative to its peers.
+        </p>
+        <ServiceBoroughHeatmap />
+      </div>
+
+      {/* Section 3c: coordinate validation. Surfaces data-quality bugs:
+       *  coords outside NYC, or coords that disagree with the stated city. */}
+      <div className="mt-6">
+        <h2 className="text-base font-semibold mb-3 text-neutral-900 dark:text-neutral-100">
+          Coordinate validation
+        </h2>
+        <p className="text-xs text-neutral-500 dark:text-neutral-400 mb-3">
+          Locations whose lat/lon doesn&apos;t match their declared city.
+          Outside-NYC issues are likely typo&apos;d coordinates;
+          borough-mismatch issues need manual verification — either side could be wrong.
+        </p>
+        <CoordinateIssuesTable />
       </div>
 
       {/* Section 2b: triage table. ageBucket is controlled by the page

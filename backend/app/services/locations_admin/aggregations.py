@@ -752,3 +752,244 @@ def get_locations_by_borough() -> dict:
             "service_count": total_svc,
         },
     }
+
+
+# ---------------------------------------------------------------------------
+# SECTION 3b — SERVICE-CATEGORY × BOROUGH HEAT MAP
+# ---------------------------------------------------------------------------
+
+def get_service_borough_heatmap() -> dict:
+    """Section 3b: 39-categories × 5-boroughs (+ Other) coverage heatmap.
+
+    Returns shape:
+        {
+            "categories": [
+                {
+                    "name": "Food",
+                    "total_locations": int,    # across all boroughs
+                    "by_borough": {
+                        "Manhattan": int,
+                        "Brooklyn": int,
+                        ...
+                        "Other": int,
+                    },
+                },
+                ...
+            ],
+            "boroughs": ["Manhattan", "Brooklyn", "Queens", "Bronx", "Staten Island", "Other"],
+        }
+
+    Categories are sorted by total_locations DESC so the highest-volume
+    rows appear first. The frontend defaults to showing top
+    HEATMAP_TOP_N_CATEGORIES (10) and offers an "expand" toggle for the
+    rest.
+
+    Each cell is the count of DISTINCT locations in that borough that
+    offer at least one service tagged with that taxonomy. Distinct on
+    location, not service — a single multi-service location offering
+    food, clothing, and showers in Brooklyn appears once in each of
+    Brooklyn-Food, Brooklyn-Clothing, Brooklyn-Showers (correct) but
+    not three times in any single cell.
+
+    Single SQL query with GROUP BY (taxonomy, borough). The
+    `service_taxonomy ⋈ service_at_locations ⋈ physical_addresses`
+    join executes in single-digit milliseconds at this scale —
+    approximately 3,500 services × 2,400 locations is a junction-table
+    sweep, not a Cartesian product.
+    """
+    sql = """
+    SELECT
+        t.name AS category,
+        CASE
+            WHEN pa.city IN ('Manhattan', 'Brooklyn', 'Queens', 'Bronx', 'Staten Island')
+                THEN pa.city
+            ELSE 'Other'
+        END AS borough,
+        COUNT(DISTINCT l.id) AS location_count
+    FROM taxonomies t
+    JOIN service_taxonomy st ON st.taxonomy_id = t.id
+    JOIN service_at_locations sal ON sal.service_id = st.service_id
+    JOIN locations l ON l.id = sal.location_id
+    LEFT JOIN physical_addresses pa ON pa.location_id = l.id
+    GROUP BY t.name, borough
+    """
+    rows = _execute_sql(sql, {})
+
+    # Aggregate by category. Each category gets a per-borough dict
+    # initialized to zero so cells with no data render as explicit 0
+    # rather than missing keys (frontend can't distinguish "no data
+    # arrived" from "zero" if the key is absent).
+    by_category: dict[str, dict[str, int]] = {}
+    for r in rows:
+        cat = r.get("category")
+        if not cat:
+            continue
+        b = r.get("borough") or "Other"
+        # Initialize every borough column on first sight of a category.
+        if cat not in by_category:
+            by_category[cat] = {label: 0 for label in (*NYC_BOROUGHS, "Other")}
+        by_category[cat][b] = int(r.get("location_count") or 0)
+
+    # Compute per-category totals + sort.
+    categories: list[dict[str, Any]] = []
+    for cat, by_borough in by_category.items():
+        total = sum(by_borough.values())
+        categories.append({
+            "name": cat,
+            "total_locations": total,
+            "by_borough": by_borough,
+        })
+    categories.sort(key=lambda c: (-c["total_locations"], c["name"]))
+
+    return {
+        "categories": categories,
+        "boroughs": [*NYC_BOROUGHS, "Other"],
+    }
+
+
+# ---------------------------------------------------------------------------
+# SECTION 3c — COORDINATE VALIDATION TABLE
+# ---------------------------------------------------------------------------
+
+def get_coordinate_issues() -> dict:
+    """Section 3c: locations whose lat/lon doesn't match their declared city.
+
+    Returns shape:
+        {
+            "issues": [
+                {
+                    "location_id": str,
+                    "location_name": str,
+                    "organization": str | None,
+                    "stated_city": str | None,        # pa.city as stored
+                    "stated_borough": str | None,     # NYC borough derived from city, if any
+                    "computed_borough": str | None,   # from coordinates via NYC DCP polygons
+                    "latitude": float,
+                    "longitude": float,
+                    "yourpeer_url": str,
+                },
+                ...
+            ],
+            "total_with_coords": int,
+            "outside_nyc_count": int,
+        }
+
+    Detection rules — the same logic as `_annotate_geographic_borough`
+    in query_executor.py, run across the catalog rather than per-card:
+
+      * Pull every location with non-null position.
+      * Compute borough from coordinates via boundaries.borough_from_coords.
+      * Compare against the stated city (mapped to a canonical borough
+        via _stated_borough_from_city).
+      * Flag mismatches AND points outside NYC entirely.
+
+    Two separate counters because they're different fix paths:
+      * outside_nyc_count → likely bad coordinate data (typo'd lat/lon
+        or coords from an out-of-state service mistakenly imported)
+      * mismatched borough → likely correct coords but wrong city in
+        the address record (or vice versa — manual verification needed)
+
+    The issues array contains both kinds; the frontend distinguishes
+    via stated_borough vs. computed_borough in the row display.
+
+    The boundary module does its own bounding-box pre-filter; running
+    against ~2,400 points with full polygons takes single-digit
+    milliseconds total. Server-side cache covers the page-load case.
+    """
+    sql = """
+    SELECT
+        l.id::text          AS location_id,
+        l.name              AS location_name,
+        l.slug              AS location_slug,
+        o.name              AS organization,
+        pa.city             AS stated_city,
+        ST_Y(l.position::geometry) AS latitude,
+        ST_X(l.position::geometry) AS longitude
+    FROM locations l
+    JOIN organizations o ON l.organization_id = o.id
+    LEFT JOIN physical_addresses pa ON pa.location_id = l.id
+    WHERE l.position IS NOT NULL
+    """
+    rows = _execute_sql(sql, {})
+
+    # Lazy-import to mirror query_executor's pattern: boundaries does
+    # GeoJSON parsing on first call, which we want to defer until the
+    # endpoint is actually hit (not on import-time / module-load).
+    from app.rag.boundaries import borough_from_coords
+    from app.rag.query_executor import _stated_borough_from_city
+
+    issues: list[dict[str, Any]] = []
+    total_with_coords = 0
+    outside_nyc_count = 0
+
+    for r in rows:
+        total_with_coords += 1
+        lat = r.get("latitude")
+        lon = r.get("longitude")
+        if lat is None or lon is None:
+            # WHERE l.position IS NOT NULL filters this out at SQL,
+            # but defensively skip in Python too in case of future
+            # nullable handling changes.
+            continue
+
+        # Coerce to float — psycopg2/SQLAlchemy may return Decimal or
+        # similar; borough_from_coords expects float.
+        lat_f = float(lat)
+        lon_f = float(lon)
+
+        computed = borough_from_coords(lat_f, lon_f)
+        stated_city = r.get("stated_city")
+        stated = _stated_borough_from_city(stated_city) if stated_city else None
+
+        if computed is None:
+            # Outside NYC entirely — coords don't fall in any of the 5
+            # borough polygons. Surface as a separate counter; included
+            # in the issues array since it's still a data-quality
+            # concern even if it doesn't have a "stated vs computed"
+            # comparison to make.
+            outside_nyc_count += 1
+            slug = r.get("location_slug") or r.get("location_id") or ""
+            issues.append({
+                "location_id": str(r.get("location_id") or ""),
+                "location_name": r.get("location_name") or "Unknown",
+                "organization": r.get("organization"),
+                "stated_city": stated_city,
+                "stated_borough": stated,
+                "computed_borough": None,   # signals "outside NYC"
+                "latitude": lat_f,
+                "longitude": lon_f,
+                "yourpeer_url": f"https://yourpeer.nyc/locations/{slug}",
+            })
+            continue
+
+        # Mismatch detection — same rule as _annotate_geographic_borough:
+        # we need BOTH boroughs to be determinable for the comparison
+        # to be meaningful. Stated == None means we couldn't map the
+        # city to a known borough (e.g. the city is "" or out-of-NYC);
+        # those aren't mismatches per se, just unknowns.
+        if stated is not None and stated != computed:
+            slug = r.get("location_slug") or r.get("location_id") or ""
+            issues.append({
+                "location_id": str(r.get("location_id") or ""),
+                "location_name": r.get("location_name") or "Unknown",
+                "organization": r.get("organization"),
+                "stated_city": stated_city,
+                "stated_borough": stated,
+                "computed_borough": computed,
+                "latitude": lat_f,
+                "longitude": lon_f,
+                "yourpeer_url": f"https://yourpeer.nyc/locations/{slug}",
+            })
+
+    # Sort: outside-NYC first (most concerning — likely typo'd coords),
+    # then alphabetical by location name within each group.
+    issues.sort(key=lambda x: (
+        x["computed_borough"] is not None,   # False (outside NYC) sorts first
+        x["location_name"].lower(),
+    ))
+
+    return {
+        "issues": issues,
+        "total_with_coords": total_with_coords,
+        "outside_nyc_count": outside_nyc_count,
+    }

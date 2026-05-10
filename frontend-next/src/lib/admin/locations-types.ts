@@ -181,6 +181,62 @@ export interface BoroughBreakdownResponse {
 }
 
 // -----------------------------------------------------------------
+// GET /api/admin/locations/heatmap — section 3b
+// -----------------------------------------------------------------
+
+export interface HeatmapCategory {
+  name: string;
+  /** Sum across all boroughs — drives default sort. */
+  total_locations: number;
+  /** Distinct location count per borough column. Always includes
+   *  every borough label (5 NYC + Other) even when zero. */
+  by_borough: Record<BoroughLabel, number>;
+}
+
+export interface HeatmapResponse {
+  /** Sorted by total_locations DESC; equal totals tie-break by name. */
+  categories: HeatmapCategory[];
+  /** Column order for the heatmap UI — fixed 6-borough sequence. */
+  boroughs: BoroughLabel[];
+}
+
+// -----------------------------------------------------------------
+// GET /api/admin/locations/coordinate-issues — section 3c
+// -----------------------------------------------------------------
+
+export interface CoordinateIssue {
+  location_id: string;
+  location_name: string;
+  organization: string | null;
+  /** Raw pa.city as stored in the DB. */
+  stated_city: string | null;
+  /** stated_city mapped to a canonical NYC borough. null when the
+   *  city doesn't map (e.g. an out-of-state city in pa.city). */
+  stated_borough: string | null;
+  /** Borough computed from coordinates via NYC DCP polygons. null
+   *  when the coords fall outside NYC entirely (the "outside NYC"
+   *  issue case — distinguishable from the borough-mismatch case
+   *  by this null check). */
+  computed_borough: string | null;
+  latitude: number;
+  longitude: number;
+  yourpeer_url: string;
+}
+
+export interface CoordinateIssuesResponse {
+  /** Outside-NYC issues sort first (most concerning), then
+   *  borough-mismatch issues alphabetically. */
+  issues: CoordinateIssue[];
+  /** Total locations with non-null position — denominator for an
+   *  "X of Y locations have issues" framing. */
+  total_with_coords: number;
+  /** Subset of `issues` where computed_borough === null. The frontend
+   *  can compute this by filtering, but exposing it as an aggregate
+   *  saves a re-walk and reads cleanly in copy. */
+  outside_nyc_count: number;
+}
+
+// -----------------------------------------------------------------
 // API error shape — shared with other admin endpoints
 // -----------------------------------------------------------------
 

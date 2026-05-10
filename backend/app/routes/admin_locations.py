@@ -28,6 +28,8 @@ from app.services.locations_admin import (
     get_locations_list,
     get_freshness_histogram,
     get_locations_by_borough,
+    get_service_borough_heatmap,
+    get_coordinate_issues,
 )
 
 logger = logging.getLogger(__name__)
@@ -172,3 +174,45 @@ def locations_by_borough():
         return get_locations_by_borough()
     except Exception as e:
         return _admin_error("/api/locations/by-borough", e)
+
+
+@router.get("/heatmap")
+def locations_heatmap():
+    """Section 3b: service-category × borough coverage heatmap.
+
+    Returns ALL taxonomy categories with their per-borough location
+    counts. Categories are sorted by total_locations DESC so the
+    frontend can default to top-N (HEATMAP_TOP_N_CATEGORIES = 10)
+    and offer an expand toggle for the rest.
+
+    Cells are distinct-location counts: a multi-service location in
+    Brooklyn that offers food, clothing, and showers contributes 1
+    to each of Brooklyn-Food, Brooklyn-Clothing, Brooklyn-Showers
+    (correct semantics) but never more than 1 to any single cell.
+    """
+    try:
+        return get_service_borough_heatmap()
+    except Exception as e:
+        return _admin_error("/api/locations/heatmap", e)
+
+
+@router.get("/coordinate-issues")
+def locations_coordinate_issues():
+    """Section 3c: locations with coordinate-vs-stated-city mismatches.
+
+    Includes two kinds of data-quality issues:
+      * Coordinates outside NYC entirely (likely typo'd lat/lon)
+      * Coordinates fall in a different borough than the stated city
+        (one of them is wrong; manual verification needed)
+
+    Both kinds are returned in a single `issues` array; rows with
+    `computed_borough: null` are the outside-NYC kind. Sorted with
+    outside-NYC first since those are the most concerning data bugs.
+
+    Aggregate counters (`total_with_coords`, `outside_nyc_count`)
+    let the frontend show "X of Y locations have issues" framing.
+    """
+    try:
+        return get_coordinate_issues()
+    except Exception as e:
+        return _admin_error("/api/locations/coordinate-issues", e)

@@ -581,3 +581,258 @@ def test_by_borough_unrecognized_label_falls_under_other():
         other = next(r for r in body["rows"] if r["borough"] == "Other")
         assert other["location_count"] == 5
         assert other["top_category"] is None
+
+
+# -----------------------------------------------------------------------
+# /heatmap (day 3 — section 3b)
+# -----------------------------------------------------------------------
+
+def test_heatmap_requires_admin_auth():
+    with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}):
+        response = client.get("/admin/api/locations/heatmap")
+        assert response.status_code == 401
+
+
+def test_heatmap_empty_data_returns_empty_categories():
+    """No taxonomy rows → empty categories array but boroughs list
+    still present (frontend uses it to render the column headers
+    even when there's no data)."""
+    clear_audit_log()
+    responder = _make_sql_responder({})
+    with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}), \
+         patch("app.services.locations_admin.aggregations._execute_sql", side_effect=responder):
+        r = admin_client.get("/admin/api/locations/heatmap")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["categories"] == []
+        assert body["boroughs"] == ["Manhattan", "Brooklyn", "Queens", "Bronx", "Staten Island", "Other"]
+
+
+def test_heatmap_realistic_shape():
+    """Three categories × 6 boroughs → 18 cells. Categories sort by
+    total_locations DESC; every cell renders as an explicit count
+    (never missing keys)."""
+    clear_audit_log()
+    rows = [
+        # Food: 100 + 60 + 40 + 30 + 10 + 5 = 245
+        {"category": "Food", "borough": "Manhattan", "location_count": 100},
+        {"category": "Food", "borough": "Brooklyn", "location_count": 60},
+        {"category": "Food", "borough": "Queens", "location_count": 40},
+        {"category": "Food", "borough": "Bronx", "location_count": 30},
+        {"category": "Food", "borough": "Staten Island", "location_count": 10},
+        {"category": "Food", "borough": "Other", "location_count": 5},
+        # Shelter: 50 + 30 = 80 — present in only 2 boroughs (the rest
+        # should render as 0, not missing)
+        {"category": "Shelter", "borough": "Manhattan", "location_count": 50},
+        {"category": "Shelter", "borough": "Brooklyn", "location_count": 30},
+        # Clothing: 20 + 10 + 5 = 35
+        {"category": "Clothing", "borough": "Brooklyn", "location_count": 20},
+        {"category": "Clothing", "borough": "Queens", "location_count": 10},
+        {"category": "Clothing", "borough": "Bronx", "location_count": 5},
+    ]
+    responder = _make_sql_responder({"GROUP BY t.name, borough": rows})
+    with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}), \
+         patch("app.services.locations_admin.aggregations._execute_sql", side_effect=responder):
+        body = admin_client.get("/admin/api/locations/heatmap").json()
+
+        # Categories sorted by total_locations DESC
+        names = [c["name"] for c in body["categories"]]
+        assert names == ["Food", "Shelter", "Clothing"]
+
+        food = body["categories"][0]
+        assert food["total_locations"] == 245
+        # Every borough column is present even on partial-data categories
+        shelter = body["categories"][1]
+        assert set(shelter["by_borough"].keys()) == {"Manhattan", "Brooklyn", "Queens", "Bronx", "Staten Island", "Other"}
+        assert shelter["by_borough"]["Manhattan"] == 50
+        assert shelter["by_borough"]["Queens"] == 0          # no data → explicit 0
+        assert shelter["by_borough"]["Other"] == 0
+
+
+def test_heatmap_categories_with_equal_totals_sort_alphabetically():
+    """Tie-break for sort stability — equal totals sort by name."""
+    clear_audit_log()
+    rows = [
+        {"category": "Food", "borough": "Manhattan", "location_count": 50},
+        {"category": "Apparel", "borough": "Manhattan", "location_count": 50},
+        {"category": "Mental Health", "borough": "Manhattan", "location_count": 50},
+    ]
+    responder = _make_sql_responder({"GROUP BY t.name, borough": rows})
+    with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}), \
+         patch("app.services.locations_admin.aggregations._execute_sql", side_effect=responder):
+        body = admin_client.get("/admin/api/locations/heatmap").json()
+        # All three have total_locations=50; alphabetical breaks the tie
+        names = [c["name"] for c in body["categories"]]
+        assert names == ["Apparel", "Food", "Mental Health"]
+
+
+# -----------------------------------------------------------------------
+# /coordinate-issues (day 3 — section 3c)
+# -----------------------------------------------------------------------
+
+def test_coordinate_issues_requires_admin_auth():
+    with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}):
+        response = client.get("/admin/api/locations/coordinate-issues")
+        assert response.status_code == 401
+
+
+def test_coordinate_issues_no_locations_returns_empty():
+    """No rows from SQL → empty issues + zero counters."""
+    clear_audit_log()
+    responder = _make_sql_responder({})
+    with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}), \
+         patch("app.services.locations_admin.aggregations._execute_sql", side_effect=responder):
+        r = admin_client.get("/admin/api/locations/coordinate-issues")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["issues"] == []
+        assert body["total_with_coords"] == 0
+        assert body["outside_nyc_count"] == 0
+
+
+def test_coordinate_issues_clean_data_returns_no_issues():
+    """Locations whose stated city matches their coordinates → no issues."""
+    clear_audit_log()
+    rows = [
+        # Coords near Manhattan, stated as Manhattan → clean
+        {
+            "location_id": "loc-clean",
+            "location_name": "Test Location",
+            "location_slug": "test",
+            "organization": "Test Org",
+            "stated_city": "Manhattan",
+            "latitude": 40.7831, "longitude": -73.9712,
+        },
+    ]
+    responder = _make_sql_responder({"l.position IS NOT NULL": rows})
+
+    # Mock both helpers to return Manhattan — agreement → no issue
+    with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}), \
+         patch("app.services.locations_admin.aggregations._execute_sql", side_effect=responder), \
+         patch("app.rag.boundaries.borough_from_coords", return_value="Manhattan"), \
+         patch("app.rag.query_executor._stated_borough_from_city", return_value="Manhattan"):
+        body = admin_client.get("/admin/api/locations/coordinate-issues").json()
+        assert body["issues"] == []
+        assert body["total_with_coords"] == 1
+        assert body["outside_nyc_count"] == 0
+
+
+def test_coordinate_issues_borough_mismatch():
+    """Coords compute as Manhattan, city says Brooklyn → mismatch, flagged."""
+    clear_audit_log()
+    rows = [
+        {
+            "location_id": "loc-mismatch",
+            "location_name": "Confused Location",
+            "location_slug": "confused",
+            "organization": "Some Org",
+            "stated_city": "Brooklyn",
+            "latitude": 40.7831, "longitude": -73.9712,
+        },
+    ]
+    responder = _make_sql_responder({"l.position IS NOT NULL": rows})
+    with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}), \
+         patch("app.services.locations_admin.aggregations._execute_sql", side_effect=responder), \
+         patch("app.rag.boundaries.borough_from_coords", return_value="Manhattan"), \
+         patch("app.rag.query_executor._stated_borough_from_city", return_value="Brooklyn"):
+        body = admin_client.get("/admin/api/locations/coordinate-issues").json()
+        assert len(body["issues"]) == 1
+        issue = body["issues"][0]
+        assert issue["location_id"] == "loc-mismatch"
+        assert issue["stated_borough"] == "Brooklyn"
+        assert issue["computed_borough"] == "Manhattan"
+        assert body["outside_nyc_count"] == 0
+
+
+def test_coordinate_issues_outside_nyc():
+    """Coords outside NYC entirely → flagged, counted in outside_nyc_count."""
+    clear_audit_log()
+    rows = [
+        {
+            "location_id": "loc-outside",
+            "location_name": "Wrong Coords Location",
+            "location_slug": "wrong",
+            "organization": "Some Org",
+            "stated_city": "Manhattan",
+            "latitude": 39.0, "longitude": -75.0,    # somewhere in Delaware
+        },
+    ]
+    responder = _make_sql_responder({"l.position IS NOT NULL": rows})
+    with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}), \
+         patch("app.services.locations_admin.aggregations._execute_sql", side_effect=responder), \
+         patch("app.rag.boundaries.borough_from_coords", return_value=None), \
+         patch("app.rag.query_executor._stated_borough_from_city", return_value="Manhattan"):
+        body = admin_client.get("/admin/api/locations/coordinate-issues").json()
+        assert len(body["issues"]) == 1
+        issue = body["issues"][0]
+        assert issue["computed_borough"] is None    # signals outside-NYC
+        assert body["outside_nyc_count"] == 1
+
+
+def test_coordinate_issues_unmappable_city_does_not_flag():
+    """City that can't be mapped to a borough (e.g. an out-of-state hotline)
+    AND coords also outside NYC → counts as outside-NYC issue, but NOT
+    a 'mismatch' since we have no stated_borough to compare against."""
+    clear_audit_log()
+    rows = [
+        {
+            "location_id": "loc-newark",
+            "location_name": "Newark Hotline",
+            "location_slug": "newark",
+            "organization": "Out of State Org",
+            "stated_city": "Newark",   # not an NYC borough
+            "latitude": 40.7357, "longitude": -74.1724,    # Newark coords
+        },
+    ]
+    responder = _make_sql_responder({"l.position IS NOT NULL": rows})
+    with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}), \
+         patch("app.services.locations_admin.aggregations._execute_sql", side_effect=responder), \
+         patch("app.rag.boundaries.borough_from_coords", return_value=None), \
+         patch("app.rag.query_executor._stated_borough_from_city", return_value=None):
+        body = admin_client.get("/admin/api/locations/coordinate-issues").json()
+        # Outside NYC → still surfaces as issue (data quality concern)
+        assert len(body["issues"]) == 1
+        assert body["issues"][0]["computed_borough"] is None
+        assert body["issues"][0]["stated_borough"] is None
+        assert body["outside_nyc_count"] == 1
+
+
+def test_coordinate_issues_outside_nyc_sort_first():
+    """Outside-NYC issues should sort BEFORE mismatch issues since
+    they're more concerning data bugs (likely typo'd coords vs.
+    just a wrong-city-tag)."""
+    clear_audit_log()
+    rows = [
+        # Mismatch issue
+        {
+            "location_id": "loc-mismatch",
+            "location_name": "B Mismatch Location",
+            "location_slug": "b-mismatch",
+            "organization": "Org B",
+            "stated_city": "Brooklyn",
+            "latitude": 40.7831, "longitude": -73.9712,
+        },
+        # Outside-NYC issue
+        {
+            "location_id": "loc-outside",
+            "location_name": "A Outside Location",
+            "location_slug": "a-outside",
+            "organization": "Org A",
+            "stated_city": "Manhattan",
+            "latitude": 39.0, "longitude": -75.0,
+        },
+    ]
+    responder = _make_sql_responder({"l.position IS NOT NULL": rows})
+
+    # Each call to borough_from_coords gets the corresponding row's
+    # coords — return None for the outside-NYC one, "Manhattan" for
+    # the mismatch one. side_effect=list returns values in order.
+    with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}), \
+         patch("app.services.locations_admin.aggregations._execute_sql", side_effect=responder), \
+         patch("app.rag.boundaries.borough_from_coords", side_effect=["Manhattan", None]), \
+         patch("app.rag.query_executor._stated_borough_from_city", side_effect=["Brooklyn", "Manhattan"]):
+        body = admin_client.get("/admin/api/locations/coordinate-issues").json()
+        assert len(body["issues"]) == 2
+        # Outside-NYC sorts before mismatch
+        assert body["issues"][0]["location_id"] == "loc-outside"
+        assert body["issues"][1]["location_id"] == "loc-mismatch"
