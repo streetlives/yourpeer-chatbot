@@ -55,14 +55,12 @@ function extractDomain(url: string): string | null {
 // card sits in a roomier carousel with more whitespace around it.
 // So mobile gets the tight threshold, desktop gets the original.
 //
-// Mobile: 80 chars ≈ 2 lines of preview before "Read more". Combined
-// with line-clamp-2 below, even a low-character-count review with no
-// natural break points can't exceed 2 lines visually.
-//
-// Desktop: 120 chars ≈ 3 lines, the original behavior. Plenty of card
-// real estate to host that.
-const REVIEW_TRUNCATE_AT_MOBILE = 80;
-const REVIEW_TRUNCATE_TO_MOBILE = 77;
+// Mobile: 60 chars ≈ 2 lines at 280px card width (px-3 padding, text-xs,
+// ~36 chars/line). Keeping below the line-wrap threshold means line-clamp-2
+// is a safety net only. "Read more" is rendered outside the clamped span
+// so it's always visible regardless of whether clamp fires.
+const REVIEW_TRUNCATE_AT_MOBILE = 60;
+const REVIEW_TRUNCATE_TO_MOBILE = 57;
 const REVIEW_TRUNCATE_AT_DESKTOP = 120;
 const REVIEW_TRUNCATE_TO_DESKTOP = 117;
 
@@ -346,7 +344,7 @@ export function ServiceCard({ service, isActive, index, total, reviewTruncate }:
         const preview = truncated
           ? service.review_highlight.slice(0, to) + "…"
           : service.review_highlight;
-        const baseCls = "text-xs text-neutral-500 dark:text-neutral-400 leading-relaxed bg-neutral-50 border border-neutral-100 rounded-lg px-3 py-2 italic dark:bg-neutral-700/60 dark:border-neutral-700 line-clamp-2 sm:line-clamp-none";
+        const baseCls = "text-xs text-neutral-500 dark:text-neutral-400 leading-relaxed bg-neutral-50 border border-neutral-100 rounded-lg px-3 py-2 italic dark:bg-neutral-700/60 dark:border-neutral-700";
         if (!truncated) {
           return (
             <div className={baseCls}>
@@ -362,9 +360,11 @@ export function ServiceCard({ service, isActive, index, total, reviewTruncate }:
             aria-label={`Read full review for ${name}`}
             className={`${baseCls} text-left w-full transition hover:bg-neutral-100 hover:border-neutral-200 cursor-pointer dark:hover:bg-neutral-800 dark:hover:border-neutral-700`}
           >
-            <span aria-hidden="true">💬 </span>
-            {preview}
-            <span className="ml-1 not-italic font-medium text-amber-700 dark:text-amber-400">
+            <span className="line-clamp-2 sm:line-clamp-none block">
+              <span aria-hidden="true">💬 </span>
+              {preview}
+            </span>
+            <span className="not-italic font-medium text-amber-700 dark:text-amber-400">
               Read more
             </span>
           </button>
@@ -422,7 +422,7 @@ export function ServiceCard({ service, isActive, index, total, reviewTruncate }:
               <button
                 type="button"
                 onClick={() => setAlsoExpanded(true)}
-                className="inline-flex items-center min-h-[2rem] text-[0.68rem] font-medium px-2 py-1 rounded-md bg-neutral-50 border border-neutral-200 text-blue-600 hover:bg-blue-50 hover:border-blue-200 transition-colors dark:bg-neutral-700 dark:border-neutral-600 dark:text-blue-300 dark:hover:bg-blue-950/40 dark:hover:border-blue-900"
+                className="inline-block text-[0.68rem] font-medium px-2 py-0.5 rounded-md bg-neutral-50 border border-neutral-200 text-blue-600 hover:bg-blue-50 hover:border-blue-200 transition-colors dark:bg-neutral-700 dark:border-neutral-600 dark:text-blue-300 dark:hover:bg-blue-950/40 dark:hover:border-blue-900"
               >
                 +{alsoHiddenCount} more
               </button>
@@ -577,7 +577,17 @@ function ActionButtons({ service, name }: { service: ServiceResult; name: string
             aria-label={`Get directions to ${name} (opens in new tab)`}
             className="flex-1 min-w-0 py-2 rounded-lg border border-amber-300 bg-amber-300 text-center text-xs font-semibold text-neutral-900 transition hover:bg-amber-400 hover:border-amber-400 dark:border-[rgba(255,213,79,0.75)] dark:bg-[rgba(255,213,79,0.75)] dark:hover:bg-[rgba(255,213,79,0.95)] dark:hover:border-[rgba(255,213,79,0.95)]"
           >
-            Directions
+            <span className="block leading-tight">
+              Directions
+            </span>
+            {websiteDomain && (
+              <span
+                className="block text-[0.65rem] font-normal text-neutral-500 dark:text-neutral-400 leading-tight mt-0.5 truncate px-1"
+                title="Google Maps"
+              >
+                Google Maps
+              </span>
+            )}
           </a>
         )}
         {service.website && (
@@ -798,7 +808,7 @@ export function LocationCard({ services, isActive, index, total, reviewTruncate 
         const preview = truncated
           ? review.slice(0, to) + "…"
           : review;
-        const baseCls = "text-xs text-neutral-500 dark:text-neutral-400 leading-relaxed bg-neutral-50 border border-neutral-100 rounded-lg px-3 py-2 italic dark:bg-neutral-700/60 dark:border-neutral-700 line-clamp-2 sm:line-clamp-none";
+        const baseCls = "text-xs text-neutral-500 dark:text-neutral-400 leading-relaxed bg-neutral-50 border border-neutral-100 rounded-lg px-3 py-2 italic dark:bg-neutral-700/60 dark:border-neutral-700";
         if (!truncated) {
           return (
             <div className={baseCls}>
@@ -814,9 +824,11 @@ export function LocationCard({ services, isActive, index, total, reviewTruncate 
             aria-label={`Read full review for ${orgName}`}
             className={`${baseCls} text-left w-full transition hover:bg-neutral-100 hover:border-neutral-200 cursor-pointer dark:hover:bg-neutral-800 dark:hover:border-neutral-700`}
           >
-            <span aria-hidden="true">💬 </span>
-            {preview}
-            <span className="ml-1 not-italic font-medium text-amber-700 dark:text-amber-400">
+            <span className="line-clamp-2 sm:line-clamp-none block">
+              <span aria-hidden="true">💬 </span>
+              {preview}
+            </span>
+            <span className="not-italic font-medium text-amber-700 dark:text-amber-400">
               Read more
             </span>
           </button>
