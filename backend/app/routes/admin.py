@@ -354,3 +354,17 @@ async def _run_eval_background(
     finally:
         with _eval_lock:
             _eval_running = False
+
+
+# ---------------------------------------------------------------------------
+# SUB-ROUTERS
+# ---------------------------------------------------------------------------
+
+# Locations admin endpoints — registered under /admin/api/locations/*.
+# Imported and included here (rather than in main.py) so the auth
+# dependency on the parent /admin router applies transparently.
+# Adding a new sub-router for a future admin section follows the
+# same pattern: create routes/admin_<thing>.py with its own APIRouter,
+# import + include here.
+from app.routes.admin_locations import router as locations_router  # noqa: E402
+router.include_router(locations_router)
