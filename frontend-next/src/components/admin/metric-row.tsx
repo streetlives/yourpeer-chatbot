@@ -7,6 +7,7 @@
 "use client";
 
 import { METRIC_GRID_COLS } from "./metric-row-grid";
+import { useIssueFilter, isHiddenByFilter } from "@/lib/admin/metrics-page-helpers";
 
 type MetricStatus = "on-target" | "warning" | "off-target" | "no-data" | "tracking";
 
@@ -82,6 +83,16 @@ export function MetricRow({
   onClick,
   statusOverride,
 }: MetricRowProps) {
+  // Honor the page-level "Show only issues" toggle. Reading the filter
+  // via context (rather than a prop) keeps every existing MetricRow
+  // call site unchanged — the page wraps its content in
+  // <IssueFilterContext.Provider> and rows opt-in automatically.
+  // Default-context value is "all", so rows render normally when no
+  // provider is mounted (e.g. unit tests, the locations page if it
+  // ever consumes MetricRow).
+  const filterMode = useIssueFilter();
+  if (isHiddenByFilter(status, filterMode)) return null;
+
   return (
     <div className={`grid ${METRIC_GRID_COLS} items-center gap-3.5 py-2.5 border-b border-neutral-100 text-sm last:border-b-0`}>
       <div>
@@ -103,7 +114,7 @@ export function MetricRow({
         >
           {name}
         </div>
-        <div className="text-xs text-neutral-400 mt-0.5">{subtitle}</div>
+        <div className="text-sm text-neutral-500 dark:text-neutral-400 mt-1">{subtitle}</div>
       </div>
       <div className="font-mono text-xs text-neutral-400">{target}</div>
       <div className={`font-mono font-bold text-right ${STATUS_COLORS[status]}`}>
@@ -118,10 +129,10 @@ export function MetricRow({
       </div>
       <div className="text-right">
         <span
-          className={`inline-block px-2 py-0.5 rounded-full text-[0.68rem] font-semibold ${
+          className={`inline-block px-2 py-0.5 rounded-full text-xs font-semibold ${
             phase === "Post-pilot"
-              ? "bg-neutral-100 text-neutral-400"
-              : "bg-blue-50 text-blue-600"
+              ? "bg-neutral-100 text-neutral-400 dark:bg-neutral-800 dark:text-neutral-500"
+              : "bg-blue-50 text-blue-600 dark:bg-blue-900/40 dark:text-blue-300"
           }`}
         >
           {phase}

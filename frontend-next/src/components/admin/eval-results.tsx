@@ -6,8 +6,9 @@
 
 "use client";
 
-import { useState } from "react";
-import type { EvalReport } from "@/lib/chat/types";
+import { useMemo, useState } from "react";
+import { ChevronDown } from "lucide-react";
+import type { EvalReport, EvalScenarioResult } from "@/lib/chat/types";
 import { StatCard } from "./stat-card";
 import { DimensionDetailDialog } from "./dimension-detail-dialog";
 import { EVAL_DIMENSIONS, DIM_SHORT_LABELS, getDimension } from "@/lib/admin/eval-dimensions";
@@ -36,6 +37,40 @@ export function EvalResults({ report }: EvalResultsProps) {
   // selectedMetric pattern in metrics/page.tsx so the two pages have
   // the same shape of in-component dialog state.
   const [selectedDimension, setSelectedDimension] = useState<EvalDimension | null>(null);
+
+  // Scenario-list category filter. `null` means "show all". The
+  // chip-row below the "Scenario Details" heading drives this; each
+  // ScenarioCard owns its own collapse state independently.
+  const [filterCategory, setFilterCategory] = useState<string | null>(null);
+
+  // Pre-compute the category histogram so the filter pills can be
+  // sorted by frequency (most-populated first) and show counts. We
+  // only include categories that actually appear in this report's
+  // scenarios — the report's `summary.category_averages` map may
+  // include categories with all-errored scenarios that wouldn't be
+  // useful as filters. Stable-sorted: equal counts preserve order
+  // of first appearance, which keeps the pill row from reshuffling
+  // when re-rendering with the same data.
+  const categoryCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const s of report.scenarios ?? []) {
+      if (!s.category) continue;
+      counts.set(s.category, (counts.get(s.category) ?? 0) + 1);
+    }
+    return Array.from(counts.entries()).sort(([, a], [, b]) => b - a);
+  }, [report.scenarios]);
+
+  // Apply the current filter to the scenario list. Scenarios without
+  // a category survive the "All" view but never match a specific-
+  // category filter (consistent with how the count histogram above
+  // excludes them).
+  const filteredScenarios = useMemo(() => {
+    const all = report.scenarios ?? [];
+    if (filterCategory === null) return all;
+    return all.filter((s) => s.category === filterCategory);
+  }, [report.scenarios, filterCategory]);
+
+  const totalScenarioCount = report.scenarios?.length ?? 0;
 
   // Passing rate: scenarios scoring >= 4.0 average that didn't error.
   // Matches the "scenario passes if its average score across all 11
@@ -233,68 +268,59 @@ export function EvalResults({ report }: EvalResultsProps) {
 
       {/* Scenario details */}
       <div id="eval-scenario-details">
-        <h3 className="text-base font-semibold mb-3">Scenario Details</h3>
-      </div>
-      {(report.scenarios || []).map((s) => {
-        if (s.error) {
-          return (
-            <div
-              key={s.name}
-              className="bg-white border border-red-200 rounded-lg px-5 py-4 mb-2.5"
-            >
-              <div className="font-semibold text-sm">❌ {s.name}</div>
-              <div className="text-sm text-red-600 mt-1">Error: {s.error}</div>
-            </div>
-          );
-        }
-
-        const emoji = s.average_score >= 4 ? "✅" : s.average_score >= 3 ? "⚠️" : "❌";
-        const scoreColor =
-          s.average_score >= 4
-            ? "text-green-600"
-            : s.average_score >= 3
-              ? "text-amber-500"
-              : "text-red-600";
-
-        return (
-          <div
-            key={s.name}
-            className="bg-white border border-neutral-200 rounded-lg px-5 py-4 mb-2.5"
+        <div className="flex items-baseline justify-between mb-3 gap-3 flex-wrap">
+          <h3 className="text-base font-semibold">Scenario Details</h3>
+          <span
+            className="text-sm text-neutral-500 dark:text-neutral-400"
+            aria-live="polite"
           >
-            <div className="flex justify-between items-center mb-2">
-              <span className="font-semibold text-sm">
-                {emoji} {s.name}
-              </span>
-              <span className={`font-mono font-bold ${scoreColor}`}>
-                {s.average_score.toFixed(1)}/5.0
-              </span>
-            </div>
-            {s.overall_notes && (
-              <div className="text-sm text-neutral-500 mt-1">{s.overall_notes}</div>
-            )}
-            {Object.entries(s.scores || {}).map(([dim, d]) => {
-              // Show the justification only when this dimension scored
-              // *below* its rubric target — those are the ones reviewers
-              // want to read. The previous hardcoded `> 3` cutoff hid
-              // failures on dimensions whose target is 4.0 or 4.5: a
-              // safety_crisis score of 3.5 is failing the rubric (target
-              // 4.5) but the old check skipped it. Falling back to 4.0
-              // for unknown keys covers any future report dim not yet in
-              // EVAL_DIMENSIONS — better to show those than hide them.
-              const target = getDimension(dim)?.target ?? 4.0;
-              if (d.score >= target) return null;
-              return (
-                <div
-                  key={dim}
-                  className="text-xs text-amber-600 mt-1.5 pl-3 border-l-2 border-amber-400"
-                >
-                  {DIM_SHORT_LABELS[dim] || dim}: {d.score}/5 — {d.justification}
-                </div>
-              );
-            })}
+            {filterCategory === null
+              ? `${totalScenarioCount} ${totalScenarioCount === 1 ? "scenario" : "scenarios"}`
+              : `${filteredScenarios.length} of ${totalScenarioCount} ${totalScenarioCount === 1 ? "scenario" : "scenarios"}`}
+          </span>
+        </div>
+
+        {/* Category filter chips. Render only when there are
+            categories to filter by (some reports may have scenarios
+            with no `category` field at all — older runs). Buttons
+            with aria-pressed since each is a single-select toggle
+            modifying the shared scenario list below — not tabs into
+            separate panels (which would need role="tablist" +
+            aria-controls + a tabpanel for each). */}
+        {categoryCounts.length > 0 && (
+          <div
+            className="flex flex-wrap gap-1.5 mb-4"
+            role="group"
+            aria-label="Filter scenarios by category"
+          >
+            <FilterPill
+              active={filterCategory === null}
+              onClick={() => setFilterCategory(null)}
+              label="All"
+              count={totalScenarioCount}
+            />
+            {categoryCounts.map(([cat, count]) => (
+              <FilterPill
+                key={cat}
+                active={filterCategory === cat}
+                onClick={() => setFilterCategory(cat)}
+                label={formatCategoryLabel(cat)}
+                count={count}
+              />
+            ))}
           </div>
-        );
-      })}
+        )}
+
+        {filteredScenarios.length === 0 ? (
+          <div className="text-center py-8 text-sm text-neutral-400">
+            No scenarios in this category.
+          </div>
+        ) : (
+          filteredScenarios.map((s) => (
+            <ScenarioCard key={s.name} scenario={s} />
+          ))
+        )}
+      </div>
 
       {selectedDimension && (
         <DimensionDetailDialog
@@ -342,4 +368,157 @@ function EvalSummaryCard({
       {children}
     </a>
   );
+}
+
+/**
+ * One row in the Scenario Details list. Collapsed by default — header
+ * shows only emoji + name + score (and a chevron). Click to expand and
+ * see the overall notes plus any sub-target dimension justifications.
+ *
+ * Error scenarios bypass the collapse entirely: the error message IS
+ * the content, and there's no useful "expand for more" target. They
+ * render as a flat red-bordered card matching the previous behavior.
+ *
+ * Per-card local state (rather than a shared map in the parent) keeps
+ * the implementation simple at the cost of losing expand state across
+ * filter changes. Verdict: that's actually the right UX — when the
+ * filter narrows the visible scenarios, re-collapsing is a useful
+ * "you're looking at a different view now" signal.
+ */
+function ScenarioCard({ scenario }: { scenario: EvalScenarioResult }) {
+  const [open, setOpen] = useState(false);
+
+  if (scenario.error) {
+    return (
+      <div className="bg-white border border-red-200 rounded-lg px-5 py-4 mb-2.5 dark:bg-neutral-900 dark:border-red-900/50">
+        <div className="font-semibold text-sm">❌ {scenario.name}</div>
+        <div className="text-sm text-red-600 dark:text-red-400 mt-1">
+          Error: {scenario.error}
+        </div>
+      </div>
+    );
+  }
+
+  const emoji =
+    scenario.average_score >= 4 ? "✅" : scenario.average_score >= 3 ? "⚠️" : "❌";
+  const scoreColor =
+    scenario.average_score >= 4
+      ? "text-green-600 dark:text-green-400"
+      : scenario.average_score >= 3
+        ? "text-amber-500 dark:text-amber-400"
+        : "text-red-600 dark:text-red-400";
+
+  return (
+    <div className="bg-white border border-neutral-200 rounded-lg mb-2.5 dark:bg-neutral-900 dark:border-neutral-800">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        className="w-full flex justify-between items-center px-5 py-3.5 text-left hover:bg-neutral-50 transition-colors rounded-lg dark:hover:bg-neutral-800/60"
+      >
+        <span className="flex items-center gap-2 min-w-0">
+          <ChevronDown
+            size={16}
+            className={`flex-shrink-0 text-neutral-400 transition-transform duration-200 ${
+              open ? "" : "-rotate-90"
+            }`}
+            aria-hidden="true"
+          />
+          <span className="font-semibold text-sm truncate">
+            {emoji} {scenario.name}
+          </span>
+        </span>
+        <span className={`font-mono font-bold flex-shrink-0 ml-3 ${scoreColor}`}>
+          {scenario.average_score.toFixed(1)}/5.0
+        </span>
+      </button>
+
+      {open && (
+        <div className="px-5 pb-4 pt-1 border-t border-neutral-100 dark:border-neutral-800">
+          {scenario.overall_notes && (
+            <div className="text-sm text-neutral-500 dark:text-neutral-400 mt-2.5">
+              {scenario.overall_notes}
+            </div>
+          )}
+          {Object.entries(scenario.scores || {}).map(([dim, d]) => {
+            // Show the justification only when this dimension scored
+            // *below* its rubric target — those are the ones reviewers
+            // want to read. The previous hardcoded `> 3` cutoff hid
+            // failures on dimensions whose target is 4.0 or 4.5: a
+            // safety_crisis score of 3.5 is failing the rubric (target
+            // 4.5) but the old check skipped it. Falling back to 4.0
+            // for unknown keys covers any future report dim not yet in
+            // EVAL_DIMENSIONS — better to show those than hide them.
+            const target = getDimension(dim)?.target ?? 4.0;
+            if (d.score >= target) return null;
+            return (
+              <div
+                key={dim}
+                className="text-xs text-amber-600 dark:text-amber-400 mt-1.5 pl-3 border-l-2 border-amber-400"
+              >
+                {DIM_SHORT_LABELS[dim] || dim}: {d.score}/5 — {d.justification}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * One pill in the category filter row. Single-select semantics: the
+ * caller is responsible for clearing other pills when this one is
+ * activated. `aria-selected` reflects the active state for tab-list
+ * accessibility. The count is rendered in a muted color when inactive
+ * so it doesn't compete with the label for attention.
+ */
+function FilterPill({
+  active,
+  onClick,
+  label,
+  count,
+}: {
+  active: boolean;
+  onClick: () => void;
+  label: string;
+  count: number;
+}) {
+  return (
+    <button
+      type="button"
+      aria-pressed={active}
+      onClick={onClick}
+      className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-sm font-medium transition-colors ${
+        active
+          ? "bg-amber-100 text-amber-900 dark:bg-amber-900/40 dark:text-amber-100"
+          : "bg-neutral-100 text-neutral-600 hover:bg-neutral-200 dark:bg-neutral-800 dark:text-neutral-300 dark:hover:bg-neutral-700"
+      }`}
+    >
+      <span>{label}</span>
+      <span
+        className={`tabular-nums ${
+          active
+            ? "text-amber-700 dark:text-amber-300"
+            : "text-neutral-400 dark:text-neutral-500"
+        }`}
+      >
+        {count}
+      </span>
+    </button>
+  );
+}
+
+/**
+ * Turn a raw category key like `natural_language` into a display label
+ * like `Natural language`. Sentence-case (only the first letter
+ * capitalized) reads better than Title Case for tag-style labels and
+ * matches the project's general label conventions. If the report
+ * starts including categories with multi-word names already
+ * capitalized, this will lower-case the trailing words — acceptable
+ * because every category seen in practice is snake_case.
+ */
+function formatCategoryLabel(cat: string): string {
+  const spaced = cat.replace(/_/g, " ");
+  return spaced.charAt(0).toUpperCase() + spaced.slice(1).toLowerCase();
 }
