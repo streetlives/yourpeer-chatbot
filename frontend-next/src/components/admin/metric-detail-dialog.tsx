@@ -41,9 +41,9 @@ export function MetricDetailDialog({ metric, onClose }: MetricDetailDialogProps)
               <div className="text-xs font-semibold text-neutral-500 dark:text-neutral-400 mb-1">
                 Definition
               </div>
-              <p className="text-sm text-neutral-700 dark:text-neutral-200 leading-relaxed">
+              <Dialog.Description className="text-sm text-neutral-700 dark:text-neutral-200 leading-relaxed">
                 {metric.definition}
-              </p>
+              </Dialog.Description>
             </div>
 
             <div>

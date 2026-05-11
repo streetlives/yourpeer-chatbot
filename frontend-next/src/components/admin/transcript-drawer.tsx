@@ -146,6 +146,19 @@ export function TranscriptDrawer({
               <Dialog.Title className="text-base font-semibold">
                 Session {sessionId.slice(0, 12)}…
               </Dialog.Title>
+              {/* Visually-hidden description for screen readers — Radix
+                  Dialog requires either aria-describedby or a
+                  Dialog.Description child. The visible meta-line below
+                  only renders when data is loaded, so we use this
+                  always-present sr-only summary that adapts to all three
+                  states (loading, empty, populated). */}
+              <Dialog.Description className="sr-only">
+                {loading
+                  ? "Loading session events."
+                  : ordered.length === 0
+                    ? "No events found for this session."
+                    : `Session with ${turnCount} turn${turnCount !== 1 ? "s" : ""}${queryCount > 0 ? `, ${queryCount} quer${queryCount !== 1 ? "ies" : "y"}` : ""}${crisisCount > 0 ? `, ${crisisCount} crisis event${crisisCount !== 1 ? "s" : ""}` : ""}.`}
+              </Dialog.Description>
               {!loading && ordered.length > 0 && (
                 <div className="text-sm text-neutral-400 dark:text-neutral-500 mt-0.5">
                   {turnCount} turn{turnCount !== 1 ? "s" : ""}

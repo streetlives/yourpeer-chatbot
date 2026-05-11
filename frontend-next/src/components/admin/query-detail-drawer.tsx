@@ -34,6 +34,18 @@ export function QueryDetailDrawer({ query, onClose }: QueryDetailDrawerProps) {
             </Dialog.Close>
           </div>
 
+          {/* Visually-hidden description — Radix Dialog requires either
+              aria-describedby or a Dialog.Description child. The dialog
+              body is a status-pill row plus a parameter table; neither
+              reads cleanly as prose, so an sr-only summary covers
+              screen readers without changing the visible layout. */}
+          <Dialog.Description className="sr-only">
+            Query template {query.template_name} returned {query.result_count} result
+            {query.result_count !== 1 ? "s" : ""} in {query.execution_ms} milliseconds
+            {query.relaxed ? ", with relaxed proximity matching" : ""}
+            {query.proximity_timeout ? ", with a proximity timeout" : ""}.
+          </Dialog.Description>
+
           <div className="space-y-4">
             {/* Summary row */}
             <div className="flex gap-3 flex-wrap">
