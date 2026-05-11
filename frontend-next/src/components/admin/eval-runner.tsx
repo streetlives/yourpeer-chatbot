@@ -69,50 +69,106 @@ export function EvalRunner({ onComplete }: EvalRunnerProps) {
     [stopPolling],
   );
 
+  // Begin polling /admin/api/eval/status every POLL_INTERVAL_MS until the
+  // backend reports `running: false`. Extracted so two entry points
+  // share the polling implementation: a fresh `handleRun` after the
+  // user clicks the button, and the mount-time recovery effect below
+  // (when the user navigates back into the page mid-run).
+  //
+  // Success/fail discrimination uses `finished_at` only — the backend
+  // sets it iff the eval subprocess exited 0 AND wrote a report file
+  // (see _run_eval_background in admin.py). Subprocess failures and
+  // exception cases both omit `finished_at`, so the absence is a
+  // reliable "did not complete" signal. The earlier code branched on
+  // `message?.startsWith("Error")` to render the failure, but the
+  // subprocess-failure message starts with "Eval failed", which that
+  // check missed — leading to silent fall-through with no ❌ status.
+  const startPolling = useCallback(() => {
+    let attempts = 0;
+    let consecutiveFailures = 0;
+    pollRef.current = setInterval(async () => {
+      attempts += 1;
+      if (attempts > MAX_POLL_ATTEMPTS) {
+        stopWatching(
+          "⚠️ Status check timed out after 75 minutes — eval may still be running on the server. Refresh to check results.",
+        );
+        return;
+      }
+      try {
+        const s = await fetchEvalStatus();
+        consecutiveFailures = 0;
+        const progress = s.total ? ` (${s.completed || 0}/${s.total})` : "";
+        setStatus((s.message || "") + progress);
+        if (!s.running) {
+          stopPolling();
+          setRunning(false);
+          if (s.finished_at) {
+            setStatus(`✅ ${s.message}`);
+            onComplete();
+          } else {
+            setStatus(`❌ ${s.message ?? "Eval did not complete."}`);
+          }
+        }
+      } catch {
+        consecutiveFailures += 1;
+        if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+          stopWatching(
+            "⚠️ Lost connection to server. The eval may still be running — refresh to check.",
+          );
+        } else {
+          setStatus(`Lost connection to server (retrying… ${consecutiveFailures}/${MAX_CONSECUTIVE_FAILURES}).`);
+        }
+      }
+    }, POLL_INTERVAL_MS);
+  }, [stopPolling, stopWatching, onComplete]);
+
+  // Mount-time recovery: if the user navigates back into the Evals page
+  // while a run is in progress on the server, restore the in-progress
+  // UI so they can see status and use "Stop watching", and so the
+  // button stays disabled (preventing a redundant second run that
+  // would 409 anyway). The check runs once per mount and is gated on
+  // `pollRef.current` to avoid double-polling if a fresh handleRun
+  // happens to win the race against the mount fetch.
+  //
+  // `startPolling` is read through a ref so this effect can have an
+  // empty dep list — using `[startPolling]` would re-run the recovery
+  // every time the callback's identity changed, which can happen on
+  // any parent re-render that affects `onComplete`'s identity.
+  const startPollingRef = useRef(startPolling);
+  useEffect(() => {
+    startPollingRef.current = startPolling;
+  }, [startPolling]);
+  useEffect(() => {
+    let cancelled = false;
+    fetchEvalStatus()
+      .then((s) => {
+        if (cancelled || pollRef.current) return;
+        if (s.running) {
+          setRunning(true);
+          const progress = s.total ? ` (${s.completed || 0}/${s.total})` : "";
+          setStatus((s.message || "Eval in progress…") + progress);
+          startPollingRef.current();
+        }
+      })
+      .catch(() => {
+        // Mount fetch is best-effort. If it fails, the user can still
+        // click Run Evals manually — the trigger call surfaces its own
+        // error path.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   async function handleRun() {
     setConfirmOpen(false);
     setRunning(true);
     setStatus("Starting eval run…");
-    let attempts = 0;
-    let consecutiveFailures = 0;
     try {
       const count = scenarioCount ? parseInt(scenarioCount, 10) : undefined;
       const validCount = count != null && Number.isFinite(count) && count > 0 ? count : undefined;
       await triggerEvalRun(validCount);
-      pollRef.current = setInterval(async () => {
-        attempts += 1;
-        if (attempts > MAX_POLL_ATTEMPTS) {
-          stopWatching(
-            "⚠️ Status check timed out after 75 minutes — eval may still be running on the server. Refresh to check results.",
-          );
-          return;
-        }
-        try {
-          const s = await fetchEvalStatus();
-          consecutiveFailures = 0;
-          const progress = s.total ? ` (${s.completed || 0}/${s.total})` : "";
-          setStatus((s.message || "") + progress);
-          if (!s.running) {
-            stopPolling();
-            setRunning(false);
-            if (s.finished_at) {
-              setStatus(`✅ ${s.message}`);
-              onComplete();
-            } else if (s.message?.startsWith("Error")) {
-              setStatus(`❌ ${s.message}`);
-            }
-          }
-        } catch {
-          consecutiveFailures += 1;
-          if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
-            stopWatching(
-              "⚠️ Lost connection to server. The eval may still be running — refresh to check.",
-            );
-          } else {
-            setStatus(`Lost connection to server (retrying… ${consecutiveFailures}/${MAX_CONSECUTIVE_FAILURES}).`);
-          }
-        }
-      }, POLL_INTERVAL_MS);
+      startPolling();
     } catch (err) {
       setStatus(err instanceof Error ? err.message : "Unknown error");
       setRunning(false);

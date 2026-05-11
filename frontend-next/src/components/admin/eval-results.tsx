@@ -11,7 +11,7 @@ import { ChevronDown } from "lucide-react";
 import type { EvalReport, EvalScenarioResult } from "@/lib/chat/types";
 import { StatCard } from "./stat-card";
 import { DimensionDetailDialog } from "./dimension-detail-dialog";
-import { EVAL_DIMENSIONS, DIM_SHORT_LABELS, getDimension } from "@/lib/admin/eval-dimensions";
+import { EVAL_DIMENSIONS, DIM_SHORT_LABELS, getDimension, warningBoundFor } from "@/lib/admin/eval-dimensions";
 import type { EvalDimension } from "@/lib/admin/eval-dimensions";
 
 /**
@@ -125,10 +125,18 @@ export function EvalResults({ report }: EvalResultsProps) {
   // threshold, not a per-dimension pass — see audit finding #23 — but
   // staying consistent with the rest of the dashboard is the right call
   // here over diverging on definition.
-  const passingScenarios = (report.scenarios ?? []).filter(
+  //
+  // Both numerator and denominator derive from `report.scenarios` (not
+  // a mix of that array and `summary.scenarios_evaluated`). The eval
+  // script generates both from the same internal `results` list, so
+  // they're invariantly equal — but reading them from one source makes
+  // the arithmetic obviously consistent and prevents a future drift if
+  // either field's definition shifts.
+  const scenarioList = report.scenarios ?? [];
+  const passingScenarios = scenarioList.filter(
     (s) => s.average_score >= 4.0 && !s.error,
   ).length;
-  const totalScenarios = summary.scenarios_evaluated;
+  const totalScenarios = scenarioList.length;
   const passingRate = totalScenarios > 0 ? passingScenarios / totalScenarios : null;
   const passingDisplay =
     passingRate != null ? `${(passingRate * 100).toFixed(1)}%` : "—";
@@ -209,18 +217,59 @@ export function EvalResults({ report }: EvalResultsProps) {
         {EVAL_DIMENSIONS.map((dim) => {
           const { key, shortLabel, target, blocker } = dim;
           const d = summary.dimension_averages[key];
-          if (!d) return null;
+
+          // Missing-dimension placeholder. Rather than returning null
+          // (which silently dropped the row and left reviewers unsure
+          // whether the dim was excluded, scored zero, or the dashboard
+          // was broken), render a muted stub with "no data in this
+          // report". Common cause: older report file predates a new
+          // dimension being added to the rubric.
+          if (!d) {
+            return (
+              <div
+                key={key}
+                className="flex items-center gap-3.5 py-2.5 border-b border-neutral-100 last:border-b-0 dark:border-neutral-800"
+              >
+                <div className="w-[220px] flex-shrink-0 text-sm font-medium text-neutral-400 dark:text-neutral-500">
+                  {shortLabel}
+                  {blocker && (
+                    <span className="ml-1.5 text-[0.65rem] text-red-500 font-semibold opacity-60">
+                      BLOCKER
+                    </span>
+                  )}
+                </div>
+                <div className="flex-1 text-xs italic text-neutral-400 dark:text-neutral-500">
+                  No data in this report
+                </div>
+                <div className="w-[60px] text-right font-mono font-bold text-sm text-neutral-300 dark:text-neutral-600">
+                  —
+                </div>
+                <div className="w-[80px] text-right text-xs font-semibold text-neutral-400 dark:text-neutral-500">
+                  ≥{target}
+                </div>
+              </div>
+            );
+          }
+
           const pct = (d.average / 5) * 100;
           const targetPct = (target / 5) * 100;
           const meetsTarget = d.average >= target;
+          // warningBoundFor uses the dimension's explicit warningThreshold
+          // when set, otherwise target - 0.3. This replaces the previous
+          // hard-coded `target - 0.5` formula, which was calibrated for
+          // targets in the 4.0–4.5 range and became too wide once
+          // safety-critical targets were tightened to 4.9 — scores in
+          // 4.4–4.9 were rendering amber when they represented major
+          // regressions from the historical 4.96–4.99 band.
+          const warnBound = warningBoundFor(dim);
           const barColor = meetsTarget
             ? "bg-green-500"
-            : d.average >= target - 0.5
+            : d.average >= warnBound
               ? "bg-amber-400"
               : "bg-red-500";
           const scoreColor = meetsTarget
             ? "text-green-600"
-            : d.average >= target - 0.5
+            : d.average >= warnBound
               ? "text-amber-500"
               : "text-red-600";
 
@@ -274,7 +323,12 @@ export function EvalResults({ report }: EvalResultsProps) {
           <h3 className="text-base font-semibold mb-3">Category Averages</h3>
           <div className="flex flex-wrap gap-2">
             {Object.entries(summary.category_averages)
-              .sort()
+              // Sort alphabetically by category key. Explicit compareFn
+              // because the default `.sort()` does string-coercion on
+              // [string, number] tuples and accidentally works for keys
+              // but would silently sort wrong if anyone refactors to
+              // "sort by value" using the default.
+              .sort(([a], [b]) => a.localeCompare(b))
               .map(([cat, avg]) => {
                 const cls =
                   avg >= 4
@@ -287,7 +341,7 @@ export function EvalResults({ report }: EvalResultsProps) {
                     key={cat}
                     className={`inline-block px-2.5 py-1 rounded-full text-sm font-semibold ${cls}`}
                   >
-                    {cat}: {avg.toFixed(1)}
+                    {formatCategoryLabel(cat)}: {avg.toFixed(1)}
                   </span>
                 );
               })}

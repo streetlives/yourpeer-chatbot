@@ -24,7 +24,7 @@ import {
   type SectionRegistry,
   type SectionSummary,
 } from "@/lib/admin/metrics-page-helpers";
-import { EVAL_DIMENSIONS } from "@/lib/admin/eval-dimensions";
+import { EVAL_DIMENSIONS, warningBoundFor } from "@/lib/admin/eval-dimensions";
 import { utcHourToET } from "@/lib/admin/format-time";
 
 // ---------------------------------------------------------------------------
@@ -984,6 +984,11 @@ export default function MetricsPage() {
                   {EVAL_DIMENSIONS.map((d) => {
                     const score = dims?.[d.key]?.average ?? null;
                     const targetLabel = `≥ ${d.target.toFixed(1)} / 5.0${d.blocker ? " ⚠ blocker" : ""}`;
+                    // warningBoundFor honors per-dimension explicit
+                    // warningThreshold overrides (privacy, hallucination,
+                    // equity). The previous `d.target - 0.5` formula
+                    // was too wide once safety-critical targets moved
+                    // to 4.9 — same fix as in eval-results.tsx.
                     return (
                       <MetricRow
                         onClick={onMetricClick}
@@ -992,7 +997,7 @@ export default function MetricsPage() {
                         subtitle="LLM-as-judge score (1–5)"
                         target={targetLabel}
                         value={fmtMetric(score, false, 2)}
-                        status={statusClass(score, d.target, "gte", d.target - 0.5)}
+                        status={statusClass(score, d.target, "gte", warningBoundFor(d))}
                       />
                     );
                   })}
