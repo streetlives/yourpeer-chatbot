@@ -56,7 +56,9 @@
     "service_url": null,
     "organization_url": "https://www.nychealthandhospitals.org/locations/nyc-health-hospitals-gotham-health-roosevelt",
     "fees": null,
-    "service_taxonomies": null,
+    "service_taxonomies": [
+      "Other service"
+    ],
     "also_available": [
       "General Health"
     ],
@@ -139,6 +141,40 @@
     ],
     "accessibility_info": null,
     "languages_spoken": null,
+    "requires_membership": null,
+    "bot_service_type": "shelter",
+    "borough": "Manhattan"
+  },
+  {
+    "service_id": "03516b8c-993c-47c3-9a7f-39190974d977",
+    "service_name": "Adult Single Men's Intake",
+    "organization_name": "Department of Homeless Services (DHS)",
+    "service_description": " ",
+    "location_id": "88519386-2837-4737-ba3c-8c1bbf6f7450",
+    "location_name": "30th Street Intake Center for Men",
+    "location_slug": "department-of-homeless-services-dhs-kips-bay-400-430-e-30th-st",
+    "last_validated_at": "2026-01-02T06:59:01.274Z",
+    "address": "400-430 E 30th St",
+    "city": "New York",
+    "state": "NY",
+    "zip_code": "10016",
+    "country": "US",
+    "latitude": 40.74064105747011,
+    "longitude": -73.97423173640271,
+    "phone": "2124814704",
+    "service_email": null,
+    "service_url": null,
+    "organization_url": "www1.nyc.gov/site/dhs/shelter/singleadults/single-adults-applying.page",
+    "fees": null,
+    "service_taxonomies": [
+      "Single Adult"
+    ],
+    "also_available": null,
+    "accessibility_info": null,
+    "languages_spoken": [
+      "en",
+      "es"
+    ],
     "requires_membership": null,
     "bot_service_type": "shelter",
     "borough": "Manhattan"
@@ -315,7 +351,9 @@
     "service_url": null,
     "organization_url": "https://grandsettlement.org/news",
     "fees": null,
-    "service_taxonomies": null,
+    "service_taxonomies": [
+      "Other service"
+    ],
     "also_available": null,
     "accessibility_info": null,
     "languages_spoken": [
@@ -393,44 +431,6 @@
     "borough": "Brooklyn"
   },
   {
-    "service_id": "061c2bbd-5e8b-4448-bfc1-7a4e45cf3954",
-    "service_name": "Code Blue Warming Center",
-    "organization_name": "NYC Health + Hospitals",
-    "service_description": "Shelter from the cold. If the weather is \u226432\u00b0F/0\u00b0C between the overnight hours stated, you may access this warming facility. See Google or a LinkNYC terminal for the current night temperatures.",
-    "location_id": "2e4952df-aaca-4a4b-b472-905f84f9fa0e",
-    "location_name": "Bellevue Hospital Center",
-    "location_slug": "nyc-health-hospitals-kips-bay",
-    "last_validated_at": "2026-04-23T15:21:03.294Z",
-    "address": "462 First Ave",
-    "city": "New York",
-    "state": "NY",
-    "zip_code": "10016",
-    "country": "US",
-    "latitude": 40.73973696080464,
-    "longitude": -73.9762128253044,
-    "phone": "2125624141",
-    "service_email": null,
-    "service_url": null,
-    "organization_url": "https://www.nychealthandhospitals.org/locations/bellevue",
-    "fees": null,
-    "service_taxonomies": [
-      "General Health"
-    ],
-    "also_available": [
-      "Food Benefits",
-      "General Health",
-      "Substance Use Treatment"
-    ],
-    "accessibility_info": null,
-    "languages_spoken": [
-      "en",
-      "es"
-    ],
-    "requires_membership": false,
-    "bot_service_type": "medical",
-    "borough": "Manhattan"
-  },
-  {
     "service_id": "06cae51e-0d04-4dfc-bae0-3b9bc1d8fa0f",
     "service_name": "Community Services",
     "organization_name": "La Colmena",
@@ -451,7 +451,9 @@
     "service_url": null,
     "organization_url": "lacolmenanyc.org/what-we-do",
     "fees": null,
-    "service_taxonomies": null,
+    "service_taxonomies": [
+      "Other service"
+    ],
     "also_available": null,
     "accessibility_info": null,
     "languages_spoken": null,
@@ -496,37 +498,6 @@
     ],
     "requires_membership": true,
     "bot_service_type": "personal_care",
-    "borough": "Manhattan"
-  },
-  {
-    "service_id": "07d4cf48-0fdd-41d4-904b-0365d6c35688",
-    "service_name": "Green Market",
-    "organization_name": "GrowNYC Greenmarket",
-    "service_description": "\u2022 Various produce and meats are available for purchase. \u2022 See how to apply your benefits to your purchases <a href=\"https://grownyc.org/use-benefits/\" target=\"_blank\" rel=\"noopener noreferrer\">here </a>.",
-    "location_id": "a3998b0d-ecc4-46c3-9252-c2dd7f8a944b",
-    "location_name": "Union Square Greenmarket",
-    "location_slug": "grownyc-greenmarket-17th-st-bet-broadway-and-park-ave-south-union-square-west-bet-17th-str-and-15th-st",
-    "last_validated_at": "2026-04-20T18:16:36.112Z",
-    "address": "17th St bet Broadway and Park Ave South, Union Square West bet 17th Str and 15th St",
-    "city": "New York",
-    "state": "NY",
-    "zip_code": "10003",
-    "country": "US",
-    "latitude": 40.73689726863744,
-    "longitude": -73.99041666604495,
-    "phone": "212.788.7476",
-    "service_email": null,
-    "service_url": null,
-    "organization_url": "https://grownyc.org/greenmarket",
-    "fees": null,
-    "service_taxonomies": [
-      "Food Pantry"
-    ],
-    "also_available": null,
-    "accessibility_info": null,
-    "languages_spoken": null,
-    "requires_membership": null,
-    "bot_service_type": "food",
     "borough": "Manhattan"
   },
   {
@@ -661,7 +632,9 @@
     "service_url": null,
     "organization_url": "venturehouse.org",
     "fees": null,
-    "service_taxonomies": null,
+    "service_taxonomies": [
+      "Other service"
+    ],
     "also_available": [
       "Employment",
       "Mental Health"
@@ -892,11 +865,11 @@
     "service_id": "0e435572-4b70-407a-8621-d13dd541e7d3",
     "service_name": "Laundry",
     "organization_name": "New York Common Pantry (NYCP)",
-    "service_description": "Laundry services are available to all unhoused guests. ",
+    "service_description": "Laundry services are available to all unhoused guests.",
     "location_id": "1ebd1a5d-c3a1-404d-aaf2-830552e4deea",
     "location_name": "Manhattan",
     "location_slug": "new-york-common-pantry-nycp",
-    "last_validated_at": "2026-03-23T22:04:30.574Z",
+    "last_validated_at": "2026-05-07T22:03:04.145Z",
     "address": "8 E 109th St",
     "city": "New York",
     "state": "NY",
@@ -907,7 +880,7 @@
     "phone": "9177209700",
     "service_email": null,
     "service_url": null,
-    "organization_url": "nycommonpantry.org",
+    "organization_url": "https://nycommonpantry.org",
     "fees": null,
     "service_taxonomies": [
       "Laundry"
@@ -915,9 +888,9 @@
     "also_available": [
       "Benefits",
       "Brown Bag",
-      "Food",
+      "Food Pantry",
       "Haircut",
-      "Mobile Market",
+      "Legal Services",
       "Shower"
     ],
     "accessibility_info": null,
@@ -959,6 +932,83 @@
     "languages_spoken": null,
     "requires_membership": null,
     "bot_service_type": "shelter",
+    "borough": "Manhattan"
+  },
+  {
+    "service_id": "1030f4d7-e8e4-48b7-b98b-a7bd029a983c",
+    "service_name": "Re-Charge Program",
+    "organization_name": "Housing Works",
+    "service_description": "Services include:\n\u2022 Case Management\n\u2022 Drop-In Groups\n\u2022 Education\n\u2022 Medical Care\n\u2022 Overdose Prevention\n\u2022 PrEP and PEP\n\u2022 Mental Health\n\u2022 STI Treatment\n\u2022 Substance Use Counseling",
+    "location_id": "6229adeb-0857-4617-a72f-3e1656246c47",
+    "location_name": "Positive Health Project",
+    "location_slug": "housing-works-301-w-37th-st",
+    "last_validated_at": "2026-05-08T02:25:36.639Z",
+    "address": "301 W 37th St",
+    "city": "New York",
+    "state": "NY",
+    "zip_code": "10018",
+    "country": "US",
+    "latitude": 40.75446968447803,
+    "longitude": -73.99243622504846,
+    "phone": "212.465.8304",
+    "service_email": null,
+    "service_url": null,
+    "organization_url": "housingworks.org/locations/positive-health-project",
+    "fees": null,
+    "service_taxonomies": [
+      "Health"
+    ],
+    "also_available": [
+      "Benefits",
+      "Health",
+      "Shower"
+    ],
+    "accessibility_info": null,
+    "languages_spoken": [
+      "en"
+    ],
+    "requires_membership": true,
+    "bot_service_type": "medical",
+    "borough": "Manhattan"
+  },
+  {
+    "service_id": "1063499b-676c-4b63-af81-2db03527dc6c",
+    "service_name": "Help 365-Case Management",
+    "organization_name": "New York Common Pantry (NYCP)",
+    "service_description": "Services include:\n\u2022 Case managers will provide benefits screenings and assistance with accessing other service providers. This program is also the entry point for all new members. All first-time registrants will receive emergency bags of food appropriate for the family size.\n\u2022 Services provided are:\n\u2022 Substance use referrals\n\u2022 SSI and SSDI applications\n\u2022 Clothing distribution\n\u2022 Housing and psychiatry enrollment and services for HRA 2010E recipients\n\u2022 Employment and education\n\u2022 Obtaining documents Wednesdays and Thursdays 10:00 AM - 2:00 PM",
+    "location_id": "1ebd1a5d-c3a1-404d-aaf2-830552e4deea",
+    "location_name": "Manhattan",
+    "location_slug": "new-york-common-pantry-nycp",
+    "last_validated_at": "2026-05-07T22:03:04.145Z",
+    "address": "8 E 109th St",
+    "city": "New York",
+    "state": "NY",
+    "zip_code": "10029",
+    "country": "US",
+    "latitude": 40.795866,
+    "longitude": -73.949163,
+    "phone": "9177209700",
+    "service_email": null,
+    "service_url": null,
+    "organization_url": "https://nycommonpantry.org",
+    "fees": null,
+    "service_taxonomies": [
+      "Benefits"
+    ],
+    "also_available": [
+      "Brown Bag",
+      "Food Pantry",
+      "Haircut",
+      "Laundry",
+      "Legal Services",
+      "Shower"
+    ],
+    "accessibility_info": null,
+    "languages_spoken": [
+      "en"
+    ],
+    "requires_membership": false,
+    "bot_service_type": "other",
     "borough": "Manhattan"
   },
   {
@@ -1207,7 +1257,9 @@
     "service_url": null,
     "organization_url": "venturehouse.org/social-recreation-services",
     "fees": null,
-    "service_taxonomies": null,
+    "service_taxonomies": [
+      "Other service"
+    ],
     "also_available": [
       "Employment",
       "Mental Health"
@@ -1219,6 +1271,48 @@
     "requires_membership": true,
     "bot_service_type": "other",
     "borough": "Staten Island"
+  },
+  {
+    "service_id": "174a507a-5112-4357-9dd7-e797c1272063",
+    "service_name": "Choice Pantry",
+    "organization_name": "New York Common Pantry (NYCP)",
+    "service_description": "The income cap for one person is under $1,600 monthly. Pantry packages are supplemental groceries in five food categories: protein, dairy, grains, fruits, and vegetables, based on the number of family members, and are provided every two weeks.",
+    "location_id": "1ebd1a5d-c3a1-404d-aaf2-830552e4deea",
+    "location_name": "Manhattan",
+    "location_slug": "new-york-common-pantry-nycp",
+    "last_validated_at": "2026-05-07T22:03:04.145Z",
+    "address": "8 E 109th St",
+    "city": "New York",
+    "state": "NY",
+    "zip_code": "10029",
+    "country": "US",
+    "latitude": 40.795866,
+    "longitude": -73.949163,
+    "phone": "9177209700",
+    "service_email": null,
+    "service_url": null,
+    "organization_url": "https://nycommonpantry.org",
+    "fees": null,
+    "service_taxonomies": [
+      "Food Pantry"
+    ],
+    "also_available": [
+      "Benefits",
+      "Brown Bag",
+      "Food Pantry",
+      "Haircut",
+      "Laundry",
+      "Legal Services",
+      "Shower"
+    ],
+    "accessibility_info": null,
+    "languages_spoken": [
+      "en",
+      "zh"
+    ],
+    "requires_membership": false,
+    "bot_service_type": "food",
+    "borough": "Manhattan"
   },
   {
     "service_id": "184646b6-8032-425f-a5db-ff3ba111b16c",
@@ -1363,6 +1457,37 @@
     "borough": "Bronx"
   },
   {
+    "service_id": "19307d54-f4bb-4827-9b92-515dbf09005e",
+    "service_name": "Food Pantry",
+    "organization_name": "Presbyterian Church of the Crossroad Food Pantry",
+    "service_description": null,
+    "location_id": "c4ab288d-d002-49cb-92d9-0aa9f1eb03fa",
+    "location_name": null,
+    "location_slug": "presbyterian-church-of-the-crossroad-food-pantry-bedford-stuyvesant",
+    "last_validated_at": "2026-05-06T17:32:46.524Z",
+    "address": "133 Elton Street",
+    "city": "BROOKLYN",
+    "state": "NY",
+    "zip_code": "11205",
+    "country": "US",
+    "latitude": 40.680541,
+    "longitude": -73.88459619999999,
+    "phone": "7182359843",
+    "service_email": null,
+    "service_url": null,
+    "organization_url": null,
+    "fees": null,
+    "service_taxonomies": [
+      "Food Pantry"
+    ],
+    "also_available": null,
+    "accessibility_info": null,
+    "languages_spoken": null,
+    "requires_membership": null,
+    "bot_service_type": "food",
+    "borough": "Brooklyn"
+  },
+  {
     "service_id": "1978f167-be97-4704-8b40-670993167dd5",
     "service_name": "Lunch",
     "organization_name": "Metropolitan Community Church of New York (MCCNY) Charities",
@@ -1467,6 +1592,50 @@
     "borough": "Brooklyn"
   },
   {
+    "service_id": "1aacefdb-0102-4f11-8118-95495c08efb9",
+    "service_name": "Breakfast, Lunch, and Seconds",
+    "organization_name": "Safe Horizon - Streetwork Project",
+    "service_description": "Free Breakfast and Lunch. Two servings.",
+    "location_id": "29301fb5-020f-473d-9cff-70584edad23c",
+    "location_name": "Uptown/Harlem DYCD Youth Drop-in Center",
+    "location_slug": "safe-horizon-streetwork-project-harlem",
+    "last_validated_at": "2026-03-23T22:11:28.633Z",
+    "address": "209 W 125th St, 2nd Fl",
+    "city": "New York",
+    "state": "NY",
+    "zip_code": "10027",
+    "country": "US",
+    "latitude": 40.8093846,
+    "longitude": -73.9487839,
+    "phone": "2126952220",
+    "service_email": null,
+    "service_url": null,
+    "organization_url": "safehorizon.org/streetwork",
+    "fees": null,
+    "service_taxonomies": [
+      "Food"
+    ],
+    "also_available": [
+      "Clothing Pantry",
+      "Drop-in Center",
+      "Food Pantry",
+      "Laundry",
+      "Legal Services",
+      "Mental Health",
+      "Personal Care",
+      "Referral",
+      "Support Groups"
+    ],
+    "accessibility_info": null,
+    "languages_spoken": [
+      "en",
+      "es"
+    ],
+    "requires_membership": true,
+    "bot_service_type": "food",
+    "borough": "Manhattan"
+  },
+  {
     "service_id": "1afa5a23-0688-479e-8f4e-797594a547d4",
     "service_name": "Closet of Hope",
     "organization_name": "Race Track Chaplaincy N.Y. Division",
@@ -1499,40 +1668,6 @@
     "requires_membership": null,
     "bot_service_type": "clothing",
     "borough": "Queens"
-  },
-  {
-    "service_id": "1c3d9d2c-939f-4bd6-9066-679dff2c15d7",
-    "service_name": "Methadone Maintenance Treatment Program",
-    "organization_name": "NYC Health + Hospitals",
-    "service_description": "Services include:\n\u2022 Individual and Group Therapy\n\u2022 Medication-Assisted Treatment\n\u2022 Outpatient Substance Use Treatment\n\u2022 Relapse Prevention\n\u2022 Social Work\n\u2022 Telehealth\n\u2022 Vocational Counseling",
-    "location_id": "617a91d3-d06e-4f1a-99f3-fab19003de36",
-    "location_name": "Gouverneur Clinic MMTP",
-    "location_slug": "nyc-health-hospitals-lower-east-side",
-    "last_validated_at": "2026-04-27T15:36:03.937Z",
-    "address": "109 Delancey St",
-    "city": "New York",
-    "state": "NY",
-    "zip_code": "10002",
-    "country": "US",
-    "latitude": 40.71844928164523,
-    "longitude": -73.98865196650212,
-    "phone": "2126142840",
-    "service_email": null,
-    "service_url": null,
-    "organization_url": "nychealthandhospitals.org/locations/gouverneur",
-    "fees": null,
-    "service_taxonomies": [
-      "Health"
-    ],
-    "also_available": null,
-    "accessibility_info": null,
-    "languages_spoken": [
-      "en",
-      "es"
-    ],
-    "requires_membership": true,
-    "bot_service_type": "medical",
-    "borough": "Manhattan"
   },
   {
     "service_id": "1d3384c5-740a-4045-84a6-0d4e210b192e",
@@ -1659,7 +1794,9 @@
     "service_url": null,
     "organization_url": "nazarethhousingnyc.org",
     "fees": null,
-    "service_taxonomies": null,
+    "service_taxonomies": [
+      "Other service"
+    ],
     "also_available": [
       "Food Pantry"
     ],
@@ -1671,6 +1808,43 @@
     "requires_membership": false,
     "bot_service_type": "other",
     "borough": "Bronx"
+  },
+  {
+    "service_id": "2099ed89-f029-4e94-b3e5-985caa2dce02",
+    "service_name": "Benefits Counseling",
+    "organization_name": "Housing Works",
+    "service_description": "This service helps people understand how working may impact their state and federal benefits. Counselors also help individuals learn about other programs they may be eligible for and refer them to the appropriate resources. ",
+    "location_id": "6229adeb-0857-4617-a72f-3e1656246c47",
+    "location_name": "Positive Health Project",
+    "location_slug": "housing-works-301-w-37th-st",
+    "last_validated_at": "2026-05-08T02:25:36.639Z",
+    "address": "301 W 37th St",
+    "city": "New York",
+    "state": "NY",
+    "zip_code": "10018",
+    "country": "US",
+    "latitude": 40.75446968447803,
+    "longitude": -73.99243622504846,
+    "phone": "212.465.8304",
+    "service_email": null,
+    "service_url": null,
+    "organization_url": "housingworks.org/locations/positive-health-project",
+    "fees": null,
+    "service_taxonomies": [
+      "Benefits"
+    ],
+    "also_available": [
+      "Health",
+      "Shower"
+    ],
+    "accessibility_info": null,
+    "languages_spoken": [
+      "en",
+      "es"
+    ],
+    "requires_membership": false,
+    "bot_service_type": "other",
+    "borough": "Manhattan"
   },
   {
     "service_id": "20fea279-47f3-49c8-b7d9-584d0f5e17f8",
@@ -1813,6 +1987,49 @@
     "borough": "Staten Island"
   },
   {
+    "service_id": "227c22dc-8f84-46ff-8fb9-bc46fcf13fea",
+    "service_name": "Support Groups",
+    "organization_name": "Safe Horizon - Streetwork Project",
+    "service_description": "Frequent open (available to all by a walk-in)  and closed (available to eligible participants via sign-up) virtual and in-person groups. ",
+    "location_id": "29301fb5-020f-473d-9cff-70584edad23c",
+    "location_name": "Uptown/Harlem DYCD Youth Drop-in Center",
+    "location_slug": "safe-horizon-streetwork-project-harlem",
+    "last_validated_at": "2026-03-23T22:11:28.633Z",
+    "address": "209 W 125th St, 2nd Fl",
+    "city": "New York",
+    "state": "NY",
+    "zip_code": "10027",
+    "country": "US",
+    "latitude": 40.8093846,
+    "longitude": -73.9487839,
+    "phone": "2126952220",
+    "service_email": null,
+    "service_url": null,
+    "organization_url": "safehorizon.org/streetwork",
+    "fees": null,
+    "service_taxonomies": [
+      "Support Groups"
+    ],
+    "also_available": [
+      "Clothing Pantry",
+      "Drop-in Center",
+      "Food",
+      "Food Pantry",
+      "Laundry",
+      "Legal Services",
+      "Mental Health",
+      "Personal Care",
+      "Referral"
+    ],
+    "accessibility_info": null,
+    "languages_spoken": [
+      "en"
+    ],
+    "requires_membership": true,
+    "bot_service_type": "medical",
+    "borough": "Manhattan"
+  },
+  {
     "service_id": "235aee4a-98da-45c4-8dc3-3e6d218e130f",
     "service_name": "Intake for Prospective Clients",
     "organization_name": "Project Hospitality",
@@ -1891,6 +2108,44 @@
     "requires_membership": true,
     "bot_service_type": "personal_care",
     "borough": "Staten Island"
+  },
+  {
+    "service_id": "23d4a0b0-1344-45cd-83e8-a08ea68a9e0c",
+    "service_name": "Harm Reduction Program",
+    "organization_name": "Housing Works",
+    "service_description": "Services include:\n\u2022 Case Management and\n\u2022 Free HIV and Hep-C Testing, STI treatment\n\u2022 Health Education\n\u2022 Medical and Mental Health\n\u2022 Medication-Assisted Treatment\n\u2022 Overdose Prevention\n\u2022 Syringe Exchange (there is an after-hours pop-in substance use program for clients, inquire within)",
+    "location_id": "6229adeb-0857-4617-a72f-3e1656246c47",
+    "location_name": "Positive Health Project",
+    "location_slug": "housing-works-301-w-37th-st",
+    "last_validated_at": "2026-05-08T02:25:36.639Z",
+    "address": "301 W 37th St",
+    "city": "New York",
+    "state": "NY",
+    "zip_code": "10018",
+    "country": "US",
+    "latitude": 40.75446968447803,
+    "longitude": -73.99243622504846,
+    "phone": "212.465.8304",
+    "service_email": null,
+    "service_url": null,
+    "organization_url": "housingworks.org/locations/positive-health-project",
+    "fees": null,
+    "service_taxonomies": [
+      "Health"
+    ],
+    "also_available": [
+      "Benefits",
+      "Health",
+      "Shower"
+    ],
+    "accessibility_info": null,
+    "languages_spoken": [
+      "en",
+      "es"
+    ],
+    "requires_membership": false,
+    "bot_service_type": "medical",
+    "borough": "Manhattan"
   },
   {
     "service_id": "2486f0e9-afe9-48e6-96c4-7f100e7e3221",
@@ -2018,7 +2273,9 @@
     "service_url": null,
     "organization_url": "oasiscenter.nyc",
     "fees": null,
-    "service_taxonomies": null,
+    "service_taxonomies": [
+      "Other service"
+    ],
     "also_available": null,
     "accessibility_info": null,
     "languages_spoken": null,
@@ -2218,7 +2475,9 @@
     "service_url": null,
     "organization_url": "maketheroadny.org",
     "fees": null,
-    "service_taxonomies": null,
+    "service_taxonomies": [
+      "Other service"
+    ],
     "also_available": null,
     "accessibility_info": null,
     "languages_spoken": null,
@@ -2247,7 +2506,9 @@
     "service_url": null,
     "organization_url": "maketheroadny.org",
     "fees": null,
-    "service_taxonomies": null,
+    "service_taxonomies": [
+      "Other service"
+    ],
     "also_available": null,
     "accessibility_info": null,
     "languages_spoken": null,
@@ -2331,44 +2592,6 @@
     "borough": "Manhattan"
   },
   {
-    "service_id": "2ba28816-f7cc-4b89-9110-06841159c798",
-    "service_name": "Case Management",
-    "organization_name": "Translatinx Network",
-    "service_description": "Some medical case management services are available but primarily involve referrals to resources. ",
-    "location_id": "261aeda6-9363-49ac-a90f-0d8322cd9c56",
-    "location_name": "New Location, Headquarters",
-    "location_slug": "translatinx-network-chelsea",
-    "last_validated_at": "2026-04-09T20:39:13.372Z",
-    "address": "127 W 26th St",
-    "city": "New York",
-    "state": "NY",
-    "zip_code": "10001",
-    "country": "US",
-    "latitude": 40.74541510807298,
-    "longitude": -73.99255104932571,
-    "phone": "6468822000",
-    "service_email": null,
-    "service_url": null,
-    "organization_url": "https://translatinxnetwork.org",
-    "fees": null,
-    "service_taxonomies": null,
-    "also_available": [
-      "Clothing Pantry",
-      "Education",
-      "Food",
-      "Health",
-      "Toiletries"
-    ],
-    "accessibility_info": null,
-    "languages_spoken": [
-      "en",
-      "es"
-    ],
-    "requires_membership": true,
-    "bot_service_type": "other",
-    "borough": "Manhattan"
-  },
-  {
     "service_id": "2c2124ff-39df-4ce3-ba00-584426bcc5e6",
     "service_name": "Nourish",
     "organization_name": "New York Common Pantry (NYCP)",
@@ -2404,6 +2627,39 @@
     "requires_membership": true,
     "bot_service_type": "food",
     "borough": "Bronx"
+  },
+  {
+    "service_id": "2c781085-75e3-46b5-9088-b02ea7125b01",
+    "service_name": "Cultural Resources",
+    "organization_name": "BROOKLYN BOTANIC GARDEN",
+    "service_description": null,
+    "location_id": "83cc4757-0667-4f49-93a2-e3d5b0b04f27",
+    "location_name": null,
+    "location_slug": "brooklyn-botanic-garden-prospect-lefferts-gardens",
+    "last_validated_at": "2026-05-11T14:21:37.401Z",
+    "address": "990 Washington Avenue",
+    "city": "Brooklyn",
+    "state": "NY",
+    "zip_code": "11225",
+    "country": "US",
+    "latitude": 40.6676216,
+    "longitude": -73.9631907,
+    "phone": "718.623.7200",
+    "service_email": null,
+    "service_url": null,
+    "organization_url": "www.bbg.org",
+    "fees": null,
+    "service_taxonomies": [
+      "Other service"
+    ],
+    "also_available": null,
+    "accessibility_info": null,
+    "languages_spoken": [
+      "en"
+    ],
+    "requires_membership": false,
+    "bot_service_type": "other",
+    "borough": "Brooklyn"
   },
   {
     "service_id": "2c7895b2-fe1e-481e-a819-eff31d71dcde",
@@ -2506,40 +2762,6 @@
     "requires_membership": false,
     "bot_service_type": "food",
     "borough": "Queens"
-  },
-  {
-    "service_id": "2e3ea521-9ec7-44f5-9599-a1e3c00efabf",
-    "service_name": "Advocates / Legal Aid",
-    "organization_name": "Lambda Legal",
-    "service_description": "Legal assistance for the LGBTQIA2S+ community and all individuals living with HIV. Lambda provides advocacy with employment, fair courts, family, healthcare, HIV, immigration, criminal justice, transgender rights, racial justice, and low-income advocacy.    ",
-    "location_id": "09b27fde-9f8e-4d92-acda-5c82d8572f8a",
-    "location_name": "National Headquarters",
-    "location_slug": "lambda-legal-financial-district",
-    "last_validated_at": "2026-03-23T21:55:49.886Z",
-    "address": "120 Wall St, 19th Floor",
-    "city": "New York",
-    "state": "NY",
-    "zip_code": "10005",
-    "country": "US",
-    "latitude": 40.70459446878901,
-    "longitude": -74.00627205354137,
-    "phone": "2128098585",
-    "service_email": null,
-    "service_url": null,
-    "organization_url": "https://lambdalegal.org/contact/",
-    "fees": null,
-    "service_taxonomies": [
-      "Legal Services"
-    ],
-    "also_available": null,
-    "accessibility_info": null,
-    "languages_spoken": [
-      "en",
-      "es"
-    ],
-    "requires_membership": true,
-    "bot_service_type": "legal",
-    "borough": "Manhattan"
   },
   {
     "service_id": "2eae0a72-b448-48fc-a838-dd471812b991",
@@ -2900,41 +3122,6 @@
     "borough": "Manhattan"
   },
   {
-    "service_id": "385835c3-b324-4dd2-89ec-754dab8e81b7",
-    "service_name": "Community Solutions",
-    "organization_name": "Center for Community Alternatives (CCA)",
-    "service_description": "This Alternative to Incarceration (ATI) Program includes:\n\u2022 Anger Management\n\u2022 Curfew Monitoring\n\u2022 Domestic Violence\n\u2022 Employment and Vocational Services\n\u2022 Evidence-Based Groups\n\u2022 Individualized Housing Support\n\u2022 Mental Health Counseling\n\u2022 Mentoring Services\n\u2022 On-Site HIV Testing\n\u2022 Toxicology Screenings",
-    "location_id": "7f7671f7-0183-43d4-9cf8-18fe018d5162",
-    "location_name": "Brooklyn",
-    "location_slug": "center-for-community-alternatives-cca-downtown-brooklyn",
-    "last_validated_at": "2026-05-04T14:24:08.588Z",
-    "address": "25 Chapel Street, 7th Floor",
-    "city": "Brooklyn",
-    "state": "NY",
-    "zip_code": "11201",
-    "country": "US",
-    "latitude": 40.6973327,
-    "longitude": -73.9860515,
-    "phone": "7188589658",
-    "service_email": null,
-    "service_url": null,
-    "organization_url": "communityalternatives.org",
-    "fees": null,
-    "service_taxonomies": null,
-    "also_available": [
-      "Health",
-      "Legal Services"
-    ],
-    "accessibility_info": null,
-    "languages_spoken": [
-      "en",
-      "es"
-    ],
-    "requires_membership": true,
-    "bot_service_type": "other",
-    "borough": "Brooklyn"
-  },
-  {
     "service_id": "385aae9b-3a87-4f8e-a9de-f9441c6c81c7",
     "service_name": "The Bridge Program and Mental Health",
     "organization_name": "NYC Health + Hospitals/Gotham Health",
@@ -2991,7 +3178,9 @@
     "service_url": null,
     "organization_url": "ny.covenanthouse.org",
     "fees": null,
-    "service_taxonomies": null,
+    "service_taxonomies": [
+      "Other service"
+    ],
     "also_available": [
       "Benefits",
       "Clothing Pantry",
@@ -3115,40 +3304,49 @@
     "borough": "Manhattan"
   },
   {
-    "service_id": "4008307b-d4f2-4691-ae80-a80766176be5",
-    "service_name": "Walk-in Pregnancy Test",
-    "organization_name": "Public Health Solutions (PHS)",
-    "service_description": "Free testing, no insurance required, and not limited to patients of the clinic.",
-    "location_id": "75e16652-aff8-48b6-aaab-c7bfb848d614",
-    "location_name": "Fort Greene",
-    "location_slug": "public-health-solutions-phs-downtown-brooklyn",
-    "last_validated_at": "2026-05-04T13:20:59.005Z",
-    "address": "295 Flatbush Ave Ext, 3d floor",
-    "city": "Brooklyn",
+    "service_id": "3e536974-51f5-4525-aa57-78d7fbf82def",
+    "service_name": "Mail and Packages Pick-Up, Residency Letters",
+    "organization_name": "Safe Horizon - Streetwork Project",
+    "service_description": "You may use any name, please memorize it in order to obtain your mail/packages. If you do not pick up your mail within 30 days, it will be returned to sender. If you reside in a shelter, specifically associated with Safe Horizon, you may obtain a letter stating your income and services you receive here to prove your situation when applying for SNAP and other benefits.",
+    "location_id": "29301fb5-020f-473d-9cff-70584edad23c",
+    "location_name": "Uptown/Harlem DYCD Youth Drop-in Center",
+    "location_slug": "safe-horizon-streetwork-project-harlem",
+    "last_validated_at": "2026-03-23T22:11:28.633Z",
+    "address": "209 W 125th St, 2nd Fl",
+    "city": "New York",
     "state": "NY",
-    "zip_code": "11201",
+    "zip_code": "10027",
     "country": "US",
-    "latitude": 40.69176583249878,
-    "longitude": -73.98205601146975,
-    "phone": "7185221144",
+    "latitude": 40.8093846,
+    "longitude": -73.9487839,
+    "phone": "2126952220",
     "service_email": null,
     "service_url": null,
-    "organization_url": "healthsolutions.org",
+    "organization_url": "safehorizon.org/streetwork",
     "fees": null,
     "service_taxonomies": [
-      "Health"
+      "Other service"
     ],
     "also_available": [
-      "Health",
-      "Mental Health"
+      "Clothing Pantry",
+      "Drop-in Center",
+      "Food",
+      "Food Pantry",
+      "Laundry",
+      "Legal Services",
+      "Mental Health",
+      "Personal Care",
+      "Referral",
+      "Support Groups"
     ],
     "accessibility_info": null,
     "languages_spoken": [
-      "en"
+      "en",
+      "es"
     ],
-    "requires_membership": false,
-    "bot_service_type": "medical",
-    "borough": "Brooklyn"
+    "requires_membership": true,
+    "bot_service_type": "other",
+    "borough": "Manhattan"
   },
   {
     "service_id": "42363bc0-76b9-466f-8334-9eb7acc428cc",
@@ -3202,7 +3400,9 @@
     "service_url": null,
     "organization_url": "maketheroadny.org",
     "fees": null,
-    "service_taxonomies": null,
+    "service_taxonomies": [
+      "Other service"
+    ],
     "also_available": null,
     "accessibility_info": null,
     "languages_spoken": [
@@ -3282,37 +3482,6 @@
     "borough": "Staten Island"
   },
   {
-    "service_id": "486594a5-ce39-4a1e-b924-cb47bfd81224",
-    "service_name": "Green Market",
-    "organization_name": "GrowNYC Greenmarket",
-    "service_description": "\u2022 Various produce and meats are available for purchase. \u2022 See how to apply your benefits to your purchases <a href=\"https://grownyc.org/use-benefits/\" target=\"_blank\" rel=\"noopener noreferrer\">here </a>.",
-    "location_id": "04221f0d-9099-4edf-864d-3152619d9cce",
-    "location_name": "Abingdon Square Greenmarket",
-    "location_slug": "grownyc-greenmarket-abingdon-square",
-    "last_validated_at": "2026-04-22T17:20:19.577Z",
-    "address": "Abingdon Square",
-    "city": "New York",
-    "state": "NY",
-    "zip_code": "10038",
-    "country": "US",
-    "latitude": 40.737205,
-    "longitude": -74.00565181889804,
-    "phone": "2127887476",
-    "service_email": null,
-    "service_url": null,
-    "organization_url": "https://grownyc.org/greenmarket",
-    "fees": null,
-    "service_taxonomies": [
-      "Food Pantry"
-    ],
-    "also_available": null,
-    "accessibility_info": null,
-    "languages_spoken": null,
-    "requires_membership": false,
-    "bot_service_type": "food",
-    "borough": "Manhattan"
-  },
-  {
     "service_id": "48905bc0-e1db-4b27-ae8b-8c26d018144b",
     "service_name": "Community Services",
     "organization_name": "Center for Family Life",
@@ -3333,7 +3502,9 @@
     "service_url": null,
     "organization_url": "centerforfamilylife.org",
     "fees": null,
-    "service_taxonomies": null,
+    "service_taxonomies": [
+      "Other service"
+    ],
     "also_available": [
       "Food Pantry"
     ],
@@ -3641,40 +3812,42 @@
     "borough": "Bronx"
   },
   {
-    "service_id": "526e66d7-2c27-4e8a-9cf0-86dd6c791ef8",
-    "service_name": "GYN",
-    "organization_name": "Public Health Solutions (PHS)",
-    "service_description": "Birth control, family planning, reproductive health screenings, and referrals are available.",
-    "location_id": "75e16652-aff8-48b6-aaab-c7bfb848d614",
-    "location_name": "Fort Greene",
-    "location_slug": "public-health-solutions-phs-downtown-brooklyn",
-    "last_validated_at": "2026-05-04T13:20:59.005Z",
-    "address": "295 Flatbush Ave Ext, 3d floor",
-    "city": "Brooklyn",
+    "service_id": "5175d10f-634f-4763-9662-07c7c2e67fca",
+    "service_name": "Safety Net Project (SNP) by Urban Justice Center (UJC)",
+    "organization_name": "New York Common Pantry (NYCP)",
+    "service_description": "Help for tenants fighting evictions, obtaining repairs, combating tenant harassment, and succession rights.",
+    "location_id": "1ebd1a5d-c3a1-404d-aaf2-830552e4deea",
+    "location_name": "Manhattan",
+    "location_slug": "new-york-common-pantry-nycp",
+    "last_validated_at": "2026-05-07T22:03:04.145Z",
+    "address": "8 E 109th St",
+    "city": "New York",
     "state": "NY",
-    "zip_code": "11201",
+    "zip_code": "10029",
     "country": "US",
-    "latitude": 40.69176583249878,
-    "longitude": -73.98205601146975,
-    "phone": "7185221144",
+    "latitude": 40.795866,
+    "longitude": -73.949163,
+    "phone": "9177209700",
     "service_email": null,
     "service_url": null,
-    "organization_url": "healthsolutions.org",
+    "organization_url": "https://nycommonpantry.org",
     "fees": null,
     "service_taxonomies": [
-      "Health"
+      "Legal Services"
     ],
     "also_available": [
-      "Health",
-      "Mental Health"
+      "Benefits",
+      "Brown Bag",
+      "Food Pantry",
+      "Haircut",
+      "Laundry",
+      "Shower"
     ],
     "accessibility_info": null,
-    "languages_spoken": [
-      "en"
-    ],
-    "requires_membership": true,
-    "bot_service_type": "medical",
-    "borough": "Brooklyn"
+    "languages_spoken": null,
+    "requires_membership": null,
+    "bot_service_type": "legal",
+    "borough": "Manhattan"
   },
   {
     "service_id": "530ef8ce-97b0-4907-8307-3c8ddb63b9fe",
@@ -4056,37 +4229,6 @@
     "borough": "Manhattan"
   },
   {
-    "service_id": "5d6493cd-adf2-4b12-8771-b4e89c5cb382",
-    "service_name": "Green Market",
-    "organization_name": "GrowNYC Greenmarket",
-    "service_description": "\u2022 Various produce and meats are available for purchase. \u2022 See how to apply your benefits to your purchases <a href=\"https://grownyc.org/use-benefits/\" target=\"_blank\" rel=\"noopener noreferrer\">here </a>.",
-    "location_id": "454c0a6c-f861-41df-9258-5e4de44bf073",
-    "location_name": "Tribeca Greenmarket",
-    "location_slug": "grownyc-greenmarket-greenwich-st-between-chambers-and-duane-sts",
-    "last_validated_at": "2026-04-20T17:28:45.106Z",
-    "address": "Greenwich St between Chambers and Duane Sts",
-    "city": "New York",
-    "state": "NY",
-    "zip_code": "10013",
-    "country": "US",
-    "latitude": 40.716966,
-    "longitude": -74.010881,
-    "phone": "212.788.7476",
-    "service_email": null,
-    "service_url": null,
-    "organization_url": "https://grownyc.org/greenmarket",
-    "fees": null,
-    "service_taxonomies": [
-      "Food Pantry"
-    ],
-    "also_available": null,
-    "accessibility_info": null,
-    "languages_spoken": null,
-    "requires_membership": null,
-    "bot_service_type": "food",
-    "borough": "Manhattan"
-  },
-  {
     "service_id": "5d9a2bfc-df8d-4945-b398-14ac71b400e1",
     "service_name": "Crisis Counseling",
     "organization_name": "Anti-Violence Project (AVP)",
@@ -4196,45 +4338,6 @@
     "borough": "Staten Island"
   },
   {
-    "service_id": "60fd1d61-b9e3-4456-8581-a8c09c0d6966",
-    "service_name": "Toiletries",
-    "organization_name": "New Alternatives - LGBTQIA2S+",
-    "service_description": "Hygiene supplies are available in the Sunday brown bag.",
-    "location_id": "2a2ae9b7-7bb4-4aa5-945b-cbdaacb43fde",
-    "location_name": "Metro Baptist Church",
-    "location_slug": "new-alternatives-lgbtqia2s-hells-kitchen",
-    "last_validated_at": "2026-03-23T22:11:30.808Z",
-    "address": "410 West 40th St",
-    "city": "New York",
-    "state": "NY",
-    "zip_code": "10018",
-    "country": "US",
-    "latitude": 40.75723988823179,
-    "longitude": -73.99430073076091,
-    "phone": "7183000133",
-    "service_email": null,
-    "service_url": null,
-    "organization_url": "newalternativesnyc.org",
-    "fees": null,
-    "service_taxonomies": [
-      "Toiletries"
-    ],
-    "also_available": [
-      "Brown Bag",
-      "Case Workers",
-      "Clothing",
-      "Health",
-      "Support Groups"
-    ],
-    "accessibility_info": null,
-    "languages_spoken": [
-      "en"
-    ],
-    "requires_membership": true,
-    "bot_service_type": "personal_care",
-    "borough": "Manhattan"
-  },
-  {
     "service_id": "60fe8fe9-c63d-43d8-96b4-7504d3e630fe",
     "service_name": "Behavioral Health Support",
     "organization_name": "Project Hospitality ",
@@ -4329,7 +4432,9 @@
     "service_url": null,
     "organization_url": "raices.us",
     "fees": null,
-    "service_taxonomies": null,
+    "service_taxonomies": [
+      "Other service"
+    ],
     "also_available": [
       "Mental Health"
     ],
@@ -4418,6 +4523,78 @@
     "requires_membership": false,
     "bot_service_type": "clothing",
     "borough": "Brooklyn"
+  },
+  {
+    "service_id": "66c9c665-e8ae-406c-a7bf-12f28c949cfe",
+    "service_name": "Patient Services",
+    "organization_name": "NYC Health + Hospitals/Gotham Health",
+    "service_description": "Services include:\n\u2022 Allergy/Immunology (All Ages)\n\u2022 Ambulatory Surgery\n\u2022 Antepartum\n\u2022 Asthma (Kids)\n\u2022 Anticoagulation\n\u2022 Audiology\n\u2022 Bariatric Surgery\n\u2022 Breast Care Surgery\n\u2022 Hematology/Oncology (Breast)\n\u2022 Cardiology (All Ages)\n\u2022 Cardiothoracic Surgery\n\u2022 Chemical Dependency\n\u2022 Opioid Treatment Programs\n\u2022 Child Services\n\u2022 Dermatology (All Ages)\n\u2022 Developmental Evaluation (Kids)\n\u2022 Diabetes Education\n\u2022 Diagnostic Cardiology\n\u2022 Emergency Psychiatry\n\u2022 Endocrinology (All Ages)\n\u2022 ENT\n\u2022 Gastroenterology (All Ages)\n\u2022 General Surgery\n\u2022 Genetics (Kids)\n\u2022 Hematology\n\u2022 Oncology (All Ages)\n\u2022 Hepatology\n\u2022 Infectious Disease\n\u2022 Nephrology (All Ages)\n\u2022 Neurology (All Ages)\n\u2022 Neuropsychology\n\u2022 Neurosurgery\n\u2022 OBGYN\n\u2022 Ophthalmology\n\u2022 Oral Surgery\n\u2022 Orthopedics\n\u2022 Lab\n\u2022 Pain Management\n\u2022 Palliative Care\n\u2022 Psychiatry\n\u2022 Physical Medicine & Rehab\n\u2022 Physical Therapy\n\u2022 Plastic Surgery\n\u2022 Podiatry\n\u2022 Port Clinic\n\u2022 Primary Care (All Ages)\n\u2022 Pulmonary (All Ages)\n\u2022 Rheumatology\n\u2022 Sickle Cell\n\u2022 Sleep Lab\n\u2022 Smoking Cessation\n\u2022 Speech Therapy\n\u2022 Surgical Oncology\n\u2022 Surgery (Kids)\n\u2022 Uro-Oncology\n\u2022 Urology\n\u2022 Vascular Surgery",
+    "location_id": "7d7ff441-34a8-4203-8a58-b6c200270653",
+    "location_name": "Kings County",
+    "location_slug": "nyc-health-hospitalsgotham-health",
+    "last_validated_at": "2026-05-06T17:23:21.791Z",
+    "address": "451 Clarkson Ave",
+    "city": "Brooklyn",
+    "state": "NY",
+    "zip_code": "11203",
+    "country": "US",
+    "latitude": 40.656415,
+    "longitude": -73.943102,
+    "phone": "7182453131",
+    "service_email": null,
+    "service_url": null,
+    "organization_url": null,
+    "fees": null,
+    "service_taxonomies": [
+      "General Health"
+    ],
+    "also_available": [
+      "General Health"
+    ],
+    "accessibility_info": null,
+    "languages_spoken": [
+      "en",
+      "es"
+    ],
+    "requires_membership": false,
+    "bot_service_type": "medical",
+    "borough": "Brooklyn"
+  },
+  {
+    "service_id": "66e59696-d29e-42e3-958e-50126491107a",
+    "service_name": "Overdose Prevention",
+    "organization_name": "Housing Works",
+    "service_description": "Learn how to prevent overdoses",
+    "location_id": "33aaa49d-e67a-4627-9d6b-eacd6c055975",
+    "location_name": "Cylar House Community Health Center",
+    "location_slug": "housing-works",
+    "last_validated_at": "2026-05-08T18:25:45.574Z",
+    "address": "743-749 E 9th St",
+    "city": "New York",
+    "state": "NY",
+    "zip_code": "10009",
+    "country": "US",
+    "latitude": 40.724683056900965,
+    "longitude": -73.97614434001972,
+    "phone": "7182770386",
+    "service_email": null,
+    "service_url": null,
+    "organization_url": "healthcare.housingworks.org/services/primary-care",
+    "fees": null,
+    "service_taxonomies": [
+      "Education"
+    ],
+    "also_available": [
+      "Health"
+    ],
+    "accessibility_info": null,
+    "languages_spoken": [
+      "en",
+      "es"
+    ],
+    "requires_membership": false,
+    "bot_service_type": "other",
+    "borough": "Manhattan"
   },
   {
     "service_id": "67784cc5-55e5-4d3b-8bca-6579b4225d6f",
@@ -4581,7 +4758,9 @@
     "service_url": null,
     "organization_url": "https://unlocal.org",
     "fees": null,
-    "service_taxonomies": null,
+    "service_taxonomies": [
+      "Other service"
+    ],
     "also_available": [
       "Clothing Pantry"
     ],
@@ -4686,7 +4865,9 @@
     "service_url": null,
     "organization_url": "fumcsi.org",
     "fees": null,
-    "service_taxonomies": null,
+    "service_taxonomies": [
+      "Other service"
+    ],
     "also_available": [
       "Food Pantry"
     ],
@@ -4847,41 +5028,6 @@
     "languages_spoken": null,
     "requires_membership": null,
     "bot_service_type": "mental_health",
-    "borough": "Brooklyn"
-  },
-  {
-    "service_id": "71ae19b2-b061-46af-b230-5e8482d325a7",
-    "service_name": "Family Court Client-Specific Planning",
-    "organization_name": "Center for Community Alternatives (CCA)",
-    "service_description": "Up to one year of community-based supervision as an Alternative to Placement (ATP) for juvenile justice-involved youth. This program helps youth with pending juvenile delinquency petitions in Family Court live at home, remain in school, abide by court mandates, and stay out of further trouble.",
-    "location_id": "7f7671f7-0183-43d4-9cf8-18fe018d5162",
-    "location_name": "Brooklyn",
-    "location_slug": "center-for-community-alternatives-cca-downtown-brooklyn",
-    "last_validated_at": "2026-05-04T14:24:08.588Z",
-    "address": "25 Chapel Street, 7th Floor",
-    "city": "Brooklyn",
-    "state": "NY",
-    "zip_code": "11201",
-    "country": "US",
-    "latitude": 40.6973327,
-    "longitude": -73.9860515,
-    "phone": "7188589658",
-    "service_email": null,
-    "service_url": null,
-    "organization_url": "communityalternatives.org",
-    "fees": null,
-    "service_taxonomies": null,
-    "also_available": [
-      "Health",
-      "Legal Services"
-    ],
-    "accessibility_info": null,
-    "languages_spoken": [
-      "en",
-      "es"
-    ],
-    "requires_membership": true,
-    "bot_service_type": "other",
     "borough": "Brooklyn"
   },
   {
@@ -5056,6 +5202,37 @@
     "borough": "Queens"
   },
   {
+    "service_id": "763e00b6-847f-4c17-909b-8ac89623f310",
+    "service_name": "General Health ",
+    "organization_name": "Housing Works ",
+    "service_description": null,
+    "location_id": "acc1e949-8ad5-4fc5-9a26-1b0ceb7e9cf2",
+    "location_name": "125th Street Community Health Center",
+    "location_slug": "housing-works-145-e-125th-st",
+    "last_validated_at": "2026-05-08T06:04:04.648Z",
+    "address": "145 E 125th St",
+    "city": "New York",
+    "state": "NY",
+    "zip_code": "10035",
+    "country": "US",
+    "latitude": 40.804394,
+    "longitude": -73.937075,
+    "phone": "9173101841",
+    "service_email": null,
+    "service_url": null,
+    "organization_url": "https://healthcare.housingworks.org/",
+    "fees": null,
+    "service_taxonomies": [
+      "General Health"
+    ],
+    "also_available": null,
+    "accessibility_info": null,
+    "languages_spoken": null,
+    "requires_membership": null,
+    "bot_service_type": "medical",
+    "borough": "Manhattan"
+  },
+  {
     "service_id": "77546d28-2803-4eee-bb9a-9e07d4b76af0",
     "service_name": "Food Pantry",
     "organization_name": "Calvary Assembly of God ",
@@ -5178,7 +5355,9 @@
     "service_url": null,
     "organization_url": "https://riseboro.org/program/older-adult-centers-clubs/",
     "fees": null,
-    "service_taxonomies": null,
+    "service_taxonomies": [
+      "Other service"
+    ],
     "also_available": null,
     "accessibility_info": null,
     "languages_spoken": null,
@@ -5218,6 +5397,80 @@
     ],
     "requires_membership": null,
     "bot_service_type": "employment",
+    "borough": "Manhattan"
+  },
+  {
+    "service_id": "7dbba3b9-b483-45b7-8eb8-535f44d80a89",
+    "service_name": "Shower",
+    "organization_name": "New York Common Pantry (NYCP)",
+    "service_description": "Toiletries are provided. First come, first served, provided by Project Dignity Hygiene Services.",
+    "location_id": "1ebd1a5d-c3a1-404d-aaf2-830552e4deea",
+    "location_name": "Manhattan",
+    "location_slug": "new-york-common-pantry-nycp",
+    "last_validated_at": "2026-05-07T22:03:04.145Z",
+    "address": "8 E 109th St",
+    "city": "New York",
+    "state": "NY",
+    "zip_code": "10029",
+    "country": "US",
+    "latitude": 40.795866,
+    "longitude": -73.949163,
+    "phone": "9177209700",
+    "service_email": null,
+    "service_url": null,
+    "organization_url": "https://nycommonpantry.org",
+    "fees": null,
+    "service_taxonomies": [
+      "Shower"
+    ],
+    "also_available": [
+      "Benefits",
+      "Brown Bag",
+      "Food Pantry",
+      "Haircut",
+      "Laundry",
+      "Legal Services"
+    ],
+    "accessibility_info": null,
+    "languages_spoken": [
+      "en"
+    ],
+    "requires_membership": false,
+    "bot_service_type": "personal_care",
+    "borough": "Manhattan"
+  },
+  {
+    "service_id": "7e15b289-7902-4a3f-b343-9f997e625544",
+    "service_name": "Shower",
+    "organization_name": "Housing Works",
+    "service_description": null,
+    "location_id": "6229adeb-0857-4617-a72f-3e1656246c47",
+    "location_name": "Positive Health Project",
+    "location_slug": "housing-works-301-w-37th-st",
+    "last_validated_at": "2026-05-08T02:25:36.639Z",
+    "address": "301 W 37th St",
+    "city": "New York",
+    "state": "NY",
+    "zip_code": "10018",
+    "country": "US",
+    "latitude": 40.75446968447803,
+    "longitude": -73.99243622504846,
+    "phone": "212.465.8304",
+    "service_email": null,
+    "service_url": null,
+    "organization_url": "housingworks.org/locations/positive-health-project",
+    "fees": null,
+    "service_taxonomies": [
+      "Shower"
+    ],
+    "also_available": [
+      "Benefits",
+      "Health"
+    ],
+    "accessibility_info": null,
+    "languages_spoken": null,
+    "requires_membership": null,
+    "bot_service_type": "personal_care",
     "borough": "Manhattan"
   },
   {
@@ -5531,7 +5784,9 @@
     "service_url": null,
     "organization_url": "maketheroadny.org",
     "fees": null,
-    "service_taxonomies": null,
+    "service_taxonomies": [
+      "Other service"
+    ],
     "also_available": null,
     "accessibility_info": null,
     "languages_spoken": null,
@@ -5609,69 +5864,37 @@
     "borough": "Queens"
   },
   {
-    "service_id": "8551289b-0628-40db-b8c9-2249416a11fe",
-    "service_name": "Patient Services",
-    "organization_name": "Damian Family Care Centers",
-    "service_description": "Services include:\n\u2022 Adult Primary Care\n\u2022 Dental\n\u2022 HIV Primary Care\n\u2022 Mental Health Service\n\u2022 Pharmacy Assistance Program\n\u2022 Podiatry",
-    "location_id": "54ea83e9-b461-485a-9bfb-c9c7a80382b1",
-    "location_name": "121st Street Family Health Center, Residential Clinic",
-    "location_slug": "damian-family-care-centers-219-e-121st-st",
-    "last_validated_at": "2026-05-05T15:44:57.824Z",
-    "address": "219 E 121st St",
-    "city": "New York",
+    "service_id": "859ab647-c7d2-4c1d-8571-66d3a4e6834a",
+    "service_name": "Cultural Resources",
+    "organization_name": "BROOKLYN MUSEUM",
+    "service_description": null,
+    "location_id": "aa458e4c-1a71-46e3-91ab-404778dac238",
+    "location_name": null,
+    "location_slug": "brooklyn-museum-clinton-hill",
+    "last_validated_at": "2026-05-11T14:20:20.508Z",
+    "address": "200 Eastern Parkway",
+    "city": "Brooklyn",
     "state": "NY",
-    "zip_code": "10035",
+    "zip_code": "11238",
     "country": "US",
-    "latitude": 40.80090522470578,
-    "longitude": -73.93650285266745,
-    "phone": "6466657022",
+    "latitude": 40.6712083,
+    "longitude": -73.9636299,
+    "phone": "718.638.5000",
     "service_email": null,
     "service_url": null,
-    "organization_url": null,
+    "organization_url": "www.brooklynmuseum.org",
     "fees": null,
     "service_taxonomies": [
-      "Health"
-    ],
-    "also_available": null,
-    "accessibility_info": null,
-    "languages_spoken": null,
-    "requires_membership": true,
-    "bot_service_type": "medical",
-    "borough": "Manhattan"
-  },
-  {
-    "service_id": "865ed66d-6e9b-418d-9ec7-fdbefa091462",
-    "service_name": "Patient Services",
-    "organization_name": "Apicha",
-    "service_description": "Services include:\n\u2022 Behavioral Health \n\u2022 Dental\n\u2022 Health Insurance Enrollment\n\u2022 HIV Prevention and Care\n\u2022 OBGYN\n\u2022 Pediatrics\n\u2022 Pharmacy\n\u2022 Primary Care\n\u2022 Sexual and Reproductive Health\n\u2022 Substance Use Services\n\u2022 Transgender and Gender-Affirming Care",
-    "location_id": "421d2792-3c6a-4759-8ac4-4190e810ddc5",
-    "location_name": "Manhattan",
-    "location_slug": "apicha-tribeca",
-    "last_validated_at": "2026-04-24T17:24:23.081Z",
-    "address": "400 Broadway",
-    "city": "New York",
-    "state": "NY",
-    "zip_code": "10013",
-    "country": "US",
-    "latitude": 40.71866998067306,
-    "longitude": -74.0023259551439,
-    "phone": "212.334.6029",
-    "service_email": null,
-    "service_url": null,
-    "organization_url": "apicha.org",
-    "fees": null,
-    "service_taxonomies": [
-      "Health"
+      "Other service"
     ],
     "also_available": null,
     "accessibility_info": null,
     "languages_spoken": [
-      "en",
-      "es"
+      "en"
     ],
     "requires_membership": false,
-    "bot_service_type": "medical",
-    "borough": "Manhattan"
+    "bot_service_type": "other",
+    "borough": "Brooklyn"
   },
   {
     "service_id": "86d944bc-bf39-45f9-9d56-082a5effe26d",
@@ -5786,50 +6009,6 @@
     "borough": "Bronx"
   },
   {
-    "service_id": "88520817-7ce0-44c4-b0b0-fabc3acaa8ab",
-    "service_name": "Baby Supplies, Feminine Care, Harm Reduction, Safe Sex Items, and Toiletries",
-    "organization_name": "Safe Horizon - Streetwork Project",
-    "service_description": "Depending on availability, the distribution may include:\n\u2022 Diapers, wipes, baby food, formula liquid and powder, clothing, strollers, and highchairs\n\u2022 Condoms and lube\n\u2022 Referrals for HIV testing\n\u2022 On-site testing via walking in.",
-    "location_id": "29301fb5-020f-473d-9cff-70584edad23c",
-    "location_name": "Uptown/Harlem DYCD Youth Drop-in Center",
-    "location_slug": "safe-horizon-streetwork-project-harlem",
-    "last_validated_at": "2026-03-23T22:11:28.633Z",
-    "address": "209 W 125th St, 2nd Fl",
-    "city": "New York",
-    "state": "NY",
-    "zip_code": "10027",
-    "country": "US",
-    "latitude": 40.8093846,
-    "longitude": -73.9487839,
-    "phone": "2126952220",
-    "service_email": null,
-    "service_url": null,
-    "organization_url": "safehorizon.org/streetwork",
-    "fees": null,
-    "service_taxonomies": [
-      "Personal Care"
-    ],
-    "also_available": [
-      "Clothing Pantry",
-      "Drop-in Center",
-      "Food",
-      "Food Pantry",
-      "Laundry",
-      "Legal Services",
-      "Mental Health",
-      "Referral",
-      "Support Groups"
-    ],
-    "accessibility_info": null,
-    "languages_spoken": [
-      "en",
-      "es"
-    ],
-    "requires_membership": true,
-    "bot_service_type": "personal_care",
-    "borough": "Manhattan"
-  },
-  {
     "service_id": "8920caa3-aff8-4a67-80df-56ff935180ff",
     "service_name": "Employment Services",
     "organization_name": "Urban Upbound (FKA East River Development Alliance (ERDA))",
@@ -5850,7 +6029,9 @@
     "service_url": null,
     "organization_url": "urbanupbound.org",
     "fees": null,
-    "service_taxonomies": null,
+    "service_taxonomies": [
+      "Other service"
+    ],
     "also_available": null,
     "accessibility_info": null,
     "languages_spoken": [
@@ -5901,68 +6082,31 @@
     "borough": "Bronx"
   },
   {
-    "service_id": "8af97b9d-9d3d-465f-8835-5014a4408bd9",
-    "service_name": "Substance Use Treatment",
-    "organization_name": "NYC Health + Hospitals",
-    "service_description": "Services include: \n\u2022 Chemical Dependency Outpatient Clinic\n\u2022 Detoxification\n\u2022 Group and Individual Counseling\n\u2022 MOUD\n\u2022 Vocational Rehab ",
-    "location_id": "2e4952df-aaca-4a4b-b472-905f84f9fa0e",
-    "location_name": "Bellevue Hospital Center",
-    "location_slug": "nyc-health-hospitals-kips-bay",
-    "last_validated_at": "2026-04-23T15:21:03.294Z",
-    "address": "462 First Ave",
-    "city": "New York",
+    "service_id": "8a10e096-9b07-4b0e-b685-a852559949e6",
+    "service_name": "Intake Center for Single Women",
+    "organization_name": "Department of Homeless Services (DHS)",
+    "service_description": "\u2022 This is an intake and processing center; single adult women must come to apply for shelter placement.\n\u2022 If you have been processed as a new arrival at Roosevelt Hotel and have a G-number, you are ineligible to come here; please go to Roosevelt Hotel for your shelter extension. New arrivals are non-US citizens who entered the country through the US-Mexico border after March 2022 and cannot return due to persecution. You are not obligated to disclose if you are not in the system and trying to get into DHS. They respect the right to shelter for anyone who asks.",
+    "location_id": "9bc3e184-820a-4d75-9674-cd34a21c83ed",
+    "location_name": "HELP Women's Shelter and Intake Center",
+    "location_slug": "department-of-homeless-services-dhs-brownsville",
+    "last_validated_at": "2026-01-02T06:57:13.401Z",
+    "address": "116 Williams Avenue (at Liberty Avenue)",
+    "city": "Brooklyn",
     "state": "NY",
-    "zip_code": "10016",
+    "zip_code": "11207",
     "country": "US",
-    "latitude": 40.73973696080464,
-    "longitude": -73.9762128253044,
-    "phone": "2125624141",
+    "latitude": 40.6731802,
+    "longitude": -73.9003571,
+    "phone": "311",
     "service_email": null,
     "service_url": null,
-    "organization_url": "https://www.nychealthandhospitals.org/locations/bellevue",
+    "organization_url": "www1.nyc.gov/site/dhs/shelter/singleadults/single-adults-applying.page",
     "fees": null,
     "service_taxonomies": [
-      "Substance Use Treatment"
+      "Single Adult"
     ],
     "also_available": [
-      "Food Benefits",
-      "General Health"
-    ],
-    "accessibility_info": null,
-    "languages_spoken": null,
-    "requires_membership": null,
-    "bot_service_type": "medical",
-    "borough": "Manhattan"
-  },
-  {
-    "service_id": "8b2fb8f7-d42e-4bb7-917d-6eebe617d060",
-    "service_name": "Education and Workforce",
-    "organization_name": "Translatinx Network",
-    "service_description": "A workforce development program that assists adults with documentation, knowledge, and skills to attain employment. Educational groups and workshops are available.",
-    "location_id": "261aeda6-9363-49ac-a90f-0d8322cd9c56",
-    "location_name": "New Location, Headquarters",
-    "location_slug": "translatinx-network-chelsea",
-    "last_validated_at": "2026-04-09T20:39:13.372Z",
-    "address": "127 W 26th St",
-    "city": "New York",
-    "state": "NY",
-    "zip_code": "10001",
-    "country": "US",
-    "latitude": 40.74541510807298,
-    "longitude": -73.99255104932571,
-    "phone": "6468822000",
-    "service_email": null,
-    "service_url": null,
-    "organization_url": "https://translatinxnetwork.org",
-    "fees": null,
-    "service_taxonomies": [
-      "Education"
-    ],
-    "also_available": [
-      "Clothing Pantry",
-      "Food",
-      "Health",
-      "Toiletries"
+      "Health"
     ],
     "accessibility_info": null,
     "languages_spoken": [
@@ -5970,8 +6114,8 @@
       "es"
     ],
     "requires_membership": false,
-    "bot_service_type": "other",
-    "borough": "Manhattan"
+    "bot_service_type": "shelter",
+    "borough": "Brooklyn"
   },
   {
     "service_id": "8d910015-44d0-42f7-abf6-4dfe304a200d",
@@ -6162,7 +6306,9 @@
     "service_url": null,
     "organization_url": "nosquedamos.org",
     "fees": null,
-    "service_taxonomies": null,
+    "service_taxonomies": [
+      "Other service"
+    ],
     "also_available": null,
     "accessibility_info": null,
     "languages_spoken": [
@@ -6302,7 +6448,9 @@
     "service_url": null,
     "organization_url": "lacolmenanyc.org/what-we-do",
     "fees": null,
-    "service_taxonomies": null,
+    "service_taxonomies": [
+      "Other service"
+    ],
     "also_available": [
       "Food Pantry"
     ],
@@ -6311,6 +6459,46 @@
     "requires_membership": null,
     "bot_service_type": "other",
     "borough": "Staten Island"
+  },
+  {
+    "service_id": "9a16cf0f-f4fe-4c3b-8bc2-b156c1e22768",
+    "service_name": "Brown Bag",
+    "organization_name": "New York Common Pantry (NYCP)",
+    "service_description": "Brown Bag lunches include a sandwich, snack, and beverage for take-away. No ID required.",
+    "location_id": "1ebd1a5d-c3a1-404d-aaf2-830552e4deea",
+    "location_name": "Manhattan",
+    "location_slug": "new-york-common-pantry-nycp",
+    "last_validated_at": "2026-05-07T22:03:04.145Z",
+    "address": "8 E 109th St",
+    "city": "New York",
+    "state": "NY",
+    "zip_code": "10029",
+    "country": "US",
+    "latitude": 40.795866,
+    "longitude": -73.949163,
+    "phone": "9177209700",
+    "service_email": null,
+    "service_url": null,
+    "organization_url": "https://nycommonpantry.org",
+    "fees": null,
+    "service_taxonomies": [
+      "Brown Bag"
+    ],
+    "also_available": [
+      "Benefits",
+      "Food Pantry",
+      "Haircut",
+      "Laundry",
+      "Legal Services",
+      "Shower"
+    ],
+    "accessibility_info": null,
+    "languages_spoken": [
+      "en"
+    ],
+    "requires_membership": false,
+    "bot_service_type": "food",
+    "borough": "Manhattan"
   },
   {
     "service_id": "9aa95744-9d1d-4d8e-878c-d4f06ce69884",
@@ -6333,7 +6521,9 @@
     "service_url": null,
     "organization_url": "venturehouse.org/social-recreation-services",
     "fees": null,
-    "service_taxonomies": null,
+    "service_taxonomies": [
+      "Other service"
+    ],
     "also_available": [
       "Employment",
       "Mental Health"
@@ -6580,7 +6770,9 @@
     "service_url": null,
     "organization_url": "maketheroadny.org",
     "fees": null,
-    "service_taxonomies": null,
+    "service_taxonomies": [
+      "Other service"
+    ],
     "also_available": null,
     "accessibility_info": null,
     "languages_spoken": null,
@@ -6753,7 +6945,9 @@
     "service_url": null,
     "organization_url": "https://bronxworks.org/our-services/services-for-older-adults/older-adult-centers",
     "fees": null,
-    "service_taxonomies": null,
+    "service_taxonomies": [
+      "Other service"
+    ],
     "also_available": [
       "Community Services",
       "Food Pantry"
@@ -6858,7 +7052,9 @@
     "service_url": null,
     "organization_url": "cis-nyc.org/contact",
     "fees": null,
-    "service_taxonomies": null,
+    "service_taxonomies": [
+      "Other service"
+    ],
     "also_available": [
       "Food Pantry"
     ],
@@ -6869,6 +7065,47 @@
     ],
     "requires_membership": false,
     "bot_service_type": "other",
+    "borough": "Manhattan"
+  },
+  {
+    "service_id": "a377f9d0-1516-45dc-a6f4-271d54bd1357",
+    "service_name": "Hot Meals Program",
+    "organization_name": "New York Common Pantry (NYCP)",
+    "service_description": "Hot Meals are distributed to eat-in or takeaway.",
+    "location_id": "1ebd1a5d-c3a1-404d-aaf2-830552e4deea",
+    "location_name": "Manhattan",
+    "location_slug": "new-york-common-pantry-nycp",
+    "last_validated_at": "2026-05-07T22:03:04.145Z",
+    "address": "8 E 109th St",
+    "city": "New York",
+    "state": "NY",
+    "zip_code": "10029",
+    "country": "US",
+    "latitude": 40.795866,
+    "longitude": -73.949163,
+    "phone": "9177209700",
+    "service_email": null,
+    "service_url": null,
+    "organization_url": "https://nycommonpantry.org",
+    "fees": null,
+    "service_taxonomies": [
+      "Food Pantry"
+    ],
+    "also_available": [
+      "Benefits",
+      "Brown Bag",
+      "Food Pantry",
+      "Haircut",
+      "Laundry",
+      "Legal Services",
+      "Shower"
+    ],
+    "accessibility_info": null,
+    "languages_spoken": [
+      "en"
+    ],
+    "requires_membership": false,
+    "bot_service_type": "food",
     "borough": "Manhattan"
   },
   {
@@ -7078,7 +7315,9 @@
     "service_url": null,
     "organization_url": "catholicworker.org",
     "fees": null,
-    "service_taxonomies": null,
+    "service_taxonomies": [
+      "Other service"
+    ],
     "also_available": [
       "Clothing Pantry",
       "Food",
@@ -7127,6 +7366,37 @@
     "borough": "Brooklyn"
   },
   {
+    "service_id": "a82aac81-c6df-40a6-934d-b4d5f8d84bf2",
+    "service_name": "Substance Use Treatment",
+    "organization_name": "Housing Works",
+    "service_description": "Supportive housing and comprehensive services for individuals living with HIV/AIDS, rather than a traditional residential addiction treatment center",
+    "location_id": "d953b644-53a6-46d3-b7fb-ff41632c3291",
+    "location_name": "Bailey House, Inc.",
+    "location_slug": "housing-works-east-harlem",
+    "last_validated_at": "2026-05-08T02:05:50.933Z",
+    "address": "1751 Park Ave, 3rd Fl",
+    "city": "New York",
+    "state": "NY",
+    "zip_code": "10035",
+    "country": "US",
+    "latitude": 40.8026899,
+    "longitude": -73.9403842,
+    "phone": "2126332500",
+    "service_email": null,
+    "service_url": null,
+    "organization_url": "https://baileyhouse.org",
+    "fees": null,
+    "service_taxonomies": [
+      "Substance Use Treatment"
+    ],
+    "also_available": null,
+    "accessibility_info": null,
+    "languages_spoken": null,
+    "requires_membership": null,
+    "bot_service_type": "medical",
+    "borough": "Manhattan"
+  },
+  {
     "service_id": "a89c0c41-3a7e-4c84-b684-9326d67c46b6",
     "service_name": "Drop-in Space",
     "organization_name": "Ali Forney Center (AFC)",
@@ -7147,7 +7417,9 @@
     "service_url": null,
     "organization_url": "aliforneycenter.org",
     "fees": null,
-    "service_taxonomies": null,
+    "service_taxonomies": [
+      "Other service"
+    ],
     "also_available": [
       "LGBTQ Young Adult"
     ],
@@ -7195,6 +7467,42 @@
     "borough": "Brooklyn"
   },
   {
+    "service_id": "a9d7fdd9-1c8d-4020-8163-7b78ad542619",
+    "service_name": "Patient Services",
+    "organization_name": "Housing Works",
+    "service_description": "Services include:\n\u2022 Acupuncture\n\u2022 Adult Day Health CarePrimary care\n\u2022 Behavioral Health GYN\n\u2022 Case Management\n\u2022 Free Hep C and HIV/AIDS testing\n\u2022 Harm reduction supplies\n\u2022 Pain Management\n\u2022 Pharmacy\n\u2022 Sexual Health Services\n\u2022 Substance Use Treatment\n\u2022 Telehealth\n\u2022 Youth and prevention and other services are available at <a href=\"https://yourpeer.nyc/locations?search=Housing+Works\">other Housing Works locations</a> \u2013 call <a href=\"tel:3474737400\">(347) 473-7400</a> for further information.",
+    "location_id": "33aaa49d-e67a-4627-9d6b-eacd6c055975",
+    "location_name": "Cylar House Community Health Center",
+    "location_slug": "housing-works",
+    "last_validated_at": "2026-05-08T18:25:45.574Z",
+    "address": "743-749 E 9th St",
+    "city": "New York",
+    "state": "NY",
+    "zip_code": "10009",
+    "country": "US",
+    "latitude": 40.724683056900965,
+    "longitude": -73.97614434001972,
+    "phone": "7182770386",
+    "service_email": null,
+    "service_url": null,
+    "organization_url": "healthcare.housingworks.org/services/primary-care",
+    "fees": null,
+    "service_taxonomies": [
+      "Health"
+    ],
+    "also_available": [
+      "Education"
+    ],
+    "accessibility_info": null,
+    "languages_spoken": [
+      "en",
+      "es"
+    ],
+    "requires_membership": false,
+    "bot_service_type": "medical",
+    "borough": "Manhattan"
+  },
+  {
     "service_id": "ab3cf3c6-4451-4dc5-91fa-13de0efcd5e2",
     "service_name": "Laundry",
     "organization_name": "Project Hospitality",
@@ -7235,40 +7543,6 @@
     "borough": "Staten Island"
   },
   {
-    "service_id": "ac6a2902-be91-4fbc-844f-dfb24df0bb74",
-    "service_name": "Patient Services",
-    "organization_name": "The Institute for Family Health (IFH)",
-    "service_description": "Services for patients of all ages include:\n\u2022 Dentistry\n\u2022 Primary Care\n\u2022 Mental Health\n\u2022 Women's Health Care\n\u2022 HIV/AIDS Services\n\u2022 Diabetic Care",
-    "location_id": "7eb85bc0-aa9c-4365-b340-5efd967606ff",
-    "location_name": "Harlem",
-    "location_slug": "the-institute-for-family-health-ifh-harlem",
-    "last_validated_at": "2026-05-04T18:14:26.095Z",
-    "address": "1824 Madison Ave",
-    "city": "New York",
-    "state": "NY",
-    "zip_code": "10035",
-    "country": "US",
-    "latitude": 40.80184775422693,
-    "longitude": -73.94371707025674,
-    "phone": "2124234500",
-    "service_email": null,
-    "service_url": null,
-    "organization_url": "https://institute.org/health-care/locations/manhattan",
-    "fees": null,
-    "service_taxonomies": [
-      "General Health"
-    ],
-    "also_available": null,
-    "accessibility_info": null,
-    "languages_spoken": [
-      "en",
-      "es"
-    ],
-    "requires_membership": false,
-    "bot_service_type": "medical",
-    "borough": "Manhattan"
-  },
-  {
     "service_id": "ad256dca-7383-4ed2-a48d-9cf870a785a4",
     "service_name": "Group Homes",
     "organization_name": "HeartShare Human Services of New York",
@@ -7300,6 +7574,46 @@
     "requires_membership": null,
     "bot_service_type": "shelter",
     "borough": "Brooklyn"
+  },
+  {
+    "service_id": "ad32d05f-d0f0-40ce-b940-746a28a7e5ed",
+    "service_name": "Haircuts",
+    "organization_name": "New York Common Pantry (NYCP)",
+    "service_description": "First come, first served, more details are at <a href=\"https://nycommonpantry.org/project-dignity\" target=\"_blank\" rel=\"noopener noreferrer\">nycommonpantry.org/project-dignity</a>.",
+    "location_id": "1ebd1a5d-c3a1-404d-aaf2-830552e4deea",
+    "location_name": "Manhattan",
+    "location_slug": "new-york-common-pantry-nycp",
+    "last_validated_at": "2026-05-07T22:03:04.145Z",
+    "address": "8 E 109th St",
+    "city": "New York",
+    "state": "NY",
+    "zip_code": "10029",
+    "country": "US",
+    "latitude": 40.795866,
+    "longitude": -73.949163,
+    "phone": "9177209700",
+    "service_email": null,
+    "service_url": null,
+    "organization_url": "https://nycommonpantry.org",
+    "fees": null,
+    "service_taxonomies": [
+      "Haircut"
+    ],
+    "also_available": [
+      "Benefits",
+      "Brown Bag",
+      "Food Pantry",
+      "Laundry",
+      "Legal Services",
+      "Shower"
+    ],
+    "accessibility_info": null,
+    "languages_spoken": [
+      "en"
+    ],
+    "requires_membership": false,
+    "bot_service_type": "personal_care",
+    "borough": "Manhattan"
   },
   {
     "service_id": "b0fc7293-80b6-4fd0-a6b3-9a5d315972e3",
@@ -7487,51 +7801,6 @@
     "borough": "Staten Island"
   },
   {
-    "service_id": "b5257c74-9b7c-4661-a9f1-babb53f3c62f",
-    "service_name": "Laundry and Shower",
-    "organization_name": "Safe Horizon - Streetwork Project",
-    "service_description": "Laundry and shower are offered by a walk in.",
-    "location_id": "29301fb5-020f-473d-9cff-70584edad23c",
-    "location_name": "Uptown/Harlem DYCD Youth Drop-in Center",
-    "location_slug": "safe-horizon-streetwork-project-harlem",
-    "last_validated_at": "2026-03-23T22:11:28.633Z",
-    "address": "209 W 125th St, 2nd Fl",
-    "city": "New York",
-    "state": "NY",
-    "zip_code": "10027",
-    "country": "US",
-    "latitude": 40.8093846,
-    "longitude": -73.9487839,
-    "phone": "2126952220",
-    "service_email": null,
-    "service_url": null,
-    "organization_url": "safehorizon.org/streetwork",
-    "fees": null,
-    "service_taxonomies": [
-      "Laundry"
-    ],
-    "also_available": [
-      "Clothing Pantry",
-      "Drop-in Center",
-      "Food",
-      "Food Pantry",
-      "Legal Services",
-      "Mental Health",
-      "Personal Care",
-      "Referral",
-      "Support Groups"
-    ],
-    "accessibility_info": null,
-    "languages_spoken": [
-      "en",
-      "es",
-      "fr"
-    ],
-    "requires_membership": true,
-    "bot_service_type": "personal_care",
-    "borough": "Manhattan"
-  },
-  {
     "service_id": "b52abb73-16dc-4287-81e7-fc52a6638198",
     "service_name": "Substance Use Treatment",
     "organization_name": "Realization Center",
@@ -7663,7 +7932,9 @@
     "service_url": null,
     "organization_url": "www.centralfamilylifecenter.org/contact-us",
     "fees": null,
-    "service_taxonomies": null,
+    "service_taxonomies": [
+      "Other service"
+    ],
     "also_available": null,
     "accessibility_info": null,
     "languages_spoken": [
@@ -7801,7 +8072,9 @@
     "service_url": null,
     "organization_url": "coalicionmexicana.org",
     "fees": null,
-    "service_taxonomies": null,
+    "service_taxonomies": [
+      "Other service"
+    ],
     "also_available": null,
     "accessibility_info": null,
     "languages_spoken": null,
@@ -7910,7 +8183,9 @@
     "service_url": null,
     "organization_url": "skylightcenter.org",
     "fees": null,
-    "service_taxonomies": null,
+    "service_taxonomies": [
+      "Other service"
+    ],
     "also_available": [
       "Food Pantry",
       "Single Adult"
@@ -8382,41 +8657,6 @@
     "borough": "Bronx"
   },
   {
-    "service_id": "c98e3085-3ec1-4380-bd47-84bfd515ae2b",
-    "service_name": "Food Pantry",
-    "organization_name": "Next Step Community Church (FKA RHOW)",
-    "service_description": null,
-    "location_id": "ec055315-f5ee-46d7-9a36-bbd6fdd2b8c5",
-    "location_name": null,
-    "location_slug": "next-step-community-church-fka-rhow-boerum-hill",
-    "last_validated_at": "2026-05-04T13:28:42.175Z",
-    "address": "360 Schermerhorn Street",
-    "city": "BROOKLYN",
-    "state": "NY",
-    "zip_code": "11217",
-    "country": "US",
-    "latitude": 40.6865313,
-    "longitude": -73.9803445,
-    "phone": "7188751858",
-    "service_email": null,
-    "service_url": null,
-    "organization_url": "nextstepcc.org/what-we-do",
-    "fees": null,
-    "service_taxonomies": [
-      "Food Pantry"
-    ],
-    "also_available": [
-      "Soup Kitchen"
-    ],
-    "accessibility_info": null,
-    "languages_spoken": [
-      "en"
-    ],
-    "requires_membership": false,
-    "bot_service_type": "food",
-    "borough": "Brooklyn"
-  },
-  {
     "service_id": "c9d4d132-bd92-4370-905d-c604bb27c6f2",
     "service_name": "Social Recreation",
     "organization_name": "Venture House (VH)",
@@ -8437,7 +8677,9 @@
     "service_url": null,
     "organization_url": "venturehouse.org",
     "fees": null,
-    "service_taxonomies": null,
+    "service_taxonomies": [
+      "Other service"
+    ],
     "also_available": [
       "Employment",
       "Mental Health"
@@ -8471,7 +8713,9 @@
     "service_url": null,
     "organization_url": "https://www.schools.nyc.gov/enrollment/enrollment-help/family-welcome-centers",
     "fees": null,
-    "service_taxonomies": null,
+    "service_taxonomies": [
+      "Other service"
+    ],
     "also_available": null,
     "accessibility_info": null,
     "languages_spoken": [
@@ -8567,7 +8811,9 @@
     "service_url": null,
     "organization_url": "saya.org",
     "fees": null,
-    "service_taxonomies": null,
+    "service_taxonomies": [
+      "Other service"
+    ],
     "also_available": null,
     "accessibility_info": null,
     "languages_spoken": [
@@ -8577,6 +8823,39 @@
     "requires_membership": false,
     "bot_service_type": "other",
     "borough": "Queens"
+  },
+  {
+    "service_id": "ce0998aa-213a-4368-94d2-c43bd0bbff9d",
+    "service_name": "Project Renewal",
+    "organization_name": "Department of Homeless Services (DHS)",
+    "service_description": "Primary care for the community.",
+    "location_id": "9bc3e184-820a-4d75-9674-cd34a21c83ed",
+    "location_name": "HELP Women's Shelter and Intake Center",
+    "location_slug": "department-of-homeless-services-dhs-brownsville",
+    "last_validated_at": "2026-01-02T06:57:13.401Z",
+    "address": "116 Williams Avenue (at Liberty Avenue)",
+    "city": "Brooklyn",
+    "state": "NY",
+    "zip_code": "11207",
+    "country": "US",
+    "latitude": 40.6731802,
+    "longitude": -73.9003571,
+    "phone": "311",
+    "service_email": null,
+    "service_url": null,
+    "organization_url": "www1.nyc.gov/site/dhs/shelter/singleadults/single-adults-applying.page",
+    "fees": null,
+    "service_taxonomies": [
+      "Health"
+    ],
+    "also_available": [
+      "Single Adult"
+    ],
+    "accessibility_info": null,
+    "languages_spoken": null,
+    "requires_membership": null,
+    "bot_service_type": "medical",
+    "borough": "Brooklyn"
   },
   {
     "service_id": "ce0cf5e5-2fd1-46e9-84c8-6ca3793ded8d",
@@ -8719,7 +8998,9 @@
     "service_url": null,
     "organization_url": "bowery.org/get-help",
     "fees": null,
-    "service_taxonomies": null,
+    "service_taxonomies": [
+      "Other service"
+    ],
     "also_available": [
       "Clothing",
       "Single Adult",
@@ -8827,7 +9108,9 @@
     "service_url": null,
     "organization_url": "https://riseboro.org/program/older-adult-centers-clubs/",
     "fees": null,
-    "service_taxonomies": null,
+    "service_taxonomies": [
+      "Other service"
+    ],
     "also_available": null,
     "accessibility_info": null,
     "languages_spoken": null,
@@ -8909,41 +9192,6 @@
     "borough": "Queens"
   },
   {
-    "service_id": "db59996f-e376-432c-a6f0-3d7c6a63f7d9",
-    "service_name": "Mitigation Services",
-    "organization_name": "Center for Community Alternatives (CCA)",
-    "service_description": "CCA\u2019s Mitigation Services assists criminal defense attorneys with advocacy at all stages of the criminal justice process, including equities, sentencing memoranda, and other functions upon request.",
-    "location_id": "7f7671f7-0183-43d4-9cf8-18fe018d5162",
-    "location_name": "Brooklyn",
-    "location_slug": "center-for-community-alternatives-cca-downtown-brooklyn",
-    "last_validated_at": "2026-05-04T14:24:08.588Z",
-    "address": "25 Chapel Street, 7th Floor",
-    "city": "Brooklyn",
-    "state": "NY",
-    "zip_code": "11201",
-    "country": "US",
-    "latitude": 40.6973327,
-    "longitude": -73.9860515,
-    "phone": "7188589658",
-    "service_email": null,
-    "service_url": null,
-    "organization_url": "communityalternatives.org",
-    "fees": null,
-    "service_taxonomies": null,
-    "also_available": [
-      "Health",
-      "Legal Services"
-    ],
-    "accessibility_info": null,
-    "languages_spoken": [
-      "en",
-      "es"
-    ],
-    "requires_membership": true,
-    "bot_service_type": "other",
-    "borough": "Brooklyn"
-  },
-  {
     "service_id": "dd279810-ed55-4fa3-9d82-4a687e89ee37",
     "service_name": "Community Services",
     "organization_name": "RiseBoro",
@@ -8964,7 +9212,9 @@
     "service_url": null,
     "organization_url": "https://riseboro.org/program/older-adult-centers-clubs/",
     "fees": null,
-    "service_taxonomies": null,
+    "service_taxonomies": [
+      "Other service"
+    ],
     "also_available": null,
     "accessibility_info": null,
     "languages_spoken": null,
@@ -9141,6 +9391,39 @@
     "borough": "Manhattan"
   },
   {
+    "service_id": "e95aeb80-fdc6-47d3-83e1-90487162d285",
+    "service_name": "Code Blue Warming Center",
+    "organization_name": "NYC Health + Hospitals/Gotham Health",
+    "service_description": "Shelter from the cold. If the weather is \u226432\u00b0F/0\u00b0C between the overnight hours stated, you may access this warming facility. See Google or a LinkNYC terminal for the current night temperatures.",
+    "location_id": "7d7ff441-34a8-4203-8a58-b6c200270653",
+    "location_name": "Kings County",
+    "location_slug": "nyc-health-hospitalsgotham-health",
+    "last_validated_at": "2026-05-06T17:23:21.791Z",
+    "address": "451 Clarkson Ave",
+    "city": "Brooklyn",
+    "state": "NY",
+    "zip_code": "11203",
+    "country": "US",
+    "latitude": 40.656415,
+    "longitude": -73.943102,
+    "phone": "7182453131",
+    "service_email": null,
+    "service_url": null,
+    "organization_url": null,
+    "fees": null,
+    "service_taxonomies": [
+      "General Health"
+    ],
+    "also_available": [
+      "General Health"
+    ],
+    "accessibility_info": null,
+    "languages_spoken": null,
+    "requires_membership": null,
+    "bot_service_type": "medical",
+    "borough": "Brooklyn"
+  },
+  {
     "service_id": "e9eeff94-f732-4339-b587-77b09e77f5fb",
     "service_name": "Food Pantry",
     "organization_name": "Faith United Methodist Church",
@@ -9214,6 +9497,48 @@
     "borough": "Brooklyn"
   },
   {
+    "service_id": "ea25854f-8990-4bae-a988-6165cd3d6821",
+    "service_name": "Nourish",
+    "organization_name": "New York Common Pantry (NYCP)",
+    "service_description": "Services include:\n\u2022 A Commodity Supplemental Food Program (CSFP)",
+    "location_id": "1ebd1a5d-c3a1-404d-aaf2-830552e4deea",
+    "location_name": "Manhattan",
+    "location_slug": "new-york-common-pantry-nycp",
+    "last_validated_at": "2026-05-07T22:03:04.145Z",
+    "address": "8 E 109th St",
+    "city": "New York",
+    "state": "NY",
+    "zip_code": "10029",
+    "country": "US",
+    "latitude": 40.795866,
+    "longitude": -73.949163,
+    "phone": "9177209700",
+    "service_email": null,
+    "service_url": null,
+    "organization_url": "https://nycommonpantry.org",
+    "fees": null,
+    "service_taxonomies": [
+      "Food Pantry"
+    ],
+    "also_available": [
+      "Benefits",
+      "Brown Bag",
+      "Food Pantry",
+      "Haircut",
+      "Laundry",
+      "Legal Services",
+      "Shower"
+    ],
+    "accessibility_info": null,
+    "languages_spoken": [
+      "en",
+      "zh"
+    ],
+    "requires_membership": true,
+    "bot_service_type": "food",
+    "borough": "Manhattan"
+  },
+  {
     "service_id": "ea35837e-e76e-419f-98b1-ca24224759a9",
     "service_name": "Shower",
     "organization_name": "CAMBA",
@@ -9252,38 +9577,6 @@
     "requires_membership": false,
     "bot_service_type": "personal_care",
     "borough": "Brooklyn"
-  },
-  {
-    "service_id": "ee102637-ce0c-4571-83f6-15e50899d637",
-    "service_name": "Cooling Center",
-    "organization_name": "Church of the Epiphany",
-    "service_description": "A designated cooling center during the Summer when the Code Red is declared (when the temperatures are > 95\u00b0F/35\u00b0C for 2 or more days or 100\u00b0F/37\u00b0C at any point) for people of age only, see locations allowing pets and people of other ages at <a href=\"https://finder.nyc.gov/coolingcenters/locations\" target=\"_blank\" rel=\"noopener noreferrer\">finder.nyc.gov/coolingcenters/locations</a>",
-    "location_id": "cecb5edb-7da6-4523-b158-c44aa3f0a03f",
-    "location_name": "",
-    "location_slug": "church-of-the-epiphany-upper-east-side",
-    "last_validated_at": "2026-04-15T16:19:04.708Z",
-    "address": "351 E 74th St",
-    "city": "New York",
-    "state": "NY",
-    "zip_code": "10021",
-    "country": "US",
-    "latitude": 40.7694413,
-    "longitude": -73.9555373,
-    "phone": "2127372720",
-    "service_email": null,
-    "service_url": null,
-    "organization_url": "https://epiphanynyc.org",
-    "fees": null,
-    "service_taxonomies": null,
-    "also_available": [
-      "Food Pantry",
-      "Soup Kitchen"
-    ],
-    "accessibility_info": null,
-    "languages_spoken": null,
-    "requires_membership": null,
-    "bot_service_type": "other",
-    "borough": "Manhattan"
   },
   {
     "service_id": "ef0e4607-e71a-48fc-8bca-bf8d00a2bbaf",
@@ -9355,37 +9648,6 @@
     ],
     "requires_membership": true,
     "bot_service_type": "medical",
-    "borough": "Manhattan"
-  },
-  {
-    "service_id": "ef44cdd5-8e37-44b3-8503-67cbaac74887",
-    "service_name": "Green Market",
-    "organization_name": "GrowNYC Greenmarket",
-    "service_description": "\u2022 Various produce and meats are available for purchase. \u2022 See how to apply your benefits to your purchases <a href=\"https://grownyc.org/use-benefits/\" target=\"_blank\" rel=\"noopener noreferrer\">here </a>.",
-    "location_id": "b0610e39-d3f0-424a-95a7-7bf9b5d9d7d3",
-    "location_name": "Tompkins Square Greenmarket",
-    "location_slug": "grownyc-greenmarket-ave-a-and-7th-st",
-    "last_validated_at": "2026-04-20T17:53:46.130Z",
-    "address": "Ave A and 7th St",
-    "city": "New York",
-    "state": "NY",
-    "zip_code": "10009",
-    "country": "US",
-    "latitude": 40.726074476629506,
-    "longitude": -73.98334433919848,
-    "phone": "212.788.7476",
-    "service_email": null,
-    "service_url": null,
-    "organization_url": "grownyc.org/greenmarket",
-    "fees": null,
-    "service_taxonomies": [
-      "Food Pantry"
-    ],
-    "also_available": null,
-    "accessibility_info": null,
-    "languages_spoken": null,
-    "requires_membership": null,
-    "bot_service_type": "food",
     "borough": "Manhattan"
   },
   {
@@ -9633,6 +9895,39 @@
     "requires_membership": false,
     "bot_service_type": "medical",
     "borough": "Bronx"
+  },
+  {
+    "service_id": "fc06cc1f-a2ad-4e3f-aa0b-b476468b7013",
+    "service_name": "Cultural Resources",
+    "organization_name": "PROSPECT PARK ZOO",
+    "service_description": null,
+    "location_id": "9076ba53-3021-4cbb-9585-507fff7070de",
+    "location_name": null,
+    "location_slug": "prospect-park-zoo-prospect-lefferts-gardens",
+    "last_validated_at": "2026-05-11T14:21:01.708Z",
+    "address": "450 Flatbush Avenue",
+    "city": "Brooklyn",
+    "state": "NY",
+    "zip_code": "11225",
+    "country": "US",
+    "latitude": 40.6655761,
+    "longitude": -73.96489079999999,
+    "phone": "718.399.7339",
+    "service_email": null,
+    "service_url": null,
+    "organization_url": "www.prospectparkzoo.com",
+    "fees": null,
+    "service_taxonomies": [
+      "Other service"
+    ],
+    "also_available": null,
+    "accessibility_info": null,
+    "languages_spoken": [
+      "en"
+    ],
+    "requires_membership": false,
+    "bot_service_type": "other",
+    "borough": "Brooklyn"
   },
   {
     "service_id": "fc788ba4-1d71-4e5f-a7ac-9d26e33d16b8",

@@ -1038,27 +1038,6 @@ class TestServiceDetailNarrowing:
                 tax_set = {str(t).lower() for t in (c.get("service_taxonomies") or [])}
                 assert tax_set & narrowed
 
-    @pytest.mark.xfail(
-        reason=(
-            "Fixture-data gap surfaced by the May 2026 hard-taxonomy "
-            "filter (_mock_query_services Step 2.5). The 'other'-bucket "
-            "Brooklyn rows this test relies on — Health Services Hotline, "
-            "Community Services — have empty service_taxonomies in the "
-            "fixture, so they no longer survive the strict taxonomy "
-            "overlap filter (production's required SQL "
-            "FILTER_BY_TAXONOMY_NAME_IN). Production would also exclude "
-            "them — but production's DB has the underlying taxonomies "
-            "tagged correctly. The fixture's per-row "
-            "service_taxonomies field is incomplete for ~40 'other' "
-            "services (see scripts/fixture/_q3_clean.sql). Until the "
-            "fixture is regenerated with proper taxonomy tagging, this "
-            "test cannot meaningfully exercise the description-regex "
-            "narrowing strategy. The strategy itself is verified by "
-            "unit tests on production's _DETAIL_DESCRIPTION_FILTERS "
-            "dict in tests/unit/test_cold_context_and_prevention_regex.py."
-        ),
-        strict=False,
-    )
     def test_description_regex_strategy_for_financial_services(self):
         """Strategy 2 (description regex): 'financial services' is in
         the description-filters dict, not the taxonomy dict. Eval must
@@ -1070,6 +1049,17 @@ class TestServiceDetailNarrowing:
         Brooklyn fixture has 'other'-bucket rows whose descriptions
         match the financial regex (Health Services Hotline mentions
         'Debt', Community Services mentions 'financial counseling').
+
+        History: this test was marked xfail in the May 2026 audit
+        follow-up when the strict taxonomy filter (Step 2.5 in
+        `_mock_query_services`) started excluding rows with empty
+        `service_taxonomies`. The May 11 fixture refresh
+        (`scripts/fixture/04_extract_fixture_hybrid.sql`, with the
+        `AND t_own.name NOT IN ('Other service')` exclusion removed
+        from the service_taxonomies subquery) populated the previously-
+        NULL taxonomy arrays with `['Other service']`, restoring the
+        coverage the test requires. The xfail decorator was removed
+        once the test started passing again.
         """
         baseline = runner._mock_query_services(
             service_type="other", location="brooklyn",
