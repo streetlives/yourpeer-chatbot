@@ -9,7 +9,7 @@
 import { useCallback, useEffect } from "react";
 import { useChatStore, nextMsgId } from "@/lib/chat/store";
 import { reconcilePending } from "@/lib/chat/pending-responses";
-import { cacheIfResults } from "@/lib/chat/use-chat-helpers";
+import { cacheIfResults } from "@/lib/chat/chat-helpers";
 import type { ChatMessage } from "@/lib/chat/types";
 
 /**

@@ -5,20 +5,30 @@
 // https://opensource.org/licenses/MIT.
 
 /**
- * Non-React utilities for the `useChat` hook.
+ * Non-React utilities for the chat send pipeline.
+ *
+ * Pure module-level helpers consumed by the `useChat` hook tree —
+ * error inspectors, retry/delay, network-failure detection,
+ * background-sync registration, the cache write — plus the two
+ * sentinel constants the frontend sends to trigger backend special
+ * paths.
+ *
+ * Why this file lives in `src/lib/chat/` and not `src/hooks/`:
+ *   Nothing here imports React. The directory split in this
+ *   codebase is "does it use React?" — hooks/ for React-bound code,
+ *   lib/chat/ for everything else. By that test these helpers
+ *   belong with `api.ts`, `send-queue.ts`, `offline-cache.ts`, and
+ *   their peers. The `use-` prefix is reserved for actual hooks
+ *   (`react-hooks/rules-of-hooks` lints anything starting with
+ *   `use` as a hook), so this file does NOT carry that prefix even
+ *   though its primary consumers are hooks.
  *
  * Why this file exists:
  *   `src/hooks/use-chat.ts` was 1243 lines. The audit
  *   (`FRONTEND_AUDIT.md` 2026-05, P1 #4) recommended splitting the
  *   hook into smaller pieces. This module is the first extraction:
- *   the pure module-level helpers — error inspectors, retry/delay,
- *   network-failure detection, background-sync registration, cache
- *   write — that the hook used but that have no React surface and
- *   are independently testable.
- *
- *   Pulling them here removed ~190 lines from the hook file without
- *   any behavior change. The hook still imports and uses each
- *   function exactly as before.
+ *   the pure utilities the hook used but that have no React
+ *   surface and are independently testable.
  *
  * What is intentionally NOT here:
  *   - `flushInFlight` (the module-level flush coordinator) stays in

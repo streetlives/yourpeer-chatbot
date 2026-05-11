@@ -31,7 +31,7 @@ import {
   isNetworkError,
   tryRegisterBackgroundSync,
   cacheIfResults,
-} from "@/lib/chat/use-chat-helpers";
+} from "@/lib/chat/chat-helpers";
 
 /**
  * Module-level coordinator for the offline-queue flush.
@@ -53,7 +53,7 @@ import {
  *      mutations of ref.current as "modifying a hook argument."
  *      Module scope sidesteps that analysis cleanly.
  *
- * Stays in this file (not in use-chat-helpers.ts) because its
+ * Stays in this file (not in chat-helpers.ts) because its
  * primary consumer is `flushQueue` below. If `flushQueue` is later
  * extracted, the coordinator should move with it.
  *
