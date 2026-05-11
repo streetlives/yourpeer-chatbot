@@ -98,6 +98,7 @@ export const AUDIT_EVENT_TYPES = [
   "session_reset",
   "feedback",
   "location_feedback",
+  "population_fallback_dedup_empty",
 ] as const;
 export type AuditEventType = (typeof AUDIT_EVENT_TYPES)[number];
 

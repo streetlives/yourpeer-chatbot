@@ -193,7 +193,7 @@ function SeriesChart({
       <div className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">
         {title}
       </div>
-      <div className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5 mb-3">
+      <div className="text-sm text-neutral-500 dark:text-neutral-400 mt-0.5 mb-3">
         {subtitle}
       </div>
       <svg
@@ -229,7 +229,7 @@ function SeriesChart({
       </svg>
       {/* X-axis labels — three ticks (start / middle / end) sized
        *  to match the chart's visual extent. */}
-      <div className="flex justify-between mt-1 text-[0.65rem] text-neutral-400 dark:text-neutral-500 tabular-nums">
+      <div className="flex justify-between mt-1 text-xs text-neutral-400 dark:text-neutral-500 tabular-nums">
         <span>{firstWeek ? formatWeekLabel(firstWeek) : ""}</span>
         <span>{middleWeek ? formatWeekLabel(middleWeek) : ""}</span>
         <span>{lastWeek ? formatWeekLabel(lastWeek) : ""}</span>

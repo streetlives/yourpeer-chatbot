@@ -140,14 +140,27 @@ export function TranscriptDrawer({
     <Dialog.Root open onOpenChange={(open) => !open && onClose()}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 bg-black/50 z-50 animate-in fade-in" />
-        <Dialog.Content className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-white border border-neutral-200 rounded-2xl max-w-[900px] w-[92%] max-h-[85vh] overflow-y-auto p-7 z-50 animate-in fade-in slide-in-from-bottom-2">
+        <Dialog.Content className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-2xl max-w-[900px] w-[92%] max-h-[85vh] overflow-y-auto p-7 z-50 animate-in fade-in slide-in-from-bottom-2">
           <div className="flex justify-between items-start mb-4">
             <div>
               <Dialog.Title className="text-base font-semibold">
                 Session {sessionId.slice(0, 12)}…
               </Dialog.Title>
+              {/* Visually-hidden description for screen readers — Radix
+                  Dialog requires either aria-describedby or a
+                  Dialog.Description child. The visible meta-line below
+                  only renders when data is loaded, so we use this
+                  always-present sr-only summary that adapts to all three
+                  states (loading, empty, populated). */}
+              <Dialog.Description className="sr-only">
+                {loading
+                  ? "Loading session events."
+                  : ordered.length === 0
+                    ? "No events found for this session."
+                    : `Session with ${turnCount} turn${turnCount !== 1 ? "s" : ""}${queryCount > 0 ? `, ${queryCount} quer${queryCount !== 1 ? "ies" : "y"}` : ""}${crisisCount > 0 ? `, ${crisisCount} crisis event${crisisCount !== 1 ? "s" : ""}` : ""}.`}
+              </Dialog.Description>
               {!loading && ordered.length > 0 && (
-                <div className="text-xs text-neutral-400 mt-0.5">
+                <div className="text-sm text-neutral-400 dark:text-neutral-500 mt-0.5">
                   {turnCount} turn{turnCount !== 1 ? "s" : ""}
                   {queryCount > 0 && ` · ${queryCount} quer${queryCount !== 1 ? "ies" : "y"}`}
                   {crisisCount > 0 && ` · ${crisisCount} crisis event${crisisCount !== 1 ? "s" : ""}`}
@@ -157,17 +170,17 @@ export function TranscriptDrawer({
             <Dialog.Close asChild>
               <button
                 aria-label="Close transcript"
-                className="w-8 h-8 rounded-lg border border-neutral-200 bg-neutral-50 text-neutral-400 flex items-center justify-center transition hover:border-red-300 hover:text-red-500"
+                className="w-8 h-8 rounded-lg border border-neutral-200 bg-neutral-50 text-neutral-400 flex items-center justify-center transition hover:border-red-300 hover:text-red-500 dark:border-neutral-800 dark:bg-neutral-800 dark:text-neutral-500 dark:hover:border-red-800 dark:hover:text-red-400"
               >
                 <X size={16} />
               </button>
             </Dialog.Close>
           </div>
 
-          {loading && <p className="text-neutral-400 text-sm">Loading…</p>}
+          {loading && <p className="text-neutral-400 dark:text-neutral-500 text-sm">Loading…</p>}
 
           {!loading && ordered.length === 0 && (
-            <p className="text-neutral-400 text-sm">No events found for this session.</p>
+            <p className="text-neutral-400 dark:text-neutral-500 text-sm">No events found for this session.</p>
           )}
 
           {/* Slot evolution panel — final state, with each value annotated by
@@ -204,7 +217,7 @@ function renderEvent(e: AuditEvent, i: number, diff: SlotDiff | undefined) {
       return (
         <div
           key={i}
-          className="text-xs text-neutral-400 italic px-3.5 py-1.5 border-l-[3px] border-neutral-200"
+          className="text-xs text-neutral-400 dark:text-neutral-500 italic px-3.5 py-1.5 border-l-[3px] border-neutral-200 dark:border-neutral-800"
         >
           Session reset · {formatTimeOfDayWithSeconds(e.timestamp)}
         </div>
@@ -213,12 +226,12 @@ function renderEvent(e: AuditEvent, i: number, diff: SlotDiff | undefined) {
       return (
         <div
           key={i}
-          className="bg-blue-50/60 border-l-[3px] border-blue-300 px-3.5 py-2 rounded-r-lg text-sm"
+          className="bg-blue-50/60 dark:bg-blue-950/30 border-l-[3px] border-blue-300 dark:border-blue-800 px-3.5 py-2 rounded-r-lg text-sm"
         >
-          <div className="text-[0.7rem] font-semibold uppercase tracking-wider text-blue-600 mb-0.5">
+          <div className="text-xs font-semibold text-blue-600 dark:text-blue-300 mb-0.5">
             Feedback {e.rating ? `· ${e.rating}` : ""}
           </div>
-          {e.comment && <div className="text-neutral-600">{e.comment}</div>}
+          {e.comment && <div className="text-neutral-600 dark:text-neutral-200">{e.comment}</div>}
         </div>
       );
     case "location_feedback":
@@ -262,12 +275,12 @@ function LocationFeedbackEvent({ e }: { e: AuditEvent }) {
   const locationLabel = e.location_name || (e.location_id ? `#${e.location_id.slice(0, 8)}` : null);
 
   return (
-    <div className="bg-blue-50/60 border-l-[3px] border-blue-300 px-3.5 py-2 rounded-r-lg text-sm">
-      <div className="text-[0.7rem] font-semibold uppercase tracking-wider text-blue-600 mb-0.5">
+    <div className="bg-blue-50/60 dark:bg-blue-950/30 border-l-[3px] border-blue-300 dark:border-blue-800 px-3.5 py-2 rounded-r-lg text-sm">
+      <div className="text-xs font-semibold text-blue-600 dark:text-blue-300 mb-0.5">
         Location feedback{e.rating ? ` · ${e.rating}` : ""}
       </div>
       {locationLabel && (
-        <div className="text-xs text-neutral-700 dark:text-neutral-300 mb-1">
+        <div className="text-sm text-neutral-700 dark:text-neutral-300 mb-1">
           {locationLabel}
         </div>
       )}
@@ -281,7 +294,7 @@ function LocationFeedbackEvent({ e }: { e: AuditEvent }) {
           ))}
         </div>
       )}
-      {e.comment && <div className="text-neutral-600">{e.comment}</div>}
+      {e.comment && <div className="text-neutral-600 dark:text-neutral-200">{e.comment}</div>}
     </div>
   );
 }
@@ -307,7 +320,7 @@ function CriterionChip({
     : "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300";
   const prefix = negative ? "Not " : "";
   return (
-    <span className={`text-[0.7rem] px-1.5 py-0.5 rounded ${cls}`}>
+    <span className={`text-xs px-1.5 py-0.5 rounded ${cls}`}>
       {prefix}{label.toLowerCase()}
     </span>
   );
@@ -322,46 +335,46 @@ function TurnEvent({ e, diff }: { e: AuditEvent; diff: SlotDiff | undefined }) {
     <div className="animate-in fade-in slide-in-from-bottom-1">
       {/* User turn */}
       {e.user_message && (
-        <div className="bg-amber-50/60 border-l-[3px] border-amber-400 px-3.5 py-2.5 rounded-r-lg mb-2">
-          <div className="text-[0.7rem] font-semibold uppercase tracking-wider text-amber-600 mb-1">
+        <div className="bg-amber-50/60 dark:bg-amber-950/30 border-l-[3px] border-amber-400 dark:border-amber-700 px-3.5 py-2.5 rounded-r-lg mb-2">
+          <div className="text-xs font-semibold text-amber-600 dark:text-amber-300 mb-1">
             User · {formatTimeOfDayWithSeconds(e.timestamp)}
           </div>
           <div className="text-sm whitespace-pre-wrap leading-relaxed">{e.user_message}</div>
         </div>
       )}
       {/* Bot turn */}
-      <div className="bg-neutral-50 border-l-[3px] border-neutral-300 px-3.5 py-2.5 rounded-r-lg">
-        <div className="text-[0.7rem] font-semibold uppercase tracking-wider text-neutral-400 mb-1">
+      <div className="bg-neutral-50 dark:bg-neutral-800/40 border-l-[3px] border-neutral-300 dark:border-neutral-700 px-3.5 py-2.5 rounded-r-lg">
+        <div className="text-xs font-semibold text-neutral-500 dark:text-neutral-400 mb-1">
           Bot
         </div>
         <div className="text-sm whitespace-pre-wrap leading-relaxed">{e.bot_response}</div>
 
         {/* Per-turn slot diff — preferred over flat slots dump */}
         {diff && (diff.added.length > 0 || diff.overwritten.length > 0 || diff.removed.length > 0) && (
-          <div className="text-xs font-mono text-neutral-500 mt-2 space-y-0.5">
+          <div className="text-xs font-mono text-neutral-500 dark:text-neutral-400 mt-2 space-y-0.5">
             {diff.added.map((s) => (
               <div key={`add-${s.key}`}>
-                <span className="text-green-600">+</span> {s.key}={s.value}
+                <span className="text-green-600 dark:text-green-400">+</span> {s.key}={s.value}
               </div>
             ))}
             {diff.overwritten.map((s) => (
               <div key={`over-${s.key}`}>
-                <span className="text-amber-600">~</span> {s.key}={" "}
-                <span className="line-through text-neutral-400">{s.from}</span>{" "}
+                <span className="text-amber-600 dark:text-amber-400">~</span> {s.key}={" "}
+                <span className="line-through text-neutral-400 dark:text-neutral-500">{s.from}</span>{" "}
                 → {s.to}
               </div>
             ))}
             {diff.removed.map((s) => (
               <div key={`rem-${s.key}`}>
-                <span className="text-red-500">−</span> {s.key}={" "}
-                <span className="line-through text-neutral-400">{s.from}</span>
+                <span className="text-red-500 dark:text-red-400">−</span> {s.key}={" "}
+                <span className="line-through text-neutral-400 dark:text-neutral-500">{s.from}</span>
               </div>
             ))}
           </div>
         )}
 
         {meta.length > 0 && (
-          <div className="text-xs text-neutral-400 mt-1.5 font-mono">
+          <div className="text-xs text-neutral-400 dark:text-neutral-500 mt-1.5 font-mono">
             {meta.map((m, idx) => (
               <span key={idx}>
                 {idx > 0 && " · "}
@@ -377,10 +390,10 @@ function TurnEvent({ e, diff }: { e: AuditEvent; diff: SlotDiff | undefined }) {
 
 function QueryEvent({ e }: { e: AuditEvent }) {
   const resultColor =
-    (e.result_count ?? 0) > 0 ? "text-emerald-600" : "text-neutral-400";
+    (e.result_count ?? 0) > 0 ? "text-emerald-600 dark:text-emerald-400" : "text-neutral-400 dark:text-neutral-500";
   return (
-    <div className="bg-emerald-50/40 border-l-[3px] border-emerald-400 px-3.5 py-2 rounded-r-lg">
-      <div className="text-[0.7rem] font-semibold uppercase tracking-wider text-emerald-600 mb-1">
+    <div className="bg-emerald-50/40 dark:bg-emerald-950/30 border-l-[3px] border-emerald-400 dark:border-emerald-700 px-3.5 py-2 rounded-r-lg">
+      <div className="text-xs font-semibold text-emerald-600 dark:text-emerald-300 mb-1">
         Query · {formatTimeOfDayWithSeconds(e.timestamp)}
       </div>
       <div className="text-sm font-mono">
@@ -390,10 +403,10 @@ function QueryEvent({ e }: { e: AuditEvent }) {
           {e.result_count ?? 0} result{(e.result_count ?? 0) !== 1 ? "s" : ""}
         </span>
         {e.relaxed && (
-          <span className="ml-2 text-amber-600 text-xs">(relaxed)</span>
+          <span className="ml-2 text-amber-600 dark:text-amber-400 text-xs">(relaxed)</span>
         )}
         {e.execution_ms != null && (
-          <span className="ml-2 text-neutral-400 text-xs">{e.execution_ms}ms</span>
+          <span className="ml-2 text-neutral-400 dark:text-neutral-500 text-xs">{e.execution_ms}ms</span>
         )}
       </div>
     </div>
@@ -402,8 +415,8 @@ function QueryEvent({ e }: { e: AuditEvent }) {
 
 function CrisisEvent({ e }: { e: AuditEvent }) {
   return (
-    <div className="bg-red-50 border-l-[3px] border-red-500 px-3.5 py-2.5 rounded-r-lg">
-      <div className="text-[0.7rem] font-semibold uppercase tracking-wider text-red-600 mb-1">
+    <div className="bg-red-50 dark:bg-red-950/30 border-l-[3px] border-red-500 dark:border-red-700 px-3.5 py-2.5 rounded-r-lg">
+      <div className="text-xs font-semibold text-red-600 dark:text-red-300 mb-1">
         ⚠ Crisis Detected · {formatTimeOfDayWithSeconds(e.timestamp)}
       </div>
       <div className="text-sm">
@@ -450,8 +463,8 @@ function SlotEvolutionPanel({ turns, finalSlots }: SlotEvolutionPanelProps) {
   }
 
   return (
-    <div className="bg-white border border-neutral-200 rounded-lg p-3 mb-4">
-      <div className="text-[0.7rem] font-semibold uppercase tracking-wider text-neutral-500 mb-2">
+    <div className="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-lg p-3 mb-4">
+      <div className="text-xs font-semibold text-neutral-500 dark:text-neutral-400 mb-2">
         Slot Trace
       </div>
       <div className="flex flex-wrap gap-1.5">
@@ -470,15 +483,15 @@ function SlotEvolutionPanel({ turns, finalSlots }: SlotEvolutionPanelProps) {
               title={tooltip}
               className={`inline-flex items-baseline gap-1 px-2 py-1 rounded-md text-xs font-mono border ${
                 overwritten
-                  ? "bg-amber-50 border-amber-200 text-amber-800"
-                  : "bg-neutral-50 border-neutral-200 text-neutral-700"
+                  ? "bg-amber-50 border-amber-200 text-amber-800 dark:bg-amber-900/20 dark:border-amber-900/40 dark:text-amber-200"
+                  : "bg-neutral-50 border-neutral-200 text-neutral-700 dark:bg-neutral-800/40 dark:border-neutral-800 dark:text-neutral-200"
               }`}
             >
               <span className="font-semibold">{key}</span>
               <span>=</span>
               <span>{value}</span>
               {setOnTurn != null && (
-                <span className="text-neutral-400 text-[0.65rem] ml-0.5">
+                <span className="text-neutral-400 dark:text-neutral-500 text-[0.65rem] ml-0.5">
                   T{setOnTurn + 1}
                   {overwritten ? "*" : ""}
                 </span>
@@ -488,7 +501,7 @@ function SlotEvolutionPanel({ turns, finalSlots }: SlotEvolutionPanelProps) {
         })}
       </div>
       {Object.values(keyHistory).some((h) => h.length > 1) && (
-        <div className="text-[0.65rem] text-neutral-400 mt-2">
+        <div className="text-xs text-neutral-400 dark:text-neutral-500 mt-2">
           * overwritten — hover for history
         </div>
       )}

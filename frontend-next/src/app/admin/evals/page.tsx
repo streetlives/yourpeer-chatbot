@@ -63,12 +63,12 @@ export default function EvalsPage() {
       {slice.error && !slice.hasData && (
         <div className="text-center py-16" role="alert">
           <div className="text-3xl mb-3">⚠️</div>
-          <p className="text-neutral-500 mb-4">
+          <p className="text-neutral-500 dark:text-neutral-400 mb-4">
             Could not load eval results. The server may be unavailable.
           </p>
           <button
             onClick={slice.refresh}
-            className="px-3.5 py-1.5 rounded-lg text-sm font-medium border border-neutral-200 bg-white text-neutral-700 hover:bg-neutral-50 transition"
+            className="px-3.5 py-1.5 rounded-lg text-sm font-medium border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 text-neutral-700 dark:text-neutral-200 hover:bg-neutral-50 dark:hover:bg-neutral-800/40 transition"
           >
             Retry
           </button>
@@ -82,12 +82,12 @@ export default function EvalsPage() {
         <div
           role="status"
           aria-live="polite"
-          className="bg-amber-50 border border-amber-200 rounded-lg px-3.5 py-2 mb-3 text-sm text-amber-800 flex items-center justify-between gap-3"
+          className="bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-900/50 rounded-lg px-3.5 py-2 mb-3 text-sm text-amber-800 dark:text-amber-200 flex items-center justify-between gap-3"
         >
           <span>Latest refresh failed — showing the previous report.</span>
           <button
             onClick={slice.refresh}
-            className="flex-shrink-0 px-2.5 py-0.5 rounded-md text-xs font-semibold bg-amber-100 text-amber-700 hover:bg-amber-200 transition"
+            className="flex-shrink-0 px-2.5 py-0.5 rounded-md text-xs font-semibold bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-200 hover:bg-amber-200 dark:hover:bg-amber-900/60 transition"
           >
             Retry
           </button>
@@ -97,10 +97,10 @@ export default function EvalsPage() {
       {!slice.error && report === undefined && <EvalSkeleton />}
 
       {!slice.error && report === null && (
-        <div className="text-center py-16 text-neutral-400">
+        <div className="text-center py-16 text-neutral-400 dark:text-neutral-500">
           <div className="text-3xl mb-3">🧪</div>
           <p>No evaluation results yet.</p>
-          <p className="mt-2 font-mono text-xs text-amber-600 bg-neutral-50 inline-block px-4 py-2 rounded-lg">
+          <p className="mt-2 font-mono text-xs text-amber-600 dark:text-amber-400 bg-neutral-50 dark:bg-neutral-800/40 inline-block px-4 py-2 rounded-lg">
             Use the Run Evals button above, upload a local eval_report.json, or run: python
             tests/eval/eval_llm_judge.py --output tests/eval_report.json
           </p>

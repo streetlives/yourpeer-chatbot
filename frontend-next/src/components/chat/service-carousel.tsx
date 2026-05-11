@@ -125,6 +125,16 @@ export function ServiceCarousel({ services }: ServiceCarouselProps) {
     >
       {/* Header */}
       <div className="flex items-center justify-between px-1 pb-2">
+        {/* Header.
+            When no grouping happened (one card per service) the count
+            is simple: "Result N of M". When services got combined into
+            location cards (groups.length < services.length) the older
+            text — "Location N of M (S services)" — was ambiguous: does
+            "S services" describe THIS location or the whole result
+            set? We now spell it out: "N of M locations · S services
+            total", and the active card's own header still surfaces
+            "X services here" so the user gets both numbers in
+            their natural place. */}
         <span
           aria-live="polite"
           aria-atomic="true"
@@ -132,7 +142,7 @@ export function ServiceCarousel({ services }: ServiceCarouselProps) {
         >
           {groups.length === services.length
             ? `Result ${currentIndex + 1} of ${groups.length}`
-            : `Location ${currentIndex + 1} of ${groups.length} (${services.length} services)`}
+            : `${currentIndex + 1} of ${groups.length} locations · ${services.length} services total`}
         </span>
         <div className="flex gap-1" role="group" aria-label="Carousel navigation">
           <button

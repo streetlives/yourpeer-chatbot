@@ -153,7 +153,7 @@ export function FreshnessHistogram({
           return (
             <div key={bucket.key} className="flex-1 min-w-0 text-center">
               <div
-                className={`text-[0.65rem] uppercase tracking-wide ${
+                className={`text-xs ${
                   isActive
                     ? "text-amber-700 dark:text-amber-400 font-semibold"
                     : "text-neutral-500 dark:text-neutral-400"
@@ -176,7 +176,7 @@ export function FreshnessHistogram({
       </div>
 
       {onBucketClick && (
-        <p className="mt-3 text-[0.7rem] text-neutral-500 dark:text-neutral-400 italic">
+        <p className="mt-3 text-xs text-neutral-500 dark:text-neutral-400 italic">
           {activeBucket
             ? "Click the highlighted bucket again to clear the filter."
             : "Click a bucket to filter the table below."}

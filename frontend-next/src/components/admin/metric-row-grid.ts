@@ -9,11 +9,22 @@
  * The header row in MetricsSection and the data rows in MetricRow must
  * align column-for-column, so they need to use the same template.
  *
- * Five columns: name (240px) · subtitle (flex) · target (130px) · value
- * (110px) · status (90px).
+ * Five columns:
+ *   1. Metric — name + subtitle stacked, takes the flex space so long
+ *      subtitles ("% of post-result feedback that is positive (N
+ *      responses so far)") fit on one line on wide viewports.
+ *      `minmax(240px, 1fr)` keeps a sane floor on narrower screens.
+ *   2. Target — `140px`, sized for the longest target string seen in
+ *      practice ("Baseline tracking only"). Was previously the flex
+ *      column, which left a large empty gap to its right on wide
+ *      desktops.
+ *   3. Current — `130px`, font-mono numeric value.
+ *   4. Status — `110px`, pill.
+ *   5. Phase — `90px`, pill.
  *
  * Tailwind's JIT scanner only picks up class strings that appear literally
  * in source — that's why this is a const-string export (the literal lives
  * here) rather than a runtime computed value.
  */
-export const METRIC_GRID_COLS = "grid-cols-[240px_1fr_130px_110px_90px]";
+export const METRIC_GRID_COLS =
+  "grid-cols-[minmax(240px,1fr)_140px_130px_110px_90px]";

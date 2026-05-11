@@ -203,18 +203,29 @@ export function ChatContainer() {
   //       message arrived, jumping the user away from whatever they
   //       were reading mid-scroll.
   //
-  // New behavior:
-  //   • Track the last message id we've already scrolled for. If the
-  //     last id hasn't changed (status flip on an existing message,
-  //     no new addition), skip scrolling entirely.
-  //   • For user messages: scroll to bottom (user expects their
-  //     message to land at the input edge).
-  //   • For bot messages that fit in the visible region: scroll to
-  //     bottom (whole message visible, same as before).
-  //   • For bot messages taller than the visible region: align the
-  //     TOP of the bot bubble to the top of the visible region, so
-  //     the user reads from the start. Falls back to scroll-to-
-  //     bottom if the message DOM node isn't found (defensive).
+  // Previous "new behavior" tried to be clever: short bot messages
+  // scrolled to bottom, long ones aligned the top. That broke for the
+  // most common case — a bot reply with services. The bubble's
+  // `data-message-id` wraps only the text bubble (see
+  // chat-message.tsx); the carousel is a SIBLING fragment, so
+  // node.offsetHeight measured ~60px and the height check failed even
+  // though the visible content (bubble + carousel + feedback row) was
+  // far taller than the viewport. Scroll-to-bottom then put the user
+  // at the bottom of the carousel, hiding the text entirely. Users
+  // typed "food in Brooklyn", got a result, and had to scroll up to
+  // read what the bot said.
+  //
+  // Current behavior: track the last message id we've already scrolled
+  // for; on a NEW id, anchor the top of that message's bubble to the
+  // top of the visible region. Works for both roles:
+  //   • Bot: bubble lands at the top; carousel + feedback row flow
+  //     down below, naturally inviting downward swipe through cards.
+  //   • User: the bubble is the last element in the scroll region, so
+  //     "top of bubble at top of viewport" clamps against the
+  //     scrollTop ceiling and resolves to the same position as the
+  //     previous scroll-to-bottom — message lands just above the input.
+  // Status flips on existing messages don't trigger a scroll (the id
+  // hasn't changed).
   const lastScrolledIdRef = useRef<string | null>(null);
   useEffect(() => {
     if (!chatRef.current || messages.length === 0) return;
@@ -227,38 +238,36 @@ export function ChatContainer() {
       const region = chatRef.current;
       if (!region) return;
 
-      // For bot messages, decide between "top of message" and "bottom
-      // of region" based on whether the message fits.
-      if (lastMsg.role === "bot") {
-        const node = region.querySelector<HTMLElement>(
-          `[data-message-id="${lastMsg.id}"]`,
-        );
-        if (node) {
-          const messageHeight = node.offsetHeight;
-          const visibleHeight = region.clientHeight;
-          if (messageHeight > visibleHeight) {
-            // Long reply — anchor the top. Compute the y-offset of
-            // the message within the scroll region using bounding
-            // rects rather than offsetTop. offsetTop walks the
-            // offsetParent chain, which for these messages may NOT
-            // terminate at the scroll region (depends on which
-            // ancestors establish a containing block); using rects
-            // sidesteps that subtlety entirely.
-            //
-            // Math: messageRect.top is relative to the viewport.
-            // regionRect.top is also relative to the viewport. The
-            // message's y-position within the region is therefore
-            // (messageRect.top - regionRect.top) + region.scrollTop.
-            const regionRect = region.getBoundingClientRect();
-            const nodeRect = node.getBoundingClientRect();
-            region.scrollTop = (nodeRect.top - regionRect.top) + region.scrollTop;
-            return;
-          }
-        }
+      const node = region.querySelector<HTMLElement>(
+        `[data-message-id="${lastMsg.id}"]`,
+      );
+      if (node) {
+        // Compute the y-offset of the message within the scroll region
+        // using bounding rects rather than offsetTop. offsetTop walks
+        // the offsetParent chain, which for these messages may NOT
+        // terminate at the scroll region (depends on which ancestors
+        // establish a containing block); using rects sidesteps that
+        // subtlety entirely.
+        //
+        // Math: messageRect.top is relative to the viewport.
+        // regionRect.top is also relative to the viewport. The
+        // message's y-position within the region is therefore
+        // (messageRect.top - regionRect.top) + region.scrollTop.
+        //
+        // The browser clamps `scrollTop` to [0, scrollHeight -
+        // clientHeight], so for short last-messages this naturally
+        // resolves to scroll-to-bottom (target > max → clamp). For
+        // tall messages, the target lands below max and we get true
+        // top-anchoring — the desired behavior.
+        const regionRect = region.getBoundingClientRect();
+        const nodeRect = node.getBoundingClientRect();
+        region.scrollTop = (nodeRect.top - regionRect.top) + region.scrollTop;
+        return;
       }
 
-      // Short bot replies, user messages, and the missing-DOM-node
-      // fallback all scroll to bottom — the original behavior.
+      // DOM-node-missing fallback: scroll to bottom. Shouldn't fire
+      // in practice (every chat message renders with a
+      // data-message-id), but defensive against future regressions.
       region.scrollTop = region.scrollHeight;
     });
   }, [messages]);

@@ -106,12 +106,12 @@ function DefaultErrorState({ onRetry }: { onRetry: () => void }) {
   return (
     <div className="text-center py-16">
       <div className="text-3xl mb-3">⚠️</div>
-      <p className="text-neutral-500 mb-4">
+      <p className="text-neutral-500 dark:text-neutral-400 mb-4">
         Could not load this data. The server may be unavailable.
       </p>
       <button
         onClick={onRetry}
-        className="px-3.5 py-1.5 rounded-lg text-sm font-medium border border-neutral-200 bg-white text-neutral-700 hover:bg-neutral-50 transition"
+        className="px-3.5 py-1.5 rounded-lg text-sm font-medium border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 text-neutral-700 dark:text-neutral-200 hover:bg-neutral-50 dark:hover:bg-neutral-800/40 transition"
       >
         Retry
       </button>
@@ -121,7 +121,7 @@ function DefaultErrorState({ onRetry }: { onRetry: () => void }) {
 
 function DefaultEmptyState() {
   return (
-    <div className="text-center py-16 text-neutral-400">
+    <div className="text-center py-16 text-neutral-400 dark:text-neutral-500">
       <div className="text-3xl mb-3">📊</div>
       <p>No data yet.</p>
     </div>
@@ -151,14 +151,14 @@ function StaleDataBanner({
     <div
       role="status"
       aria-live="polite"
-      className="bg-amber-50 border border-amber-200 rounded-lg px-3.5 py-2 mb-3 text-sm text-amber-800 flex items-center justify-between gap-3"
+      className="bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-900/50 rounded-lg px-3.5 py-2 mb-3 text-sm text-amber-800 dark:text-amber-200 flex items-center justify-between gap-3"
     >
       <span>
         Latest refresh failed — showing data from {ageLabel}.
       </span>
       <button
         onClick={onRetry}
-        className="flex-shrink-0 px-2.5 py-0.5 rounded-md text-xs font-semibold bg-amber-100 text-amber-700 hover:bg-amber-200 transition"
+        className="flex-shrink-0 px-2.5 py-0.5 rounded-md text-xs font-semibold bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-200 hover:bg-amber-200 dark:hover:bg-amber-900/60 transition"
       >
         Retry
       </button>

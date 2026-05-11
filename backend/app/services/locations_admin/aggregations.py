@@ -1370,18 +1370,35 @@ def get_service_borough_heatmap() -> dict:
     join executes in single-digit milliseconds at this scale —
     approximately 3,500 services × 2,400 locations is a junction-table
     sweep, not a Cartesian product.
+
+    Wraps the borough-resolution CASE in a CTE so the outer GROUP BY
+    references a materialized column. Grouping directly by an output
+    alias of a CASE expression that references `pa.city` failed in
+    PostgreSQL with "column pa.city must appear in the GROUP BY
+    clause" — the GROUP-BY validator inspects the CASE's column
+    references before alias resolution, so it can't tell that
+    `GROUP BY borough` covers `pa.city`. The CTE form sidesteps this
+    cleanly and matches the borough-summary query pattern elsewhere
+    in this module.
     """
     sql = """
+    WITH labeled AS (
+        SELECT
+            t.name AS category,
+            %(borough_case)s AS borough,
+            l.id AS location_id
+        FROM taxonomies t
+        JOIN service_taxonomy st ON st.taxonomy_id = t.id
+        JOIN service_at_locations sal ON sal.service_id = st.service_id
+        JOIN locations l ON l.id = sal.location_id
+        LEFT JOIN physical_addresses pa ON pa.location_id = l.id
+    )
     SELECT
-        t.name AS category,
-        %(borough_case)s AS borough,
-        COUNT(DISTINCT l.id) AS location_count
-    FROM taxonomies t
-    JOIN service_taxonomy st ON st.taxonomy_id = t.id
-    JOIN service_at_locations sal ON sal.service_id = st.service_id
-    JOIN locations l ON l.id = sal.location_id
-    LEFT JOIN physical_addresses pa ON pa.location_id = l.id
-    GROUP BY t.name, borough
+        category,
+        borough,
+        COUNT(DISTINCT location_id) AS location_count
+    FROM labeled
+    GROUP BY category, borough
     """ % {"borough_case": _borough_case_sql("pa.city")}
     rows = _execute_sql(sql, {})
 
@@ -2361,12 +2378,17 @@ def get_data_integrity_callouts() -> dict:
     # regex is the same shape formatPhone produces; phones that don't
     # match AND look phone-shaped (≥7 digits) are flagged. Empty /
     # 'n/a' / 'tbd' values are out of scope for this callout.
+    #
+    # Bind params use SQLAlchemy's named-parameter syntax `:name`, not
+    # psycopg2's pyformat `%(name)s` — text() only recognizes `:name`,
+    # and passing `%(name)s` through results in the literal `%` reaching
+    # Postgres which errors with "syntax error at or near \"%\"".
     bad_phones_sql = """
     SELECT COUNT(*) AS n
     FROM phones p
     WHERE p.number IS NOT NULL
-      AND p.number ~ %(phonelike)s
-      AND p.number !~* %(strict)s
+      AND p.number ~ :phonelike
+      AND p.number !~* :strict
     """
     n = _scalar_count(bad_phones_sql, {
         "phonelike": _PHONELIKE_RE,

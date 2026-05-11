@@ -179,53 +179,55 @@ export function LocationsTable({
       )}
 
       {data && (
-        <>
-          <div className="bg-white border border-neutral-200 rounded-lg overflow-hidden dark:bg-neutral-900 dark:border-neutral-800">
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead className="bg-neutral-50 dark:bg-neutral-800/50">
+        <div className="bg-white border border-neutral-200 rounded-lg overflow-hidden dark:bg-neutral-900 dark:border-neutral-800">
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead className="bg-neutral-50 dark:bg-neutral-800/50">
+                <tr>
+                  <SortHeader label="Location" field="name" current={sortKey} dir={sortDir} onClick={handleSortClick} />
+                  <SortHeader label="Organization" field="organization" current={sortKey} dir={sortDir} onClick={handleSortClick} />
+                  <SortHeader label="Borough" field="city" current={sortKey} dir={sortDir} onClick={handleSortClick} />
+                  <SortHeader label="Services" field="service_count" current={sortKey} dir={sortDir} onClick={handleSortClick} className="text-right" />
+                  <th className="px-4 py-3 text-xs font-semibold text-neutral-500 dark:text-neutral-400 text-left">Categories</th>
+                  <SortHeader label="Last verified" field="last_validated_at" current={sortKey} dir={sortDir} onClick={handleSortClick} />
+                  <th className="px-4 py-3 text-xs font-semibold text-neutral-500 dark:text-neutral-400 text-center">Data</th>
+                  <SortHeader label="Recent flags" field="recent_flags" current={sortKey} dir={sortDir} onClick={handleSortClick} className="text-right" />
+                  <th className="px-4 py-3 text-xs font-semibold text-neutral-500 dark:text-neutral-400 text-right">Open</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.locations.length === 0 && (
                   <tr>
-                    <SortHeader label="Location" field="name" current={sortKey} dir={sortDir} onClick={handleSortClick} />
-                    <SortHeader label="Organization" field="organization" current={sortKey} dir={sortDir} onClick={handleSortClick} />
-                    <SortHeader label="Borough" field="city" current={sortKey} dir={sortDir} onClick={handleSortClick} />
-                    <SortHeader label="Services" field="service_count" current={sortKey} dir={sortDir} onClick={handleSortClick} className="text-right" />
-                    <th className="px-4 py-3 text-xs uppercase tracking-wider font-semibold text-neutral-400 text-left">Categories</th>
-                    <SortHeader label="Last verified" field="last_validated_at" current={sortKey} dir={sortDir} onClick={handleSortClick} />
-                    <th className="px-4 py-3 text-xs uppercase tracking-wider font-semibold text-neutral-400 text-center">Data</th>
-                    <SortHeader label="Recent flags" field="recent_flags" current={sortKey} dir={sortDir} onClick={handleSortClick} className="text-right" />
-                    <th className="px-4 py-3 text-xs uppercase tracking-wider font-semibold text-neutral-400 text-right">Open</th>
+                    <td colSpan={9} className="px-4 py-10 text-center text-neutral-400 dark:text-neutral-500">
+                      No locations match these filters.
+                    </td>
                   </tr>
-                </thead>
-                <tbody>
-                  {data.locations.length === 0 && (
-                    <tr>
-                      <td colSpan={9} className="px-4 py-10 text-center text-neutral-400">
-                        No locations match these filters.
-                      </td>
-                    </tr>
-                  )}
-                  {data.locations.map((loc) => (
-                    <LocationRow key={loc.location_id} loc={loc} />
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                )}
+                {data.locations.map((loc) => (
+                  <LocationRow key={loc.location_id} loc={loc} />
+                ))}
+              </tbody>
+            </table>
           </div>
 
-          <div className="mt-4">
-            <TablePagination
-              totalItems={data.total}
-              page={data.page}
-              pageSize={pageSize}
-              onPageChange={setPage}
-              onPageSizeChange={(ps) => {
-                setPageSize(ps);
-                setPage(1);
-              }}
-              ariaLabel="Locations table pagination"
-            />
-          </div>
-        </>
+          {/* TablePagination sits INSIDE the card so its existing
+              `border-t` visually attaches to the table (the previous
+              `mt-4` wrapper produced a floating, disconnected control).
+              The pagination's own `bg-neutral-50` matches the table
+              header, so the card reads as a single unit:
+              header → rows → footer. */}
+          <TablePagination
+            totalItems={data.total}
+            page={data.page}
+            pageSize={pageSize}
+            onPageChange={setPage}
+            onPageSizeChange={(ps) => {
+              setPageSize(ps);
+              setPage(1);
+            }}
+            ariaLabel="Locations table pagination"
+          />
+        </div>
       )}
     </div>
   );
@@ -260,7 +262,7 @@ function FilterBar({
        *  pills are easier to manipulate on a touchscreen and friendlier
        *  to keyboard nav than a floating <select multiple>). */}
       <div className="flex flex-wrap items-center gap-1">
-        <span className="text-xs uppercase tracking-wider text-neutral-500 mr-1.5">Borough:</span>
+        <span className="text-xs font-semibold text-neutral-500 dark:text-neutral-400 mr-1.5">Borough:</span>
         {(["Manhattan", "Brooklyn", "Queens", "Bronx", "Staten Island", "Other"] as BoroughLabel[]).map((b) => {
           const active = boroughFilter.includes(b);
           return (
@@ -287,7 +289,7 @@ function FilterBar({
 
       {/* Age bucket — single-select dropdown */}
       <div className="flex items-center gap-1.5">
-        <label className="text-xs uppercase tracking-wider text-neutral-500" htmlFor="age-bucket">Age:</label>
+        <label className="text-sm font-medium text-neutral-500 dark:text-neutral-400" htmlFor="age-bucket">Age:</label>
         <select
           id="age-bucket"
           value={ageBucket}
@@ -322,7 +324,7 @@ function FilterBar({
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="Search name or organization…"
-          className="w-full text-xs px-2.5 py-1.5 rounded border border-neutral-200 bg-white dark:bg-neutral-900 dark:border-neutral-700 dark:text-neutral-200 placeholder:text-neutral-400"
+          className="w-full text-xs px-2.5 py-1.5 rounded border border-neutral-200 bg-white dark:bg-neutral-900 dark:border-neutral-700 dark:text-neutral-200 placeholder:text-neutral-400 dark:placeholder:text-neutral-500"
         />
       </div>
     </div>
@@ -359,8 +361,8 @@ function SortHeader({
       <button
         type="button"
         onClick={() => onClick(field)}
-        className={`w-full px-4 py-3 text-xs uppercase tracking-wider font-semibold cursor-pointer select-none transition-colors text-left hover:text-neutral-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 focus-visible:ring-inset ${
-          active ? "text-amber-600" : "text-neutral-400"
+        className={`w-full px-4 py-3 text-xs font-semibold cursor-pointer select-none transition-colors text-left hover:text-neutral-600 dark:hover:text-neutral-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 focus-visible:ring-inset ${
+          active ? "text-amber-600 dark:text-amber-400" : "text-neutral-500 dark:text-neutral-400"
         } ${className}`}
         aria-label={`Sort by ${label}`}
       >
@@ -390,7 +392,7 @@ function LocationRow({ loc }: { loc: LocationsListRow }) {
           {loc.service_categories.join(", ") || "—"}
         </span>
         {loc.service_categories_more > 0 && (
-          <span className="ml-1 text-neutral-400">+{loc.service_categories_more}</span>
+          <span className="ml-1 text-neutral-400 dark:text-neutral-500">+{loc.service_categories_more}</span>
         )}
       </td>
       <td className="px-4 py-3 text-sm text-neutral-600 dark:text-neutral-300">
@@ -406,7 +408,7 @@ function LocationRow({ loc }: { loc: LocationsListRow }) {
             {loc.recent_flags}
           </span>
         ) : (
-          <span className="text-neutral-400">—</span>
+          <span className="text-neutral-400 dark:text-neutral-500">—</span>
         )}
       </td>
       <td className="px-4 py-3 text-right">
@@ -428,7 +430,7 @@ function LastVerifiedCell({ value }: { value: string | null }) {
   if (value === null) {
     return (
       <span className="inline-flex items-center gap-1 text-red-700 dark:text-red-400">
-        <span className="w-1.5 h-1.5 rounded-full bg-red-500 inline-block" aria-hidden="true" />
+        <span className="w-1.5 h-1.5 rounded-full bg-red-500 dark:bg-red-400 inline-block" aria-hidden="true" />
         Never
       </span>
     );
@@ -471,7 +473,7 @@ function DataBadges({ loc }: { loc: LocationsListRow }) {
         <span
           key={it.label}
           title={`${it.has ? "Has" : "Missing"} ${it.label}`}
-          className={`text-[0.6rem] px-1.5 py-0.5 rounded ${
+          className={`text-xs px-1.5 py-0.5 rounded ${
             it.has
               ? "bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300"
               : "bg-red-50 text-red-700 dark:bg-red-900/30 dark:text-red-300"

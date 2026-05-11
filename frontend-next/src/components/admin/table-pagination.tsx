@@ -81,14 +81,14 @@ export function TablePagination({
   return (
     <nav
       aria-label={ariaLabel}
-      className="flex flex-wrap items-center justify-between gap-3 px-4 py-2.5 bg-neutral-50 border-t border-neutral-200 text-xs text-neutral-500"
+      className="flex flex-wrap items-center justify-between gap-3 px-4 py-2.5 bg-neutral-50 dark:bg-neutral-800/40 border-t border-neutral-200 dark:border-neutral-800 text-xs text-neutral-500 dark:text-neutral-400"
     >
       {/* Left: range string */}
       <div>
-        Showing <span className="font-mono text-neutral-700">{startItem}</span>
-        –<span className="font-mono text-neutral-700">{endItem}</span>
+        Showing <span className="font-mono text-neutral-700 dark:text-neutral-200">{startItem}</span>
+        –<span className="font-mono text-neutral-700 dark:text-neutral-200">{endItem}</span>
         {" of "}
-        <span className="font-mono text-neutral-700">{totalItems}</span>
+        <span className="font-mono text-neutral-700 dark:text-neutral-200">{totalItems}</span>
       </div>
 
       {/* Right: page-size selector + nav buttons */}
@@ -103,7 +103,7 @@ export function TablePagination({
               onPageSizeChange(Number(e.target.value) as PageSize)
             }
             aria-label="Items per page"
-            className="pl-2 pr-6 border border-neutral-200 rounded-md bg-white text-neutral-700 text-xs focus:outline-none focus:border-amber-400 focus:ring-1 focus:ring-amber-400"
+            className="pl-2 pr-6 border border-neutral-200 dark:border-neutral-700 rounded-md bg-white dark:bg-neutral-900 text-neutral-700 dark:text-neutral-200 text-xs focus:outline-none focus:border-amber-400 focus:ring-1 focus:ring-amber-400"
           >
             {PAGE_SIZE_OPTIONS.map((n) => (
               <option key={n} value={n}>
@@ -129,7 +129,7 @@ export function TablePagination({
             onClick={() => onPageChange(safePage - 1)}
             icon={<ChevronLeft size={14} />}
           />
-          <span className="px-2.5 py-1 text-neutral-600 font-medium tabular-nums">
+          <span className="px-2.5 py-1 text-neutral-600 dark:text-neutral-300 font-medium tabular-nums">
             Page <span className="font-mono">{safePage}</span> of{" "}
             <span className="font-mono">{totalPages}</span>
           </span>
@@ -165,7 +165,7 @@ function NavButton({ label, disabled, onClick, icon }: NavButtonProps) {
       onClick={onClick}
       disabled={disabled}
       aria-label={label}
-      className="w-7 h-7 inline-flex items-center justify-center rounded-md text-neutral-500 transition-colors hover:bg-white hover:text-neutral-700 hover:border-neutral-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-neutral-500"
+      className="w-7 h-7 inline-flex items-center justify-center rounded-md text-neutral-500 dark:text-neutral-400 transition-colors hover:bg-white dark:hover:bg-neutral-800 hover:text-neutral-700 dark:hover:text-neutral-200 hover:border-neutral-200 dark:hover:border-neutral-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent dark:disabled:hover:bg-transparent disabled:hover:text-neutral-500 dark:disabled:hover:text-neutral-400"
     >
       {icon}
     </button>

@@ -4,15 +4,35 @@
 // license that can be found in the LICENSE file or at
 // https://opensource.org/licenses/MIT.
 
-import { redirect } from "next/navigation";
+"use client";
 
-/**
- * The bare /admin route redirects to /admin/overview, which is the
- * canonical landing page for the staff console. Without this redirect,
- * /admin would render an empty page (or worse, stale duplicate content)
- * and the error boundary's "Back to overview" link would take users
- * somewhere broken.
- */
-export default function AdminPage() {
-  redirect("/admin/overview");
+import { useDataSlice } from "@/hooks/use-data-slice";
+import { DataPanel } from "@/components/admin/data-panel";
+import { ConversationTable } from "@/components/admin/conversation-table";
+import { TableSkeleton } from "@/components/admin/loading-skeleton";
+
+export default function ConversationsPage() {
+  const slice = useDataSlice("conversations");
+
+  return (
+    <DataPanel
+      slice={slice}
+      skeleton={
+        <TableSkeleton
+          rows={6}
+          // Matches ConversationTable: Session (id-prefix), Turns (small),
+          // Outcome (badge), Slots (wide truncated), Last Active (timestamp)
+          widths={["w-24", "w-8", "w-20", "w-48", "w-28"]}
+        />
+      }
+      emptyState={
+        <div className="text-center py-16 text-neutral-400 dark:text-neutral-500">
+          <div className="text-3xl mb-3">💬</div>
+          <p>No conversations yet. Start chatting to see them here.</p>
+        </div>
+      }
+    >
+      {(data) => <ConversationTable conversations={data} />}
+    </DataPanel>
+  );
 }

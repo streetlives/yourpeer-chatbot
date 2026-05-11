@@ -35,8 +35,8 @@ function SliderField({
   return (
     <label className="block">
       <div className="flex justify-between mb-0.5">
-        <span className="text-xs text-neutral-600">{label}</span>
-        <span className="text-xs font-mono font-semibold text-neutral-900">
+        <span className="text-sm text-neutral-600 dark:text-neutral-300">{label}</span>
+        <span className="text-sm font-mono font-semibold text-neutral-900 dark:text-neutral-100">
           {format ? format(value) : value}
         </span>
       </div>
@@ -70,11 +70,11 @@ function ToggleField({
         type="checkbox"
         checked={checked}
         onChange={(e) => onChange(e.target.checked)}
-        className="w-4 h-4 rounded border-neutral-300 text-amber-500 accent-amber-500 cursor-pointer"
+        className="w-4 h-4 rounded border-neutral-300 dark:border-neutral-700 text-amber-500 dark:text-amber-500 accent-amber-500 cursor-pointer"
       />
       <div>
-        <span className="text-xs font-medium text-neutral-700">{label}</span>
-        <span className="text-[0.65rem] text-neutral-400 ml-1.5">{detail}</span>
+        <span className="text-sm font-medium text-neutral-700 dark:text-neutral-200">{label}</span>
+        <span className="text-xs text-neutral-400 dark:text-neutral-500 ml-1.5">{detail}</span>
       </div>
     </label>
   );
@@ -214,9 +214,9 @@ export function CostCalculator() {
   return (
     <>
       {/* Sliders */}
-      <div className="bg-white border border-neutral-200 rounded-lg px-4 py-4 mb-4">
+      <div className="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-lg px-4 py-4 mb-4">
         <div className="flex items-center justify-between mb-3">
-          <span className="text-xs font-bold uppercase tracking-wider text-neutral-400">
+          <span className="text-sm font-semibold text-neutral-700 dark:text-neutral-300">
             Inputs
           </span>
           <button
@@ -224,7 +224,7 @@ export function CostCalculator() {
             onClick={() => dispatch({ type: "reset" })}
             disabled={!isDirty}
             aria-label="Reset all calculator inputs to defaults"
-            className="flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-medium text-neutral-500 hover:text-neutral-700 hover:bg-neutral-50 transition disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent"
+            className="flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-medium text-neutral-500 dark:text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200 hover:bg-neutral-50 dark:hover:bg-neutral-800 transition disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent"
           >
             <RotateCcw size={12} />
             Reset
@@ -241,12 +241,12 @@ export function CostCalculator() {
           <SliderField label="% bot questions" value={s.botQuestionPct} onChange={setNum("botQuestionPct")} min={0} max={10} step={1} format={(v) => v + "%"} />
         </div>
 
-        <div className="flex gap-4 mt-4 pt-3 border-t border-neutral-100">
+        <div className="flex gap-4 mt-4 pt-3 border-t border-neutral-100 dark:border-neutral-800">
           <ToggleField label="LLM-as-a-jury evaluation" checked={s.includeJury} onChange={setBool("includeJury")} detail="~$45-55 per monthly run" />
           <ToggleField label="Future: multi-language" checked={s.includeMultilang} onChange={setBool("includeMultilang")} detail="Sonnet for non-English" />
         </div>
 
-        <div className="text-xs text-neutral-400 mt-3">
+        <div className="text-sm text-neutral-400 dark:text-neutral-500 mt-3">
           {totalTurns.toLocaleString()} total turns &middot;{" "}
           {conversationalTurns.toLocaleString()} conv &middot;{" "}
           {slotTurns.toLocaleString()} slot &middot;{" "}
@@ -267,43 +267,43 @@ export function CostCalculator() {
             onClick={() => setActiveConfig(c.id)}
             className={`py-2.5 px-2 rounded-lg text-center transition-all ${
               activeConfig === c.id
-                ? "bg-neutral-900 text-white border-2 border-neutral-900"
-                : "bg-white text-neutral-700 border border-neutral-200 hover:border-neutral-300"
+                ? "bg-neutral-900 text-white border-2 border-neutral-900 dark:bg-amber-400 dark:text-neutral-900 dark:border-amber-400"
+                : "bg-white text-neutral-700 border border-neutral-200 hover:border-neutral-300 dark:bg-neutral-900 dark:text-neutral-200 dark:border-neutral-800 dark:hover:border-neutral-700"
             }`}
           >
-            <div className="text-xs font-semibold">{c.name}</div>
-            <div className="text-[0.65rem] opacity-70 mt-0.5">{c.tag}</div>
+            <div className="text-sm font-semibold">{c.name}</div>
+            <div className="text-xs opacity-70 mt-0.5">{c.tag}</div>
             <div className="text-base font-bold font-mono mt-1">{fmt(c.total)}</div>
           </button>
         ))}
       </div>
 
       {/* Config detail grid */}
-      <div className="bg-white border border-neutral-200 rounded-lg overflow-hidden mb-6">
-        <div className="px-4 py-3 border-b border-neutral-100 flex items-center justify-between">
+      <div className="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-lg overflow-hidden mb-6">
+        <div className="px-4 py-3 border-b border-neutral-100 dark:border-neutral-800 flex items-center justify-between">
           <div>
             <div className="text-sm font-bold">{config.name}</div>
-            <div className="text-xs text-neutral-400 mt-0.5">{config.desc}</div>
+            <div className="text-sm text-neutral-400 dark:text-neutral-500 mt-0.5">{config.desc}</div>
           </div>
           <div className="text-right">
             <span className="text-2xl font-bold font-mono">{fmt(config.total)}</span>
-            <span className="text-xs text-neutral-400">/mo</span>
+            <span className="text-sm text-neutral-400 dark:text-neutral-500">/mo</span>
           </div>
         </div>
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4">
           {activeTasks.map((item, idx) => (
             <div
               key={item.key}
-              className={`px-4 py-3 border-b border-neutral-100 ${(idx + 1) % 4 !== 0 ? "border-r" : ""} last:border-b-0`}
+              className={`px-4 py-3 border-b border-neutral-100 dark:border-neutral-800 ${(idx + 1) % 4 !== 0 ? "border-r" : ""} last:border-b-0`}
             >
-              <div className="text-[0.65rem] font-bold uppercase tracking-wider text-neutral-400 mb-1">
+              <div className="text-xs font-semibold text-neutral-500 dark:text-neutral-400 mb-1">
                 {item.label}
               </div>
               <ModelBadge model={item.model} />
               <div className="text-lg font-bold font-mono mt-1.5">
                 {fmt(item.cost)}
               </div>
-              <div className="text-[0.65rem] text-neutral-400">
+              <div className="text-xs text-neutral-400 dark:text-neutral-500">
                 {item.count.toLocaleString()} calls
               </div>
             </div>
@@ -312,17 +312,17 @@ export function CostCalculator() {
       </div>
 
       {/* Post-results savings note */}
-      <div className="bg-emerald-50 border border-emerald-200 rounded-lg px-4 py-3 mb-4 text-sm text-emerald-800">
+      <div className="bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-900/40 rounded-lg px-4 py-3 mb-4 text-sm text-emerald-800 dark:text-emerald-200">
         <span className="font-semibold">Cost optimization:</span>{" "}
         Post-results questions (&ldquo;are any open now?&rdquo;, &ldquo;tell me about the first one&rdquo;)
         are handled deterministically from stored card data — zero LLM calls.
-        The <code className="bg-emerald-100 px-1 rounded text-xs">skip_llm</code> optimization
+        The <code className="bg-emerald-100 dark:bg-emerald-900/40 px-1 rounded text-xs">skip_llm</code> optimization
         also eliminates Sonnet crisis detection calls on short safe actions (≤ 4 words).
       </div>
 
       {/* Scale projection */}
-      <div className="bg-white border border-neutral-200 rounded-lg px-4 py-3 mb-6">
-        <div className="text-xs font-semibold mb-2">
+      <div className="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-lg px-4 py-3 mb-6">
+        <div className="text-sm font-semibold mb-2">
           Scale projection (recommended config)
         </div>
         <div className="grid grid-cols-4 gap-2">
@@ -355,11 +355,11 @@ export function CostCalculator() {
                 : 0);
             return (
               <div key={users} className="text-center py-1.5">
-                <div className="text-xs text-neutral-500">
+                <div className="text-sm text-neutral-500 dark:text-neutral-400">
                   {users === 36000 ? "AI capacity" : users.toLocaleString() + " users"}
                 </div>
                 <div className="text-lg font-bold font-mono">{fmt(projectedCost)}</div>
-                <div className="text-[0.65rem] text-neutral-400">/month</div>
+                <div className="text-xs text-neutral-400 dark:text-neutral-500">/month</div>
               </div>
             );
           })}

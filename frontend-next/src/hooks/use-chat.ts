@@ -8,25 +8,30 @@
 
 import { useCallback, useEffect } from "react";
 import { useChatStore, nextMsgId } from "@/lib/chat/store";
-import { sendChatMessage, sendFeedback } from "@/lib/chat/api";
+import { sendChatMessage } from "@/lib/chat/api";
 import { useGeolocation } from "./use-geolocation";
-import type { FeedbackRating, ChatMessage } from "@/lib/chat/types";
+import { useChatFeedback } from "./use-chat-feedback";
+import { useChatSwReconcile } from "./use-chat-sw-reconcile";
+import type { ChatMessage } from "@/lib/chat/types";
 import {
   enqueue as enqueueMessage,
   dequeue as dequeueMessage,
   readQueue,
   reapExpired,
 } from "@/lib/chat/send-queue";
-import {
-  reconcilePending,
-} from "@/lib/chat/pending-responses";
-import { cacheLastResults } from "@/lib/chat/offline-cache";
 import { generateRequestId } from "@/lib/chat/request-id";
 import { redactPII } from "@/lib/chat/pii-redactor";
 import { BOROUGH_QUICK_REPLIES } from "@/lib/chat/borough-quick-replies";
-
-const GEOLOCATION_TRIGGER = "__use_geolocation__";
-const CRISIS_GEO_TRIGGER = "__crisis_geo_search__";
+import {
+  GEOLOCATION_TRIGGER,
+  CRISIS_GEO_TRIGGER,
+  withRetry,
+  errMessage,
+  userFacingError,
+  isNetworkError,
+  tryRegisterBackgroundSync,
+  cacheIfResults,
+} from "@/lib/chat/chat-helpers";
 
 /**
  * Module-level coordinator for the offline-queue flush.
@@ -48,176 +53,13 @@ const CRISIS_GEO_TRIGGER = "__crisis_geo_search__";
  *      mutations of ref.current as "modifying a hook argument."
  *      Module scope sidesteps that analysis cleanly.
  *
+ * Stays in this file (not in chat-helpers.ts) because its
+ * primary consumer is `flushQueue` below. If `flushQueue` is later
+ * extracted, the coordinator should move with it.
+ *
  * NOT a useRef even with the "Ref" suffix — see comment above.
  */
 let flushInFlight: Promise<void> | null = null;
-
-/** Wait ms milliseconds. */
-const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
-
-/**
- * Try an async operation with one automatic retry after a delay.
- * Does NOT retry 429 (rate limit) or 403 (auth) errors.
- */
-async function withRetry<T>(fn: () => Promise<T>, retryDelayMs = 1500): Promise<T> {
-  try {
-    return await fn();
-  } catch (err: unknown) {
-    const msg = errMessage(err);
-    // Don't retry rate limits or auth errors
-    if (msg.includes("429") || msg.includes("403")) throw err;
-    await delay(retryDelayMs);
-    return fn();
-  }
-}
-
-/** Safely extract a message string from an unknown thrown value. */
-function errMessage(err: unknown): string {
-  if (err instanceof Error) return err.message;
-  if (typeof err === "string") return err;
-  if (err && typeof err === "object" && "message" in err) {
-    const m = (err as { message?: unknown }).message;
-    return typeof m === "string" ? m : "";
-  }
-  return "";
-}
-
-/** Safely extract an error name (e.g. "TypeError") from an unknown thrown value. */
-function errName(err: unknown): string {
-  if (err instanceof Error) return err.name;
-  if (err && typeof err === "object" && "name" in err) {
-    const n = (err as { name?: unknown }).name;
-    return typeof n === "string" ? n : "";
-  }
-  return "";
-}
-
-/** Convert a caught error into a user-friendly message. */
-function userFacingError(err: unknown): string {
-  const msg = errMessage(err);
-  const name = errName(err);
-  // Rate-limit messages include "wait" — pass through verbatim
-  if (msg.includes("wait")) return msg;
-  // API layer errors (503, 500) already have good messages — pass through
-  if (msg.includes("temporarily unavailable") || msg.includes("on our end") || msg.includes("Try again")) return msg;
-  // Network error — fetch itself failed (no response)
-  if (name === "TypeError" || msg.includes("fetch")) return "Can't reach the server right now. Check your connection and try again.";
-  // Timeout — AbortSignal.timeout fired
-  if (name === "TimeoutError" || name === "AbortError") return "The search is taking longer than expected. Try again in a moment.";
-  // Fallback
-  return "Sorry, something went wrong. Try again in a moment.";
-}
-
-/**
- * True when an error looks like a network failure (offline, DNS, etc.),
- * as opposed to a server-returned error (4xx/5xx) or a request timeout.
- * Used to decide whether to enqueue the message for later flush or
- * surface the error to the user immediately.
- *
- * Rate limits (429), auth (403), bad request (400), server errors
- * (5xx) are NOT network errors — they mean we reached the server and
- * it answered.
- *
- * Timeouts (AbortSignal.timeout firing) are also NOT treated as
- * network errors, even though they produce no response: a timeout
- * means the server was slow, not that the user was offline. Queuing
- * on timeout would show the user "I'll send this when you're back
- * online" while they're clearly online, which is confusing. Let those
- * flow to the normal error path where userFacingError() says "taking
- * longer than expected — try again."
- *
- * As a final guard we also check navigator.onLine. Even if fetch
- * raised TypeError, if the browser thinks it's online the user
- * probably sees a degraded state (e.g. captive portal, VPN issue)
- * better served by an error message than silent queuing.
- */
-function isNetworkError(err: unknown): boolean {
-  // Browser is sure we're online → not a queue-worthy network failure
-  if (typeof navigator !== "undefined" && navigator.onLine === false) {
-    // Offline for sure — anything that failed is a network error
-    return true;
-  }
-  const msg = errMessage(err);
-  const name = errName(err);
-  // Timeouts are slow-server, not no-network — don't queue
-  if (name === "TimeoutError") return false;
-  if (name === "AbortError") return false;
-  if (name === "TypeError") return true;          // fetch itself failed
-  if (msg.includes("Failed to fetch")) return true;
-  if (msg.includes("NetworkError")) return true;
-  // HTTP status codes in the message mean we got a response
-  if (/\b[45]\d\d\b/.test(msg)) return false;
-  return false;
-}
-
-/**
- * Ask the browser to fire a Background Sync event when connectivity is
- * available. The sync tag here MUST match `SYNC_TAG` in public/sw.js —
- * the SW's sync handler only runs for the exact tag it's checking for.
- *
- * This is a strict enhancement on top of the existing client-side
- * flush. When it works (Chromium browsers with the API enabled), the
- * browser will drain the queue even if the tab is closed or JS is
- * frozen — useful for iOS Android Chrome in background or users who
- * close the tab between when they hit send and when connectivity
- * returns. When it doesn't work (Safari, Firefox, older Edge, or any
- * browser where the registration fails), the existing client-side
- * `online` handler still fires on tab focus and drains the queue.
- *
- * Failures are swallowed: this is a best-effort enhancement, never
- * the primary send path. We also check `navigator.onLine` before
- * registering — an immediate sync on an already-online browser would
- * fire right away, which is fine but racy with the client-side
- * flush. Skip it; the client-side path will handle it.
- */
-async function tryRegisterBackgroundSync(): Promise<void> {
-  if (typeof window === "undefined") return;
-  if (!("serviceWorker" in navigator)) return;
-  // Feature detection — SyncManager is the global API for Background
-  // Sync. Safari and Firefox omit this; registering on those browsers
-  // throws, which is why we gate even though the call below is in a
-  // try/catch.
-  if (!("SyncManager" in window)) return;
-  try {
-    const reg = await navigator.serviceWorker.ready;
-    // The `sync` property is typed as optional in lib.dom — check
-    // before using to satisfy strict mode. Present whenever
-    // SyncManager is defined.
-    const sync = (reg as ServiceWorkerRegistration & {
-      sync?: { register(tag: string): Promise<void> };
-    }).sync;
-    if (!sync) return;
-    await sync.register("yourpeer-send-queue");
-  } catch (err) {
-    // Common failure modes: user-denied storage permission, no SW
-    // registered yet (would be odd this deep in the send path), or
-    // the browser happens not to implement Background Sync despite
-    // exposing SyncManager. None of these should break the user's
-    // flow — the client-side online handler is the fallback.
-    console.debug("[sync] registration failed (non-fatal):", err);
-  }
-}
-
-/**
- * Write a bot response that includes service cards to the offline
- * cache. Fire-and-forget — caching failures never block the UI.
- *
- * Called from every success path (geo flow, crisis flow, normal
- * send, retries, queue flush). Kept as a standalone helper so if
- * any success path is added later, we don't forget to cache there
- * too.
- *
- * Guards:
- * - Requires at least one service in the response. Without services
- *   there's nothing useful to show offline.
- * - Requires no retryMessage. If the response also carries a retry
- *   prompt it's an error message, not results — don't cache.
- */
-function cacheIfResults(botMessage: ChatMessage, userQuery: string): void {
-  if (!botMessage.services || botMessage.services.length === 0) return;
-  if (botMessage.retryMessage) return;
-  void cacheLastResults(botMessage, userQuery);
-}
 
 export function useChat() {
   const {
@@ -883,36 +725,7 @@ export function useChat() {
     [sessionId, latitude, longitude, hasCoords, addMessage, updateMessage, removeMessage, setSessionId, setLoading, setError, requestLocation, handleNetworkError],
   );
 
-  const submitFeedback = useCallback(
-    (rating: FeedbackRating) => {
-      if (!sessionId) return;
-
-      // Gather context from the most recent bot message with results,
-      // or the most recent bot response text if no results were shown.
-      const botMessages = messages.filter((m) => m.role === "bot");
-      const lastWithResults = [...botMessages].reverse().find((m) => m.services && m.services.length > 0);
-      const lastBot = botMessages[botMessages.length - 1];
-
-      const context: Record<string, unknown> = {};
-      if (lastWithResults?.services) {
-        context.result_count = lastWithResults.services.length;
-        context.service_names = lastWithResults.services
-          .slice(0, 10)
-          .map((s) => s.service_name)
-          .filter(Boolean);
-        context.organizations = [...new Set(
-          lastWithResults.services.map((s) => s.organization).filter(Boolean),
-        )].slice(0, 5);
-      }
-      if (lastBot?.text) {
-        // Truncate to avoid sending huge payloads
-        context.bot_response = lastBot.text.slice(0, 200);
-      }
-
-      sendFeedback(sessionId, rating, context);
-    },
-    [sessionId, messages],
-  );
+  const submitFeedback = useChatFeedback();
 
   // Flush queued messages when connection returns.
   //
@@ -1134,110 +947,11 @@ export function useChat() {
   }, [flushQueue]);
 
   // Reconcile pending responses that the service worker delivered via
-  // Background Sync while this tab wasn't running (or was frozen). The
-  // SW stores server responses under `yourpeer:pending-responses:v1`;
-  // here we drain that store, inject the messages into the chat log,
-  // and clear the store.
-  //
-  // Two triggers:
-  //   - On mount: covers the case where the user closed the tab before
-  //     the queue drained, then reopens later. Any SW-completed sends
-  //     surface now.
-  //   - On `online`: covers the case where the tab stayed open during
-  //     an offline spell, the SW drained on reconnect, and the
-  //     reconcile happens right after the online handler fires the
-  //     client-side flush (harmless duplication — server dedupes via
-  //     X-Request-ID, client dedupes by message id).
-  //
-  // The reconcile itself is session-aware: if the pending response is
-  // for a session the user has since reset, it's dropped inside
-  // reconcilePending(). Responses for the current session (or from a
-  // request that started with no session) are applied here.
-  //
-  // Mirrors the response-handling logic in flushQueue (lines ~1005-
-  // 1045). Kept inline rather than factored because the state updates
-  // touch hook-scoped closures (addMessage, updateMessage,
-  // setSessionId, sessionId) and extracting would require threading
-  // all of those through as arguments — noise for one call site.
-  const reconcileSwResponses = useCallback(async () => {
-    if (typeof window === "undefined") return;
-    const matched = await reconcilePending(sessionId);
-    if (matched.length === 0) return;
-
-    let sessionResetWarned = false;
-    for (const entry of matched) {
-      // Narrow the unknown response body to a shape we can use. The
-      // SW writes whatever /api/chat returned; if the shape is off
-      // (e.g. old server, partial response), skip rather than crash.
-      const body = entry.body;
-      if (!body || typeof body !== "object") continue;
-      const data = body as {
-        response?: string;
-        session_id?: string;
-        services?: ChatMessage["services"];
-        quick_replies?: ChatMessage["quick_replies"];
-      };
-
-      if (data.session_id) setSessionId(data.session_id);
-
-      // Same session-reset heuristic as flushQueue: if the pending
-      // response was for a token the server rejected and minted a
-      // new one, let the user know. Guarded to fire at most once
-      // per reconcile batch so a backlog doesn't spam the user.
-      if (
-        !sessionResetWarned &&
-        entry.sessionId &&
-        data.session_id &&
-        data.session_id !== entry.sessionId
-      ) {
-        addMessage({
-          id: nextMsgId(),
-          role: "bot",
-          text: "You were offline for a while — starting a fresh conversation.",
-          transient: true,
-        });
-        sessionResetWarned = true;
-      }
-
-      // Flip the user's own message (which should still be present
-      // with status="pending") to "sent". updateMessage is a no-op
-      // if the message isn't found — safe if the user wiped history
-      // in between.
-      updateMessage(entry.id, { status: "sent" });
-
-      const botMsg: ChatMessage = {
-        id: nextMsgId(),
-        role: "bot",
-        text: data.response || "(No response text)",
-        services: data.services,
-        quick_replies: data.quick_replies,
-        showFeedback: (data.services?.length ?? 0) > 0,
-      };
-      addMessage(botMsg);
-      // cacheIfResults needs the user's original query; we don't have
-      // it here (pending-responses stores only the response, not the
-      // request). Look it up from the live message log — if it's
-      // still there, we cache; if not (history was wiped), skip.
-      const userMsg = useChatStore
-        .getState()
-        .messages.find((m) => m.id === entry.id);
-      if (userMsg) {
-        cacheIfResults(botMsg, userMsg.text);
-      }
-    }
-  }, [sessionId, addMessage, updateMessage, setSessionId]);
-
-  useEffect(() => {
-    // Fire on mount and whenever the tab comes back online. The
-    // reconcile itself is idempotent (drain-and-clear pattern) so
-    // double-fires are harmless.
-    void reconcileSwResponses();
-    const handler = () => {
-      void reconcileSwResponses();
-    };
-    window.addEventListener("online", handler);
-    return () => window.removeEventListener("online", handler);
-  }, [reconcileSwResponses]);
+  // Background Sync while this tab wasn't running (or was frozen).
+  // Extracted to its own hook — see `use-chat-sw-reconcile.ts` for the
+  // full behavior. This hook registers its own mount + `online` effect
+  // and returns nothing.
+  useChatSwReconcile();
 
   return { messages, isLoading, error, send, retry, submitFeedback, cancelQueued };
 }

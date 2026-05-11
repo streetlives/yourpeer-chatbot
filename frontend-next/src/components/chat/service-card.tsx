@@ -47,22 +47,27 @@ function extractDomain(url: string): string | null {
 // On mobile, vertical space is precious — every line on the service
 // card matters because users have to scroll past N cards to evaluate
 // options, and reviews that take 3+ lines compound into a real cost.
-// The "Read more" dialog is the right surface for the full text.
+// On desktop the carousel sits in roomier whitespace, but 4 lines of
+// italic review prose still pushes the action buttons (Call /
+// Directions / Website) below the fold of a typical viewport, so we
+// cap desktop at 3 lines too.
 //
 // Both mobile and desktop card widths wrap reviews at ~35 chars/line.
-// The difference isn't horizontal — it's visual context: on mobile
-// the card is one of many that fill the chat region; on desktop the
-// card sits in a roomier carousel with more whitespace around it.
-// So mobile gets the tight threshold, desktop gets the original.
+// The difference is the line-clamp ceiling: mobile clamps at 2 lines,
+// desktop at 3.
 //
 // Mobile: 60 chars ≈ 2 lines at 280px card width (px-3 padding, text-xs,
-// ~36 chars/line). Keeping below the line-wrap threshold means line-clamp-2
-// is a safety net only. "Read more" is rendered outside the clamped span
-// so it's always visible regardless of whether clamp fires.
+// ~36 chars/line). Keeping the char count below the visual clamp means
+// line-clamp-2 is a safety net only.
+//
+// Desktop: 95 chars ≈ 2.5 lines, leaves room on line 3 for the
+// " Read more" suffix without line-clamp-3's ellipsis truncating it.
+// At 117 chars (the previous threshold) the truncated preview wrapped
+// to 4 lines, which is what we're tightening.
 const REVIEW_TRUNCATE_AT_MOBILE = 60;
 const REVIEW_TRUNCATE_TO_MOBILE = 57;
-const REVIEW_TRUNCATE_AT_DESKTOP = 120;
-const REVIEW_TRUNCATE_TO_DESKTOP = 117;
+const REVIEW_TRUNCATE_AT_DESKTOP = 95;
+const REVIEW_TRUNCATE_TO_DESKTOP = 92;
 
 /**
  * Hook returning the right truncation threshold for the current viewport.
@@ -290,9 +295,17 @@ export function ServiceCard({ service, isActive, index, total, reviewTruncate }:
       aria-current={isActive ? "true" : undefined}
       className="flex-shrink-0 w-[280px] max-w-[calc(100vw-5rem)] snap-start bg-white border border-neutral-200 rounded-2xl p-4 flex flex-col gap-2.5 transition-all hover:border-neutral-300 hover:shadow-md dark:bg-neutral-800 dark:border-neutral-700 dark:hover:border-neutral-600"
     >
-      {/* Name */}
+      {/* Name. Prepended with the same category emoji that
+       *  LocationCard uses on its per-service rows, so visually a
+       *  single-service card and a service inside a multi-service
+       *  card carry the same icon for the same category. Falls
+       *  through to no emoji when ALSO_EMOJI has no entry for the
+       *  exact service_name — see the comment above ALSO_EMOJI for
+       *  the coverage caveat (many real catalog names like
+       *  "Choice Pantry" or "Wellness Clinic" miss the exact-match
+       *  lookup and stay emoji-less). */}
       <div className="text-[0.95rem] font-semibold tracking-tight text-neutral-900 dark:text-neutral-100 leading-snug break-words">
-        {name}
+        {ALSO_EMOJI[name] ? `${ALSO_EMOJI[name]} ` : ""}{name}
       </div>
 
       {/* Organization + Verified */}
@@ -358,7 +371,7 @@ export function ServiceCard({ service, isActive, index, total, reviewTruncate }:
             type="button"
             onClick={() => setReviewOpen(true)}
             aria-label={`Read full review for ${name}`}
-            className={`${baseCls} line-clamp-2 sm:line-clamp-none text-left w-full transition hover:bg-neutral-100 hover:border-neutral-200 cursor-pointer dark:hover:bg-neutral-800 dark:hover:border-neutral-700`}
+            className={`${baseCls} line-clamp-2 sm:line-clamp-3 text-left w-full transition hover:bg-neutral-100 hover:border-neutral-200 cursor-pointer dark:hover:bg-neutral-800 dark:hover:border-neutral-700`}
           >
             <span aria-hidden="true">💬 </span>
             {preview}
@@ -562,7 +575,7 @@ function ActionButtons({ service, name }: { service: ServiceResult; name: string
             type="button"
             onClick={() => setShowCallConfirm(true)}
             aria-label={`Call ${name}`}
-            className="flex-1 min-w-0 py-2 rounded-lg border border-neutral-900 bg-neutral-900 text-center text-xs font-semibold text-white transition hover:bg-neutral-700 dark:border-neutral-400 dark:bg-neutral-400 dark:text-neutral-900 dark:hover:bg-neutral-300 dark:hover:border-neutral-300"
+            className="flex-1 min-w-0 py-1.5 rounded-lg border border-neutral-900 bg-neutral-900 text-center text-xs font-semibold text-white transition hover:bg-neutral-700 dark:border-neutral-400 dark:bg-neutral-400 dark:text-neutral-900 dark:hover:bg-neutral-300 dark:hover:border-neutral-300"
           >
             Call
           </button>
@@ -573,7 +586,7 @@ function ActionButtons({ service, name }: { service: ServiceResult; name: string
             target="_blank"
             rel="noopener noreferrer"
             aria-label={`Get directions to ${name} (opens in new tab)`}
-            className="flex-1 min-w-0 py-2 rounded-lg border border-amber-300 bg-amber-300 text-center text-xs font-semibold text-neutral-900 transition hover:bg-amber-400 hover:border-amber-400 dark:border-[rgba(255,213,79,0.75)] dark:bg-[rgba(255,213,79,0.75)] dark:hover:bg-[rgba(255,213,79,0.95)] dark:hover:border-[rgba(255,213,79,0.95)]"
+            className="flex-1 min-w-0 py-1.5 rounded-lg border border-amber-300 bg-amber-300 text-center text-xs font-semibold text-neutral-900 transition hover:bg-amber-400 hover:border-amber-400 dark:border-[rgba(255,213,79,0.75)] dark:bg-[rgba(255,213,79,0.75)] dark:hover:bg-[rgba(255,213,79,0.95)] dark:hover:border-[rgba(255,213,79,0.95)]"
           >
             <span className="block leading-tight">
               Directions
@@ -598,7 +611,7 @@ function ActionButtons({ service, name }: { service: ServiceResult; name: string
                 ? `Visit ${name} website at ${websiteDomain} (opens in new tab)`
                 : `Visit ${name} website (opens in new tab)`
             }
-            className="flex-1 min-w-0 py-2 rounded-lg border border-neutral-200 bg-neutral-50 text-center text-xs font-semibold text-neutral-900 transition hover:bg-neutral-100 hover:border-neutral-300 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-100 dark:hover:bg-neutral-800 dark:hover:border-neutral-600"
+            className="flex-1 min-w-0 py-1.5 rounded-lg border border-neutral-200 bg-neutral-50 text-center text-xs font-semibold text-neutral-900 transition hover:bg-neutral-100 hover:border-neutral-300 dark:border-neutral-600 dark:bg-neutral-700 dark:text-neutral-100 dark:hover:bg-neutral-600 dark:hover:border-neutral-500"
           >
             <span className="block leading-tight">
               Website
@@ -606,7 +619,7 @@ function ActionButtons({ service, name }: { service: ServiceResult; name: string
             </span>
             {websiteDomain && (
               <span
-                className="block text-[0.65rem] font-normal text-neutral-500 dark:text-neutral-400 leading-tight mt-0.5 truncate px-1"
+                className="block text-[0.65rem] font-normal text-neutral-500 dark:text-neutral-300 leading-tight mt-0.5 truncate px-1"
                 title={websiteDomain}
               >
                 {websiteDomain}
@@ -669,16 +682,30 @@ export function LocationCard({ services, isActive, index, total, reviewTruncate 
       !(primary.languages.length === 1 && primary.languages[0] === "English"))
   );
 
-  // Detect shared fields — if all services have the same value, show once
+  // Detect shared fields — if all services have the same value, promote
+  // it to the location-level (top of card) instead of repeating per
+  // service. We split this PER-FIELD rather than treating "all badges
+  // identical" as a single condition: it's common for services at one
+  // location to share, say, the eligibility cohort ("Ages 14-24") while
+  // differing on whether a referral is required. The old all-or-nothing
+  // check forced repeating the shared field on every service in that
+  // case. The per-field flags promote each independently — eligibility
+  // moves to top, requires_membership stays per-service.
   const allSameHours =
     services.every((s) => s.hours_today === primary.hours_today && s.is_open === primary.is_open);
-  const allSameBadges =
-    services.every(
-      (s) =>
-        s.requires_membership === primary.requires_membership &&
-        s.eligibility_summary === primary.eligibility_summary &&
-        s.fees === primary.fees,
-    );
+  const allSameRequiresMembership =
+    services.every((s) => s.requires_membership === primary.requires_membership);
+  const allSameEligibility =
+    services.every((s) => s.eligibility_summary === primary.eligibility_summary);
+  const allSameFees =
+    services.every((s) => s.fees === primary.fees);
+  // Top-level row visible when at least one shared field has a value
+  // worth surfacing. (allSameX is true even when all values are null —
+  // we only render the row if there's something to show.)
+  const showSharedBadges =
+    (allSameRequiresMembership && !!primary.requires_membership) ||
+    (allSameEligibility && !!primary.eligibility_summary) ||
+    (allSameFees && !!primary.fees);
 
   return (
     <div
@@ -687,12 +714,28 @@ export function LocationCard({ services, isActive, index, total, reviewTruncate 
       aria-current={isActive ? "true" : undefined}
       className="flex-shrink-0 w-[280px] max-w-[calc(100vw-5rem)] snap-start bg-white border border-neutral-200 rounded-2xl p-4 flex flex-col gap-2.5 transition-all hover:border-neutral-300 hover:shadow-md dark:bg-neutral-800 dark:border-neutral-700 dark:hover:border-neutral-600"
     >
-      {/* Organization header */}
+      {/* Organization header.
+       *  The "N services" pill is the primary visual differentiator
+       *  between this card and a single-service ServiceCard — without
+       *  it the two card types look almost identical at a glance, and
+       *  users reading "St Mark's Outreach" wouldn't know whether
+       *  they're looking at one service or a bundled list. The pill
+       *  sits inline with the verified badge for compact rendering on
+       *  280px-wide mobile cards. */}
       <div className="flex flex-col gap-0.5">
         <div className="text-[0.95rem] font-semibold tracking-tight text-neutral-900 dark:text-neutral-100 leading-snug break-words">
           {orgName}
         </div>
-        <ValidatedBadge dateStr={bestVerified ?? undefined} />
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <span
+            className="inline-flex items-center gap-1 text-[0.65rem] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded-md bg-slate-100 text-slate-700 dark:bg-slate-800/60 dark:text-slate-300"
+            aria-label={`${services.length} services at this location`}
+          >
+            <span aria-hidden="true">🗂️</span>
+            {services.length} services
+          </span>
+          <ValidatedBadge dateStr={bestVerified ?? undefined} />
+        </div>
       </div>
 
       {/* Shared hours — shown once when identical. All-day handling
@@ -713,20 +756,25 @@ export function LocationCard({ services, isActive, index, total, reviewTruncate 
         </div>
       )}
 
-      {/* Shared badges — shown once when identical */}
-      {allSameBadges && (primary.fees || primary.requires_membership || primary.eligibility_summary) && (
+      {/* Shared badges — promoted to the top of the card when a field
+       *  is identical across every service. Each badge type is gated
+       *  independently (see the per-field allSame flags above), so a
+       *  location where all services share "Ages 14-24" but differ on
+       *  referral requirements will promote the eligibility badge while
+       *  leaving requires_membership to render per-service. */}
+      {showSharedBadges && (
         <div className="flex items-center gap-1.5 flex-wrap">
-          {primary.requires_membership && (
+          {allSameRequiresMembership && primary.requires_membership && (
             <span className="inline-block text-xs font-semibold text-amber-800 bg-amber-100 px-2 py-0.5 rounded-lg dark:text-amber-950 dark:bg-amber-300">
               Ref. may be required
             </span>
           )}
-          {primary.eligibility_summary && (
+          {allSameEligibility && primary.eligibility_summary && (
             <span className="inline-block text-xs font-semibold text-blue-800 bg-blue-50 px-2 py-0.5 rounded-lg dark:text-blue-950 dark:bg-blue-300">
               {primary.eligibility_summary}
             </span>
           )}
-          {primary.fees && (
+          {allSameFees && primary.fees && (
             <span className="inline-block text-xs font-semibold text-green-800 bg-green-100 px-2 py-0.5 rounded-lg dark:text-green-950 dark:bg-green-300">
               {primary.fees}
             </span>
@@ -737,11 +785,24 @@ export function LocationCard({ services, isActive, index, total, reviewTruncate 
       {/* Service list */}
       <div className="pt-1 border-t border-neutral-100 dark:border-neutral-800">
         <div className="text-[0.65rem] font-semibold uppercase tracking-wider text-neutral-400 dark:text-neutral-500 mb-1.5">
-          Services
+          {services.length} services at this location
         </div>
         <div className="flex flex-col gap-2">
           {services.map((svc, i) => {
-            const hasPerServiceInfo = !allSameHours || !allSameBadges;
+            // A service row needs its own row of structured info only
+            // when *something* about it differs from the location-level
+            // summary. That can be hours, referral status, eligibility,
+            // or fees — track them independently so the divider/spacing
+            // appears whenever any of the per-field promotions failed.
+            const hasPerServiceInfo =
+              !allSameHours ||
+              !allSameRequiresMembership ||
+              !allSameEligibility ||
+              !allSameFees;
+            const hasOwnBadges =
+              (!allSameRequiresMembership && !!svc.requires_membership) ||
+              (!allSameEligibility && !!svc.eligibility_summary) ||
+              (!allSameFees && !!svc.fees);
             return (
               <div
                 key={svc.service_id || i}
@@ -770,20 +831,24 @@ export function LocationCard({ services, isActive, index, total, reviewTruncate 
                   </div>
                 )}
 
-                {/* Per-service badges — only when they differ */}
-                {!allSameBadges && (svc.fees || svc.requires_membership || svc.eligibility_summary) && (
+                {/* Per-service badges — render only the fields that
+                 *  weren't promoted to the top of the card. The
+                 *  hasOwnBadges check suppresses the wrapper div when
+                 *  every badge for this service was promoted (avoids
+                 *  an empty row with no content). */}
+                {hasOwnBadges && (
                   <div className="flex items-center gap-1 flex-wrap">
-                    {svc.requires_membership && (
+                    {!allSameRequiresMembership && svc.requires_membership && (
                       <span className="inline-block text-[0.65rem] font-semibold text-amber-800 bg-amber-100 px-1.5 py-0.5 rounded-md dark:text-amber-950 dark:bg-amber-300">
                         Ref. may be required
                       </span>
                     )}
-                    {svc.eligibility_summary && (
+                    {!allSameEligibility && svc.eligibility_summary && (
                       <span className="inline-block text-[0.65rem] font-semibold text-blue-800 bg-blue-50 px-1.5 py-0.5 rounded-md dark:text-blue-950 dark:bg-blue-300">
                         {svc.eligibility_summary}
                       </span>
                     )}
-                    {svc.fees && (
+                    {!allSameFees && svc.fees && (
                       <span className="inline-block text-[0.65rem] font-semibold text-green-800 bg-green-100 px-1.5 py-0.5 rounded-md dark:text-green-950 dark:bg-green-300">
                         {svc.fees}
                       </span>
@@ -820,7 +885,7 @@ export function LocationCard({ services, isActive, index, total, reviewTruncate 
             type="button"
             onClick={() => setReviewOpen(true)}
             aria-label={`Read full review for ${orgName}`}
-            className={`${baseCls} line-clamp-2 sm:line-clamp-none text-left w-full transition hover:bg-neutral-100 hover:border-neutral-200 cursor-pointer dark:hover:bg-neutral-800 dark:hover:border-neutral-700`}
+            className={`${baseCls} line-clamp-2 sm:line-clamp-3 text-left w-full transition hover:bg-neutral-100 hover:border-neutral-200 cursor-pointer dark:hover:bg-neutral-800 dark:hover:border-neutral-700`}
           >
             <span aria-hidden="true">💬 </span>
             {preview}

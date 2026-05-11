@@ -69,50 +69,106 @@ export function EvalRunner({ onComplete }: EvalRunnerProps) {
     [stopPolling],
   );
 
+  // Begin polling /admin/api/eval/status every POLL_INTERVAL_MS until the
+  // backend reports `running: false`. Extracted so two entry points
+  // share the polling implementation: a fresh `handleRun` after the
+  // user clicks the button, and the mount-time recovery effect below
+  // (when the user navigates back into the page mid-run).
+  //
+  // Success/fail discrimination uses `finished_at` only — the backend
+  // sets it iff the eval subprocess exited 0 AND wrote a report file
+  // (see _run_eval_background in admin.py). Subprocess failures and
+  // exception cases both omit `finished_at`, so the absence is a
+  // reliable "did not complete" signal. The earlier code branched on
+  // `message?.startsWith("Error")` to render the failure, but the
+  // subprocess-failure message starts with "Eval failed", which that
+  // check missed — leading to silent fall-through with no ❌ status.
+  const startPolling = useCallback(() => {
+    let attempts = 0;
+    let consecutiveFailures = 0;
+    pollRef.current = setInterval(async () => {
+      attempts += 1;
+      if (attempts > MAX_POLL_ATTEMPTS) {
+        stopWatching(
+          "⚠️ Status check timed out after 75 minutes — eval may still be running on the server. Refresh to check results.",
+        );
+        return;
+      }
+      try {
+        const s = await fetchEvalStatus();
+        consecutiveFailures = 0;
+        const progress = s.total ? ` (${s.completed || 0}/${s.total})` : "";
+        setStatus((s.message || "") + progress);
+        if (!s.running) {
+          stopPolling();
+          setRunning(false);
+          if (s.finished_at) {
+            setStatus(`✅ ${s.message}`);
+            onComplete();
+          } else {
+            setStatus(`❌ ${s.message ?? "Eval did not complete."}`);
+          }
+        }
+      } catch {
+        consecutiveFailures += 1;
+        if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+          stopWatching(
+            "⚠️ Lost connection to server. The eval may still be running — refresh to check.",
+          );
+        } else {
+          setStatus(`Lost connection to server (retrying… ${consecutiveFailures}/${MAX_CONSECUTIVE_FAILURES}).`);
+        }
+      }
+    }, POLL_INTERVAL_MS);
+  }, [stopPolling, stopWatching, onComplete]);
+
+  // Mount-time recovery: if the user navigates back into the Evals page
+  // while a run is in progress on the server, restore the in-progress
+  // UI so they can see status and use "Stop watching", and so the
+  // button stays disabled (preventing a redundant second run that
+  // would 409 anyway). The check runs once per mount and is gated on
+  // `pollRef.current` to avoid double-polling if a fresh handleRun
+  // happens to win the race against the mount fetch.
+  //
+  // `startPolling` is read through a ref so this effect can have an
+  // empty dep list — using `[startPolling]` would re-run the recovery
+  // every time the callback's identity changed, which can happen on
+  // any parent re-render that affects `onComplete`'s identity.
+  const startPollingRef = useRef(startPolling);
+  useEffect(() => {
+    startPollingRef.current = startPolling;
+  }, [startPolling]);
+  useEffect(() => {
+    let cancelled = false;
+    fetchEvalStatus()
+      .then((s) => {
+        if (cancelled || pollRef.current) return;
+        if (s.running) {
+          setRunning(true);
+          const progress = s.total ? ` (${s.completed || 0}/${s.total})` : "";
+          setStatus((s.message || "Eval in progress…") + progress);
+          startPollingRef.current();
+        }
+      })
+      .catch(() => {
+        // Mount fetch is best-effort. If it fails, the user can still
+        // click Run Evals manually — the trigger call surfaces its own
+        // error path.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   async function handleRun() {
     setConfirmOpen(false);
     setRunning(true);
     setStatus("Starting eval run…");
-    let attempts = 0;
-    let consecutiveFailures = 0;
     try {
       const count = scenarioCount ? parseInt(scenarioCount, 10) : undefined;
       const validCount = count != null && Number.isFinite(count) && count > 0 ? count : undefined;
       await triggerEvalRun(validCount);
-      pollRef.current = setInterval(async () => {
-        attempts += 1;
-        if (attempts > MAX_POLL_ATTEMPTS) {
-          stopWatching(
-            "⚠️ Status check timed out after 75 minutes — eval may still be running on the server. Refresh to check results.",
-          );
-          return;
-        }
-        try {
-          const s = await fetchEvalStatus();
-          consecutiveFailures = 0;
-          const progress = s.total ? ` (${s.completed || 0}/${s.total})` : "";
-          setStatus((s.message || "") + progress);
-          if (!s.running) {
-            stopPolling();
-            setRunning(false);
-            if (s.finished_at) {
-              setStatus(`✅ ${s.message}`);
-              onComplete();
-            } else if (s.message?.startsWith("Error")) {
-              setStatus(`❌ ${s.message}`);
-            }
-          }
-        } catch {
-          consecutiveFailures += 1;
-          if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
-            stopWatching(
-              "⚠️ Lost connection to server. The eval may still be running — refresh to check.",
-            );
-          } else {
-            setStatus(`Lost connection to server (retrying… ${consecutiveFailures}/${MAX_CONSECUTIVE_FAILURES}).`);
-          }
-        }
-      }, POLL_INTERVAL_MS);
+      startPolling();
     } catch (err) {
       setStatus(err instanceof Error ? err.message : "Unknown error");
       setRunning(false);
@@ -149,7 +205,7 @@ export function EvalRunner({ onComplete }: EvalRunnerProps) {
           <button
             disabled={running || uploading}
             aria-label={running ? "Evaluation running" : "Run evaluation suite"}
-            className="px-4 py-2 rounded-lg bg-amber-300 text-neutral-900 font-semibold text-sm transition hover:bg-amber-400 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="px-4 py-2 rounded-lg bg-amber-300 dark:bg-amber-500 text-neutral-900 dark:text-neutral-900 font-semibold text-sm transition hover:bg-amber-400 dark:hover:bg-amber-400 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {running ? "⏳ Running…" : "▶ Run Evals"}
           </button>
@@ -158,18 +214,18 @@ export function EvalRunner({ onComplete }: EvalRunnerProps) {
         <Dialog.Portal>
           <Dialog.Overlay className="fixed inset-0 bg-black/40 z-50" />
           <Dialog.Content
-            className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 bg-white rounded-xl shadow-xl w-full max-w-md p-6"
+            className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 bg-white dark:bg-neutral-900 border border-transparent dark:border-neutral-800 rounded-xl shadow-xl w-full max-w-md p-6"
             aria-describedby="eval-confirm-desc"
           >
-            <Dialog.Title className="text-lg font-bold text-neutral-900 mb-1">
+            <Dialog.Title className="text-lg font-bold text-neutral-900 dark:text-neutral-100 mb-1">
               Run evaluation suite?
             </Dialog.Title>
-            <p id="eval-confirm-desc" className="text-sm text-neutral-500 mb-4">
+            <p id="eval-confirm-desc" className="text-sm text-neutral-500 dark:text-neutral-400 mb-4">
               This will run <strong>{scenarioLabel}</strong> through the full
               chatbot pipeline and score each one using Claude Opus as a judge.
             </p>
 
-            <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 mb-5 text-sm text-amber-800">
+            <div className="bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-900/50 rounded-lg px-4 py-3 mb-5 text-sm text-amber-800 dark:text-amber-200">
               <strong>Cost warning:</strong> Each scenario makes multiple
               Anthropic API calls (Haiku for conversation, Sonnet for user
               simulation, Opus for judging across 11 dimensions).
@@ -180,13 +236,13 @@ export function EvalRunner({ onComplete }: EvalRunnerProps) {
 
             <div className="flex justify-end gap-3">
               <Dialog.Close asChild>
-                <button className="px-4 py-2 rounded-lg bg-amber-400 text-sm font-semibold text-neutral-900 hover:bg-amber-500 transition">
+                <button className="px-4 py-2 rounded-lg bg-amber-400 dark:bg-amber-500 text-sm font-semibold text-neutral-900 dark:text-neutral-900 hover:bg-amber-500 dark:hover:bg-amber-400 transition">
                   Cancel
                 </button>
               </Dialog.Close>
               <button
                 onClick={handleRun}
-                className="px-4 py-2 rounded-lg text-sm font-medium text-neutral-600 hover:bg-neutral-100 transition"
+                className="px-4 py-2 rounded-lg text-sm font-medium text-neutral-600 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800 transition"
               >
                 Yes, run {scenarioLabel}
               </button>
@@ -198,19 +254,20 @@ export function EvalRunner({ onComplete }: EvalRunnerProps) {
       <select
         value={scenarioCount}
         onChange={(e) => setScenarioCount(e.target.value)}
-        className="bg-white border border-neutral-200 rounded-lg px-2.5 py-1.5 text-sm"
+        className="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 text-neutral-700 dark:text-neutral-200 rounded-lg px-2.5 py-1.5 text-sm"
       >
         <option value="">All scenarios</option>
         <option value="5">5 scenarios (quick)</option>
-        <option value="10">10 scenarios</option>
-        <option value="20">20 scenarios</option>
+        <option value="25">25 scenarios</option>
+        <option value="50">50 scenarios</option>
+        <option value="100">100 scenarios</option>
       </select>
 
       <button
         onClick={() => fileInputRef.current?.click()}
         disabled={running || uploading}
         aria-label="Upload eval report from local file"
-        className="px-4 py-2 rounded-lg border border-neutral-200 bg-white text-neutral-700 font-medium text-sm transition hover:bg-neutral-50 disabled:opacity-50 disabled:cursor-not-allowed"
+        className="px-4 py-2 rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 text-neutral-700 dark:text-neutral-200 font-medium text-sm transition hover:bg-neutral-50 dark:hover:bg-neutral-800/40 disabled:opacity-50 disabled:cursor-not-allowed"
       >
         {uploading ? "⏳ Uploading…" : "📄 Upload Report"}
       </button>
@@ -224,7 +281,7 @@ export function EvalRunner({ onComplete }: EvalRunnerProps) {
       />
 
       {status && (
-        <span className="text-sm text-neutral-500">{status}</span>
+        <span className="text-sm text-neutral-500 dark:text-neutral-400">{status}</span>
       )}
 
       {running && (
@@ -235,7 +292,7 @@ export function EvalRunner({ onComplete }: EvalRunnerProps) {
             )
           }
           aria-label="Stop polling for eval status"
-          className="ml-2 px-2.5 py-1 rounded-md text-xs font-medium text-neutral-500 hover:text-neutral-700 hover:bg-neutral-100 transition"
+          className="ml-2 px-2.5 py-1 rounded-md text-xs font-medium text-neutral-500 dark:text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-800 transition"
         >
           Stop watching
         </button>

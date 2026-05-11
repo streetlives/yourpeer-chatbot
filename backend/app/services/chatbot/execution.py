@@ -27,7 +27,10 @@ from app.privacy.pii_redactor import redact_pii
 from app.services.phrase_lists import _SERVICE_LABELS, _WELCOME_QUICK_REPLIES
 from app.services.session_store import save_session_slots
 from app.services.slot_extraction_regex import NEAR_ME_SENTINEL
-from app.services.audit_log import log_query_execution
+from app.services.audit_log import (
+    log_population_fallback_dedup_empty,
+    log_query_execution,
+)
 
 from .context import _DISPLAY_PAGE_SIZE, _count_unique_locations
 
@@ -398,6 +401,26 @@ def _run_population_fallback(
             "User sees no fallback note even though the query ran.",
             labels, len(cards), len(existing_service_ids),
         )
+        # Structured audit event so the admin dashboard can count this
+        # case distinctly from no-fallback and successful-fallback paths.
+        # The warning log above is a complementary text-stream signal;
+        # this is the dashboard-visible signal. session_id is resolved
+        # via the ContextVar set in generate_reply(), so no extra plumbing
+        # is needed through _run_population_fallback's signature.
+        try:
+            log_population_fallback_dedup_empty(
+                labels=labels,
+                fetched_count=len(cards),
+                main_result_count=len(existing_service_ids),
+            )
+        except Exception as audit_err:  # pragma: no cover - defensive
+            # Audit logging must never break the user-facing path. If
+            # the event store or persistence layer is unhealthy, swallow
+            # the error and rely on the warning above for visibility.
+            logger.warning(
+                "Failed to record population_fallback_dedup_empty audit event: %s",
+                audit_err,
+            )
         return [], ""
 
     # Mark each card so the frontend can visually distinguish fallback

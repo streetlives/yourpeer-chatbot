@@ -64,26 +64,26 @@ export function BoroughBreakdownTable() {
         <table className="w-full">
           <thead className="bg-neutral-50 dark:bg-neutral-800/50">
             <tr>
-              <th scope="col" className="px-4 py-3 text-xs uppercase tracking-wider font-semibold text-neutral-400 text-left">
+              <th scope="col" className="px-4 py-3 text-xs font-semibold text-neutral-500 dark:text-neutral-400 text-left">
                 Borough
               </th>
-              <th scope="col" className="px-4 py-3 text-xs uppercase tracking-wider font-semibold text-neutral-400 text-right">
+              <th scope="col" className="px-4 py-3 text-xs font-semibold text-neutral-500 dark:text-neutral-400 text-right">
                 Locations
               </th>
               <th
                 scope="col"
-                className="px-4 py-3 text-xs uppercase tracking-wider font-semibold text-neutral-400 text-right"
+                className="px-4 py-3 text-xs font-semibold text-neutral-500 dark:text-neutral-400 text-right"
                 title="Count of service-at-location pairs in this borough. A multi-service location contributes one entry per service — sum across boroughs is larger than the 'Total services' stat (which counts distinct services in the catalog)."
               >
                 Service entries
               </th>
-              <th scope="col" className="px-4 py-3 text-xs uppercase tracking-wider font-semibold text-neutral-400 text-right">
+              <th scope="col" className="px-4 py-3 text-xs font-semibold text-neutral-500 dark:text-neutral-400 text-right">
                 Avg entries/loc
               </th>
-              <th scope="col" className="px-4 py-3 text-xs uppercase tracking-wider font-semibold text-neutral-400 text-left">
+              <th scope="col" className="px-4 py-3 text-xs font-semibold text-neutral-500 dark:text-neutral-400 text-left">
                 Verified &lt;90d
               </th>
-              <th scope="col" className="px-4 py-3 text-xs uppercase tracking-wider font-semibold text-neutral-400 text-left">
+              <th scope="col" className="px-4 py-3 text-xs font-semibold text-neutral-500 dark:text-neutral-400 text-left">
                 Top category
               </th>
             </tr>
@@ -126,9 +126,9 @@ export function BoroughBreakdownTable() {
               <td className="px-4 py-3 text-sm font-semibold text-neutral-900 dark:text-neutral-100 text-right tabular-nums">
                 {data.totals.service_count.toLocaleString()}
               </td>
-              <td className="px-4 py-3 text-sm text-neutral-500 text-right">—</td>
-              <td className="px-4 py-3 text-sm text-neutral-500">—</td>
-              <td className="px-4 py-3 text-sm text-neutral-500">—</td>
+              <td className="px-4 py-3 text-sm text-neutral-500 dark:text-neutral-400 text-right">—</td>
+              <td className="px-4 py-3 text-sm text-neutral-500 dark:text-neutral-400">—</td>
+              <td className="px-4 py-3 text-sm text-neutral-500 dark:text-neutral-400">—</td>
             </tr>
           </tbody>
         </table>
@@ -147,7 +147,7 @@ export function BoroughBreakdownTable() {
  */
 function VerifiedBar({ pct }: { pct: number | null }) {
   if (pct === null) {
-    return <span className="text-neutral-400">—</span>;
+    return <span className="text-neutral-400 dark:text-neutral-500">—</span>;
   }
   const colorClass =
     pct >= 50 ? "bg-green-500"

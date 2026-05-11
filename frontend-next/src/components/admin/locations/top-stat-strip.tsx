@@ -65,14 +65,14 @@ export function LocationsTopStatStrip({ stats }: { stats: LocationsStats }) {
         valueColor="text-green-700 dark:text-green-400"
       />
       <StatCardWithTrend
-        label="Never verified"
-        value={fmt(stats.never_verified_count)}
+        label="Stale (>90d)"
+        value={fmt(stats.stale_count)}
         trend={null}
         valueColor="text-amber-700 dark:text-amber-400"
       />
       <StatCardWithTrend
-        label="Stale (>90d)"
-        value={fmt(stats.stale_count)}
+        label="Never verified"
+        value={fmt(stats.never_verified_count)}
         trend={null}
         valueColor="text-amber-700 dark:text-amber-400"
       />
@@ -104,7 +104,7 @@ function StatCardWithTrend({
 }) {
   return (
     <div className="bg-white border border-neutral-200 rounded-lg p-4 dark:bg-neutral-900 dark:border-neutral-800">
-      <div className="text-xs uppercase tracking-wider text-neutral-500 dark:text-neutral-400 mb-1.5">
+      <div className="text-sm font-semibold text-neutral-500 dark:text-neutral-400 mb-1.5">
         {label}
       </div>
       <div className="flex items-baseline">

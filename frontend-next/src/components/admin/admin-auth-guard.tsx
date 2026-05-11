@@ -50,21 +50,21 @@ export function AdminAuthGuard({ children }: { children: React.ReactNode }) {
 
   if (authState === "loading") {
     return (
-      <div className="min-h-dvh bg-neutral-100 flex items-center justify-center">
-        <p className="text-neutral-400 text-sm">Checking access…</p>
+      <div className="min-h-dvh bg-neutral-100 dark:bg-neutral-950 flex items-center justify-center">
+        <p className="text-neutral-400 dark:text-neutral-500 text-sm">Checking access…</p>
       </div>
     );
   }
 
   if (authState === "infra-error") {
     return (
-      <div className="min-h-dvh bg-neutral-100 flex items-center justify-center px-4">
+      <div className="min-h-dvh bg-neutral-100 dark:bg-neutral-950 flex items-center justify-center px-4">
         <div className="w-full max-w-sm text-center" role="alert">
           <div className="text-3xl mb-3">⚠️</div>
-          <h2 className="text-base font-semibold text-neutral-900 mb-1">
+          <h2 className="text-base font-semibold text-neutral-900 dark:text-neutral-100 mb-1">
             Backend unreachable
           </h2>
-          <p className="text-sm text-neutral-500 mb-5">
+          <p className="text-sm text-neutral-500 dark:text-neutral-400 mb-5">
             We can&apos;t verify your sign-in right now. The server may be down
             or restarting.
           </p>
@@ -73,7 +73,7 @@ export function AdminAuthGuard({ children }: { children: React.ReactNode }) {
               setAuthState("loading");
               checkAuth();
             }}
-            className="px-4 py-2 rounded-lg text-sm font-medium border border-neutral-200 bg-white text-neutral-700 hover:bg-neutral-50 transition"
+            className="px-4 py-2 rounded-lg text-sm font-medium border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 text-neutral-700 dark:text-neutral-200 hover:bg-neutral-50 dark:hover:bg-neutral-800/40 transition"
           >
             Retry
           </button>

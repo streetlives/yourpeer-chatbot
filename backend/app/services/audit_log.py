@@ -211,6 +211,69 @@ def log_location_feedback(
     persistence.persist_event(event)
 
 
+def log_population_fallback_dedup_empty(
+    session_id="", labels=None, fetched_count=0,
+    main_result_count=0, request_id=None, **kwargs,
+):
+    """Record a population-fallback run that produced no user-visible cards.
+
+    The population fallback fires for users with rare population labels
+    (LGBTQ, veteran, senior, youth) when the main borough-scoped search
+    can't surface population-specific services. From the user's
+    perspective there are two zero-result outcomes that look identical
+    ("no 'I also found … further away' note") but mean different things:
+
+      - fetched_count > 0, deduped to 0  →  the rare-population services
+        the fallback found were already in the main results; the main
+        query did its job and the fallback was redundant.
+      - fetched_count == 0               →  no rare-population services
+        exist in the catalog for this query at all; a data-curation gap.
+
+    Both states are "fallback ran, user got nothing" — which from the
+    admin query feed is otherwise indistinguishable from "fallback was
+    never attempted." This event surfaces both to the dashboard. The
+    fetched_count field in the payload is the discriminator for the two
+    sub-cases. See docs/design/POPULATION_FALLBACK_SPEC.md §Observability
+    and TEST_QUALITY_PLAN §3.2 / §5 P0.2.
+
+    Resolution order for session_id mirrors `record_llm_call`:
+      1. Explicit `session_id=` kwarg if non-empty.
+      2. The `_session_id_ctx` ContextVar set by `generate_reply()` so
+         downstream call sites in `execution.py` don't have to plumb
+         session_id through.
+      3. Empty string fallback for non-request contexts (e.g. unit tests
+         that exercise the function directly).
+
+    `labels` is the user-detected list of rare populations that drove
+    the fallback (e.g. `["youth", "lgbtq"]`). `main_result_count` is the
+    size of the dedup target — the count of main-result service_ids the
+    fallback was compared against.
+    """
+    sid = session_id or _session_id_ctx.get("")
+    event = {
+        "type": "population_fallback_dedup_empty",
+        "timestamp": _now_iso(),
+        "session_id": sid,
+        "labels": list(labels or []),
+        "fetched_count": fetched_count,
+        "main_result_count": main_result_count,
+        "request_id": request_id,
+    }
+    for k, v in kwargs.items():
+        if v is not None and k not in event:
+            event[k] = v
+    with _lock:
+        _events.append(event)
+        # Only thread the event into the per-session conversation when a
+        # session id is present. Without that guard, all "no-session"
+        # events would collide under the empty-string key — and unit
+        # tests that exercise the function directly would silently
+        # pollute the conversation index.
+        if sid:
+            _register_conversation(sid, event)
+    persistence.persist_event(event)
+
+
 # ---------------------------------------------------------------------------
 # RETRIEVAL
 # ---------------------------------------------------------------------------

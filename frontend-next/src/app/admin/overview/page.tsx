@@ -38,7 +38,7 @@ export default function OverviewPage() {
         skeleton={<StatCardSkeleton />}
         isEmpty={(data) => data == null}
         emptyState={
-          <div className="text-center py-10 text-neutral-400">
+          <div className="text-center py-10 text-neutral-400 dark:text-neutral-500">
             <div className="text-3xl mb-3">📊</div>
             <p>No activity yet. Start chatting to see metrics here.</p>
           </div>
@@ -65,7 +65,7 @@ export default function OverviewPage() {
             />
           }
           emptyState={
-            <div className="text-center py-10 text-neutral-400">
+            <div className="text-center py-10 text-neutral-400 dark:text-neutral-500">
               <p className="text-sm">No recent events to display.</p>
             </div>
           }

@@ -26,7 +26,7 @@ export default function QueriesPage() {
         />
       }
       emptyState={
-        <div className="text-center py-16 text-neutral-400">
+        <div className="text-center py-16 text-neutral-400 dark:text-neutral-500">
           <div className="text-3xl mb-3">🔍</div>
           <p>No queries logged yet. Service searches will appear here.</p>
         </div>

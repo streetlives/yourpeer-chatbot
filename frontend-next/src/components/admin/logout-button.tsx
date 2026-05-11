@@ -35,14 +35,14 @@ export function LogoutButton() {
   return (
     <span className="flex items-center gap-2">
       {error && (
-        <span className="text-xs text-red-500" role="alert">
+        <span className="text-xs text-red-500 dark:text-red-400" role="alert">
           {error}
         </span>
       )}
       <button
         onClick={handleLogout}
         disabled={pending}
-        className="text-sm text-neutral-400 hover:text-neutral-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        className="text-sm text-neutral-400 dark:text-neutral-500 hover:text-neutral-600 dark:hover:text-neutral-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
       >
         {pending ? "Signing out…" : "Sign out"}
       </button>
