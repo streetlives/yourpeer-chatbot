@@ -21,7 +21,7 @@ export default function AdminLayout({
 }) {
   return (
     <AdminAuthGuard>
-      <div className="min-h-dvh bg-neutral-100 dark:bg-neutral-950">
+      <div className="min-h-dvh bg-neutral-100 dark:bg-neutral-950 text-neutral-900 dark:text-neutral-100">
         <div className="max-w-[1280px] mx-auto px-7 py-6">
           <header className="flex items-center justify-between pb-5 border-b border-neutral-300 dark:border-neutral-800 mb-6">
             <div className="flex items-baseline gap-3">

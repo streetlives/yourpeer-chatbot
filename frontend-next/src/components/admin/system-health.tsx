@@ -119,15 +119,15 @@ export function SystemHealth() {
     : [];
 
   return (
-    <div className="border border-slate-200 rounded-lg overflow-hidden">
-      <div className="flex items-center justify-between px-4 py-2.5 bg-slate-50 border-b border-slate-200">
-        <span className="text-sm font-medium text-slate-700">System health</span>
+    <div className="border border-slate-200 dark:border-slate-800 rounded-lg overflow-hidden">
+      <div className="flex items-center justify-between px-4 py-2.5 bg-slate-50 dark:bg-slate-800/40 border-b border-slate-200 dark:border-slate-800">
+        <span className="text-sm font-medium text-slate-700 dark:text-slate-200">System health</span>
         <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${overallColor}`}>
           {overallLabel}
         </span>
       </div>
       {rows.length === 0 && (
-        <div className="px-4 py-3 text-sm text-slate-400">
+        <div className="px-4 py-3 text-sm text-slate-400 dark:text-slate-500">
           {error || "Loading…"}
         </div>
       )}
@@ -164,18 +164,18 @@ export function SystemHealth() {
               <div
                 key={row.name}
                 className={`flex items-center gap-3 px-4 py-2.5 ${
-                  mobileBottomBorder ? "border-b border-slate-100" : ""
+                  mobileBottomBorder ? "border-b border-slate-100 dark:border-slate-800" : ""
                 } ${
                   desktopSuppressBottom ? "md:border-b-0" : ""
                 } ${
                   // Vertical separator between the two columns, only
                   // visible at md+ (when columns actually exist).
-                  isLeftColumn ? "md:border-r md:border-slate-100" : ""
+                  isLeftColumn ? "md:border-r md:border-slate-100 dark:md:border-slate-800" : ""
                 }`}
               >
                 <StatusDot status={row.status} />
-                <span className="text-sm font-medium text-slate-700 flex-shrink-0">{row.name}</span>
-                <span className="text-sm text-slate-500 truncate" title={row.detail}>{row.detail}</span>
+                <span className="text-sm font-medium text-slate-700 dark:text-slate-200 flex-shrink-0">{row.name}</span>
+                <span className="text-sm text-slate-500 dark:text-slate-400 truncate" title={row.detail}>{row.detail}</span>
               </div>
             );
           })}

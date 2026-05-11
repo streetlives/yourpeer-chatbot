@@ -267,7 +267,7 @@ export function CostCalculator() {
             onClick={() => setActiveConfig(c.id)}
             className={`py-2.5 px-2 rounded-lg text-center transition-all ${
               activeConfig === c.id
-                ? "bg-neutral-900 text-white border-2 border-neutral-900 dark:bg-white dark:text-neutral-900 dark:border-white"
+                ? "bg-neutral-900 text-white border-2 border-neutral-900 dark:bg-amber-400 dark:text-neutral-900 dark:border-amber-400"
                 : "bg-white text-neutral-700 border border-neutral-200 hover:border-neutral-300 dark:bg-neutral-900 dark:text-neutral-200 dark:border-neutral-800 dark:hover:border-neutral-700"
             }`}
           >

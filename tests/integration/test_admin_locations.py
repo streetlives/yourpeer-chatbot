@@ -710,7 +710,7 @@ def test_heatmap_realistic_shape():
         {"category": "Clothing", "borough": "Queens", "location_count": 10},
         {"category": "Clothing", "borough": "Bronx", "location_count": 5},
     ]
-    responder = _make_sql_responder({"GROUP BY t.name, borough": rows})
+    responder = _make_sql_responder({"GROUP BY category, borough": rows})
     with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}), \
          patch("app.services.locations_admin.aggregations._execute_sql", side_effect=responder):
         body = admin_client.get("/admin/api/locations/heatmap").json()
@@ -737,13 +737,61 @@ def test_heatmap_categories_with_equal_totals_sort_alphabetically():
         {"category": "Apparel", "borough": "Manhattan", "location_count": 50},
         {"category": "Mental Health", "borough": "Manhattan", "location_count": 50},
     ]
-    responder = _make_sql_responder({"GROUP BY t.name, borough": rows})
+    responder = _make_sql_responder({"GROUP BY category, borough": rows})
     with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}), \
          patch("app.services.locations_admin.aggregations._execute_sql", side_effect=responder):
         body = admin_client.get("/admin/api/locations/heatmap").json()
         # All three have total_locations=50; alphabetical breaks the tie
         names = [c["name"] for c in body["categories"]]
         assert names == ["Apparel", "Food", "Mental Health"]
+
+
+def test_heatmap_sql_uses_cte_for_borough_grouping():
+    """Regression: the heatmap SQL must wrap the borough-resolution
+    CASE in a CTE before grouping. Previously the SQL was shaped:
+
+        SELECT t.name AS category, CASE WHEN ... pa.city ... END AS borough,
+               COUNT(DISTINCT l.id) AS location_count
+        FROM ...
+        GROUP BY t.name, borough
+
+    which PostgreSQL rejected with "column pa.city must appear in
+    the GROUP BY clause" — the validator inspects the CASE's column
+    references before alias resolution, so `GROUP BY borough` doesn't
+    cover `pa.city`. The CTE form materializes `borough` first so the
+    outer GROUP BY references a plain column.
+
+    The other heatmap tests mock _execute_sql with a responder that
+    matches on a SQL substring, so they pass even if the SQL is
+    syntactically wrong as long as the responder still matches. This
+    test directly inspects the SQL being sent and asserts the CTE
+    pattern is intact."""
+    captured = []
+    def capturing_responder(sql, params):
+        captured.append(sql)
+        return []
+    with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}), \
+         patch("app.services.locations_admin.aggregations._execute_sql", side_effect=capturing_responder):
+        admin_client.get("/admin/api/locations/heatmap")
+    # The heatmap function emits one SQL — find it.
+    heatmap_sqls = [s for s in captured if "COUNT(DISTINCT" in s and "borough" in s]
+    assert heatmap_sqls, "Expected the heatmap to emit a SQL with COUNT(DISTINCT ...) and a borough column"
+    sql = heatmap_sqls[0]
+    # CTE wrapper present
+    assert "WITH labeled AS" in sql, (
+        f"Heatmap SQL must use a CTE to materialize the borough column. "
+        f"Found instead:\n{sql}"
+    )
+    # Outer GROUP BY references the CTE column, not the SELECT-list alias.
+    assert "GROUP BY category, borough" in sql, (
+        f"Outer GROUP BY should reference materialized `category, borough` "
+        f"from the CTE, not aliases of CASE expressions. Found:\n{sql}"
+    )
+    # The broken form is gone.
+    assert "GROUP BY t.name, borough" not in sql, (
+        f"The broken pattern (grouping by alias of a CASE expression that "
+        f"references pa.city) has been reintroduced:\n{sql}"
+    )
 
 
 # -----------------------------------------------------------------------
@@ -1635,6 +1683,43 @@ def test_integrity_callouts_multiple_fire_in_display_order():
         body = admin_client.get("/admin/api/locations/integrity-callouts").json()
         ids = [c["id"] for c in body["callouts"]]
         assert ids == ["orphaned_locations", "malformed_phones", "entity_encoded_html"]
+
+
+def test_integrity_callouts_sql_uses_sqlalchemy_named_binds():
+    """Regression: every SQL string passed to _execute_sql by the
+    integrity callouts must use SQLAlchemy's `:name` bind syntax,
+    NOT psycopg2-pyformat `%(name)s`.
+
+    The malformed-phones query previously used `%(phonelike)s` which
+    isn't recognized by text() — the literal `%` was passed through
+    to Postgres which rejected it with "syntax error at or near \"%\"".
+    All other integrity tests mock _execute_sql, so the SQL itself was
+    never validated. This test captures every SQL string the callouts
+    code emits and asserts none of them contain the pyformat pattern.
+
+    Note: SQL-fragment composition via Python `%`-formatting (the
+    `_borough_case_sql()` helper, used elsewhere in this module) is
+    resolved BEFORE the SQL reaches _execute_sql, so it correctly
+    doesn't appear here. The regex below intentionally has no
+    exceptions — by the time SQL hits _execute_sql, all `%(name)s`
+    should be gone."""
+    import re
+    captured_sqls = []
+    def capturing_responder(sql, params):
+        captured_sqls.append(sql)
+        return [{"n": 0}]
+    with patch.dict(os.environ, {"ADMIN_API_KEY": "test-key"}), \
+         patch("app.services.locations_admin.aggregations._execute_sql", side_effect=capturing_responder):
+        admin_client.get("/admin/api/locations/integrity-callouts")
+    # Every SQL string should be clean of `%(name)s` style binds.
+    pyformat_re = re.compile(r'%\([a-z_][a-z_0-9]*\)s')
+    offenders = [s for s in captured_sqls if pyformat_re.search(s)]
+    assert not offenders, (
+        f"Found {len(offenders)} integrity SQL string(s) with "
+        f"psycopg2-pyformat binds (%(name)s) — these must use "
+        f"SQLAlchemy named binds (:name) instead. First offender:\n"
+        f"{offenders[0]}"
+    )
 
 
 # -----------------------------------------------------------------------
