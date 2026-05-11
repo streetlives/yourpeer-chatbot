@@ -96,7 +96,7 @@ function CalloutCard({ callout }: { callout: IntegrityCallout }) {
               {callout.count.toLocaleString()}
             </span>
           </div>
-          <p className="text-xs text-neutral-700 dark:text-neutral-300 leading-relaxed">
+          <p className="text-sm text-neutral-700 dark:text-neutral-300 leading-relaxed">
             {callout.action_hint}
           </p>
         </div>

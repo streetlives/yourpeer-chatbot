@@ -114,7 +114,7 @@ export function FeedbackCommentsStream() {
           <div className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">
             Recent comments
           </div>
-          <div className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">
+          <div className="text-sm text-neutral-500 dark:text-neutral-400 mt-0.5">
             {truncated ? (
               <>
                 Most recent <span className="font-medium">{data.comments.length}</span> of{" "}
@@ -176,12 +176,12 @@ function CommentRow({
           <div className="min-w-0 flex-1">
             <span className="text-sm font-medium text-neutral-900 dark:text-neutral-100 truncate">
               {comment.location_name || (
-                <span className="text-neutral-400 italic font-normal">(no name captured)</span>
+                <span className="text-neutral-400 dark:text-neutral-500 italic font-normal">(no name captured)</span>
               )}
             </span>
           </div>
           <div className="flex items-center gap-2 flex-shrink-0">
-            <span className="text-[0.7rem] text-neutral-400 dark:text-neutral-500 tabular-nums whitespace-nowrap">
+            <span className="text-xs text-neutral-400 dark:text-neutral-500 tabular-nums whitespace-nowrap">
               {formatRelativeTime(comment.timestamp)}
             </span>
             <ExternalLink
@@ -235,7 +235,7 @@ function CriterionBadge({
   // positive properties, so the negation reads naturally.
   const prefix = negative ? "Not " : "";
   return (
-    <span className={`text-[0.7rem] px-1.5 py-0.5 rounded ${cls}`}>
+    <span className={`text-xs px-1.5 py-0.5 rounded ${cls}`}>
       {prefix}{label.toLowerCase()}
     </span>
   );

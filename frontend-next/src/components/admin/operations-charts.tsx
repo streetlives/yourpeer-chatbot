@@ -186,17 +186,17 @@ function VerticalBars({
                   width — overflows its 30px slot freely. With sparse
                   labeling (every 6th column on a 24-bar chart), there
                   are no neighbors to collide with. */}
-              <div className="text-[0.65rem] text-neutral-500 leading-tight whitespace-nowrap absolute left-1/2 -translate-x-1/2 top-0">
+              <div className="text-xs text-neutral-500 dark:text-neutral-400 leading-tight whitespace-nowrap absolute left-1/2 -translate-x-1/2 top-0">
                 {it.label}
               </div>
               {it.sublabel && showLabel && (
-                <div className="text-[0.55rem] text-neutral-400 leading-tight whitespace-nowrap absolute left-1/2 -translate-x-1/2 top-3">
+                <div className="text-[0.55rem] text-neutral-400 dark:text-neutral-500 leading-tight whitespace-nowrap absolute left-1/2 -translate-x-1/2 top-3">
                   {it.sublabel}
                 </div>
               )}
               {/* Spacer to give the label-row container its height since
                   the label itself is now absolute-positioned. */}
-              <div className="text-[0.65rem] leading-tight invisible" aria-hidden="true">
+              <div className="text-xs leading-tight invisible" aria-hidden="true">
                 {it.label}
               </div>
             </div>
@@ -268,12 +268,12 @@ function HorizontalBars({
                 className="h-full bg-amber-300/70 rounded dark:bg-amber-400/60"
                 style={{ width: `${pct}%` }}
               />
-              <div className="absolute inset-0 flex items-center pl-2 text-[0.7rem] font-mono text-neutral-700 font-semibold dark:text-neutral-200">
+              <div className="absolute inset-0 flex items-center pl-2 text-xs font-mono text-neutral-700 font-semibold dark:text-neutral-200">
                 {it.value}
               </div>
             </div>
             {it.secondary && (
-              <div className={`w-[80px] text-right text-[0.7rem] flex-shrink-0 ${secondaryClass}`}>
+              <div className={`w-[80px] text-right text-xs flex-shrink-0 ${secondaryClass}`}>
                 {it.secondary}
               </div>
             )}
@@ -511,10 +511,10 @@ export function HowLongWidget({ stats }: { stats: AdminStats }) {
       <div className="mt-4 pt-3 border-t border-neutral-100 dark:border-neutral-800">
         <div className="flex items-baseline justify-between gap-3">
           <div>
-            <div className="text-xs font-medium text-neutral-700 dark:text-neutral-300">
+            <div className="text-sm font-medium text-neutral-700 dark:text-neutral-300">
               In handoff range (3-7m)
             </div>
-            <div className="text-[0.7rem] text-neutral-500 dark:text-neutral-400 mt-0.5">
+            <div className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">
               Peer-navigator target window
             </div>
           </div>
@@ -605,10 +605,10 @@ export function EngagementWidget({ stats }: { stats: AdminStats }) {
       <div className="mt-4 pt-3 border-t border-neutral-100 dark:border-neutral-800">
         <div className="flex items-baseline justify-between gap-3">
           <div>
-            <div className="text-xs font-medium text-neutral-700 dark:text-neutral-300">
+            <div className="text-sm font-medium text-neutral-700 dark:text-neutral-300">
               Post-results follow-up rate
             </div>
-            <div className="text-[0.7rem] text-neutral-500 dark:text-neutral-400 mt-0.5">
+            <div className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">
               {postSubtitle}
             </div>
           </div>
@@ -718,7 +718,7 @@ function CrisisPanel({
       </div>
       <HorizontalBars items={items} maxRows={8} />
       {showFooterHint && (
-        <div className="mt-3 pt-2 border-t border-neutral-100 text-[0.7rem] text-neutral-500 dark:border-neutral-800 dark:text-neutral-400">
+        <div className="mt-3 pt-2 border-t border-neutral-100 text-xs text-neutral-500 dark:border-neutral-800 dark:text-neutral-400">
           See the Recent Activity feed below for individual crisis events.
         </div>
       )}
@@ -807,7 +807,7 @@ export function OperationsBlock({ stats }: { stats: AdminStats }) {
   return (
     <div className="mb-7">
       <h2 className="text-base font-semibold mb-1">Operations</h2>
-      <p className="text-xs text-neutral-400 mb-4">
+      <p className="text-sm text-neutral-500 dark:text-neutral-400 mb-4">
         When and where users need help, session engagement patterns, and
         post-results behavior. Informs peer navigator staffing and database
         coverage priorities.

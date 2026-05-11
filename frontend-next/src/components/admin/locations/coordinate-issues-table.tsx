@@ -104,7 +104,7 @@ export function CoordinateIssuesTable() {
     <div className="bg-white border border-neutral-200 rounded-lg overflow-hidden dark:bg-neutral-900 dark:border-neutral-800">
       {/* Summary strip — gives the "X of Y" framing before the table */}
       <div className="px-4 py-3 bg-amber-50 border-b border-amber-200 dark:bg-amber-950/20 dark:border-amber-900/50">
-        <div className="flex items-center gap-2 text-xs text-amber-900 dark:text-amber-200">
+        <div className="flex items-center gap-2 text-sm text-amber-900 dark:text-amber-200">
           <AlertTriangle size={14} aria-hidden="true" />
           <span>
             <span className="font-semibold">{data.issues.length.toLocaleString()}</span>
@@ -130,7 +130,7 @@ export function CoordinateIssuesTable() {
             outside NYC" pill when there are zero outside-NYC rows. */}
         {(data.outside_nyc_count > 0 || mismatchCount > 0) && (
           <div className="mt-2 flex flex-wrap items-center gap-2">
-            <span className="text-[11px] uppercase tracking-wider text-amber-800/70 dark:text-amber-300/70">
+            <span className="text-xs font-semibold text-amber-800/80 dark:text-amber-300/80">
               Show
             </span>
             {data.outside_nyc_count > 0 && (
@@ -151,7 +151,7 @@ export function CoordinateIssuesTable() {
             )}
             {hiddenCount > 0 && (
               <span
-                className="text-[11px] text-amber-800/70 dark:text-amber-300/70"
+                className="text-xs text-amber-800/70 dark:text-amber-300/70"
                 aria-live="polite"
               >
                 {hiddenCount.toLocaleString()} hidden
@@ -165,19 +165,19 @@ export function CoordinateIssuesTable() {
         <table className="w-full">
           <thead className="bg-neutral-50 dark:bg-neutral-800/50">
             <tr>
-              <th scope="col" className="px-4 py-3 text-xs uppercase tracking-wider font-semibold text-neutral-400 text-left">
+              <th scope="col" className="px-4 py-3 text-xs font-semibold text-neutral-500 dark:text-neutral-400 text-left">
                 Location
               </th>
-              <th scope="col" className="px-4 py-3 text-xs uppercase tracking-wider font-semibold text-neutral-400 text-left">
+              <th scope="col" className="px-4 py-3 text-xs font-semibold text-neutral-500 dark:text-neutral-400 text-left">
                 Stated city
               </th>
-              <th scope="col" className="px-4 py-3 text-xs uppercase tracking-wider font-semibold text-neutral-400 text-left">
+              <th scope="col" className="px-4 py-3 text-xs font-semibold text-neutral-500 dark:text-neutral-400 text-left">
                 Issue
               </th>
-              <th scope="col" className="px-4 py-3 text-xs uppercase tracking-wider font-semibold text-neutral-400 text-left">
+              <th scope="col" className="px-4 py-3 text-xs font-semibold text-neutral-500 dark:text-neutral-400 text-left">
                 Coords
               </th>
-              <th scope="col" className="px-4 py-3 text-xs uppercase tracking-wider font-semibold text-neutral-400 text-right">
+              <th scope="col" className="px-4 py-3 text-xs font-semibold text-neutral-500 dark:text-neutral-400 text-right">
                 Open
               </th>
             </tr>
@@ -234,7 +234,7 @@ function FilterPill({
       aria-pressed={active}
       className={[
         "inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full",
-        "text-[11px] font-medium transition-colors",
+        "text-xs font-medium transition-colors",
         "focus-visible:outline-none focus-visible:ring-2",
         "focus-visible:ring-amber-500 focus-visible:ring-offset-1",
         "focus-visible:ring-offset-amber-50 dark:focus-visible:ring-offset-amber-950/30",

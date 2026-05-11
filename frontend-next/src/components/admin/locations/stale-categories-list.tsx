@@ -64,7 +64,7 @@ export function StaleCategoriesList() {
     <div className="bg-white border border-neutral-200 rounded-lg overflow-hidden dark:bg-neutral-900 dark:border-neutral-800">
       {/* Summary banner */}
       <div className="px-4 py-2.5 bg-amber-50 border-b border-amber-200 dark:bg-amber-950/20 dark:border-amber-900/50">
-        <div className="flex items-center gap-2 text-xs text-amber-900 dark:text-amber-200">
+        <div className="flex items-center gap-2 text-sm text-amber-900 dark:text-amber-200">
           <Clock size={12} aria-hidden="true" />
           <span>
             {hasMore ? (
@@ -90,19 +90,19 @@ export function StaleCategoriesList() {
             <tr>
               <th
                 scope="col"
-                className="px-4 py-3 text-left text-xs uppercase tracking-wider font-semibold text-neutral-400"
+                className="px-4 py-3 text-left text-xs font-semibold text-neutral-500 dark:text-neutral-400"
               >
                 Category
               </th>
               <th
                 scope="col"
-                className="px-4 py-3 text-right text-xs uppercase tracking-wider font-semibold text-neutral-400"
+                className="px-4 py-3 text-right text-xs font-semibold text-neutral-500 dark:text-neutral-400"
               >
                 Locations
               </th>
               <th
                 scope="col"
-                className="px-4 py-3 text-left text-xs uppercase tracking-wider font-semibold text-neutral-400 whitespace-nowrap"
+                className="px-4 py-3 text-left text-xs font-semibold text-neutral-500 dark:text-neutral-400 whitespace-nowrap"
               >
                 Most recent verification
               </th>

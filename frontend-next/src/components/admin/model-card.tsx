@@ -42,22 +42,22 @@ export function ModelCard({ modelKey }: { modelKey: "haiku" | "sonnet" | "opus" 
   const textColor = textColors[modelKey];
 
   return (
-    <div className={`bg-white border border-neutral-200 rounded-lg p-4 border-t-[3px] ${accent}`}>
+    <div className={`bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-lg p-4 border-t-[3px] ${accent}`}>
       <div className="flex items-baseline justify-between mb-2.5">
         <span className={`text-base font-bold ${textColor}`}>
           {m.name}
         </span>
-        <span className="text-xs font-mono text-neutral-400">
+        <span className="text-sm font-mono text-neutral-400 dark:text-neutral-500">
           ${m.input}/${m.output}/MTok
         </span>
       </div>
 
-      <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-xs text-neutral-500 mb-3">
+      <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-sm text-neutral-500 dark:text-neutral-400 mb-3">
         <span>Speed: {m.speed}</span>
         <span>Context: {m.context}</span>
         <span>Latency: {m.latency}</span>
         <span>
-          ID: <code className="text-[0.65rem] bg-neutral-100 px-1 rounded">
+          ID: <code className="text-xs bg-neutral-100 dark:bg-neutral-800 px-1 rounded">
             {/* Strip the date suffix (8 trailing digits prefixed with "-")
                 if present. Truncating to 3 segments via .split("-").slice(0,3)
                 used to drop the model's minor version too — `claude-haiku-4-5-20251001`
@@ -71,22 +71,22 @@ export function ModelCard({ modelKey }: { modelKey: "haiku" | "sonnet" | "opus" 
       </div>
 
       <div className="mb-2">
-        <div className="text-[0.65rem] font-bold uppercase tracking-wider text-green-600 mb-1">
+        <div className="text-xs font-semibold text-green-600 dark:text-green-400 mb-1">
           Strengths
         </div>
         {m.strengths.slice(0, 4).map((s, i) => (
-          <div key={i} className="text-xs text-neutral-600 leading-relaxed flex gap-1.5">
+          <div key={i} className="text-sm text-neutral-600 dark:text-neutral-300 leading-relaxed flex gap-1.5">
             <span className="text-green-500 flex-shrink-0">+</span>
             <span>{s}</span>
           </div>
         ))}
       </div>
       <div>
-        <div className="text-[0.65rem] font-bold uppercase tracking-wider text-red-500 mb-1">
+        <div className="text-xs font-semibold text-red-500 dark:text-red-400 mb-1">
           Weaknesses
         </div>
         {m.weaknesses.slice(0, 3).map((w, i) => (
-          <div key={i} className="text-xs text-neutral-600 leading-relaxed flex gap-1.5">
+          <div key={i} className="text-sm text-neutral-600 dark:text-neutral-300 leading-relaxed flex gap-1.5">
             <span className="text-red-400 flex-shrink-0">&minus;</span>
             <span>{w}</span>
           </div>

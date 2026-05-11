@@ -20,7 +20,7 @@ export function ModelAnalysis() {
   return (
     <>
       {/* Intro banner */}
-      <div className="bg-white border border-neutral-200 rounded-lg px-3.5 py-2.5 text-sm text-neutral-500 mb-6">
+      <div className="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-lg px-3.5 py-2.5 text-sm text-neutral-500 dark:text-neutral-400 mb-6">
         Claude model cost and capability analysis for each LLM-powered task in
         the chatbot. All pricing from{" "}
         <a
@@ -36,7 +36,7 @@ export function ModelAnalysis() {
       </div>
 
       {/* Model cards */}
-      <h2 className="text-xs font-bold uppercase tracking-widest text-neutral-400 mb-3 pb-2 border-b border-neutral-200">
+      <h2 className="text-sm font-semibold text-neutral-700 dark:text-neutral-300 mb-3 pb-2 border-b border-neutral-200 dark:border-neutral-800">
         Model comparison
       </h2>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-8">
@@ -46,7 +46,7 @@ export function ModelAnalysis() {
       </div>
 
       {/* Per-task recommendations */}
-      <h2 className="text-xs font-bold uppercase tracking-widest text-neutral-400 mb-3 pb-2 border-b border-neutral-200">
+      <h2 className="text-sm font-semibold text-neutral-700 dark:text-neutral-300 mb-3 pb-2 border-b border-neutral-200 dark:border-neutral-800">
         Per-task model recommendations
       </h2>
       <div className="flex flex-col gap-2 mb-8">
@@ -56,20 +56,20 @@ export function ModelAnalysis() {
       </div>
 
       {/* Cost calculator */}
-      <h2 className="text-xs font-bold uppercase tracking-widest text-neutral-400 mb-3 pb-2 border-b border-neutral-200">
+      <h2 className="text-sm font-semibold text-neutral-700 dark:text-neutral-300 mb-3 pb-2 border-b border-neutral-200 dark:border-neutral-800">
         Monthly cost calculator
       </h2>
       <CostCalculator />
 
       {/* Sources */}
       <details className="mb-4">
-        <summary className="text-xs font-bold uppercase tracking-widest text-neutral-400 cursor-pointer hover:text-neutral-600 pb-2 border-b border-neutral-200">
+        <summary className="text-sm font-semibold text-neutral-700 dark:text-neutral-300 cursor-pointer hover:text-neutral-900 dark:hover:text-neutral-100 pb-2 border-b border-neutral-200 dark:border-neutral-800">
           Sources &amp; methodology
         </summary>
         <div className="mt-3 space-y-1.5">
           {SOURCES.map((s) => (
-            <div key={s.id} className="text-xs text-neutral-500 leading-relaxed">
-              <span className="text-neutral-400">[{s.id}]</span>{" "}
+            <div key={s.id} className="text-sm text-neutral-500 dark:text-neutral-400 leading-relaxed">
+              <span className="text-neutral-400 dark:text-neutral-500">[{s.id}]</span>{" "}
               <a
                 href={s.url}
                 target="_blank"
@@ -83,7 +83,7 @@ export function ModelAnalysis() {
               {s.note}
             </div>
           ))}
-          <div className="text-xs text-neutral-400 mt-2 pt-2 border-t border-neutral-100">
+          <div className="text-sm text-neutral-400 dark:text-neutral-500 mt-2 pt-2 border-t border-neutral-100 dark:border-neutral-800">
             Token estimates derived from inspecting the YourPeer codebase system
             prompts, tool schemas, and response constraints.
           </div>

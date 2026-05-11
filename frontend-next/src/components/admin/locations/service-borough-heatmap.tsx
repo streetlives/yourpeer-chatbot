@@ -120,7 +120,7 @@ export function ServiceBoroughHeatmap() {
               {/* Category name column header */}
               <th
                 scope="col"
-                className="px-4 py-3 text-left text-xs uppercase tracking-wider font-semibold text-neutral-400 dark:text-neutral-500 border-b border-neutral-200 dark:border-neutral-800 sticky left-0 bg-white dark:bg-neutral-900 z-10"
+                className="px-4 py-3 text-left text-xs font-semibold text-neutral-500 dark:text-neutral-400 border-b border-neutral-200 dark:border-neutral-800 sticky left-0 bg-white dark:bg-neutral-900 z-10"
               >
                 Category
               </th>
@@ -129,7 +129,7 @@ export function ServiceBoroughHeatmap() {
                 <th
                   key={b}
                   scope="col"
-                  className="px-3 py-3 text-center text-xs uppercase tracking-wider font-semibold text-neutral-400 dark:text-neutral-500 border-b border-neutral-200 dark:border-neutral-800 whitespace-nowrap"
+                  className="px-3 py-3 text-center text-xs font-semibold text-neutral-500 dark:text-neutral-400 border-b border-neutral-200 dark:border-neutral-800 whitespace-nowrap"
                 >
                   {b}
                 </th>
@@ -137,7 +137,7 @@ export function ServiceBoroughHeatmap() {
               {/* Totals column */}
               <th
                 scope="col"
-                className="px-3 py-3 text-right text-xs uppercase tracking-wider font-semibold text-neutral-400 dark:text-neutral-500 border-b border-neutral-200 dark:border-neutral-800"
+                className="px-3 py-3 text-right text-xs font-semibold text-neutral-500 dark:text-neutral-400 border-b border-neutral-200 dark:border-neutral-800"
               >
                 Total
               </th>

@@ -16,16 +16,16 @@ function typeBadge(type: string) {
   const label = type.replace(/_/g, " ");
   const cls =
     type === "crisis_detected"
-      ? "bg-red-50 text-red-600"
+      ? "bg-red-50 text-red-600 dark:bg-red-900/30 dark:text-red-300"
       : type === "query_execution"
-        ? "bg-blue-50 text-blue-600"
+        ? "bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-300"
         : type === "session_reset"
-          ? "bg-amber-50 text-amber-600"
+          ? "bg-amber-50 text-amber-600 dark:bg-amber-900/30 dark:text-amber-300"
           : type === "feedback"
-            ? "bg-emerald-50 text-emerald-600"
+            ? "bg-emerald-50 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-300"
             : type === "location_feedback"
-              ? "bg-teal-50 text-teal-600"
-              : "bg-neutral-100 text-neutral-400";
+              ? "bg-teal-50 text-teal-600 dark:bg-teal-900/30 dark:text-teal-300"
+              : "bg-neutral-100 text-neutral-400 dark:bg-neutral-800 dark:text-neutral-500";
   return (
     <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-semibold ${cls}`}>
       {label}
@@ -35,10 +35,10 @@ function typeBadge(type: string) {
 
 function feedbackBadge(rating?: string) {
   if (rating === "up") {
-    return <span className="inline-block px-2 py-0.5 rounded-full text-xs font-semibold bg-green-50 text-green-600">👍 Helpful</span>;
+    return <span className="inline-block px-2 py-0.5 rounded-full text-xs font-semibold bg-green-50 text-green-600 dark:bg-green-900/30 dark:text-green-300">👍 Helpful</span>;
   }
   if (rating === "down") {
-    return <span className="inline-block px-2 py-0.5 rounded-full text-xs font-semibold bg-red-50 text-red-600">👎 Not helpful</span>;
+    return <span className="inline-block px-2 py-0.5 rounded-full text-xs font-semibold bg-red-50 text-red-600 dark:bg-red-900/30 dark:text-red-300">👎 Not helpful</span>;
   }
   return null;
 }
@@ -59,13 +59,13 @@ export function EventFeed({ events }: EventFeedProps) {
   // QueryLogTable. This component assumes it has rows to render.
 
   return (
-    <div className="bg-white border border-neutral-200 rounded-lg overflow-x-auto">
+    <div className="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-lg overflow-x-auto">
       <table className="w-full text-sm">
         <thead>
           <tr>
             <SortableHeader label="Time" field="timestamp" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
             <SortableHeader label="Type" field="type" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
-            <th className="text-left px-4 py-3 text-xs uppercase tracking-wider text-neutral-400 font-semibold border-b border-neutral-200">
+            <th className="text-left px-4 py-3 text-xs font-semibold text-neutral-500 dark:text-neutral-400 border-b border-neutral-200 dark:border-neutral-800">
               Detail
             </th>
             <SortableHeader label="Session" field="session_id" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
@@ -94,7 +94,7 @@ export function EventFeed({ events }: EventFeedProps) {
                 <>
                   {ev.template_name} → {ev.result_count} results ({ev.execution_ms}ms)
                   {ev.relaxed && (
-                    <span className="ml-1 inline-block px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-50 text-amber-600">
+                    <span className="ml-1 inline-block px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-50 text-amber-600 dark:bg-amber-900/30 dark:text-amber-300">
                       relaxed
                     </span>
                   )}
@@ -102,7 +102,7 @@ export function EventFeed({ events }: EventFeedProps) {
               );
             } else if (ev.type === "crisis_detected") {
               detail = (
-                <span className="inline-block px-2 py-0.5 rounded-full text-xs font-semibold bg-red-50 text-red-600">
+                <span className="inline-block px-2 py-0.5 rounded-full text-xs font-semibold bg-red-50 text-red-600 dark:bg-red-900/30 dark:text-red-300">
                   {ev.crisis_category}
                 </span>
               );
@@ -115,20 +115,20 @@ export function EventFeed({ events }: EventFeedProps) {
                   <span className="flex items-center gap-2">
                     {feedbackBadge(ev.rating)}
                     {ev.comment && (
-                      <span className="text-neutral-500 max-w-[200px] truncate block">
+                      <span className="text-neutral-500 dark:text-neutral-400 max-w-[200px] truncate block">
                         &quot;{ev.comment}&quot;
                       </span>
                     )}
                   </span>
                   {ctx?.service_names && ctx.service_names.length > 0 && (
-                    <span className="text-[0.65rem] text-neutral-400 leading-snug">
+                    <span className="text-xs text-neutral-400 dark:text-neutral-500 leading-snug">
                       {ctx.result_count} results · {ctx.service_names.slice(0, 3).join(", ")}
                       {ctx.service_names.length > 3 ? ` +${ctx.service_names.length - 3} more` : ""}
                       {ctx.organizations?.[0] ? ` @ ${ctx.organizations[0]}` : ""}
                     </span>
                   )}
                   {!ctx?.service_names && ctx?.bot_response && (
-                    <span className="text-[0.65rem] text-neutral-400 truncate max-w-[280px] block">
+                    <span className="text-xs text-neutral-400 dark:text-neutral-500 truncate max-w-[280px] block">
                       {ctx.bot_response.slice(0, 80)}{ctx.bot_response.length > 80 ? "…" : ""}
                     </span>
                   )}
@@ -161,13 +161,13 @@ export function EventFeed({ events }: EventFeedProps) {
                   .map((c) => FEEDBACK_CRITERION_LABELS[c].toLowerCase())
                   .join(", ");
                 criteriaLine = (
-                  <span className="text-[0.65rem] text-red-600 dark:text-red-400">
+                  <span className="text-xs text-red-600 dark:text-red-400">
                     {negativeCrits.length} flagged: {labels}
                   </span>
                 );
               } else if (totalRated > 0) {
                 criteriaLine = (
-                  <span className="text-[0.65rem] text-emerald-600 dark:text-emerald-400">
+                  <span className="text-xs text-emerald-600 dark:text-emerald-400">
                     all positive ({totalRated})
                   </span>
                 );
@@ -177,23 +177,23 @@ export function EventFeed({ events }: EventFeedProps) {
                   <span className="flex items-center gap-2 flex-wrap">
                     {feedbackBadge(ev.rating)}
                     {ev.location_name ? (
-                      <span className="text-[0.7rem] text-neutral-600 dark:text-neutral-300 max-w-[180px] truncate">
+                      <span className="text-xs text-neutral-600 dark:text-neutral-300 max-w-[180px] truncate">
                         {ev.location_name}
                       </span>
                     ) : (
-                      <span className="text-[0.65rem] text-neutral-400 italic">
+                      <span className="text-xs text-neutral-400 dark:text-neutral-500 italic">
                         location feedback
                       </span>
                     )}
                     {criteriaLine}
                     {ev.comment && (
-                      <span className="text-neutral-500 max-w-[200px] truncate block">
+                      <span className="text-neutral-500 dark:text-neutral-400 max-w-[200px] truncate block">
                         &quot;{ev.comment}&quot;
                       </span>
                     )}
                   </span>
                   {ev.context?.bot_response && (
-                    <span className="text-[0.65rem] text-neutral-400 truncate max-w-[280px] block">
+                    <span className="text-xs text-neutral-400 dark:text-neutral-500 truncate max-w-[280px] block">
                       {ev.context.bot_response.slice(0, 80)}
                       {ev.context.bot_response.length > 80 ? "…" : ""}
                     </span>
@@ -203,20 +203,20 @@ export function EventFeed({ events }: EventFeedProps) {
             }
 
             return (
-              <tr key={rowKey} className="hover:bg-neutral-50/50">
+              <tr key={rowKey} className="hover:bg-neutral-50/50 dark:hover:bg-neutral-800/40">
                 <td
-                  className="px-4 py-2.5 font-mono text-xs border-b border-neutral-100"
+                  className="px-4 py-2.5 font-mono text-xs border-b border-neutral-100 dark:border-neutral-800"
                   title={timeTooltip}
                 >
                   {time}
                 </td>
-                <td className="px-4 py-2.5 border-b border-neutral-100">
+                <td className="px-4 py-2.5 border-b border-neutral-100 dark:border-neutral-800">
                   {typeBadge(ev.type)}
                 </td>
-                <td className="px-4 py-2.5 border-b border-neutral-100">
+                <td className="px-4 py-2.5 border-b border-neutral-100 dark:border-neutral-800">
                   {detail}
                 </td>
-                <td className="px-4 py-2.5 font-mono text-xs text-neutral-400 border-b border-neutral-100" title={ev.session_id || ""}>
+                <td className="px-4 py-2.5 font-mono text-xs text-neutral-400 dark:text-neutral-500 border-b border-neutral-100 dark:border-neutral-800" title={ev.session_id || ""}>
                   {ev.session_id ? `${ev.session_id.slice(0, 12)}…` : ""}
                 </td>
               </tr>

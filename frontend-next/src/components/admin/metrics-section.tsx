@@ -133,7 +133,7 @@ export function MetricsSection({
           {/* Header row — uses the same grid template as MetricRow so the
               header columns align with the data rows below. */}
           <div
-            className={`grid ${METRIC_GRID_COLS} gap-3.5 pb-2 text-xs uppercase tracking-wider text-neutral-500 dark:text-neutral-400 font-semibold`}
+            className={`grid ${METRIC_GRID_COLS} gap-3.5 pb-2 text-xs text-neutral-500 dark:text-neutral-400 font-semibold`}
           >
             <span>Metric</span>
             <span>Target</span>

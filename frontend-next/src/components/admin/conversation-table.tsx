@@ -136,25 +136,25 @@ export function ConversationTable({ conversations }: ConversationTableProps) {
   return (
     <>
       {/* Filter bar */}
-      <div className="bg-white border border-neutral-200 rounded-lg p-3 mb-3 flex flex-wrap items-center gap-2">
+      <div className="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-lg p-3 mb-3 flex flex-wrap items-center gap-2">
         <input
           type="search"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="Search session ID or slot value (e.g. food, brooklyn, urgent)…"
           aria-label="Search conversations"
-          className="flex-1 min-w-[240px] px-3 py-1.5 text-sm border border-neutral-200 rounded-lg bg-white text-neutral-700 placeholder:text-neutral-400 focus:outline-none focus:border-amber-400 focus:ring-1 focus:ring-amber-400"
+          className="flex-1 min-w-[240px] px-3 py-1.5 text-sm border border-neutral-200 dark:border-neutral-800 rounded-lg bg-white dark:bg-neutral-900 text-neutral-700 dark:text-neutral-200 placeholder:text-neutral-400 dark:placeholder:text-neutral-500 focus:outline-none focus:border-amber-400 focus:ring-1 focus:ring-amber-400"
         />
 
-        <div className="flex items-center gap-1 border border-neutral-200 rounded-lg p-0.5 bg-neutral-50">
+        <div className="flex items-center gap-1 border border-neutral-200 dark:border-neutral-800 rounded-lg p-0.5 bg-neutral-50 dark:bg-neutral-800/40">
           {outcomeButtons.map((b) => (
             <button
               key={b.key}
               onClick={() => setOutcomeFilter(b.key)}
               className={`px-2.5 py-1 rounded-md text-xs font-medium transition ${
                 outcomeFilter === b.key
-                  ? "bg-white text-neutral-900 shadow-sm"
-                  : "text-neutral-500 hover:text-neutral-700"
+                  ? "bg-white text-neutral-900 shadow-sm dark:bg-neutral-700 dark:text-neutral-100"
+                  : "text-neutral-500 dark:text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200"
               }`}
             >
               {b.label}
@@ -162,7 +162,7 @@ export function ConversationTable({ conversations }: ConversationTableProps) {
           ))}
         </div>
 
-        <label className="flex items-center gap-1.5 text-xs text-neutral-500">
+        <label className="flex items-center gap-1.5 text-sm text-neutral-500 dark:text-neutral-400">
           Min turns
           <input
             type="number"
@@ -173,16 +173,16 @@ export function ConversationTable({ conversations }: ConversationTableProps) {
             }
             placeholder="0"
             aria-label="Minimum turns filter"
-            className="w-14 px-2 py-1 text-sm border border-neutral-200 rounded-md bg-white text-neutral-700 placeholder:text-neutral-300 focus:outline-none focus:border-amber-400"
+            className="w-14 px-2 py-1 text-sm border border-neutral-200 dark:border-neutral-800 rounded-md bg-white dark:bg-neutral-900 text-neutral-700 dark:text-neutral-200 placeholder:text-neutral-300 dark:placeholder:text-neutral-600 focus:outline-none focus:border-amber-400"
           />
         </label>
 
-        <div className="text-xs text-neutral-400 ml-auto">
+        <div className="text-sm text-neutral-400 dark:text-neutral-500 ml-auto">
           {filtered.length} of {conversations.length}
           {filtersActive && (
             <button
               onClick={clearFilters}
-              className="ml-2 px-2 py-0.5 rounded text-neutral-500 hover:bg-neutral-100 hover:text-neutral-700 transition"
+              className="ml-2 px-2 py-0.5 rounded text-neutral-500 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800 hover:text-neutral-700 dark:hover:text-neutral-200 transition"
             >
               Clear
             </button>
@@ -191,11 +191,11 @@ export function ConversationTable({ conversations }: ConversationTableProps) {
       </div>
 
       {filtered.length === 0 ? (
-        <div className="bg-white border border-neutral-200 rounded-lg py-10 text-center text-sm text-neutral-400">
+        <div className="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-lg py-10 text-center text-sm text-neutral-400 dark:text-neutral-500">
           No conversations match these filters.
         </div>
       ) : (
-        <div className="bg-white border border-neutral-200 rounded-lg overflow-hidden">
+        <div className="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-lg overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
@@ -203,7 +203,7 @@ export function ConversationTable({ conversations }: ConversationTableProps) {
                   <SortableHeader label="Session" field="session_id" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
                   <SortableHeader label="Turns" field="turn_count" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
                   <SortableHeader label="Outcome" field="services_delivered" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
-                  <th className="text-left px-4 py-3 text-xs uppercase tracking-wider text-neutral-400 font-semibold border-b border-neutral-200">
+                  <th className="text-left px-4 py-3 text-xs font-semibold text-neutral-500 dark:text-neutral-400 border-b border-neutral-200 dark:border-neutral-800">
                     Slots
                   </th>
                   <SortableHeader label="Last Active" field="last_seen" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
@@ -228,37 +228,37 @@ export function ConversationTable({ conversations }: ConversationTableProps) {
                       tabIndex={0}
                       role="button"
                       aria-label={`View transcript for session ${c.session_id.slice(0, 12)}`}
-                      className="cursor-pointer hover:bg-amber-50/50 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 focus-visible:ring-offset-1"
+                      className="cursor-pointer hover:bg-amber-50/50 dark:hover:bg-amber-900/15 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 focus-visible:ring-offset-1"
                     >
-                      <td className="px-4 py-2.5 font-mono text-xs text-neutral-500 border-b border-neutral-100" title={c.session_id}>
+                      <td className="px-4 py-2.5 font-mono text-xs text-neutral-500 dark:text-neutral-400 border-b border-neutral-100 dark:border-neutral-800" title={c.session_id}>
                         {c.session_id.slice(0, 12)}…
                       </td>
-                      <td className="px-4 py-2.5 border-b border-neutral-100">
+                      <td className="px-4 py-2.5 border-b border-neutral-100 dark:border-neutral-800">
                         {c.turn_count}
                       </td>
-                      <td className="px-4 py-2.5 border-b border-neutral-100 space-x-1">
+                      <td className="px-4 py-2.5 border-b border-neutral-100 dark:border-neutral-800 space-x-1">
                         {c.services_delivered > 0 ? (
-                          <span className="inline-block px-2 py-0.5 rounded-full text-xs font-semibold bg-green-50 text-green-600">
+                          <span className="inline-block px-2 py-0.5 rounded-full text-xs font-semibold bg-green-50 text-green-600 dark:bg-green-900/30 dark:text-green-300">
                             {c.services_delivered} results
                           </span>
                         ) : (
-                          <span className="inline-block px-2 py-0.5 rounded-full text-xs font-semibold bg-neutral-100 text-neutral-400">
+                          <span className="inline-block px-2 py-0.5 rounded-full text-xs font-semibold bg-neutral-100 text-neutral-400 dark:bg-neutral-800 dark:text-neutral-500">
                             no results
                           </span>
                         )}
                         {c.crisis_detected && (
-                          <span className="inline-block px-2 py-0.5 rounded-full text-xs font-semibold bg-red-50 text-red-600">
+                          <span className="inline-block px-2 py-0.5 rounded-full text-xs font-semibold bg-red-50 text-red-600 dark:bg-red-900/30 dark:text-red-300">
                             crisis
                           </span>
                         )}
                       </td>
                       <td
-                        className="px-4 py-2.5 text-sm border-b border-neutral-100 max-w-[300px] truncate"
+                        className="px-4 py-2.5 text-sm border-b border-neutral-100 dark:border-neutral-800 max-w-[300px] truncate"
                         title={slots}
                       >
                         {slots}
                       </td>
-                      <td className="px-4 py-2.5 font-mono text-xs text-neutral-400 border-b border-neutral-100">
+                      <td className="px-4 py-2.5 font-mono text-xs text-neutral-400 dark:text-neutral-500 border-b border-neutral-100 dark:border-neutral-800">
                         {/* Absolute timestamp here, unlike event-feed and
                             query-log which use formatRelativeTime. The
                             inconsistency is deliberate: conversation rows

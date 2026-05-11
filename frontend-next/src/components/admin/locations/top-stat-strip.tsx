@@ -104,7 +104,7 @@ function StatCardWithTrend({
 }) {
   return (
     <div className="bg-white border border-neutral-200 rounded-lg p-4 dark:bg-neutral-900 dark:border-neutral-800">
-      <div className="text-xs uppercase tracking-wider text-neutral-500 dark:text-neutral-400 mb-1.5">
+      <div className="text-sm font-semibold text-neutral-500 dark:text-neutral-400 mb-1.5">
         {label}
       </div>
       <div className="flex items-baseline">

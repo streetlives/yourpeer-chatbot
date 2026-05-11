@@ -107,7 +107,7 @@ function CriterionBaseline({ data }: { data: FeedbackAggregatesResponse }) {
           <div className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">
             Per-criterion baseline
           </div>
-          <div className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">
+          <div className="text-sm text-neutral-500 dark:text-neutral-400 mt-0.5">
             How often each criterion gets flagged across {data.total_events_overall.toLocaleString()}{" "}
             event{data.total_events_overall === 1 ? "" : "s"}
           </div>
@@ -160,7 +160,7 @@ function CriterionBar({
         <>
           <div className="h-2 rounded-full bg-neutral-100 dark:bg-neutral-800 mb-2" />
           <div className="text-lg font-semibold text-neutral-300 dark:text-neutral-600">—</div>
-          <div className="text-[0.7rem] text-neutral-400 dark:text-neutral-500">Not rated</div>
+          <div className="text-xs text-neutral-400 dark:text-neutral-500">Not rated</div>
         </>
       ) : (
         <>
@@ -176,7 +176,7 @@ function CriterionBar({
           <div className={`text-lg font-semibold ${textColor}`}>
             {pct!.toFixed(1)}%
           </div>
-          <div className="text-[0.7rem] text-neutral-500 dark:text-neutral-400">
+          <div className="text-xs text-neutral-500 dark:text-neutral-400">
             {summary.negative.toLocaleString()} of {summary.events_rated.toLocaleString()} negative
           </div>
         </>
@@ -210,7 +210,7 @@ function MostFlaggedTable({ data }: { data: FeedbackAggregatesResponse }) {
         <div className="text-sm font-semibold text-neutral-900 dark:text-neutral-100 mb-1">
           Most-flagged locations
         </div>
-        <p className="text-xs text-neutral-500 dark:text-neutral-400 italic">
+        <p className="text-sm text-neutral-500 dark:text-neutral-400 italic">
           No locations have accumulated {data.min_sample}+ feedback events yet. Once feedback
           volume picks up, the most-flagged ranking will appear here.
         </p>
@@ -226,7 +226,7 @@ function MostFlaggedTable({ data }: { data: FeedbackAggregatesResponse }) {
         <div className="text-sm font-semibold text-neutral-900 dark:text-neutral-100">
           Most-flagged locations
         </div>
-        <div className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">
+        <div className="text-sm text-neutral-500 dark:text-neutral-400 mt-0.5">
           {truncated ? (
             <>
               Top <span className="font-medium">{data.most_flagged.length}</span> of{" "}
@@ -248,32 +248,32 @@ function MostFlaggedTable({ data }: { data: FeedbackAggregatesResponse }) {
         <table className="w-full">
           <thead className="bg-neutral-50 dark:bg-neutral-800/50">
             <tr>
-              <th scope="col" className="px-4 py-3 text-left text-xs uppercase tracking-wider font-semibold text-neutral-400">
+              <th scope="col" className="px-4 py-3 text-left text-xs font-semibold text-neutral-500 dark:text-neutral-400">
                 Location
               </th>
-              <th scope="col" className="px-3 py-3 text-right text-xs uppercase tracking-wider font-semibold text-neutral-400">
+              <th scope="col" className="px-3 py-3 text-right text-xs font-semibold text-neutral-500 dark:text-neutral-400">
                 Events
               </th>
               {FEEDBACK_CRITERIA.map((crit) => (
                 <th
                   key={crit}
                   scope="col"
-                  className="px-3 py-3 text-center text-xs uppercase tracking-wider font-semibold text-neutral-400 whitespace-nowrap"
+                  className="px-3 py-3 text-center text-xs font-semibold text-neutral-500 dark:text-neutral-400 whitespace-nowrap"
                 >
                   {FEEDBACK_CRITERION_LABELS[crit]}
                 </th>
               ))}
               <th
                 scope="col"
-                className="px-3 py-3 text-right text-xs uppercase tracking-wider font-semibold text-neutral-400 whitespace-nowrap"
+                className="px-3 py-3 text-right text-xs font-semibold text-neutral-500 dark:text-neutral-400 whitespace-nowrap"
                 title="Smoothed via Laplace add-one ((neg+1)/(total+2)) to avoid 100% cliffs at low samples. Raw ratio shown alongside."
               >
                 Negative ratio
               </th>
-              <th scope="col" className="px-3 py-3 text-right text-xs uppercase tracking-wider font-semibold text-neutral-400">
+              <th scope="col" className="px-3 py-3 text-right text-xs font-semibold text-neutral-500 dark:text-neutral-400">
                 Comments
               </th>
-              <th scope="col" className="px-3 py-3 text-right text-xs uppercase tracking-wider font-semibold text-neutral-400 whitespace-nowrap">
+              <th scope="col" className="px-3 py-3 text-right text-xs font-semibold text-neutral-500 dark:text-neutral-400 whitespace-nowrap">
                 Last event
               </th>
             </tr>
@@ -305,11 +305,11 @@ function FlaggedRow({ row }: { row: MostFlaggedRow }) {
     <tr className="border-t border-neutral-100 dark:border-neutral-800 hover:bg-neutral-50/70 dark:hover:bg-neutral-800/30">
       <td className="px-4 py-3 text-sm font-medium text-neutral-900 dark:text-neutral-100">
         {row.location_name || (
-          <span className="text-neutral-400 italic font-normal">
+          <span className="text-neutral-400 dark:text-neutral-500 italic font-normal">
             (no name captured)
           </span>
         )}
-        <div className="text-[0.7rem] text-neutral-400 font-mono">
+        <div className="text-xs text-neutral-400 dark:text-neutral-500 font-mono">
           {row.location_id.slice(0, 8)}
           {row.location_id.length > 8 && "…"}
         </div>
@@ -336,7 +336,7 @@ function FlaggedRow({ row }: { row: MostFlaggedRow }) {
           )}
           <span>{smoothedPct.toFixed(0)}%</span>
         </span>
-        <div className="text-[0.7rem] text-neutral-400 dark:text-neutral-500 font-normal mt-0.5">
+        <div className="text-xs text-neutral-400 dark:text-neutral-500 font-normal mt-0.5">
           raw {(row.raw_negative_ratio * 100).toFixed(0)}%
         </div>
       </td>
@@ -376,7 +376,7 @@ function CriterionMicroBar({ counts }: { counts: { positive: number; negative: n
           style={{ width: `${Math.max(4, negPct)}%` }}
         />
       </div>
-      <span className="text-[0.65rem] text-neutral-500 dark:text-neutral-400 tabular-nums">
+      <span className="text-xs text-neutral-500 dark:text-neutral-400 tabular-nums">
         {counts.negative}/{counts.rated}
       </span>
     </div>

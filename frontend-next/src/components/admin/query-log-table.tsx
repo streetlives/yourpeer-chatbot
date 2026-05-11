@@ -64,14 +64,14 @@ export function QueryLogTable({ queries }: QueryLogTableProps) {
 
   return (
     <>
-      <div className="bg-white border border-neutral-200 rounded-lg overflow-hidden">
+      <div className="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-lg overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr>
                 <SortableHeader label="Time" field="timestamp" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
                 <SortableHeader label="Template" field="template_name" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
-                <th className="text-left px-4 py-3 text-xs uppercase tracking-wider text-neutral-400 font-semibold border-b border-neutral-200">
+                <th className="text-left px-4 py-3 text-xs font-semibold text-neutral-500 dark:text-neutral-400 border-b border-neutral-200 dark:border-neutral-800">
                   Params
                 </th>
                 <SortableHeader label="Results" field="result_count" sortKey={sortKey} sortDir={sortDir} onSort={onSort} />
@@ -100,38 +100,38 @@ export function QueryLogTable({ queries }: QueryLogTableProps) {
                     tabIndex={0}
                     role="button"
                     aria-label={`View details for ${q.template_name} query`}
-                    className="cursor-pointer hover:bg-amber-50/50 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 focus-visible:ring-offset-1"
+                    className="cursor-pointer hover:bg-amber-50/50 dark:hover:bg-amber-900/15 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 focus-visible:ring-offset-1"
                   >
                     <td
-                      className="px-4 py-2.5 font-mono text-xs border-b border-neutral-100"
+                      className="px-4 py-2.5 font-mono text-xs border-b border-neutral-100 dark:border-neutral-800"
                       title={formatAbsoluteTooltip(q.timestamp)}
                     >
                       {formatRelativeTime(q.timestamp)}
                     </td>
-                    <td className="px-4 py-2.5 font-semibold border-b border-neutral-100">
+                    <td className="px-4 py-2.5 font-semibold border-b border-neutral-100 dark:border-neutral-800">
                       {q.template_name}
                     </td>
-                    <td className="px-4 py-2.5 text-xs text-neutral-500 max-w-[250px] truncate border-b border-neutral-100" title={params}>
+                    <td className="px-4 py-2.5 text-xs text-neutral-500 dark:text-neutral-400 max-w-[250px] truncate border-b border-neutral-100 dark:border-neutral-800" title={params}>
                       {params || "—"}
                     </td>
-                    <td className="px-4 py-2.5 border-b border-neutral-100">
+                    <td className="px-4 py-2.5 border-b border-neutral-100 dark:border-neutral-800">
                       <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-semibold ${
-                        q.result_count > 0 ? "bg-green-50 text-green-600" : "bg-red-50 text-red-600"
+                        q.result_count > 0 ? "bg-green-50 text-green-600 dark:bg-green-900/30 dark:text-green-300" : "bg-red-50 text-red-600 dark:bg-red-900/30 dark:text-red-300"
                       }`}>
                         {q.result_count}
                       </span>
                     </td>
-                    <td className="px-4 py-2.5 font-mono text-xs text-neutral-400 border-b border-neutral-100">
+                    <td className="px-4 py-2.5 font-mono text-xs text-neutral-400 dark:text-neutral-500 border-b border-neutral-100 dark:border-neutral-800">
                       {q.execution_ms}ms
                     </td>
-                    <td className="px-4 py-2.5 border-b border-neutral-100">
+                    <td className="px-4 py-2.5 border-b border-neutral-100 dark:border-neutral-800">
                       {q.proximity_timeout && (
-                        <span className="inline-block px-2 py-0.5 rounded-full text-xs font-semibold bg-red-50 text-red-600 mr-1">
+                        <span className="inline-block px-2 py-0.5 rounded-full text-xs font-semibold bg-red-50 text-red-600 dark:bg-red-900/30 dark:text-red-300 mr-1">
                           timeout
                         </span>
                       )}
                       {q.relaxed && (
-                        <span className="inline-block px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-50 text-amber-600">
+                        <span className="inline-block px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-50 text-amber-600 dark:bg-amber-900/30 dark:text-amber-300">
                           yes
                         </span>
                       )}

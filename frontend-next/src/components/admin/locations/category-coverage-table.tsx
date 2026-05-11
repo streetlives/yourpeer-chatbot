@@ -113,31 +113,31 @@ export function CategoryCoverageTable() {
             <tr>
               <th
                 scope="col"
-                className="px-4 py-3 text-left text-xs uppercase tracking-wider font-semibold text-neutral-400"
+                className="px-4 py-3 text-left text-xs font-semibold text-neutral-500 dark:text-neutral-400"
               >
                 Category
               </th>
               <th
                 scope="col"
-                className="px-4 py-3 text-right text-xs uppercase tracking-wider font-semibold text-neutral-400"
+                className="px-4 py-3 text-right text-xs font-semibold text-neutral-500 dark:text-neutral-400"
               >
                 Services
               </th>
               <th
                 scope="col"
-                className="px-4 py-3 text-right text-xs uppercase tracking-wider font-semibold text-neutral-400"
+                className="px-4 py-3 text-right text-xs font-semibold text-neutral-500 dark:text-neutral-400"
               >
                 Locations
               </th>
               <th
                 scope="col"
-                className="px-4 py-3 text-left text-xs uppercase tracking-wider font-semibold text-neutral-400 whitespace-nowrap"
+                className="px-4 py-3 text-left text-xs font-semibold text-neutral-500 dark:text-neutral-400 whitespace-nowrap"
               >
                 Verified &lt;90d
               </th>
               <th
                 scope="col"
-                className="px-4 py-3 text-right text-xs uppercase tracking-wider font-semibold text-neutral-400 whitespace-nowrap"
+                className="px-4 py-3 text-right text-xs font-semibold text-neutral-500 dark:text-neutral-400 whitespace-nowrap"
                 title="Approximate — chat-template demand divided evenly across each template's covered taxonomies."
               >
                 Demand
@@ -145,13 +145,13 @@ export function CategoryCoverageTable() {
               </th>
               <th
                 scope="col"
-                className="px-4 py-3 text-right text-xs uppercase tracking-wider font-semibold text-neutral-400 whitespace-nowrap"
+                className="px-4 py-3 text-right text-xs font-semibold text-neutral-500 dark:text-neutral-400 whitespace-nowrap"
               >
                 No-result %
               </th>
               <th
                 scope="col"
-                className="px-4 py-3 text-right text-xs uppercase tracking-wider font-semibold text-neutral-400 whitespace-nowrap"
+                className="px-4 py-3 text-right text-xs font-semibold text-neutral-500 dark:text-neutral-400 whitespace-nowrap"
                 title="Demand queries per available location. High = users keep asking, supply is thin."
               >
                 Demand : Supply
