@@ -40,7 +40,7 @@ User (browser)
           +-- System health card (real-time component status)
           +-- Anonymized transcripts, query logs, crisis events
           +-- 35+ metrics across 7 layers
-          +-- LLM-as-Judge eval runner (171 scenarios, 11 dimensions, Opus judge)
+          +-- LLM-as-Judge eval runner (184 scenarios, 11 dimensions, Opus judge)
 ```
 
 ## Key Design Principles

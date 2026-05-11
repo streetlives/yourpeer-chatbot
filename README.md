@@ -115,7 +115,7 @@ See [FEATURES.md](docs/FEATURES.md) for the full feature reference, organized by
 | Crisis Detection | Regex pre-check + Claude Sonnet (LLM stage for nuanced/indirect language) |
 | Conversational Fallback | Claude Haiku (dialog only, not for service data) |
 | Database | Streetlives PostgreSQL on AWS RDS (read-only), PostGIS for neighborhood proximity |
-| Frontend | Next.js 15, React 19, TypeScript, Tailwind CSS, Zustand, Radix UI, Lucide icons |
+| Frontend | Next.js 16, React 19, TypeScript, Tailwind CSS, Zustand, Radix UI, Lucide icons |
 | Deployment | Render (two services: FastAPI API + Next.js frontend) |
 
 ## Models
