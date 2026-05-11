@@ -13,7 +13,14 @@ export default function GlobalError({
   error: Error & { digest?: string };
   reset: () => void;
 }) {
-  console.log('Error: ', error)
+  // Dev-only: log the error to the browser console so it's visible
+  // when working locally. Production users hit React's normal error
+  // pipeline (and any APM that's configured) — they don't need to see
+  // the raw error object in the browser console. Per FRONTEND_AUDIT
+  // 2026-05 P2 #9.
+  if (process.env.NODE_ENV !== "production") {
+    console.log("Error: ", error);
+  }
   return (
     <html lang="en">
       <body>
