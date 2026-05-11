@@ -290,9 +290,17 @@ export function ServiceCard({ service, isActive, index, total, reviewTruncate }:
       aria-current={isActive ? "true" : undefined}
       className="flex-shrink-0 w-[280px] max-w-[calc(100vw-5rem)] snap-start bg-white border border-neutral-200 rounded-2xl p-4 flex flex-col gap-2.5 transition-all hover:border-neutral-300 hover:shadow-md dark:bg-neutral-800 dark:border-neutral-700 dark:hover:border-neutral-600"
     >
-      {/* Name */}
+      {/* Name. Prepended with the same category emoji that
+       *  LocationCard uses on its per-service rows, so visually a
+       *  single-service card and a service inside a multi-service
+       *  card carry the same icon for the same category. Falls
+       *  through to no emoji when ALSO_EMOJI has no entry for the
+       *  exact service_name — see the comment above ALSO_EMOJI for
+       *  the coverage caveat (many real catalog names like
+       *  "Choice Pantry" or "Wellness Clinic" miss the exact-match
+       *  lookup and stay emoji-less). */}
       <div className="text-[0.95rem] font-semibold tracking-tight text-neutral-900 dark:text-neutral-100 leading-snug break-words">
-        {name}
+        {ALSO_EMOJI[name] ? `${ALSO_EMOJI[name]} ` : ""}{name}
       </div>
 
       {/* Organization + Verified */}
@@ -562,7 +570,7 @@ function ActionButtons({ service, name }: { service: ServiceResult; name: string
             type="button"
             onClick={() => setShowCallConfirm(true)}
             aria-label={`Call ${name}`}
-            className="flex-1 min-w-0 py-2 rounded-lg border border-neutral-900 bg-neutral-900 text-center text-xs font-semibold text-white transition hover:bg-neutral-700 dark:border-neutral-400 dark:bg-neutral-400 dark:text-neutral-900 dark:hover:bg-neutral-300 dark:hover:border-neutral-300"
+            className="flex-1 min-w-0 py-1.5 rounded-lg border border-neutral-900 bg-neutral-900 text-center text-xs font-semibold text-white transition hover:bg-neutral-700 dark:border-neutral-400 dark:bg-neutral-400 dark:text-neutral-900 dark:hover:bg-neutral-300 dark:hover:border-neutral-300"
           >
             Call
           </button>
@@ -573,7 +581,7 @@ function ActionButtons({ service, name }: { service: ServiceResult; name: string
             target="_blank"
             rel="noopener noreferrer"
             aria-label={`Get directions to ${name} (opens in new tab)`}
-            className="flex-1 min-w-0 py-2 rounded-lg border border-amber-300 bg-amber-300 text-center text-xs font-semibold text-neutral-900 transition hover:bg-amber-400 hover:border-amber-400 dark:border-[rgba(255,213,79,0.75)] dark:bg-[rgba(255,213,79,0.75)] dark:hover:bg-[rgba(255,213,79,0.95)] dark:hover:border-[rgba(255,213,79,0.95)]"
+            className="flex-1 min-w-0 py-1.5 rounded-lg border border-amber-300 bg-amber-300 text-center text-xs font-semibold text-neutral-900 transition hover:bg-amber-400 hover:border-amber-400 dark:border-[rgba(255,213,79,0.75)] dark:bg-[rgba(255,213,79,0.75)] dark:hover:bg-[rgba(255,213,79,0.95)] dark:hover:border-[rgba(255,213,79,0.95)]"
           >
             <span className="block leading-tight">
               Directions
@@ -598,7 +606,7 @@ function ActionButtons({ service, name }: { service: ServiceResult; name: string
                 ? `Visit ${name} website at ${websiteDomain} (opens in new tab)`
                 : `Visit ${name} website (opens in new tab)`
             }
-            className="flex-1 min-w-0 py-2 rounded-lg border border-neutral-200 bg-neutral-50 text-center text-xs font-semibold text-neutral-900 transition hover:bg-neutral-100 hover:border-neutral-300 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-100 dark:hover:bg-neutral-800 dark:hover:border-neutral-600"
+            className="flex-1 min-w-0 py-1.5 rounded-lg border border-neutral-200 bg-neutral-50 text-center text-xs font-semibold text-neutral-900 transition hover:bg-neutral-100 hover:border-neutral-300 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-100 dark:hover:bg-neutral-800 dark:hover:border-neutral-600"
           >
             <span className="block leading-tight">
               Website
@@ -687,12 +695,28 @@ export function LocationCard({ services, isActive, index, total, reviewTruncate 
       aria-current={isActive ? "true" : undefined}
       className="flex-shrink-0 w-[280px] max-w-[calc(100vw-5rem)] snap-start bg-white border border-neutral-200 rounded-2xl p-4 flex flex-col gap-2.5 transition-all hover:border-neutral-300 hover:shadow-md dark:bg-neutral-800 dark:border-neutral-700 dark:hover:border-neutral-600"
     >
-      {/* Organization header */}
+      {/* Organization header.
+       *  The "N services" pill is the primary visual differentiator
+       *  between this card and a single-service ServiceCard — without
+       *  it the two card types look almost identical at a glance, and
+       *  users reading "St Mark's Outreach" wouldn't know whether
+       *  they're looking at one service or a bundled list. The pill
+       *  sits inline with the verified badge for compact rendering on
+       *  280px-wide mobile cards. */}
       <div className="flex flex-col gap-0.5">
         <div className="text-[0.95rem] font-semibold tracking-tight text-neutral-900 dark:text-neutral-100 leading-snug break-words">
           {orgName}
         </div>
-        <ValidatedBadge dateStr={bestVerified ?? undefined} />
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <span
+            className="inline-flex items-center gap-1 text-[0.65rem] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded-md bg-amber-100 text-amber-900 dark:bg-amber-900/40 dark:text-amber-200"
+            aria-label={`${services.length} services at this location`}
+          >
+            <span aria-hidden="true">🗂️</span>
+            {services.length} services
+          </span>
+          <ValidatedBadge dateStr={bestVerified ?? undefined} />
+        </div>
       </div>
 
       {/* Shared hours — shown once when identical. All-day handling
@@ -737,7 +761,7 @@ export function LocationCard({ services, isActive, index, total, reviewTruncate 
       {/* Service list */}
       <div className="pt-1 border-t border-neutral-100 dark:border-neutral-800">
         <div className="text-[0.65rem] font-semibold uppercase tracking-wider text-neutral-400 dark:text-neutral-500 mb-1.5">
-          Services
+          {services.length} services at this location
         </div>
         <div className="flex flex-col gap-2">
           {services.map((svc, i) => {
