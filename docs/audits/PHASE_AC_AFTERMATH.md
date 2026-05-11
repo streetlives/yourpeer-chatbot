@@ -1,6 +1,6 @@
 # Phase A-C aftermath — open items tracking
 
-**Status as of:** Phase A, B, C complete; Phase D handler migration and Stage 2 snapshot cleanup landed in PR #76. This doc enumerates everything that remains: audit-flagged smells we chose not to address, deferred bugs and design decisions, and eval cluster fixes. Items closed in PR #76 (`D-1` through `D-5`, `TEST-GAP-1`, `TEST-GAP-2`, `ENG-1`) retain their detail sections below for historical context — see each section's status line.
+**Status as of:** Phase A, B, C complete; Phase D handler migration and Stage 2 snapshot cleanup landed in PR #76; subsequent PRs closed the `LLM-*`, `COMPAT-*`, `UTIL-*`, `BUG-1`, and `SMELL-3` items (see the table at the bottom). The May 2026 SMELL bundle closes `SMELL-2`, `SMELL-5`, `SMELL-8`, and `SMELL-9` per the doc's own prioritization note (low-priority style smells closed en masse). Remaining open: `SUSPECT-1` (needs eval run, not a code change) and the two eval-cluster items `EVAL-B` / `EVAL-C` (need eval verification of score uplift). Items closed in any prior PR retain their detail sections below for historical context — see each section's status line.
 
 Use stable IDs (e.g., `D-1`, `BUG-1`) when referencing items from PRs or commits.
 
@@ -16,12 +16,12 @@ Use stable IDs (e.g., `D-1`, `BUG-1`) when referencing items from PRs or commits
 | `D-4` | Investigate dropping `_response_tone` alias | Phase D | S | ✅ Closed (PR #76) |
 | `D-5` | Stage 2 snapshot pattern: helper accessors for `_last_action` / `_pending_confirmation` | Phase D | M | ✅ Closed (PR #76) |
 | `BUG-1` | `_persist_emotional_context_late` save-on-value-change | Bug | XS | ✅ Closed |
-| `SUSPECT-1` | Tone prefix asymmetry between follow-up paths | UX question | XS | Low |
-| `SMELL-2` | Underscore-prefixed locals in `generate_reply` | Style | M | Low |
+| `SUSPECT-1` | Tone prefix asymmetry between follow-up paths | UX question | XS | Low (needs eval) |
+| `SMELL-2` | Underscore-prefixed locals in `generate_reply` | Style | M | ✅ Closed (May 2026, option b — documented convention) |
 | `SMELL-3` | Inline imports of `slot_extraction.extract` | Style | XS | ✅ Closed |
-| `SMELL-5` | `if X: pass else:` structure in orchestrator | Style | XS | Low |
-| `SMELL-8` | Mixed dispatch patterns | Style | M | Low |
-| `SMELL-9` | `_empty_reply` doesn't log empty-message events | Audit gap | XS | Low |
+| `SMELL-5` | `if X: pass else:` structure in orchestrator | Style | XS | ✅ Closed (May 2026) |
+| `SMELL-8` | Mixed dispatch patterns | Style | M | ✅ Closed (May 2026) |
+| `SMELL-9` | `_empty_reply` doesn't log empty-message events | Audit gap | XS | ✅ Closed (May 2026) |
 | `UTIL-1` | Extend `text_normalize.py` with `normalize_contractions` + `strip_intensifiers` | Utility extraction | S | ✅ Closed |
 | `UTIL-2` | Extract `format_time` to `utils/time_format.py` | Utility extraction | XS | ✅ Closed |
 | `LLM-1` | Duplicate `slot_extraction.extract()` between `_run_llm_gate` and orchestrator service branch | LLM redundancy | M | ✅ Closed |
@@ -192,7 +192,21 @@ The audit explicitly flagged smells 5, 7, 8, 9 as "fix opportunistically, not wo
 
 ### `SMELL-2` — Underscore-prefixed locals in `generate_reply`
 
-**Status:** Open. Partially addressed — many `_*` locals were eliminated when their values moved onto `ctx` during phases A-C, but some remain.
+**Status:** ✅ **Closed (May 2026)** via option (b) from the acceptance
+list — kept as a semantic marker, with the convention documented
+inline. A comment block in `generate_reply` (right after the empty-
+message guard, before the PII redaction block) names the convention
+explicitly: leading-underscore locals (`_pii_warning`,
+`_extraction_source`, `_action_pre`, `_post_result`,
+`_spanish_acknowledgment`, etc.) are transient pipeline state consumed
+within `generate_reply` and NOT promoted onto `MessageContext`;
+values that DO promote use `ctx` fields directly (`ctx.tone`,
+`ctx.snapshot_*`). Sweep-rename (option (a) or (c)) would touch every
+line of the orchestrator's main function for a low-priority style
+change and was rejected on risk/payoff grounds. The audit body below
+preserves the original finding.
+
+**Original finding:** Partially addressed — many `_*` locals were eliminated when their values moved onto `ctx` during phases A-C, but some remain.
 
 **Remaining cases:** `_action_pre`, `_extraction_source`, `_llm_tone`, `_crisis_result`, `_response_tone`, `_pii_warning`, `_confidence`, `_tone_prefix`, `_emotional_context_update`, `_is_service_flow`, `_geolocation_ready`, `_has_session_coords`, `_post_result`, `_spanish_acknowledgment`, `_spanish_result`, `_immigration_acknowledgment`, etc.
 
@@ -219,7 +233,16 @@ All three did `from app.services.slot_extraction import extract as extract_unifi
 
 ### `SMELL-5` — `if X: pass else:` structure
 
-**Status:** Open.
+**Status:** ✅ **Closed (May 2026).** Flipped to `if tone != "crisis":` in
+`orchestrator.py`. The else-body (queue-accept fast path + post-results
+check) is now the if-body, indentation unchanged. Behavior identical;
+preserved by the full test suite. Replaced the inline `pass` comment
+with a header comment explaining why crisis tone skips these fast
+paths (non-meaningful for active crisis; message falls through to
+crisis routing below). The audit body below describes the pre-fix
+state.
+
+**Original finding:**
 
 **Location:** orchestrator.py:
 ```python
@@ -236,7 +259,20 @@ else:
 
 ### `SMELL-8` — Mixed dispatch patterns
 
-**Status:** Open.
+**Status:** ✅ **Closed (May 2026).** Five Pattern B dispatcher call
+sites in `orchestrator.py` standardized on the walrus form
+(`if (result := _handle_X(ctx)): return …`):
+`_handle_post_results_interaction`, `_handle_demographic_skip`,
+`_handle_location_unknown`, `_handle_context_aware_confirm`, and
+`_handle_pending_confirmation`. `_handle_post_pending_confirmation`
+was already called-and-returned-directly (no Pattern B form, no
+refactor needed). `_handle_spanish_detection` returns a tuple, so it
+stays in its current shape. All five refactored handlers return
+`dict | None`, so the truthy check is equivalent to `is not None`.
+Behavior preserved by the full test suite. The audit body below
+preserves the original analysis.
+
+**Original finding:**
 
 **Description:** Dispatch oscillates between two styles in the orchestrator:
 - **Pattern A** — category-driven with immediate return (`if category == "reset": return _handle_reset(ctx)`)
@@ -254,7 +290,20 @@ if (result := _handle_demographic_skip(ctx)) is not None:
 
 ### `SMELL-9` — `_empty_reply` doesn't log empty-message events
 
-**Status:** Open.
+**Status:** ✅ **Closed (May 2026)** via option (a). The empty-message
+guard in `orchestrator.py::generate_reply` now calls `_log_turn` before
+returning, with `category="empty_message"` and `tone=None`. The reply
+dict is bound to a local first (`empty_reply = _empty_reply(...)`) so
+the same value is both logged and returned. `_log_turn` wraps its body
+in `try/except` so an audit-log failure can't break the user-facing
+path. Regression test:
+`tests/integration/test_classification_and_routing.py::test_empty_message_logs_audit_event`
+pins that a `conversation_turn` event with `category='empty_message'`
+lands in the audit feed for the empty-message path; the user-facing
+contract from `test_empty_message_guard` is unchanged. The audit body
+below describes the pre-fix state.
+
+**Original finding:**
 
 **Description:** orchestrator.py:102 (empty-message guard) returns via `_empty_reply` without `_log_turn`. Every other return path logs.
 
@@ -597,10 +646,15 @@ These items were resolved during Phases A-C, the audit follow-ups PR, and PR #76
 | `TEST-GAP-1` — `_handle_demographic_skip` apostrophe coverage | PR #76: `normalize_apostrophes` added to handler; 14 unit tests with curly-apostrophe pin. |
 | `TEST-GAP-2` — Snapshot-arg semantic divergence tests | PR #76: 5 `TestSnapshotArgSemantics` tests construct ctx where `ctx.existing.get(...)` and `ctx.snapshot_*` deliberately diverge, pin "uses snapshot, not re-read". |
 | `ENG-1` — Apostrophe fuzz harness | PR #76: `tests/integration/test_apostrophe_fuzz.py` (13 tests) wired through to the now-migrated accessibility handlers. |
+| `SMELL-2` — Underscore-prefixed locals in `generate_reply` | May 2026 SMELL bundle: option (b) — convention documented in `generate_reply` itself (comment block after the empty-message guard) rather than sweep-rename. Convention named explicitly: leading-`_` locals are transient pipeline state NOT promoted onto `MessageContext`; promoted values use `ctx` fields directly. |
+| `SMELL-5` — `if X: pass else:` structure | May 2026 SMELL bundle: flipped to `if tone != "crisis":` in `orchestrator.py`. Body unchanged; comment reframed to explain why crisis tone skips the queue-accept/post-results fast paths. |
+| `SMELL-8` — Mixed dispatch patterns | May 2026 SMELL bundle: five Pattern B call sites in `orchestrator.py` standardized on walrus form (`_handle_post_results_interaction`, `_handle_demographic_skip`, `_handle_location_unknown`, `_handle_context_aware_confirm`, `_handle_pending_confirmation`). All five return `dict \| None`, so truthy check is equivalent to `is not None`. |
+| `SMELL-9` — `_empty_reply` doesn't log empty-message events | May 2026 SMELL bundle: option (a) — empty-message guard in `generate_reply` now calls `_log_turn` with `category='empty_message'` before returning. Pinned by new integration test `test_empty_message_logs_audit_event` alongside the existing user-facing-contract tests. |
 
 ---
 
 ## Notes on prioritization
 
-- `EVAL-B` and `EVAL-C` are now the highest-value remaining items by user impact — they pin specific scoring failures.
-- All remaining `SMELL-*` items (`SMELL-2`, `SMELL-5`, `SMELL-8`, `SMELL-9`) plus `SUSPECT-1` are explicitly low-priority per the original audit's own assessment. Consider closing them en masse with a single small "polish PR" rather than individual changes.
+- `EVAL-B` and `EVAL-C` are now the highest-value remaining items by user impact — they pin specific scoring failures. Acceptance requires a fresh eval run, so they're not closeable from a code change alone.
+- `SUSPECT-1` remains open as a documentation/decision item; acceptance is "decision recorded" after reviewing relevant multi-turn eval scenarios — also gated on an eval run.
+- All `SMELL-*` items are closed as of May 2026; see each section's status marker for the resolution path. The doc's earlier "polish PR en masse" recommendation was followed for the four-SMELL bundle.

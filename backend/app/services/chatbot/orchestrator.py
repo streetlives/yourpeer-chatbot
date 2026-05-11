@@ -78,6 +78,7 @@ from .pipeline import (
     _run_llm_gate,
 )
 from .contextual_acknowledgments import _combined_contextual_acknowledgments
+from .logging import _log_turn
 from .result_builder import _build_follow_up_response
 from .session_helpers import (
     _append_to_transcript,
@@ -124,13 +125,38 @@ def generate_reply(
 
     # --- Empty message guard ---
     if not message or not message.strip():
-        return _empty_reply(
+        # SMELL-9 resolution: every other return path in `generate_reply`
+        # eventually flows through `_log_turn` (directly or via a handler).
+        # Without this call, the audit feed has no record that the bot
+        # ever saw an empty message — admin dashboards undercount turns
+        # and the "user sent nothing → bot replied with welcome prompt"
+        # case is invisible. `_log_turn` is wrapped in try/except, so an
+        # audit-log failure can't break the user-facing path.
+        empty_reply = _empty_reply(
             session_id,
             "What are you looking for today? I can help with food, "
             "shelter, clothing, health care, and more.",
             get_session_slots(session_id),
             quick_replies=list(_WELCOME_QUICK_REPLIES),
         )
+        _log_turn(
+            session_id, "", empty_reply, "empty_message",
+            request_id=request_id, tone=None,
+        )
+        return empty_reply
+
+    # --- Local-naming convention (SMELL-2 resolution) ---
+    # Several locals in this function carry a leading underscore — e.g.,
+    # `_pii_warning`, `_extraction_source`, `_action_pre`, `_post_result`,
+    # `_spanish_acknowledgment`. Python's standard convention reserves
+    # the leading underscore for module-private *names*, not function
+    # locals; the orchestrator uses it as a visual marker for transient
+    # pipeline state that is consumed within `generate_reply` and is
+    # NOT promoted onto `MessageContext`. (Values that DO promote use
+    # ctx fields directly — e.g. `ctx.tone`, `ctx.snapshot_*`.) The
+    # convention is intentionally preserved here; see PHASE_AC_AFTERMATH
+    # SMELL-2 for the design discussion and the option-(b) decision to
+    # keep it as a semantic marker rather than sweep-rename.
 
     # --- PII Redaction + Safety Warning ---
     # When a user shares highly sensitive PII (SSN, phone), the warning
@@ -308,9 +334,11 @@ def generate_reply(
     # See ``MessageContext.snapshot_response_tone`` for the contract.
     ctx.snapshot_response_tone = tone
 
-    if tone == "crisis":
-        pass  # handled below in routing
-    else:
+    # Crisis tone skips the queue-accept and post-results fast paths —
+    # those checks are non-meaningful for a user in active crisis and the
+    # message should fall through to crisis routing below. Flipped from
+    # `if tone == "crisis": pass else: …` per SMELL-5 resolution.
+    if tone != "crisis":
         # --- QUEUE-ACCEPT FAST PATH ---
         # When the user has a pending queue offer (from a prior multi-
         # intent search) AND the current message's extracted service
@@ -351,8 +379,10 @@ def generate_reply(
             )
 
         # --- POST-RESULTS QUESTION CHECK ---
-        _post_result = _handle_post_results_interaction(ctx)
-        if _post_result:
+        # Walrus form (SMELL-8): the assignment-and-truth-check stay on
+        # one line; handler returns dict|None so the truthy check is
+        # equivalent to `is not None`.
+        if _post_result := _handle_post_results_interaction(ctx):
             return _apply_pii_warning(_pii_warning, _post_result)
 
     # === ROUTE TO HANDLERS ===
@@ -484,13 +514,11 @@ def generate_reply(
 
     # --- Demographic skip ("I'd rather not say" / "skip") ---
     # SAMHSA Empowerment principle: users control what they share.
-    _demo_skip_result = _handle_demographic_skip(ctx)
-    if _demo_skip_result:
+    if _demo_skip_result := _handle_demographic_skip(ctx):
         return _apply_pii_warning(_pii_warning, _demo_skip_result)
 
     # --- Location unknown ---
-    _loc_unknown_result = _handle_location_unknown(ctx)
-    if _loc_unknown_result:
+    if _loc_unknown_result := _handle_location_unknown(ctx):
         return _apply_pii_warning(_pii_warning, _loc_unknown_result)
 
     # --- Confused / Overwhelmed ---
@@ -516,8 +544,7 @@ def generate_reply(
     # sees the same value the handler dispatched on. See
     # ``MessageContext.snapshot_last_action`` for the contract.
     ctx.snapshot_last_action = existing.get("_last_action")
-    context_result = _handle_context_aware_confirm(ctx)
-    if context_result:
+    if context_result := _handle_context_aware_confirm(ctx):
         return _apply_pii_warning(_pii_warning, context_result)
 
     # Clear the last_action tracker now that we've checked it
@@ -534,8 +561,7 @@ def generate_reply(
     # Snapshot _pending_confirmation: handler pops it on confirm paths;
     # the ``if pending:`` guard below must see the pre-mutation value.
     ctx.snapshot_pending = existing.get("_pending_confirmation")
-    confirm_result = _handle_pending_confirmation(ctx)
-    if confirm_result:
+    if confirm_result := _handle_pending_confirmation(ctx):
         return _apply_pii_warning(_pii_warning, confirm_result)
 
     # If pending confirmation but user typed something new
