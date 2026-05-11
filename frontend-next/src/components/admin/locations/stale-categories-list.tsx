@@ -123,7 +123,7 @@ export function StaleCategoriesList() {
                 <td className="px-4 py-3 text-sm">
                   {cat.days_since_max_verified === null ? (
                     <span className="inline-flex items-center gap-1.5 text-red-700 dark:text-red-400">
-                      <span className="w-1.5 h-1.5 rounded-full bg-red-500 inline-block" aria-hidden="true" />
+                      <span className="w-1.5 h-1.5 rounded-full bg-red-500 dark:bg-red-400 inline-block" aria-hidden="true" />
                       Never verified
                     </span>
                   ) : cat.days_since_max_verified >= 365 ? (

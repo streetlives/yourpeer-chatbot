@@ -205,7 +205,7 @@ export function EvalRunner({ onComplete }: EvalRunnerProps) {
           <button
             disabled={running || uploading}
             aria-label={running ? "Evaluation running" : "Run evaluation suite"}
-            className="px-4 py-2 rounded-lg bg-amber-300 text-neutral-900 font-semibold text-sm transition hover:bg-amber-400 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="px-4 py-2 rounded-lg bg-amber-300 dark:bg-amber-500 text-neutral-900 dark:text-neutral-900 font-semibold text-sm transition hover:bg-amber-400 dark:hover:bg-amber-400 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {running ? "⏳ Running…" : "▶ Run Evals"}
           </button>
@@ -214,18 +214,18 @@ export function EvalRunner({ onComplete }: EvalRunnerProps) {
         <Dialog.Portal>
           <Dialog.Overlay className="fixed inset-0 bg-black/40 z-50" />
           <Dialog.Content
-            className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 bg-white rounded-xl shadow-xl w-full max-w-md p-6"
+            className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 bg-white dark:bg-neutral-900 border border-transparent dark:border-neutral-800 rounded-xl shadow-xl w-full max-w-md p-6"
             aria-describedby="eval-confirm-desc"
           >
-            <Dialog.Title className="text-lg font-bold text-neutral-900 mb-1">
+            <Dialog.Title className="text-lg font-bold text-neutral-900 dark:text-neutral-100 mb-1">
               Run evaluation suite?
             </Dialog.Title>
-            <p id="eval-confirm-desc" className="text-sm text-neutral-500 mb-4">
+            <p id="eval-confirm-desc" className="text-sm text-neutral-500 dark:text-neutral-400 mb-4">
               This will run <strong>{scenarioLabel}</strong> through the full
               chatbot pipeline and score each one using Claude Opus as a judge.
             </p>
 
-            <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 mb-5 text-sm text-amber-800">
+            <div className="bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-900/50 rounded-lg px-4 py-3 mb-5 text-sm text-amber-800 dark:text-amber-200">
               <strong>Cost warning:</strong> Each scenario makes multiple
               Anthropic API calls (Haiku for conversation, Sonnet for user
               simulation, Opus for judging across 11 dimensions).
@@ -236,13 +236,13 @@ export function EvalRunner({ onComplete }: EvalRunnerProps) {
 
             <div className="flex justify-end gap-3">
               <Dialog.Close asChild>
-                <button className="px-4 py-2 rounded-lg bg-amber-400 text-sm font-semibold text-neutral-900 hover:bg-amber-500 transition">
+                <button className="px-4 py-2 rounded-lg bg-amber-400 dark:bg-amber-500 text-sm font-semibold text-neutral-900 dark:text-neutral-900 hover:bg-amber-500 dark:hover:bg-amber-400 transition">
                   Cancel
                 </button>
               </Dialog.Close>
               <button
                 onClick={handleRun}
-                className="px-4 py-2 rounded-lg text-sm font-medium text-neutral-600 hover:bg-neutral-100 transition"
+                className="px-4 py-2 rounded-lg text-sm font-medium text-neutral-600 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800 transition"
               >
                 Yes, run {scenarioLabel}
               </button>
@@ -254,7 +254,7 @@ export function EvalRunner({ onComplete }: EvalRunnerProps) {
       <select
         value={scenarioCount}
         onChange={(e) => setScenarioCount(e.target.value)}
-        className="bg-white border border-neutral-200 rounded-lg px-2.5 py-1.5 text-sm"
+        className="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 text-neutral-700 dark:text-neutral-200 rounded-lg px-2.5 py-1.5 text-sm"
       >
         <option value="">All scenarios</option>
         <option value="5">5 scenarios (quick)</option>
@@ -267,7 +267,7 @@ export function EvalRunner({ onComplete }: EvalRunnerProps) {
         onClick={() => fileInputRef.current?.click()}
         disabled={running || uploading}
         aria-label="Upload eval report from local file"
-        className="px-4 py-2 rounded-lg border border-neutral-200 bg-white text-neutral-700 font-medium text-sm transition hover:bg-neutral-50 disabled:opacity-50 disabled:cursor-not-allowed"
+        className="px-4 py-2 rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 text-neutral-700 dark:text-neutral-200 font-medium text-sm transition hover:bg-neutral-50 dark:hover:bg-neutral-800/40 disabled:opacity-50 disabled:cursor-not-allowed"
       >
         {uploading ? "⏳ Uploading…" : "📄 Upload Report"}
       </button>
@@ -281,7 +281,7 @@ export function EvalRunner({ onComplete }: EvalRunnerProps) {
       />
 
       {status && (
-        <span className="text-sm text-neutral-500">{status}</span>
+        <span className="text-sm text-neutral-500 dark:text-neutral-400">{status}</span>
       )}
 
       {running && (
@@ -292,7 +292,7 @@ export function EvalRunner({ onComplete }: EvalRunnerProps) {
             )
           }
           aria-label="Stop polling for eval status"
-          className="ml-2 px-2.5 py-1 rounded-md text-xs font-medium text-neutral-500 hover:text-neutral-700 hover:bg-neutral-100 transition"
+          className="ml-2 px-2.5 py-1 rounded-md text-xs font-medium text-neutral-500 dark:text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200 hover:bg-neutral-100 dark:hover:bg-neutral-800 transition"
         >
           Stop watching
         </button>

@@ -260,7 +260,7 @@ export default function MetricsPage() {
     return (
       <div className="text-center py-16" role="alert">
         <div className="text-3xl mb-3">⚠️</div>
-        <p className="text-neutral-500 mb-4">
+        <p className="text-neutral-500 dark:text-neutral-400 mb-4">
           Could not load metrics. The server may be unavailable.
         </p>
         <button
@@ -270,7 +270,7 @@ export default function MetricsPage() {
             fetchQueries();
             fetchEvalResults();
           }}
-          className="px-3.5 py-1.5 rounded-lg text-sm font-medium border border-neutral-200 bg-white text-neutral-700 hover:bg-neutral-50 transition"
+          className="px-3.5 py-1.5 rounded-lg text-sm font-medium border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 text-neutral-700 dark:text-neutral-200 hover:bg-neutral-50 dark:hover:bg-neutral-800/40 transition"
         >
           Retry
         </button>
@@ -427,7 +427,7 @@ export default function MetricsPage() {
             <div
               role="status"
               aria-live="polite"
-              className="bg-amber-50 border border-amber-200 rounded-lg px-3.5 py-2 mb-3 text-sm text-amber-800 flex items-center justify-between gap-3"
+              className="bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-900/50 rounded-lg px-3.5 py-2 mb-3 text-sm text-amber-800 dark:text-amber-200 flex items-center justify-between gap-3"
             >
               <span>
                 Latest refresh failed for {erroredSlices.join(", ")} — some
@@ -440,7 +440,7 @@ export default function MetricsPage() {
                   if (queriesSlice.error) fetchQueries();
                   if (evalSlice.error) fetchEvalResults();
                 }}
-                className="flex-shrink-0 px-2.5 py-0.5 rounded-md text-xs font-semibold bg-amber-100 text-amber-700 hover:bg-amber-200 transition"
+                className="flex-shrink-0 px-2.5 py-0.5 rounded-md text-xs font-semibold bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-200 hover:bg-amber-200 dark:hover:bg-amber-900/60 transition"
               >
                 Retry
               </button>
@@ -484,7 +484,7 @@ export default function MetricsPage() {
                 onChange={(e) =>
                   setFilterMode(e.target.checked ? "issues" : "all")
                 }
-                className="h-4 w-4 rounded border-neutral-300 text-amber-500 focus:ring-amber-400 dark:border-neutral-600 dark:bg-neutral-800"
+                className="h-4 w-4 rounded border-neutral-300 text-amber-500 dark:text-amber-500 focus:ring-amber-400 dark:border-neutral-600 dark:bg-neutral-800"
               />
               Show only issues
             </label>
@@ -500,7 +500,7 @@ export default function MetricsPage() {
                 href="https://github.com/ianlau20/yourpeer-chatbot/blob/main/docs/ops/METRICS.md"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-amber-600 hover:underline"
+                className="text-amber-600 dark:text-amber-400 hover:underline"
               >
                 METRICS.md
               </a>
@@ -674,7 +674,7 @@ export default function MetricsPage() {
             description="Emotional awareness, tone, frustration handling, and repetition. For this population, even routine interactions carry emotional weight — purely transactional tone is a gap."
           >
             {toneClassifierDegenerate && (
-              <div className="bg-amber-50 border border-amber-200 rounded-lg px-3.5 py-2.5 text-sm text-amber-800 mb-3">
+              <div className="bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-900/50 rounded-lg px-3.5 py-2.5 text-sm text-amber-800 dark:text-amber-200 mb-3">
                 <strong>Tone classifier rarely firing</strong> — only {Math.round((toneClassifierCoverage ?? 0) * 100)}% of {totalToneClassified} (total) classified turns have a tone detected. The derived emotional and tone metrics below may be unreliable until classifier coverage improves. Investigate the split classifier&apos;s tone detection logic before drawing conclusions from this section.
               </div>
             )}

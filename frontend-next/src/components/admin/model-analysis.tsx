@@ -27,7 +27,7 @@ export function ModelAnalysis() {
           href="https://docs.anthropic.com/en/about-claude/pricing"
           target="_blank"
           rel="noopener noreferrer"
-          className="text-amber-600 hover:underline"
+          className="text-amber-600 dark:text-amber-400 hover:underline"
         >
           Anthropic official docs
         </a>
@@ -74,7 +74,7 @@ export function ModelAnalysis() {
                 href={s.url}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-amber-600 hover:underline"
+                className="text-amber-600 dark:text-amber-400 hover:underline"
               >
                 {s.text}
                 <ExternalLink size={10} className="inline ml-0.5 -mt-0.5" />

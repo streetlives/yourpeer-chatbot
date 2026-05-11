@@ -224,7 +224,7 @@ export function EvalResults({ report }: EvalResultsProps) {
       {/* Dimension scores */}
       <div className="mb-7" id="eval-dimension-scores">
         <h3 className="text-base font-semibold mb-4">Dimension Scores</h3>
-        <p className="text-xs text-neutral-400 mb-3">
+        <p className="text-xs text-neutral-400 dark:text-neutral-500 mb-3">
           Click a dimension name to see what the LLM judge measures and how it scores 1–5.
         </p>
         {EVAL_DIMENSIONS.map((dim) => {
@@ -246,7 +246,7 @@ export function EvalResults({ report }: EvalResultsProps) {
                 <div className="w-[220px] flex-shrink-0 text-sm font-medium text-neutral-400 dark:text-neutral-500">
                   {shortLabel}
                   {blocker && (
-                    <span className="ml-1.5 text-[0.65rem] text-red-500 font-semibold opacity-60">
+                    <span className="ml-1.5 text-[0.65rem] text-red-500 dark:text-red-400 font-semibold opacity-60">
                       BLOCKER
                     </span>
                   )}
@@ -289,32 +289,32 @@ export function EvalResults({ report }: EvalResultsProps) {
           return (
             <div
               key={key}
-              className="flex items-center gap-3.5 py-2.5 border-b border-neutral-100 last:border-b-0"
+              className="flex items-center gap-3.5 py-2.5 border-b border-neutral-100 dark:border-neutral-800 last:border-b-0"
             >
               <div className="w-[220px] flex-shrink-0 text-sm font-medium">
                 <button
                   type="button"
                   onClick={() => setSelectedDimension(dim)}
-                  className="text-left hover:text-amber-600 focus:text-amber-600 focus:outline-none focus:underline transition-colors cursor-pointer"
+                  className="text-left hover:text-amber-600 dark:hover:text-amber-400 focus:text-amber-600 dark:focus:text-amber-400 focus:outline-none focus:underline transition-colors cursor-pointer"
                   aria-label={`Show details for ${shortLabel}`}
                 >
                   {shortLabel}
                 </button>
                 {blocker && (
-                  <span className="ml-1.5 text-[0.65rem] text-red-600 font-semibold">
+                  <span className="ml-1.5 text-[0.65rem] text-red-600 dark:text-red-400 font-semibold">
                     BLOCKER
                   </span>
                 )}
               </div>
               <div className="flex-1 relative">
-                <div className="w-full h-2 bg-neutral-100 rounded-full overflow-hidden">
+                <div className="w-full h-2 bg-neutral-100 dark:bg-neutral-800 rounded-full overflow-hidden">
                   <div
                     className={`h-full rounded-full transition-all ${barColor}`}
                     style={{ width: `${pct}%` }}
                   />
                 </div>
                 <div
-                  className="absolute -top-0.5 h-3 w-0.5 bg-neutral-400 rounded-full"
+                  className="absolute -top-0.5 h-3 w-0.5 bg-neutral-400 dark:bg-neutral-500 rounded-full"
                   style={{ left: `${targetPct}%` }}
                   title={`Target: ${target}/5.0`}
                 />
@@ -439,7 +439,7 @@ export function EvalResults({ report }: EvalResultsProps) {
         )}
 
         {filteredScenarios.length === 0 ? (
-          <div className="text-center py-8 text-sm text-neutral-400">
+          <div className="text-center py-8 text-sm text-neutral-400 dark:text-neutral-500">
             {filter.kind === "failures"
               ? "No failing scenarios — everything is passing."
               : "No scenarios in this category."}
@@ -608,7 +608,7 @@ function ScenarioCard({
             return (
               <div
                 key={dim}
-                className="text-xs text-amber-600 dark:text-amber-400 mt-1.5 pl-3 border-l-2 border-amber-400"
+                className="text-xs text-amber-600 dark:text-amber-400 mt-1.5 pl-3 border-l-2 border-amber-400 dark:border-amber-600"
               >
                 {DIM_SHORT_LABELS[dim] || dim}: {d.score}/5 — {d.justification}
               </div>

@@ -31,7 +31,7 @@ export function StatCardSkeleton({ count = 6 }: { count?: number }) {
       {Array.from({ length: count }).map((_, i) => (
         <div
           key={i}
-          className="bg-white border border-neutral-200 rounded-lg px-4 py-4"
+          className="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-lg px-4 py-4"
         >
           <Bone className="h-3 w-20 mb-3" />
           <Bone className="h-7 w-14 mb-2" />
@@ -73,19 +73,19 @@ export function TableSkeleton({
 
   return (
     <div
-      className="bg-white border border-neutral-200 rounded-lg overflow-hidden"
+      className="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-lg overflow-hidden"
       role="status"
       aria-label="Loading table"
     >
       {/* Header */}
-      <div className="flex gap-4 px-4 py-3 border-b border-neutral-200">
+      <div className="flex gap-4 px-4 py-3 border-b border-neutral-200 dark:border-neutral-800">
         {colWidths.map((w, i) => (
           <Bone key={i} className={`h-3 ${w}`} />
         ))}
       </div>
       {/* Rows */}
       {Array.from({ length: rows }).map((_, r) => (
-        <div key={r} className="flex gap-4 px-4 py-3 border-b border-neutral-100">
+        <div key={r} className="flex gap-4 px-4 py-3 border-b border-neutral-100 dark:border-neutral-800">
           {colWidths.map((w, c) => (
             <Bone key={c} className={`h-4 ${w}`} />
           ))}
@@ -102,9 +102,9 @@ export function MetricsSkeleton() {
       {[1, 2, 3].map((section) => (
         <div key={section} className="mb-6">
           <Bone className="h-5 w-40 mb-3" />
-          <div className="bg-white border border-neutral-200 rounded-lg overflow-hidden">
+          <div className="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-lg overflow-hidden">
             {Array.from({ length: 4 }).map((_, i) => (
-              <div key={i} className="flex justify-between px-4 py-3 border-b border-neutral-100">
+              <div key={i} className="flex justify-between px-4 py-3 border-b border-neutral-100 dark:border-neutral-800">
                 <Bone className="h-4 w-36" />
                 <Bone className="h-4 w-16" />
                 <Bone className="h-4 w-20" />
@@ -122,7 +122,7 @@ export function EvalSkeleton() {
   return (
     <div role="status" aria-label="Loading evaluation results">
       <Bone className="h-5 w-48 mb-4" />
-      <div className="bg-white border border-neutral-200 rounded-lg p-4 mb-4">
+      <div className="bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-lg p-4 mb-4">
         <Bone className="h-4 w-64 mb-3" />
         <Bone className="h-4 w-52 mb-3" />
         <Bone className="h-4 w-40" />

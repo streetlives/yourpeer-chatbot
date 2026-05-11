@@ -61,7 +61,7 @@ export function TaskRow({ task }: { task: TaskDef }) {
               <div className="flex flex-col gap-2">
                 {task.jurySteps.map((step, i) => (
                   <div key={i} className="flex gap-3 items-start">
-                    <span className="flex-shrink-0 w-5 h-5 rounded-full bg-amber-500 text-white text-[0.65rem] font-bold flex items-center justify-center mt-0.5">
+                    <span className="flex-shrink-0 w-5 h-5 rounded-full bg-amber-500 dark:bg-amber-500 text-white text-[0.65rem] font-bold flex items-center justify-center mt-0.5">
                       {i + 1}
                     </span>
                     <div>

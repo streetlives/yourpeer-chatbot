@@ -324,7 +324,7 @@ function FilterBar({
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="Search name or organization…"
-          className="w-full text-xs px-2.5 py-1.5 rounded border border-neutral-200 bg-white dark:bg-neutral-900 dark:border-neutral-700 dark:text-neutral-200 placeholder:text-neutral-400"
+          className="w-full text-xs px-2.5 py-1.5 rounded border border-neutral-200 bg-white dark:bg-neutral-900 dark:border-neutral-700 dark:text-neutral-200 placeholder:text-neutral-400 dark:placeholder:text-neutral-500"
         />
       </div>
     </div>
@@ -430,7 +430,7 @@ function LastVerifiedCell({ value }: { value: string | null }) {
   if (value === null) {
     return (
       <span className="inline-flex items-center gap-1 text-red-700 dark:text-red-400">
-        <span className="w-1.5 h-1.5 rounded-full bg-red-500 inline-block" aria-hidden="true" />
+        <span className="w-1.5 h-1.5 rounded-full bg-red-500 dark:bg-red-400 inline-block" aria-hidden="true" />
         Never
       </span>
     );

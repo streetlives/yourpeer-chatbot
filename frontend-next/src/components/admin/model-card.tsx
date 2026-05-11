@@ -76,7 +76,7 @@ export function ModelCard({ modelKey }: { modelKey: "haiku" | "sonnet" | "opus" 
         </div>
         {m.strengths.slice(0, 4).map((s, i) => (
           <div key={i} className="text-sm text-neutral-600 dark:text-neutral-300 leading-relaxed flex gap-1.5">
-            <span className="text-green-500 flex-shrink-0">+</span>
+            <span className="text-green-500 dark:text-green-400 flex-shrink-0">+</span>
             <span>{s}</span>
           </div>
         ))}
@@ -87,7 +87,7 @@ export function ModelCard({ modelKey }: { modelKey: "haiku" | "sonnet" | "opus" 
         </div>
         {m.weaknesses.slice(0, 3).map((w, i) => (
           <div key={i} className="text-sm text-neutral-600 dark:text-neutral-300 leading-relaxed flex gap-1.5">
-            <span className="text-red-400 flex-shrink-0">&minus;</span>
+            <span className="text-red-400 dark:text-red-300 flex-shrink-0">&minus;</span>
             <span>{w}</span>
           </div>
         ))}

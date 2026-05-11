@@ -70,7 +70,7 @@ function ToggleField({
         type="checkbox"
         checked={checked}
         onChange={(e) => onChange(e.target.checked)}
-        className="w-4 h-4 rounded border-neutral-300 dark:border-neutral-700 text-amber-500 accent-amber-500 cursor-pointer"
+        className="w-4 h-4 rounded border-neutral-300 dark:border-neutral-700 text-amber-500 dark:text-amber-500 accent-amber-500 cursor-pointer"
       />
       <div>
         <span className="text-sm font-medium text-neutral-700 dark:text-neutral-200">{label}</span>

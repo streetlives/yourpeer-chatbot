@@ -116,7 +116,7 @@ export function MetricRow({
         </div>
         <div className="text-sm text-neutral-500 dark:text-neutral-400 mt-1">{subtitle}</div>
       </div>
-      <div className="font-mono text-xs text-neutral-400">{target}</div>
+      <div className="font-mono text-xs text-neutral-400 dark:text-neutral-500">{target}</div>
       <div className={`font-mono font-bold text-right ${STATUS_COLORS[status]}`}>
         {value ?? "—"}
       </div>
