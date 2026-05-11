@@ -1,10 +1,48 @@
 import re
 import logging
 import re as _re
+import datetime
+import zoneinfo
 
 from typing import Optional
 
 logger = logging.getLogger(__name__)
+
+# ----------------------------------------------------------------------------
+# NYC time / cold-weather seasonality
+# ----------------------------------------------------------------------------
+# All date evaluation happens in America/New_York. Render's container clock
+# is UTC by default — without explicit TZ conversion, a query at 11pm ET on
+# October 31 would compute month=11 (UTC = Nov 1 03:00) and incorrectly
+# enable the winter gate one day early. Same boundary risk at the spring
+# end. Mirrors the schedule-status TZ pattern documented in
+# `backend/app/rag/query_templates.py:_compute_schedule_status`.
+_NYC_TIMEZONE = zoneinfo.ZoneInfo("America/New_York")
+
+# NYC warming-center season. November through March aligns with the city's
+# DSS Code Blue activation window (~Nov 1 – Apr 15) — months where warming-
+# center capacity is reliably available across the five boroughs. October
+# and April are shoulder months where centers may or may not be operational
+# on a given day; the chatbot requires an explicit cold-context signal
+# ("freezing", "warming center", etc.) to surface them outside this range.
+# See TAXONOMY_AUDIT_MAY2026.md §VIII for the seasonal-gating rationale.
+_NYC_WINTER_MONTHS = frozenset({11, 12, 1, 2, 3})
+
+
+def _is_nyc_winter_month(today=None) -> bool:
+    """True when ``today`` falls within NYC's warming-center season
+    (November–March, Code Blue window).
+
+    Args:
+        today: Optional ``date`` for testing. When None, reads the
+            current date in America/New_York time (NOT process-local
+            time — Render containers run UTC and would skew the
+            month boundary at the start/end of each season).
+    """
+    if today is None:
+        today = datetime.datetime.now(_NYC_TIMEZONE).date()
+    return today.month in _NYC_WINTER_MONTHS
+
 
 # NOTE: This file contains a simple rule-based slot extractor used for early
 # prototyping. It relies on keyword matching and basic regex patterns, so it
@@ -1386,6 +1424,63 @@ _DURATION_STRIP_RE = re.compile(
 )
 
 
+def _extract_cold_context(text: str, today=None) -> bool:
+    """Detect cold-weather / warming-center context in the user message.
+
+    Returns True when EITHER:
+      • The current date falls within NYC's warming-center season
+        (November–March) — auto-enabled per
+        TAXONOMY_AUDIT_MAY2026.md §VIII's "seasonal cold signal"
+        guidance. Warming centers are operational citywide during this
+        window, so a generic shelter query should surface them without
+        requiring the user to type cold-context language.
+      • The message contains explicit cold-weather or warming-center
+        language. This path fires year-round so a summer user asking
+        "where's a warming center?" or "I'm freezing" (e.g., a cold
+        snap, illness, AC failure) still gets the right answer.
+
+    The two paths short-circuit: in winter, no message inspection
+    happens; out of season, the message is checked.
+
+    Args:
+        text:  The user's (redacted) message text.
+        today: Optional ``date`` for testing the seasonal gate.
+               Defaults to the current date in America/New_York.
+
+    Returns:
+        True  if cold-weather or warming-center context detected, OR
+              if the current date is in NYC winter season.
+        False otherwise.
+    """
+    # Seasonal gate — auto-enable Nov–Mar regardless of message text.
+    if _is_nyc_winter_month(today):
+        return True
+
+    lower = text.lower()
+    # Explicit warming-related asks — always trigger
+    explicit = (
+        "warming center", "warming centre", "warming site",
+        "warm shelter", "warm place to sleep", "warm place to stay",
+        "out of the cold", "get out of the cold", "escape the cold",
+    )
+    if any(phrase in lower for phrase in explicit):
+        return True
+    # Cold-context language paired with shelter intent. We don't gate on
+    # service_type here (that's the caller's job); we just look for the
+    # cold-context signal. The shelter-enrichment caller only applies the
+    # signal to shelter queries.
+    cold_phrases = (
+        "freezing", "frostbite", "frozen out",
+        "i'm cold", "im cold", "i am cold",
+        "we're cold", "were cold", "we are cold",
+        "so cold", "really cold",
+        "cold outside", "cold tonight", "cold out there",
+        "stay warm", "get warm", "keep warm", "somewhere warm",
+        "need warmth",
+    )
+    return any(phrase in lower for phrase in cold_phrases)
+
+
 def _extract_family_status(text: str) -> Optional[str]:
     """Extract family composition from user message.
 
@@ -1886,6 +1981,7 @@ def extract_slots(message: str) -> dict:
         "family_status": _extract_family_status(message),
         "_gender": gender,
         "_populations": populations,
+        "_cold_context": _extract_cold_context(message),
         "org_name": _extract_org_name(message),
         "no_requirements": _extract_no_requirements(message),
         "_contradiction": _find_contradiction_signal(message) >= 0,
@@ -2000,6 +2096,17 @@ def merge_slots(existing: dict, new_values: dict) -> dict:
                 existing_pops = set(merged.get("_populations", []))
                 existing_pops.update(value)
                 merged["_populations"] = sorted(existing_pops)
+            continue
+        # _cold_context is a sticky boolean — once True for the session
+        # (the user mentioned freezing / warming center / "out of the
+        # cold"), it stays True for subsequent turns. A turn-2 message
+        # of just "in Manhattan" returns _cold_context=False; without
+        # this special case, the False would silently overwrite the
+        # turn-1 True and the warming-center enrichment would stop
+        # firing mid-conversation.
+        if key == "_cold_context":
+            if value:
+                merged["_cold_context"] = True
             continue
         if value not in (None, "", []):
             # If user provides a real location, replace a previous "near me"

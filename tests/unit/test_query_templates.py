@@ -76,19 +76,23 @@ EXPECTED_TAXONOMY_NAMES = {
     "shelter": {
         # Parent + generic housing types
         "shelter", "transitional independent living (til)",
-        "housing lottery", "veterans short-term housing", "warming center", "safe haven",
+        "housing lottery", "safe haven",
         # Population-specific shelter children (Apr 2026 YourPeer parity update):
         "youth", "families", "single adult", "senior", "lgbtq young adult", "veterans",
         # Service-mode shelter children (Apr 16 DB verification — Covenant House /
         # Safe Horizon discoverability fix):
         "crisis", "drop-in center", "referral", "assessment",
-        # NOTE: "residential recovery" and "supportive housing" were removed
-        # from this set in May 2026 per TAXONOMY_AUDIT_MAY2026.md:
-        #   - residential recovery (§VIII, the CREATE Inc. user-testing bug):
-        #     substance-use treatment programs that confused "I need a place
-        #     to sleep tonight" queries. Still reachable via mental_health
-        #     template + service_detail narrowing.
-        #   - supportive housing (Ticket J): vestigial, 0 services tagged.
+        # NOTE on omissions from this set (May 2026 audit follow-ups):
+        #   - residential recovery (§VIII) — CREATE Inc. bug; recovery
+        #     programs route via mental_health template / service_detail
+        #     narrowing.
+        #   - supportive housing (Ticket J) — vestigial, 0 services.
+        #   - veterans short-term housing — population-specific to veterans;
+        #     added back conditionally via rag/__init__.py shelter enrichment
+        #     when populations contains "veteran".
+        #   - warming center — seasonal; added back conditionally via the
+        #     shelter enrichment when slots["_cold_context"] is True
+        #     (detected by _extract_cold_context in slot_extraction_regex.py).
     },
     "clothing": {
         "clothing", "clothing pantry", "interview-ready clothing",
@@ -260,11 +264,66 @@ def test_food_includes_food_pantry():
         "food pantry missing from food template — this is the largest food taxonomy (732 services)"
 
 
-def test_shelter_includes_warming_center_and_safe_haven():
-    """Warming Center and Safe Haven must be in shelter template."""
+def test_shelter_includes_safe_haven():
+    """Safe Haven must be in shelter template default.
+
+    Warming Center used to be asserted here too. May 2026 audit follow-up
+    moved Warming Center to conditional-only (added via enrichment when
+    `_cold_context` is True). See
+    `test_shelter_warming_center_added_on_cold_context` below for the
+    conditional inclusion check.
+    """
     names = TEMPLATES["shelter"]["default_params"]["taxonomy_names"]
-    assert "warming center" in names, "warming center missing from shelter template"
     assert "safe haven" in names, "safe haven missing from shelter template"
+    assert "warming center" not in names, (
+        "Warming Center should NOT be in default — added conditionally on "
+        "cold_context signal per TAXONOMY_AUDIT_MAY2026.md §VIII."
+    )
+
+
+def test_shelter_warming_center_added_on_cold_context():
+    """Warming Center is added to taxonomy_names when cold_context=True.
+
+    May 2026 audit follow-up: Warming Center (1 svc) was removed from the
+    shelter default and gated to the cold_context signal detected by
+    `_extract_cold_context` in slot_extraction_regex.py.
+    """
+    names = _get_taxonomy_names("shelter", cold_context=True)
+    assert "warming center" in names, (
+        "Warming Center must surface when cold_context=True. "
+        "Got: {}".format(names)
+    )
+    # And it's NOT there when the cold_context signal is absent.
+    names_no_cold = _get_taxonomy_names("shelter")
+    assert "warming center" not in names_no_cold, (
+        "Warming Center leaked into default without cold_context signal"
+    )
+
+
+def test_shelter_veterans_short_term_housing_not_in_default():
+    """Veterans Short-Term Housing is conditional-only (May 2026 audit).
+
+    Was previously in the default; per TAXONOMY_AUDIT_MAY2026.md §VIII
+    it's population-specific to veterans. The shelter enrichment in
+    rag/__init__.py adds it back when populations contains "veteran".
+    Non-veteran users no longer see it in plain shelter searches.
+    """
+    names = TEMPLATES["shelter"]["default_params"]["taxonomy_names"]
+    assert "veterans short-term housing" not in names, (
+        "Veterans Short-Term Housing must not be in default — added "
+        "conditionally on veteran population signal per "
+        "TAXONOMY_AUDIT_MAY2026.md §VIII."
+    )
+
+
+def test_shelter_veterans_short_term_housing_added_on_veteran_pop():
+    """Veterans Short-Term Housing is added when populations contains veteran.
+
+    Counterpart to test_shelter_veterans_short_term_housing_not_in_default.
+    """
+    names = _get_taxonomy_names("shelter", populations=["veteran"])
+    assert "veterans short-term housing" in names
+    assert "veterans" in names
 
 
 def test_clothing_includes_clothing_pantry():

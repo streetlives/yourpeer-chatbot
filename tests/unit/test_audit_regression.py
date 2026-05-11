@@ -334,12 +334,18 @@ class TestShelterNarrowWithParent:
             "I need a place to sleep tonight" use case. Still reachable
             via mental_health template and via service_detail narrowing
             ("detox", "sober living", etc.).
+          - Veterans Short-Term Housing (2 services) — removed May 2026
+            audit follow-up. Population-specific to veterans; added back
+            via shelter enrichment when populations contains "veteran".
+          - Warming Center (1 service)          — removed May 2026 audit
+            follow-up. Seasonal; added back via shelter enrichment when
+            slots["_cold_context"] is True.
         """
         names = _shelter_tax()
         expected_members = {
             "shelter", "transitional independent living (til)",
-            "housing lottery", "veterans short-term housing", "warming center",
-            "safe haven", "youth", "families", "single adult", "senior",
+            "housing lottery", "safe haven",
+            "youth", "families", "single adult", "senior",
             "lgbtq young adult", "veterans",
             # Service-mode Shelter children (added after Covenant House / Safe
             # Horizon DB verification):
@@ -555,19 +561,23 @@ class TestShelterSafetyEnrichments:
 
         Pregnant only matters as an override IN THE CONTEXT OF family_status=alone.
 
-        After May 2026 audit fix (TAXONOMY_AUDIT_MAY2026.md §VIII + Ticket J):
-        default has 16 entries — was 18, minus 'residential recovery' (CREATE Inc.
-        bug) and 'supportive housing' (vestigial 0-service taxonomy).
+        After May 2026 audit fixes (TAXONOMY_AUDIT_MAY2026.md §VIII + Ticket J):
+        default has 14 entries — was 18, minus 4:
+          - residential recovery (CREATE Inc. bug)
+          - supportive housing (vestigial 0-service taxonomy)
+          - veterans short-term housing (conditional on veteran population)
+          - warming center (conditional on cold_context signal)
         """
         names = _shelter_tax(populations=["pregnant"])
-        # Default full list
+        # Default list
         assert "families" in names
         assert "single adult" in names
         assert "shelter" in names
-        # Default should be 16 entries after May 2026 audit fixes
-        assert len(names) == 16, (
-            f"Default shelter list expected 16 entries (May 2026 audit fix: "
-            f"removed residential recovery + supportive housing), got {len(names)}: {names}"
+        # Default should be 14 entries after May 2026 audit fixes
+        assert len(names) == 14, (
+            f"Default shelter list expected 14 entries (May 2026 audit fixes: "
+            f"removed residential recovery, supportive housing, veterans "
+            f"short-term housing, warming center), got {len(names)}: {names}"
         )
 
 
@@ -1729,13 +1739,22 @@ class TestShelterDefaultCompleteness:
 
     # Children with non-zero services that are nonetheless intentionally
     # OMITTED from the shelter template default (May 2026 audit decisions).
-    # Tests for these live in TestPhantomTaxonomyGuards.
+    # Tests for these live in TestPhantomTaxonomyGuards and the
+    # TestShelterDefaultTaxonomies::test_*_not_in_shelter_default tests.
     DB_VERIFIED_OMITTED_FROM_DEFAULT = {
         # Removed May 2026 per TAXONOMY_AUDIT_MAY2026.md §VIII — CREATE Inc.
         # user-testing bug. Substance-use treatment programs that confused
         # "I need a place to sleep tonight" queries. Still reachable via
         # mental_health template + service_detail narrowing ("detox", etc.).
         "residential recovery",
+        # Removed May 2026 audit follow-up. Population-specific to veterans;
+        # the shelter enrichment in rag/__init__.py adds it back when
+        # populations contains "veteran".
+        "veterans short-term housing",
+        # Removed May 2026 audit follow-up. Seasonal service; the shelter
+        # enrichment adds it back when slots["_cold_context"] is True
+        # (detected by _extract_cold_context in slot_extraction_regex.py).
+        "warming center",
     }
 
     # DB-verified zero-service Shelter children (intentionally omitted)

@@ -188,7 +188,16 @@ _DETAIL_DESCRIPTION_FILTERS = {
     "Section 8 vouchers": r"section 8|housing voucher|rental assist|\mHCV\M",
     "affordable housing": r"affordable housing|low.income housing|subsidiz|below market",
     "eviction prevention": r"eviction prevent|anti.eviction|stay.*home|keep.*housed",
-    "homeless prevention programs": r"homeless prevent|prevention|diversion",
+    # "homeless prevention programs": tightened May 2026 (audit follow-up).
+    # The previous regex had a bare `prevention` alternation that matched
+    # unrelated services — STD prevention, fall prevention, overdose
+    # prevention, etc. The fix narrows to homelessness-specific prevention
+    # language. `homeless prevent` already covers "homeless prevention"
+    # (no word boundary in alternation). `diversion` is kept — NYC's
+    # "shelter diversion" is the standard term for homeless-prevention
+    # services. Added `housing.*prevent|prevent.*homeless` for word-order
+    # tolerance (e.g., "prevention of homelessness").
+    "homeless prevention programs": r"homeless prevent|housing.*prevent|prevent.*homeless|diversion",
     "housing assistance": r"housing assist|housing help|housing support|find.*housing",
     "housing lottery": r"housing lottery|Housing Connect|affordable.*apply",
     "housing programs": r"housing program|housing service|housing support",
@@ -214,6 +223,7 @@ def query_services(
     org_name: str = None,
     no_requirements: bool = False,
     taxonomy_override: list = None,
+    cold_context: bool = False,
 ) -> dict:
     """
     High-level entry point: go from intake slots to service results.
@@ -241,6 +251,13 @@ def query_services(
                       run a targeted second query for rare population-
                       specific taxonomies like "lgbtq young adult" when
                       the main proximity-bounded query returned none.
+        cold_context: If True, add `Warming Center` to the shelter taxonomy
+                      list. Set by the slot extractor's `_extract_cold_context`
+                      when the user message mentions freezing, warming
+                      centers, or "out of the cold". Per
+                      TAXONOMY_AUDIT_MAY2026.md §VIII, warming centers are
+                      seasonal and should not surface in default shelter
+                      searches.
 
     Returns:
         dict with keys: services, result_count, template_used,
@@ -489,6 +506,15 @@ def query_services(
             for tx in ("drop-in center", "crisis"):
                 if tx not in safety_extras:
                     safety_extras.append(tx)
+
+        # (6) Cold context → surface Warming Center.
+        # Warming Center (1 svc) is seasonal and was removed from the
+        # shelter default in May 2026 (TAXONOMY_AUDIT_MAY2026.md §VIII).
+        # Conditional inclusion when the user message mentions freezing
+        # cold, warming centers, or "out of the cold" — detected by
+        # `_extract_cold_context` in slot_extraction_regex.py.
+        if cold_context:
+            safety_extras.append("warming center")
 
         # Compose final taxonomy list (dedupe while preserving order).
         final = list(narrowed)

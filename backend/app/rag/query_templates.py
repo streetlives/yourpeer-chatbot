@@ -696,8 +696,6 @@ TEMPLATES = {
                 "shelter",
                 "transitional independent living (til)",
                 "housing lottery",
-                "veterans short-term housing",
-                "warming center",
                 "safe haven",
                 # Population-specific shelter children (kept in default so a
                 # generic "I need shelter" query without a family_status still
@@ -719,13 +717,30 @@ TEMPLATES = {
                 "drop-in center",   # 6 services — day sleeping rooms, drop-in
                 "referral",         # 6 services — shelter placement referrals
                 "assessment",       # 1 service — intake assessment
+                # NOT in default (added conditionally via rag/__init__.py
+                # enrichment when the relevant signal is present, per
+                # TAXONOMY_AUDIT_MAY2026.md §VIII):
+                #
+                #   • veterans short-term housing (2 svc) — added when
+                #     populations contains "veteran". Already population-
+                #     specific to veterans; surfacing for non-veteran users
+                #     is misleading. May 2026 audit follow-up removal.
+                #
+                #   • warming center (1 svc) — added when cold_context slot
+                #     is True. Seasonal-only service that should only surface
+                #     when the user signals cold-weather context (e.g.,
+                #     "freezing", "out of the cold", "warming center").
+                #     May 2026 audit follow-up removal.
             ]
         },
         "taxonomy_aliases": [
             "Shelter", "Transitional Independent Living (TIL)",
-            "Housing Lottery", "Veterans Short-Term Housing", "Warming Center", "Safe Haven",
+            "Housing Lottery", "Safe Haven",
             "Youth", "Families", "Single Adult", "Senior", "LGBTQ Young Adult", "Veterans",
             "Crisis", "Drop-in Center", "Referral", "Assessment",
+            # Conditional-only (added via enrichment) — listed here for
+            # taxonomy_aliases parity with the enriched query results.
+            "Veterans Short-Term Housing", "Warming Center",
         ],
     },
     "clothing": {
