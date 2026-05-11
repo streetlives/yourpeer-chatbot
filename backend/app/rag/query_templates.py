@@ -889,7 +889,7 @@ TEMPLATES = {
     },
     "other": {
         "name": "OtherServicesQuery",
-        "description": "Find benefits, drop-in centers, case workers, and miscellaneous services",
+        "description": "Find benefits, case workers, education, and miscellaneous Other-service-tree services",
         "required_filters": [FILTER_BY_TAXONOMY_NAME_IN, FILTER_NOT_HIDDEN, FILTER_BY_STATE_NY],
         "optional_filters": [
             FILTER_BY_CITY,
@@ -899,39 +899,56 @@ TEMPLATES = {
             FILTER_BY_DESCRIPTION_KEYWORDS,
         ],
         "default_params": {
+            # Other-service-tree taxonomies only.
+            #
+            # May 2026 fix (TAXONOMY_AUDIT_MAY2026.md §VIII follow-up):
+            # the previous default included 15 taxonomies parented under
+            # *other* DB trees, polluting `service_type=other` results with
+            # shelter / personal-care / clothing services. Specifically the
+            # 10 Shelter children listed below were causing shelter services
+            # to surface in non-shelter queries (e.g., a "benefits in Brooklyn"
+            # search returning a Single Adult shelter, because both `single
+            # adult` and `benefits` were in the taxonomy_names IN clause).
+            #
+            # The eval suite already noted the symptom — see
+            # `natural_drop_in_center` scenario description in
+            # tests/eval/eval_llm_judge.py ("an 'other' query won't return
+            # drop-in centers"). Drop-in centers route via shelter template;
+            # they should never have been in `other`.
+            #
+            # REMOVED from default (DB tree → correct template):
+            #   • drop-in center, referral, assessment, single adult,
+            #     families, youth, senior, veterans, lgbtq young adult,
+            #     intake               → Shelter tree (shelter template)
+            #   • baby supplies        → Clothing tree (clothing template,
+            #                            via service_detail="baby supplies"
+            #                            narrowing)
+            #   • baby, community services, activities, gym
+            #                          → Personal Care tree (personal_care
+            #                            template)
+            #   • appliances           → PHANTOM (does not exist in DB,
+            #                            April 2026 verification)
+            #   • pets                 → Other-tree but VESTIGIAL (0 services,
+            #                            audit Ticket J)
+            #
+            # KEPT (all Other-service-tree children with non-zero services
+            # that aren't already promoted to a dedicated template):
             "taxonomy_names": [
-                "other service",
-                "benefits",
-                "drop-in center",
-                "case workers",
-                "referral",
-                "education",
-                "mail",
-                "free wifi",
-                "taxes",
-                "baby supplies",
-                "baby",
-                "assessment",
-                "community services",
-                "activities",
-                "appliances",
-                "gym",
-                "pets",
-                "single adult",
-                "families",
-                "youth",
-                "senior",
-                "veterans",
-                "lgbtq young adult",
-                "intake",
+                "other service",  # parent — 1,105 services tagged here directly
+                "benefits",       # 32 svc
+                "case workers",   # 28 svc
+                "education",      # 101 svc — pending Phase B promotion
+                "free wifi",      # 8 svc
+                "mail",           # 6 svc
+                "taxes",          # 2 svc
+                # NOT included (intentionally promoted to their own templates):
+                #   legal services, immigration services → legal template
+                #   employment, internship               → employment template
             ]
         },
         "taxonomy_aliases": [
-            "Other service", "Benefits", "Drop-in Center", "Case Workers",
-            "Referral", "Education", "Mail", "Free Wifi", "Taxes",
-            "Baby Supplies", "Baby", "Assessment", "Community Services",
-            "Activities", "Appliances", "Gym", "Pets", "Single Adult",
-            "Families", "Youth", "Senior", "Veterans", "LGBTQ Young Adult", "Intake",
+            "Other service", "Benefits", "Case Workers", "Education",
+            "Free Wifi", "Mail", "Taxes",
         ],
     },
     "org_name": {

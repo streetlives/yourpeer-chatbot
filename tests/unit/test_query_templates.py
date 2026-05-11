@@ -116,11 +116,13 @@ EXPECTED_TAXONOMY_NAMES = {
         "residential recovery", "support groups",
     },
     "other": {
-        "other service", "benefits", "drop-in center", "case workers", "referral",
-        "education", "mail", "free wifi", "taxes", "baby supplies", "baby",
-        "assessment", "community services", "activities", "appliances", "gym",
-        "pets", "single adult", "families", "youth", "senior", "veterans",
-        "lgbtq young adult", "intake",
+        # May 2026 cleanup (TAXONOMY_AUDIT_MAY2026.md §VIII follow-up):
+        # Other-service-tree taxonomies only. Previously included 15
+        # cross-tree taxonomies (10 Shelter children, 4 Personal Care, 1
+        # Clothing) plus 1 phantom and 1 vestigial. See query_templates.py
+        # for the per-taxonomy removal rationale.
+        "other service", "benefits", "case workers", "education",
+        "free wifi", "mail", "taxes",
     },
 }
 
@@ -293,11 +295,56 @@ def test_personal_care_includes_hygiene_and_haircut():
     assert "haircut" in names, "haircut missing from personal_care template"
 
 
-def test_other_includes_benefits_and_drop_in():
-    """Benefits and Drop-in Center must be in other template."""
+def test_other_includes_benefits():
+    """Benefits must be in other template.
+
+    Previously also asserted 'drop-in center' here, but Drop-in Center is
+    a Shelter child (per `test_drop_in_center_is_shelter_child` in
+    test_audit_regression.py). The May 2026 cleanup removed it from the
+    `other` template's default — see TAXONOMY_AUDIT_MAY2026.md §VIII
+    follow-up and the cross-tree pollution comment in query_templates.py.
+    """
     names = TEMPLATES["other"]["default_params"]["taxonomy_names"]
     assert "benefits" in names, "benefits missing from other template"
-    assert "drop-in center" in names, "drop-in center missing from other template"
+
+
+def test_other_excludes_shelter_tree_taxonomies():
+    """The `other` template's taxonomy_names must NOT include any Shelter
+    children. Including them caused shelter services to surface in
+    `service_type=other` queries (e.g., a "benefits in Brooklyn" search
+    returning Single Adult shelters).
+
+    Verified via tests/eval/eval_llm_judge.py `natural_drop_in_center`
+    scenario description: drop-in centers route via shelter, not other.
+    """
+    other_names = set(TEMPLATES["other"]["default_params"]["taxonomy_names"])
+    shelter_children = {
+        "drop-in center", "referral", "assessment", "single adult",
+        "families", "youth", "senior", "veterans", "lgbtq young adult",
+        "intake", "crisis", "safe haven", "warming center",
+        "transitional independent living (til)", "housing lottery",
+        "residential recovery", "veterans short-term housing",
+        "supportive housing", "cooling center",
+    }
+    leaked = other_names & shelter_children
+    assert not leaked, (
+        f"'other' template includes Shelter children {leaked}. These "
+        f"pollute non-shelter queries with shelter services. Shelter "
+        f"queries should route via service_type='shelter'."
+    )
+
+
+def test_other_excludes_phantom_taxonomies():
+    """The `other` template's taxonomy_names must not include taxonomies
+    that don't exist in the DB (April 2026 verification).
+    """
+    other_names = set(TEMPLATES["other"]["default_params"]["taxonomy_names"])
+    phantoms = {"appliances"}  # Verified 0 rows in taxonomies table
+    leaked = other_names & phantoms
+    assert not leaked, (
+        f"'other' template includes phantom taxonomies {leaked} that "
+        f"do not exist in the DB."
+    )
 
 
 def test_exact_taxonomy_names_match_expected():
