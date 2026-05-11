@@ -75,13 +75,24 @@ EXPECTED_TAXONOMY_NAMES = {
     },
     "shelter": {
         # Parent + generic housing types
-        "shelter", "transitional independent living (til)", "supportive housing",
-        "housing lottery", "veterans short-term housing", "warming center", "safe haven",
+        "shelter", "transitional independent living (til)",
+        "housing lottery", "safe haven",
         # Population-specific shelter children (Apr 2026 YourPeer parity update):
         "youth", "families", "single adult", "senior", "lgbtq young adult", "veterans",
-        # Service-type shelter children (Apr 16 DB verification — Covenant House /
+        # Service-mode shelter children (Apr 16 DB verification — Covenant House /
         # Safe Horizon discoverability fix):
-        "crisis", "drop-in center", "referral", "assessment", "residential recovery",
+        "crisis", "drop-in center", "referral", "assessment",
+        # NOTE on omissions from this set (May 2026 audit follow-ups):
+        #   - residential recovery (§VIII) — CREATE Inc. bug; recovery
+        #     programs route via mental_health template / service_detail
+        #     narrowing.
+        #   - supportive housing (Ticket J) — vestigial, 0 services.
+        #   - veterans short-term housing — population-specific to veterans;
+        #     added back conditionally via rag/__init__.py shelter enrichment
+        #     when populations contains "veteran".
+        #   - warming center — seasonal; added back conditionally via the
+        #     shelter enrichment when slots["_cold_context"] is True
+        #     (detected by _extract_cold_context in slot_extraction_regex.py).
     },
     "clothing": {
         "clothing", "clothing pantry", "interview-ready clothing",
@@ -109,11 +120,13 @@ EXPECTED_TAXONOMY_NAMES = {
         "residential recovery", "support groups",
     },
     "other": {
-        "other service", "benefits", "drop-in center", "case workers", "referral",
-        "education", "mail", "free wifi", "taxes", "baby supplies", "baby",
-        "assessment", "community services", "activities", "appliances", "gym",
-        "pets", "single adult", "families", "youth", "senior", "veterans",
-        "lgbtq young adult", "intake",
+        # May 2026 cleanup (TAXONOMY_AUDIT_MAY2026.md §VIII follow-up):
+        # Other-service-tree taxonomies only. Previously included 15
+        # cross-tree taxonomies (10 Shelter children, 4 Personal Care, 1
+        # Clothing) plus 1 phantom and 1 vestigial. See query_templates.py
+        # for the per-taxonomy removal rationale.
+        "other service", "benefits", "case workers", "education",
+        "free wifi", "mail", "taxes",
     },
 }
 
@@ -251,11 +264,66 @@ def test_food_includes_food_pantry():
         "food pantry missing from food template — this is the largest food taxonomy (732 services)"
 
 
-def test_shelter_includes_warming_center_and_safe_haven():
-    """Warming Center and Safe Haven must be in shelter template."""
+def test_shelter_includes_safe_haven():
+    """Safe Haven must be in shelter template default.
+
+    Warming Center used to be asserted here too. May 2026 audit follow-up
+    moved Warming Center to conditional-only (added via enrichment when
+    `_cold_context` is True). See
+    `test_shelter_warming_center_added_on_cold_context` below for the
+    conditional inclusion check.
+    """
     names = TEMPLATES["shelter"]["default_params"]["taxonomy_names"]
-    assert "warming center" in names, "warming center missing from shelter template"
     assert "safe haven" in names, "safe haven missing from shelter template"
+    assert "warming center" not in names, (
+        "Warming Center should NOT be in default — added conditionally on "
+        "cold_context signal per TAXONOMY_AUDIT_MAY2026.md §VIII."
+    )
+
+
+def test_shelter_warming_center_added_on_cold_context():
+    """Warming Center is added to taxonomy_names when cold_context=True.
+
+    May 2026 audit follow-up: Warming Center (1 svc) was removed from the
+    shelter default and gated to the cold_context signal detected by
+    `_extract_cold_context` in slot_extraction_regex.py.
+    """
+    names = _get_taxonomy_names("shelter", cold_context=True)
+    assert "warming center" in names, (
+        "Warming Center must surface when cold_context=True. "
+        "Got: {}".format(names)
+    )
+    # And it's NOT there when the cold_context signal is absent.
+    names_no_cold = _get_taxonomy_names("shelter")
+    assert "warming center" not in names_no_cold, (
+        "Warming Center leaked into default without cold_context signal"
+    )
+
+
+def test_shelter_veterans_short_term_housing_not_in_default():
+    """Veterans Short-Term Housing is conditional-only (May 2026 audit).
+
+    Was previously in the default; per TAXONOMY_AUDIT_MAY2026.md §VIII
+    it's population-specific to veterans. The shelter enrichment in
+    rag/__init__.py adds it back when populations contains "veteran".
+    Non-veteran users no longer see it in plain shelter searches.
+    """
+    names = TEMPLATES["shelter"]["default_params"]["taxonomy_names"]
+    assert "veterans short-term housing" not in names, (
+        "Veterans Short-Term Housing must not be in default — added "
+        "conditionally on veteran population signal per "
+        "TAXONOMY_AUDIT_MAY2026.md §VIII."
+    )
+
+
+def test_shelter_veterans_short_term_housing_added_on_veteran_pop():
+    """Veterans Short-Term Housing is added when populations contains veteran.
+
+    Counterpart to test_shelter_veterans_short_term_housing_not_in_default.
+    """
+    names = _get_taxonomy_names("shelter", populations=["veteran"])
+    assert "veterans short-term housing" in names
+    assert "veterans" in names
 
 
 def test_clothing_includes_clothing_pantry():
@@ -286,11 +354,56 @@ def test_personal_care_includes_hygiene_and_haircut():
     assert "haircut" in names, "haircut missing from personal_care template"
 
 
-def test_other_includes_benefits_and_drop_in():
-    """Benefits and Drop-in Center must be in other template."""
+def test_other_includes_benefits():
+    """Benefits must be in other template.
+
+    Previously also asserted 'drop-in center' here, but Drop-in Center is
+    a Shelter child (per `test_drop_in_center_is_shelter_child` in
+    test_audit_regression.py). The May 2026 cleanup removed it from the
+    `other` template's default — see TAXONOMY_AUDIT_MAY2026.md §VIII
+    follow-up and the cross-tree pollution comment in query_templates.py.
+    """
     names = TEMPLATES["other"]["default_params"]["taxonomy_names"]
     assert "benefits" in names, "benefits missing from other template"
-    assert "drop-in center" in names, "drop-in center missing from other template"
+
+
+def test_other_excludes_shelter_tree_taxonomies():
+    """The `other` template's taxonomy_names must NOT include any Shelter
+    children. Including them caused shelter services to surface in
+    `service_type=other` queries (e.g., a "benefits in Brooklyn" search
+    returning Single Adult shelters).
+
+    Verified via tests/eval/eval_llm_judge.py `natural_drop_in_center`
+    scenario description: drop-in centers route via shelter, not other.
+    """
+    other_names = set(TEMPLATES["other"]["default_params"]["taxonomy_names"])
+    shelter_children = {
+        "drop-in center", "referral", "assessment", "single adult",
+        "families", "youth", "senior", "veterans", "lgbtq young adult",
+        "intake", "crisis", "safe haven", "warming center",
+        "transitional independent living (til)", "housing lottery",
+        "residential recovery", "veterans short-term housing",
+        "supportive housing", "cooling center",
+    }
+    leaked = other_names & shelter_children
+    assert not leaked, (
+        f"'other' template includes Shelter children {leaked}. These "
+        f"pollute non-shelter queries with shelter services. Shelter "
+        f"queries should route via service_type='shelter'."
+    )
+
+
+def test_other_excludes_phantom_taxonomies():
+    """The `other` template's taxonomy_names must not include taxonomies
+    that don't exist in the DB (April 2026 verification).
+    """
+    other_names = set(TEMPLATES["other"]["default_params"]["taxonomy_names"])
+    phantoms = {"appliances"}  # Verified 0 rows in taxonomies table
+    leaked = other_names & phantoms
+    assert not leaked, (
+        f"'other' template includes phantom taxonomies {leaked} that "
+        f"do not exist in the DB."
+    )
 
 
 def test_exact_taxonomy_names_match_expected():
@@ -1653,25 +1766,46 @@ def test_shelter_enrichment_senior():
 
 
 def test_shelter_enrichment_families():
-    """Shelter query with family_status=with_children narrows to families + parent shelter.
+    """Shelter query with family_status=with_children narrows to families + parent
+    shelter + generic shelter modes.
 
     DB verification (April 2026) showed the Families child has only 3 services;
     strict YourPeer-style narrowing would often return 0 results. The chatbot
     preserves the parent 'shelter' taxonomy in narrowed queries for better recall
     — documented divergence from YourPeer in QUERY_PARITY_AUDIT.md.
+
+    May 2026 (TAXONOMY_AUDIT_MAY2026.md §VIII): also preserves generic shelter
+    modes (crisis, drop-in center, referral, etc.) — the user-reported "not
+    seeing shelters I would expect" regression fix.
     """
     names = _get_taxonomy_names("shelter", family_status="with_children")
-    assert names == ["families", "shelter"], f"Expected ['families', 'shelter'], got {names}"
+    assert "families" in names
+    assert "shelter" in names
+    for tx in ("crisis", "drop-in center", "referral",
+               "transitional independent living (til)",
+               "safe haven", "housing lottery", "assessment"):
+        assert tx in names, f"with_children must preserve generic mode '{tx}'"
 
 
 def test_shelter_enrichment_single_adult():
-    """Shelter query with family_status=alone narrows to single adult + parent shelter.
+    """Shelter query with family_status=alone narrows to single adult + parent
+    shelter + generic shelter modes.
 
     Single Adult child has 38 services (DB verified). Parent preservation
     ensures the 18 generic-Shelter-tagged services remain visible.
+
+    May 2026 (TAXONOMY_AUDIT_MAY2026.md §VIII): also preserves generic shelter
+    modes (crisis 13 svc, drop-in 6 svc, referral 6 svc, etc.) — single adults
+    plausibly qualify for emergency beds and placement referrals regardless of
+    family composition.
     """
     names = _get_taxonomy_names("shelter", family_status="alone")
-    assert names == ["single adult", "shelter"], f"Expected ['single adult', 'shelter'], got {names}"
+    assert "single adult" in names
+    assert "shelter" in names
+    for tx in ("crisis", "drop-in center", "referral",
+               "transitional independent living (til)",
+               "safe haven", "housing lottery", "assessment"):
+        assert tx in names, f"alone must preserve generic mode '{tx}'"
 
 
 def test_shelter_default_includes_lgbtq_young_adult():
@@ -1694,28 +1828,49 @@ def test_shelter_default_includes_all_children():
         assert child in names, f"Default shelter list missing '{child}'"
 
 
-def test_shelter_narrowing_excludes_generic_siblings():
-    """When family_status narrows, generic sibling housing taxonomies
-    (safe haven, warming center, TIL) are NOT in the final list.
+def test_shelter_narrowing_excludes_population_specific_siblings():
+    """When family_status narrows, POPULATION-specific sibling housing
+    taxonomies (warming center, veterans short-term housing) are NOT in the
+    final list unless a matching signal is present.
 
     Parent 'shelter' IS preserved (see test_shelter_enrichment_families).
     Uses age=30 to avoid triggering the youth safety enrichment.
+
+    May 2026 (TAXONOMY_AUDIT_MAY2026.md §VIII): generic shelter modes
+    (safe haven, TIL, housing lottery, crisis, drop-in center, referral,
+    assessment) are now preserved across narrowing — they're not
+    population-specific.
     """
     names = _get_taxonomy_names("shelter", age=30, family_status="with_children")
-    assert "safe haven" not in names, "Generic 'safe haven' should be excluded under narrow"
-    assert "warming center" not in names, "Generic 'warming center' should be excluded under narrow"
-    assert "single adult" not in names, "Wrong child included under narrow"
+    # Population-specific (no signal): stripped
+    assert "warming center" not in names, "Population-specific 'warming center' should be excluded"
+    assert "single adult" not in names, "Wrong family-composition child included under narrow"
     assert "youth" not in names, "Youth not expected for age 30"
-    assert names == ["families", "shelter"], f"Expected ['families', 'shelter'], got {names}"
+    assert "veterans short-term housing" not in names, "No veteran signal — should be excluded"
+    assert "senior" not in names, "Not senior age — should be excluded"
+    assert "lgbtq young adult" not in names, "No LGBTQ signal — should be excluded"
+    # Generic shelter modes: PRESERVED (regression fix)
+    for kept in ("safe haven", "transitional independent living (til)",
+                 "housing lottery", "crisis", "drop-in center",
+                 "referral", "assessment"):
+        assert kept in names, f"Generic shelter mode '{kept}' should be preserved"
 
 
 def test_shelter_narrowing_youth_safety_add():
     """When family_status narrows BUT user is in the youth age range (16-24),
     'youth' is added back as a safety enrichment so Covenant House / Ali Forney
-    remain discoverable (Cornell sample outcome)."""
+    remain discoverable (Cornell sample outcome).
+
+    The narrowed list now also includes generic shelter modes (May 2026 fix).
+    """
     names = _get_taxonomy_names("shelter", age=19, family_status="with_children")
-    assert names == ["families", "shelter", "youth"], \
-        f"Expected ['families', 'shelter', 'youth'], got {names}"
+    assert "families" in names
+    assert "shelter" in names
+    assert "youth" in names, "age 19 must trigger youth safety add"
+    for tx in ("crisis", "drop-in center", "referral",
+               "transitional independent living (til)",
+               "safe haven", "housing lottery", "assessment"):
+        assert tx in names, f"narrowed list must preserve generic mode '{tx}'"
 
 
 def test_food_no_enrichment():

@@ -9,6 +9,14 @@ mutation-testing investment.
 there still Y?). Section 4 is the criticality ranking. Section 5 is the
 prioritized action plan with P0/P1/P2 phases.
 
+**Status (May 2026):** ✅ All three P0 items in §5 closed. P0.1 (rarity-based
+`fallback_population` ordering) and P0.3 (`xfail_strict` + registered
+markers in `pyproject.toml`) were already in the codebase when this doc
+was last reviewed — the audit text below describes pre-fix state and
+has been annotated with status markers per item. P0.2 (audit event for
+silent fallback dedup-to-empty) shipped in this revision; see §3.2 and
+§5 P0 table for the resolution detail. P1 items remain open.
+
 ---
 
 ## 1. Best-practice gap status
@@ -22,13 +30,16 @@ Status key: ✅ done · ⚠️ partial · ❌ gap.
 | 3 | CI coverage gate                               | ✅     | `--cov-fail-under=85` in `test-quality.yml`. Artifact uploaded, summary posted to PR.                                                                                                                                                   |
 | 4 | CI audit gate                                  | ✅     | `check_audit_baseline.py` runs before tests in `test-quality.yml`. Fails on any new finding above baseline.                                                                                                                             |
 | 5 | Package-level patching over-reliance           | ⚠️     | Codemod ran (130 rewrites, 0 D7 findings) — but the back-compat re-exports in `chatbot/__init__.py` STILL EXIST to avoid breaking legacy tests. Latent footgun: a new dev can still write the wrong-target patch, the D7 check catches it but only after the fact. |
-| 6 | Explicit test categorization (unit/integration/eval markers) | ❌ | No `@pytest.mark.unit`, `@pytest.mark.integration`, `@pytest.mark.eval`, or `@pytest.mark.slow` markers registered. Categorization is by directory only. No `pyproject.toml [tool.pytest.ini_options]` section at all. |
+| 6 | Explicit test categorization (unit/integration/eval markers) | ⚠️ | `[tool.pytest.ini_options]` section now exists in root `pyproject.toml`. Markers `slow`, `requires_llm`, `requires_db`, and `live` are registered. The unit/integration/eval split was intentionally NOT promoted to markers — the project keeps that split directory-based (see pyproject.toml comment: "Unit/integration split is by directory, not by marker"). Closes the original "no markers at all" gap; the directory-vs-marker decision is the residual judgment call to revisit if directory layout ever becomes ambiguous. |
 | 7 | Coverage measured in CI                        | ✅     | Same as #2/#3. Uploaded as artifact for debugging.                                                                                                                                                                                     |
 
-**Bottom line:** 4 of 7 gaps closed. Residual: mutation coverage (partial
-by design, but under-inclusive), `chatbot/__init__.py` re-exports
-(cosmetic — the gate catches misuse), and test categorization (missing
-entirely). Plan below addresses all three.
+**Bottom line:** 5 of 7 gaps closed (gap #6 closed via the
+`[tool.pytest.ini_options]` block landing in `pyproject.toml` with
+`slow`, `requires_llm`, `requires_db`, `live` markers and `xfail_strict
+= true`; directory-based unit/integration split kept deliberately).
+Residual: mutation coverage (partial by design, but under-inclusive)
+and `chatbot/__init__.py` re-exports (cosmetic — the gate catches
+misuse). Plan below addresses both.
 
 ---
 
@@ -130,6 +141,22 @@ fallback card IDs for admin visibility. P1.
 
 ### 3.2 Silent dedupe-to-empty on fallback
 
+**Status:** ✅ Resolved (May 2026, this revision). `_run_population_fallback`
+now calls `audit_log.log_population_fallback_dedup_empty` from the
+dedup-empty branch alongside the existing `logger.warning`. The new
+event lands in the `_events` deque (visible to the admin dashboard's
+event feed) with a `population_fallback_dedup_empty` type, the
+user-detected `labels`, `fetched_count` (pre-dedup), and
+`main_result_count` (dedup target size). Both sub-cases — fallback
+query returned nothing, and fallback query returned cards but every one
+was a duplicate of main results — emit the event; `fetched_count`
+distinguishes them in the payload. Pinned by two new integration tests
+in `tests/unit/test_population_fallback.py::TestFallbackIntegration`
+(`test_fallback_dedup_to_empty_emits_audit_event`,
+`test_fallback_query_returning_no_cards_also_emits_dedup_empty_event`)
+plus 6 unit tests in `tests/unit/test_audit_log.py`. The audit body
+below preserves the original finding for traceability.
+
 **Confirmed as described.** In `_run_population_fallback`, if every
 candidate card was already in `existing_ids`, the function returns
 `([], "")` without logging. From the admin console it looks like no
@@ -168,6 +195,21 @@ real category. Affects 11-scenario failure patterns in the eval suite.
 P1.
 
 ### 3.4 `fallback_population` first-match-wins
+
+**Status:** ✅ Resolved (already shipped at the time of this revision).
+The audit's recommendation — fixed priority ordering, rarest first —
+landed in `execution.py` as the module-level constant
+`_POPULATION_RARE_PRIORITY = ("lgbtq", "veteran", "senior", "youth")`.
+The per-card attribution loop in `_run_population_fallback` walks
+`priority_ordered = [lb for lb in _POPULATION_RARE_PRIORITY if lb in
+user_labels]` instead of the raw `labels` list, so iteration order no
+longer depends on user detection order. The user-facing note text
+still composes from `labels` in detection order — scoped fix. Pinned by
+`tests/unit/test_population_fallback.py::TestFallbackPriorityOrdering`
+(`test_multi_tagged_card_picks_lgbtq_over_youth`,
+`test_multi_tagged_card_picks_veteran_over_senior`,
+`test_note_text_still_uses_detection_order`). The audit's code snippet
+below describes the pre-fix state.
 
 **Confirmed.** `execution.py:395`:
 ```python
@@ -277,11 +319,13 @@ despite containing the known bugs in §3.1, §3.2, §3.4.
 
 ### P0 — Safety / correctness (ship this sprint)
 
-| #  | Item | Effort | Owner hint | Rationale |
-|----|------|:------:|------|------|
-| P0.1 | **Fix `fallback_population` iteration order** (§3.4). Add rarity-based ordering + 3 unit tests. | ~S | backend | Currently a silent mislabeling for users with multi-population overlap (LGBTQ youth, disabled veteran, etc.). |
-| P0.2 | **Emit audit event for silent dedup-to-empty** (§3.2). | XS | backend | Admin visibility. Current behavior hides a class of "fallback failed" from dashboards. |
-| P0.3 | **Add `xfail_strict = true`** to `pyproject.toml`. | XS | any | Costs nothing. Gives us xpassed alerts when features ship. Prerequisite for P1.1 and P1.2. |
+All three P0 items closed as of May 2026 (see header status block).
+
+| #  | Item | Effort | Status | Rationale |
+|----|------|:------:|:------:|------|
+| P0.1 | **Fix `fallback_population` iteration order** (§3.4). Add rarity-based ordering + 3 unit tests. | ~S | ✅ Closed | `_POPULATION_RARE_PRIORITY` + per-card priority walk in `execution.py`; `TestFallbackPriorityOrdering` has 3 tests. |
+| P0.2 | **Emit audit event for silent dedup-to-empty** (§3.2). | XS | ✅ Closed (May 2026) | `log_population_fallback_dedup_empty` in `audit_log.py`; wired from `_run_population_fallback`'s dedup-empty branch; 8 new tests across `test_audit_log.py` and `test_population_fallback.py`. |
+| P0.3 | **Add `xfail_strict = true`** to `pyproject.toml`. | XS | ✅ Closed | Present in root `pyproject.toml` under `[tool.pytest.ini_options]` alongside registered `slow`, `requires_llm`, `requires_db`, `live` markers. |
 
 ### P1 — Quality gates + pending fixes (next sprint)
 
@@ -320,12 +364,12 @@ despite containing the known bugs in §3.1, §3.2, §3.4.
 
 ## 6. Effort estimates summary
 
-| Bucket | Items | Total effort |
-|--------|:-----:|:------------:|
-| P0 (ship this sprint)  | 3 | ~1 day |
-| P1 (next sprint)       | 8 | ~1.5 weeks |
-| P2 (backlog)           | 6 | ~3 weeks with product review |
-| P3 (ongoing)           | 4 | continuous |
+| Bucket | Items | Status | Total effort |
+|--------|:-----:|:------:|:------------:|
+| P0 (ship this sprint)  | 3 | ✅ all closed | ~1 day (done) |
+| P1 (next sprint)       | 8 | open | ~1.5 weeks |
+| P2 (backlog)           | 6 | open | ~3 weeks with product review |
+| P3 (ongoing)           | 4 | open | continuous |
 
 **If we ship only P0 + P1:** the suite goes from "deterministic and
 comprehensive" (current state) to "deterministic, comprehensive, and

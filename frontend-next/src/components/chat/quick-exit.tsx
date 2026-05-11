@@ -161,10 +161,19 @@ export function QuickExit() {
           // gap-1.5 separates the ✕ glyph from the label — flex
           // collapses whitespace between flex items, so a trailing
           // space inside the span renders as zero gap without this.
-          "inline-flex items-center gap-1.5",
+          // max-[379px]:gap-1 tightens the glyph/label gap on very
+          // small phones (paired with the title shrink in
+          // chat-container.tsx) so "Leave site" doesn't wrap to two
+          // lines next to "YourPeer AI Chat" at 320–360px widths.
+          "inline-flex items-center gap-1.5 max-[379px]:gap-1 whitespace-nowrap",
           // Visual: red, dense, unmissable but not screaming.
-          "px-3 py-2 rounded-lg",
-          "bg-red-600 text-white text-sm font-semibold",
+          // px/py drop at <380px keeps the button compact in row 1
+          // of the mobile header at very narrow widths; text-xs
+          // (instead of text-sm) shaves another ~20px of label
+          // width. Above 380px the standard padding and text-sm
+          // sizing apply.
+          "px-3 py-2 max-[379px]:px-2 max-[379px]:py-1.5 rounded-lg",
+          "bg-red-600 text-white text-sm max-[379px]:text-xs font-semibold",
           "shadow-md ring-1 ring-red-700/40",
           "transition hover:bg-red-700 active:scale-[0.97]",
           // Accessible focus ring — visible on both backgrounds.

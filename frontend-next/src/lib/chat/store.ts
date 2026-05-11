@@ -85,6 +85,29 @@ const INITIAL_QUICK_REPLIES: QuickReply[] = [
 ];
 
 // ---------------------------------------------------------------------------
+// Restored-results message shape
+// ---------------------------------------------------------------------------
+// The pure helper that constructs the restored message (and the two
+// constants it uses) lives in `./restored-message` so it can be
+// verified in isolation by `scripts/verify/restore-earlier-results.mjs`
+// without the verify script having to pull in zustand and the
+// service-worker plumbing this file imports.
+
+import {
+  buildRestoredResultsMessage,
+  RESTORED_RESULTS_PREFIX,
+  RESTORED_RESULTS_QUICK_REPLIES,
+} from "./restored-message";
+// Re-export so external callers can keep importing from store.ts
+// (the public surface of the chat state module). The store action
+// below uses the imported binding directly.
+export {
+  buildRestoredResultsMessage,
+  RESTORED_RESULTS_PREFIX,
+  RESTORED_RESULTS_QUICK_REPLIES,
+};
+
+// ---------------------------------------------------------------------------
 // Message IDs — monotonic counter that survives rehydration
 // ---------------------------------------------------------------------------
 
@@ -235,26 +258,22 @@ export const useChatStore = create<ChatStore>()(
       restoreEarlierResults: () => {
         const snapshot = get().lastResultsBeforeReset;
         if (!snapshot) return;
-        // Inject a brief orienting prefix so the restored message
-        // doesn't read like the bot is responding to nothing.
-        const prefix: ChatMessage = {
-          id: nextMsgId(),
-          role: "bot",
-          text: "Here are the services you were looking at before:",
-        };
-        // New ID on the restored results so it doesn't collide with
-        // anything else in the current chat stream.
-        const restored: ChatMessage = {
-          ...snapshot,
-          id: nextMsgId(),
-          // Don't re-show quick replies — they were contextual to the
-          // previous conversation state.
-          quick_replies: undefined,
-          // Don't show feedback affordance again for the same results.
-          showFeedback: false,
-        };
+        // Single restored bot message — pairing the saved cards with
+        // an orienting prefix and a fresh-conversation QR set. The
+        // override rules are documented on `buildRestoredResultsMessage`
+        // above; tests live in `scripts/verify/restore-earlier-results.mjs`.
+        //
+        // Earlier versions of this function emitted two messages — a
+        // separate prefix bubble plus the restored snapshot — so the
+        // user saw "Here are the services you were looking at before:"
+        // followed by an awkward second bot bubble carrying the stale
+        // "I found 6 option(s) for you:" text above the cards, with
+        // no quick replies. The merge to a single message removes
+        // that duplicate framing and gives the user actionable next
+        // steps.
+        const restored = buildRestoredResultsMessage(snapshot, nextMsgId());
         set((state) => ({
-          messages: [...state.messages, prefix, restored],
+          messages: [...state.messages, restored],
           lastResultsBeforeReset: null,
           lastActiveAt: Date.now(),
         }));

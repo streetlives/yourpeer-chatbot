@@ -663,35 +663,52 @@ TEMPLATES = {
             FILTER_BY_DESCRIPTION_KEYWORDS,
         ],
         "default_params": {
-            # Full list of Shelter parent + all known children in the Streetlives DB.
+            # Shelter parent + non-vestigial children in the Streetlives DB.
             # YourPeer sends just the "Shelter" parent ID and relies on the API to
             # expand to children server-side. The chatbot queries the DB directly,
             # so children must be enumerated explicitly to get equivalent coverage.
             #
             # Sub-category narrowing (family_status → families / single adult) is
-            # handled in rag/__init__.py by REPLACING this list with the specific
-            # child — matching YourPeer's sub-filter narrowing semantics.
+            # handled in rag/__init__.py. As of the May 2026 taxonomy audit fix,
+            # narrowing PRESERVES the generic shelter-mode children (crisis,
+            # drop-in center, referral, etc.) instead of stripping them — this
+            # fixes the regression where single adults asking for shelter lost
+            # visibility into emergency beds, drop-in centers, and placement
+            # referrals.
             #
-            # DB verified April 16, 2026: 19 Shelter children total. All with
-            # non-zero service counts are included below (18). Omitted:
-            # Cooling Center (0 services), Intake (0 services).
+            # DB verified April 16, 2026: 19 Shelter children total.
+            # OMITTED from default:
+            #   • Cooling Center (0 services)         — vestigial (Ticket J).
+            #   • Intake (0 services)                  — vestigial (Ticket J).
+            #   • Supportive Housing (0 services)      — vestigial (Ticket J,
+            #     audit §IX). Was here for forward-compat; the audit confirms
+            #     it has 0 services tagged and recommends removal.
+            #   • Residential Recovery (2 services)    — REMOVED May 2026 per
+            #     TAXONOMY_AUDIT_MAY2026.md §VIII (the CREATE Inc. bug). These
+            #     are substance-use treatment programs, not shelter; default
+            #     inclusion confused the "I need a place to sleep tonight" ask.
+            #     Still reachable via the mental_health template (recovery
+            #     programs) and via service_detail narrowing ("detox",
+            #     "sober living", etc. — see rag/__init__.py
+            #     _DETAIL_TO_TAXONOMY_NARROWING).
             "taxonomy_names": [
-                # Parent + generic housing types
+                # Parent + generic housing modes (always applicable)
                 "shelter",
                 "transitional independent living (til)",
-                "supportive housing",
                 "housing lottery",
-                "veterans short-term housing",
-                "warming center",
                 "safe haven",
-                # Population-specific shelter children
+                # Population-specific shelter children (kept in default so a
+                # generic "I need shelter" query without a family_status still
+                # surfaces them; narrowing logic in rag/__init__.py strips the
+                # population-children that don't match the user's family_status
+                # while keeping the generic modes above intact).
                 "youth",
                 "families",
                 "single adult",
                 "senior",
                 "lgbtq young adult",
                 "veterans",
-                # Service-type shelter children (added Apr 16, 2026 after
+                # Service-mode shelter children (added Apr 16, 2026 after
                 # Covenant House / Safe Horizon DB verification revealed these
                 # were missing from the default list, making services like
                 # Emergency Bed Placement and Shelter Placement invisible
@@ -700,14 +717,30 @@ TEMPLATES = {
                 "drop-in center",   # 6 services — day sleeping rooms, drop-in
                 "referral",         # 6 services — shelter placement referrals
                 "assessment",       # 1 service — intake assessment
-                "residential recovery",  # 2 services — also in mental_health template
+                # NOT in default (added conditionally via rag/__init__.py
+                # enrichment when the relevant signal is present, per
+                # TAXONOMY_AUDIT_MAY2026.md §VIII):
+                #
+                #   • veterans short-term housing (2 svc) — added when
+                #     populations contains "veteran". Already population-
+                #     specific to veterans; surfacing for non-veteran users
+                #     is misleading. May 2026 audit follow-up removal.
+                #
+                #   • warming center (1 svc) — added when cold_context slot
+                #     is True. Seasonal-only service that should only surface
+                #     when the user signals cold-weather context (e.g.,
+                #     "freezing", "out of the cold", "warming center").
+                #     May 2026 audit follow-up removal.
             ]
         },
         "taxonomy_aliases": [
-            "Shelter", "Transitional Independent Living (TIL)", "Supportive Housing",
-            "Housing Lottery", "Veterans Short-Term Housing", "Warming Center", "Safe Haven",
+            "Shelter", "Transitional Independent Living (TIL)",
+            "Housing Lottery", "Safe Haven",
             "Youth", "Families", "Single Adult", "Senior", "LGBTQ Young Adult", "Veterans",
-            "Crisis", "Drop-in Center", "Referral", "Assessment", "Residential Recovery",
+            "Crisis", "Drop-in Center", "Referral", "Assessment",
+            # Conditional-only (added via enrichment) — listed here for
+            # taxonomy_aliases parity with the enriched query results.
+            "Veterans Short-Term Housing", "Warming Center",
         ],
     },
     "clothing": {
@@ -871,7 +904,7 @@ TEMPLATES = {
     },
     "other": {
         "name": "OtherServicesQuery",
-        "description": "Find benefits, drop-in centers, case workers, and miscellaneous services",
+        "description": "Find benefits, case workers, education, and miscellaneous Other-service-tree services",
         "required_filters": [FILTER_BY_TAXONOMY_NAME_IN, FILTER_NOT_HIDDEN, FILTER_BY_STATE_NY],
         "optional_filters": [
             FILTER_BY_CITY,
@@ -881,39 +914,56 @@ TEMPLATES = {
             FILTER_BY_DESCRIPTION_KEYWORDS,
         ],
         "default_params": {
+            # Other-service-tree taxonomies only.
+            #
+            # May 2026 fix (TAXONOMY_AUDIT_MAY2026.md §VIII follow-up):
+            # the previous default included 15 taxonomies parented under
+            # *other* DB trees, polluting `service_type=other` results with
+            # shelter / personal-care / clothing services. Specifically the
+            # 10 Shelter children listed below were causing shelter services
+            # to surface in non-shelter queries (e.g., a "benefits in Brooklyn"
+            # search returning a Single Adult shelter, because both `single
+            # adult` and `benefits` were in the taxonomy_names IN clause).
+            #
+            # The eval suite already noted the symptom — see
+            # `natural_drop_in_center` scenario description in
+            # tests/eval/eval_llm_judge.py ("an 'other' query won't return
+            # drop-in centers"). Drop-in centers route via shelter template;
+            # they should never have been in `other`.
+            #
+            # REMOVED from default (DB tree → correct template):
+            #   • drop-in center, referral, assessment, single adult,
+            #     families, youth, senior, veterans, lgbtq young adult,
+            #     intake               → Shelter tree (shelter template)
+            #   • baby supplies        → Clothing tree (clothing template,
+            #                            via service_detail="baby supplies"
+            #                            narrowing)
+            #   • baby, community services, activities, gym
+            #                          → Personal Care tree (personal_care
+            #                            template)
+            #   • appliances           → PHANTOM (does not exist in DB,
+            #                            April 2026 verification)
+            #   • pets                 → Other-tree but VESTIGIAL (0 services,
+            #                            audit Ticket J)
+            #
+            # KEPT (all Other-service-tree children with non-zero services
+            # that aren't already promoted to a dedicated template):
             "taxonomy_names": [
-                "other service",
-                "benefits",
-                "drop-in center",
-                "case workers",
-                "referral",
-                "education",
-                "mail",
-                "free wifi",
-                "taxes",
-                "baby supplies",
-                "baby",
-                "assessment",
-                "community services",
-                "activities",
-                "appliances",
-                "gym",
-                "pets",
-                "single adult",
-                "families",
-                "youth",
-                "senior",
-                "veterans",
-                "lgbtq young adult",
-                "intake",
+                "other service",  # parent — 1,105 services tagged here directly
+                "benefits",       # 32 svc
+                "case workers",   # 28 svc
+                "education",      # 101 svc — pending Phase B promotion
+                "free wifi",      # 8 svc
+                "mail",           # 6 svc
+                "taxes",          # 2 svc
+                # NOT included (intentionally promoted to their own templates):
+                #   legal services, immigration services → legal template
+                #   employment, internship               → employment template
             ]
         },
         "taxonomy_aliases": [
-            "Other service", "Benefits", "Drop-in Center", "Case Workers",
-            "Referral", "Education", "Mail", "Free Wifi", "Taxes",
-            "Baby Supplies", "Baby", "Assessment", "Community Services",
-            "Activities", "Appliances", "Gym", "Pets", "Single Adult",
-            "Families", "Youth", "Senior", "Veterans", "LGBTQ Young Adult", "Intake",
+            "Other service", "Benefits", "Case Workers", "Education",
+            "Free Wifi", "Mail", "Taxes",
         ],
     },
     "org_name": {

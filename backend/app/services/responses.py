@@ -53,9 +53,9 @@ _HELP_RESPONSE = (
 
 _ESCALATION_RESPONSE = (
     "I can connect you with a peer navigator who can help with your situation.\n\n"
-    "You can reach the Streetlives team at:\n"
-    "• Visit yourpeer.nyc and use the chat feature\n"
-    "• Call 311 and ask for social services referrals\n\n"
+    "You can reach the Streetlives team at yourpeer.nyc and use the chat feature.\n"
+    "(This feature is currently in development)\n"
+    "• You can call 311 and ask for social services referrals\n\n"
     "If you're in crisis:\n"
     "• 988 Suicide & Crisis Lifeline — call or text 988\n"
     "• Crisis Text Line — text HOME to 741741\n\n"

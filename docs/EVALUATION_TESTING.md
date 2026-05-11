@@ -5,7 +5,7 @@ End-to-end LLM-as-judge evaluation for the YourPeer chatbot. Distinct from the u
 ## Quick start
 
 ```bash
-# Full run (all 171 scenarios, save report to disk)
+# Full run (all 184 scenarios, save report to disk)
 ANTHROPIC_API_KEY=sk-ant-... \
     python tests/eval/eval_llm_judge.py --output eval_report.json
 
@@ -28,6 +28,8 @@ The first command is the gold-standard signal — every release-decision number 
 Three-stage pipeline, identical for every scenario:
 
 **Stage 1 — Conversation simulator.** Each scenario in `SCENARIOS` (defined in `tests/eval/eval_llm_judge.py`) carries a persona, an opening message, and expected behavior notes. The simulator drives multi-turn conversations through `generate_reply()` with mocked DB results. Scripted user messages run first; if the bot asks follow-up questions, Claude Sonnet generates natural user responses consistent with the scenario persona. This is why scenarios are slightly non-deterministic — Sonnet may phrase the same intent differently across runs.
+
+The "mocked DB results" come from `_mock_query_services` in the same file, which reads `tests/eval/fixtures/services.json` (282 frozen rows snapshotted from production via `scripts/fixture/04_extract_fixture_hybrid.sql`, last refreshed May 2026). The mock applies the **same** strict taxonomy filter production applies in SQL: it imports `compute_taxonomy_names` from `app.rag` and excludes any fixture row whose `service_taxonomies` array has no case-insensitive overlap with the computed taxonomy list. Before May 2026 the mock was looser — it would surface services that production's `FILTER_BY_TAXONOMY_NAME_IN` would have correctly excluded, hiding routing bugs. With the strict filter in place, eval routing decisions now mirror production behavior exactly; any drift between the eval's `_mock_query_services` and production's `query_services` becomes a test failure (see `tests/unit/test_eval_mock_dispatch.py`). The fixture refresh process and SQL extraction are documented in `scripts/fixture/REFRESH_RUNBOOK.md`.
 
 **Stage 2 — LLM judge.** The completed transcript and scenario metadata are sent to Claude Opus with a detailed scoring rubric. Opus scores 11 quality dimensions on a 1-5 scale with written justifications, and emits any critical-failure call-outs (specific things that went wrong even when the overall score was acceptable).
 
@@ -140,7 +142,7 @@ ANTHROPIC_API_KEY=sk-ant-... \
     "critical_failure_count": 19,
     "perfect_count": 3,
     "scenarios_with_errors": 0,
-    "scenarios_evaluated": 171,
+    "scenarios_evaluated": 184,
     "dimension_averages": {
       "slot_extraction":  { "average": 4.80, "weight": 1.5, "min": 2, "max": 5 },
       "response_tone":    { "average": 3.91, "weight": 1.5, "min": 2, "max": 5 },
@@ -181,7 +183,7 @@ The `--subset` flag reads `scenarios[].id` and `scenarios[].average_score` from 
 
 | Mode | Scenarios | Time | Cost (approx.) |
 |---|---|---|---|
-| Full eval | 171 | 30-60 min | $15-25 |
+| Full eval | 184 | 30-60 min | $15-25 |
 | `--subset failing` (typical) | 4-8 | 3-5 min | $1-2 |
 | `--subset borderline` (typical) | 30-50 | 8-15 min | $4-8 |
 | `--scenario-id` single run | 1 | <1 min | $0.05-0.15 |
@@ -191,11 +193,11 @@ Cost is dominated by Opus judge output tokens ($75/M tokens). Each scenario invo
 
 ## Scenario coverage
 
-171 scenarios across 20 categories: `happy_path`, `multi_turn`, `crisis`, `confirmation`, `privacy`, `edge_case`, `natural_language`, `adversarial`, `accessibility`, `taxonomy_regression`, `borough_filter`, `no_result`, `staten_island`, `neighborhood_routing`, `schedule`, `referral`, `data_quality`, `emotional`, `bot_question`, and `multi_intent`.
+184 scenarios across 20 categories: `happy_path`, `multi_turn`, `crisis`, `confirmation`, `privacy`, `edge_case`, `natural_language`, `adversarial`, `accessibility`, `taxonomy_regression`, `borough_filter`, `no_result`, `staten_island`, `neighborhood_routing`, `schedule`, `referral`, `data_quality`, `emotional`, `bot_question`, and `multi_intent`.
 
 The largest categories are `multi_intent` (34), `natural_language` (28), `happy_path` (16), `edge_case` (16), and `crisis` (13). Multi-intent grew most recently with 30 scenarios covering core queue flow, three-service combos, queue decline, location change mid-queue, cross-service slot conflicts (cross-borough, cross-neighborhood), emotional + multi-service tone variants, shame/embarrassment, and YourPeer-specific personas (LGBTQ youth, DYCD RHY runaway, foster-care aging-out, asylum seeker, reentry, family with children).
 
-The most recent run reports live under `eval-r37/` (and prior `eval-r36/`, `eval-r32/` etc.) — each has both Markdown and Word formats with the full headline numbers, dimension scores, score distributions, critical-failure breakdown, fix-target tracking, and progress-across-runs tables.
+The most recent run reports live under `eval-r42/` (and prior `eval-r41/`, `eval-r37/`, `eval-r36/`, `eval-r32/` etc.) — each has both Markdown and Word formats with the full headline numbers, dimension scores, score distributions, critical-failure breakdown, fix-target tracking, and progress-across-runs tables. The May 2026 audit also added a 16-scenario subset probe (the prior 13-scenario regression set plus three add-ons exercising the fixture refresh — `multi_family_with_children_path`, `multi_lgbtq_youth_ali_forney`, `peer_detox_manhattan`) for fast iteration during taxonomy and fixture work; full-suite runs remain the release-decision signal.
 
 ## Adding a new scenario
 
@@ -222,6 +224,6 @@ After adding, smoke-test the scenario with `--scenario-id your_scenario_id` to c
 
 - `scripts/mini_eval_r36_regressions.py` and `scripts/mini_eval_r36_regressions.md` — migration-specific subset runner with R36 baselines and per-turn transcript dumps. The `--subset failing` flag in the main eval is general; the mini-eval is for the R36 regression set specifically.
 - `scripts/mini_eval_option_4.py` — short-path prompt iteration only (no Opus judge); ~30s, ~$0.01.
-- `eval-r37/YourPeer_Chatbot_Eval_Run_37.md` — the most recent full run report; example of the format used for every release-decision run.
+- `eval-r42/YourPeer_Chatbot_Eval_Run_42.md` — the most recent full run report; example of the format used for every release-decision run.
 - `docs/design/UNIFIED_EXTRACTOR_MIGRATION.md` — context on the unified extractor migration.
 - `tests/unit/test_eval_subset_filter.py` — 20 unit tests exercising the `--subset` filter logic in isolation.

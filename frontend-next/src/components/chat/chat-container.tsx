@@ -280,7 +280,15 @@ export function ChatContainer() {
       // means the `sm:` cascade still wins above 640px — the previous
       // version used a `style` prop for these and silently overrode
       // sm:px-4, losing 4px of desktop side padding.
-      className="flex flex-col max-w-[820px] mx-auto pl-[max(env(safe-area-inset-left,0px),0.75rem)] pr-[max(env(safe-area-inset-right,0px),0.75rem)] sm:pl-[max(env(safe-area-inset-left,0px),1rem)] sm:pr-[max(env(safe-area-inset-right,0px),1rem)] min-h-dvh"
+      //
+      // max-w: 1024px on all sizes. Below ~820px viewport the container
+      // is naturally capped by viewport width and the value is moot;
+      // at 1024+ desktop viewports the wider cap gives the chat panel
+      // and the input meaningful breathing room — previously the
+      // 820px cap left ~200px of dead whitespace on either side of a
+      // standard 1280×720 desktop monitor and clipped the rightmost
+      // service card in the results carousel.
+      className="flex flex-col max-w-[1024px] mx-auto pl-[max(env(safe-area-inset-left,0px),0.75rem)] pr-[max(env(safe-area-inset-right,0px),0.75rem)] sm:pl-[max(env(safe-area-inset-left,0px),1rem)] sm:pr-[max(env(safe-area-inset-right,0px),1rem)] min-h-dvh"
       style={{
         // Vertical safe-area handling: keep these as inline style
         // because there's no responsive breakpoint to compose with —
@@ -327,7 +335,18 @@ export function ChatContainer() {
        */}
       <div className="flex flex-col sm:flex-row sm:items-baseline gap-0 sm:gap-2.5 px-1 pt-3 pb-2 sm:pt-5 sm:pb-3.5">
         <div className="flex items-center gap-2.5 sm:contents">
-          <h1 className="text-xl font-bold tracking-tight text-neutral-900 dark:text-neutral-100">
+          {/* Title size:
+           *   • Base (>= 380px viewport): text-xl, the brand weight
+           *     used everywhere else.
+           *   • max-[379px] (very small phones, e.g. iPhone 5/SE 1st
+           *     gen at 320px, certain budget Android at 360px): drop
+           *     to text-base. Combined with the QuickExit padding
+           *     reduction at the same breakpoint (see quick-exit.tsx),
+           *     this keeps "YourPeer AI Chat" and "Leave site" on a
+           *     single row at 320–379px. Above 380px the layout
+           *     comfortably fits the full-weight title.
+           */}
+          <h1 className="text-xl max-[379px]:text-base font-bold tracking-tight text-neutral-900 dark:text-neutral-100">
             YourPeer AI Chat
           </h1>
           <span
@@ -431,11 +450,24 @@ export function ChatContainer() {
           //     doesn't visually collapse on empty state. Plenty of
           //     viewport on desktop, no overflow risk.
           //
-          // max-h-[75dvh] on both breakpoints prevents the region
-          // from filling the whole screen on tall viewports and
-          // crowding out the input. (The flex layout would respect
-          // sibling sizes anyway, but max-h is a defensive cap.)
-          className="bg-white border border-neutral-200 rounded-2xl h-full sm:min-h-[400px] max-h-[75dvh] overflow-y-auto p-3 sm:p-5 flex flex-col gap-2.5 shadow-sm focus:outline-none focus:ring-2 focus:ring-amber-300/30 dark:bg-neutral-900 dark:border-neutral-800"
+          //
+          // max-h-[80dvh]: caps the panel at 80% of viewport height
+          // on tall monitors. This is a deliberate point on a
+          // tradeoff: the wrapper's `flex-1` reserves all remaining
+          // column space (= viewport − header − ChatInput − padding),
+          // and the inner panel grows via `h-full` to fill that
+          // wrapper. If we remove the cap, the panel fills the full
+          // reserved space — which on a 1200px-tall viewport reads as
+          // visually overwhelming. If we set the cap too low (e.g.
+          // 60dvh), the panel is short but a visible empty gap opens
+          // between the panel bottom and the input top, because the
+          // wrapper is still `flex-1` and absorbs the slack as dead
+          // space inside itself. 80dvh tunes the gap small on
+          // typical laptop viewports while keeping the panel from
+          // dominating the screen on tall ones. Dial down (75, 70)
+          // for a shorter panel + larger gap; dial up (85, 90) for
+          // a taller panel + smaller gap.
+          className="bg-white border border-neutral-200 rounded-2xl h-full sm:min-h-[400px] max-h-[80dvh] overflow-y-auto p-3 sm:p-5 flex flex-col gap-2.5 shadow-sm focus:outline-none focus:ring-2 focus:ring-amber-300/30 dark:bg-neutral-900 dark:border-neutral-800"
         >
           {!hydrated ? (
             <p className="text-neutral-400 text-sm">Loading…</p>

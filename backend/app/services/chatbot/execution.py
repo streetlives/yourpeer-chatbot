@@ -909,6 +909,7 @@ def _execute_and_respond(
             populations=slots.get("_populations"),
             org_name=slots.get("org_name"),
             no_requirements=bool(slots.get("no_requirements")),
+            cold_context=bool(slots.get("_cold_context")),
             max_results=_FETCH_LIMIT,
         )
 

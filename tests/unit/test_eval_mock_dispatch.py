@@ -1049,6 +1049,17 @@ class TestServiceDetailNarrowing:
         Brooklyn fixture has 'other'-bucket rows whose descriptions
         match the financial regex (Health Services Hotline mentions
         'Debt', Community Services mentions 'financial counseling').
+
+        History: this test was marked xfail in the May 2026 audit
+        follow-up when the strict taxonomy filter (Step 2.5 in
+        `_mock_query_services`) started excluding rows with empty
+        `service_taxonomies`. The May 11 fixture refresh
+        (`scripts/fixture/04_extract_fixture_hybrid.sql`, with the
+        `AND t_own.name NOT IN ('Other service')` exclusion removed
+        from the service_taxonomies subquery) populated the previously-
+        NULL taxonomy arrays with `['Other service']`, restoring the
+        coverage the test requires. The xfail decorator was removed
+        once the test started passing again.
         """
         baseline = runner._mock_query_services(
             service_type="other", location="brooklyn",

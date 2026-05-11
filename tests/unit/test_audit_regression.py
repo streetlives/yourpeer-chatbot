@@ -211,42 +211,105 @@ class TestShelterNarrowWithParent:
     """
 
     def test_with_children_narrows_to_families_plus_parent(self):
-        """with_children produces exactly ['families', 'shelter']."""
+        """with_children narrows to families + parent + generic shelter modes.
+
+        After May 2026 regression fix (TAXONOMY_AUDIT_MAY2026.md §VIII):
+        narrowing PRESERVES generic shelter modes (crisis, drop-in center,
+        referral, TIL, safe haven, housing lottery, assessment) — these
+        children are not population-specific so families plausibly qualify
+        for them. Previously the narrowed list was just ['families','shelter'].
+        """
         names = _shelter_tax(family_status="with_children")
-        assert names == ["families", "shelter"], (
-            f"with_children should narrow to ['families', 'shelter'] (parent-preserved), "
-            f"got {names}"
-        )
+        # The family-composition child + parent
+        assert "families" in names
+        assert "shelter" in names
+        # Plus the generic shelter modes (regression fix)
+        for tx in ("crisis", "drop-in center", "referral",
+                   "transitional independent living (til)",
+                   "safe haven", "housing lottery", "assessment"):
+            assert tx in names, (
+                f"family_status='with_children' must preserve '{tx}' "
+                f"(generic shelter mode). Got: {names}"
+            )
 
     def test_with_family_narrows_to_families_plus_parent(self):
-        """'with_family' is the synonym path for with_children."""
+        """'with_family' is the synonym path for with_children.
+
+        After May 2026 regression fix (TAXONOMY_AUDIT_MAY2026.md §VIII):
+        narrowing PRESERVES generic shelter modes (crisis, drop-in center,
+        referral, TIL, safe haven, housing lottery, assessment) — these
+        children are not population-specific so families plausibly qualify
+        for them. Previously the narrowed list was just ['families','shelter'].
+        """
         names = _shelter_tax(family_status="with_family")
-        assert names == ["families", "shelter"], (
-            f"with_family should narrow to ['families', 'shelter'], got {names}"
-        )
+        # The family-composition child + parent
+        assert "families" in names
+        assert "shelter" in names
+        # Plus the generic shelter modes (regression fix)
+        for tx in ("crisis", "drop-in center", "referral",
+                   "transitional independent living (til)",
+                   "safe haven", "housing lottery", "assessment"):
+            assert tx in names, (
+                f"family_status='with_family' must preserve '{tx}' "
+                f"(generic shelter mode). Got: {names}"
+            )
 
     def test_alone_narrows_to_single_adult_plus_parent(self):
-        """alone produces exactly ['single adult', 'shelter']."""
-        names = _shelter_tax(family_status="alone")
-        assert names == ["single adult", "shelter"], (
-            f"alone should narrow to ['single adult', 'shelter'] (parent-preserved), "
-            f"got {names}"
-        )
+        """alone narrows to single adult + parent + generic shelter modes.
 
-    def test_narrowing_excludes_generic_siblings(self):
-        """Narrowing must strip generic housing siblings (safe haven, warming center, TIL).
-
-        These are parent-level alternatives, not family-composition children,
-        so a user asking for family shelter shouldn't see a warming center.
-        Parent 'shelter' IS preserved (see above tests).
+        After May 2026 regression fix (TAXONOMY_AUDIT_MAY2026.md §VIII):
+        narrowing PRESERVES generic shelter modes. Previously the narrowed
+        list was just ['single adult','shelter'] — which stripped out crisis
+        (13 svc), drop-in center (6 svc), referral (6 svc), TIL, safe haven,
+        housing lottery, assessment. Users reported "not seeing shelters they
+        expected"; the cause was over-aggressive narrowing.
         """
+        names = _shelter_tax(family_status="alone")
+        # The family-composition child + parent
+        assert "single adult" in names
+        assert "shelter" in names
+        # Plus the generic shelter modes (regression fix)
+        for tx in ("crisis", "drop-in center", "referral",
+                   "transitional independent living (til)",
+                   "safe haven", "housing lottery", "assessment"):
+            assert tx in names, (
+                f"family_status='alone' must preserve '{tx}' "
+                f"(generic shelter mode). Got: {names}"
+            )
+
+    def test_narrowing_excludes_population_specific_siblings(self):
+        """Narrowing must strip POPULATION-specific siblings that don't match
+        the user's signals.
+
+        After May 2026 regression fix: narrowing preserves generic shelter
+        modes but still excludes population-specific children for which no
+        signal fired (no veteran population, no senior age, no LGBTQ).
+
+        The previous test (renamed from test_narrowing_excludes_generic_siblings)
+        incorrectly excluded TIL/safe haven/housing lottery from narrowed
+        results — those are non-population shelter modes that families
+        and single adults plausibly qualify for. See TAXONOMY_AUDIT_MAY2026.md
+        §VIII for the per-taxonomy classification rationale.
+        """
+        # age=30 → no youth signal, no senior signal; no veteran/LGBTQ/DV pop
         names = _shelter_tax(family_status="with_children", age=30)
-        for excluded in ["safe haven", "warming center",
-                         "transitional independent living (til)",
-                         "housing lottery", "veterans short-term housing",
-                         "supportive housing"]:
+        # Population-specific children without matching signal: stripped
+        for excluded in ["youth", "senior", "lgbtq young adult",
+                         "veterans", "veterans short-term housing",
+                         "warming center"]:
             assert excluded not in names, (
-                f"'{excluded}' should be excluded from narrowed query, got {names}"
+                f"'{excluded}' should be excluded from narrowed query "
+                f"(population-specific, no signal fired), got {names}"
+            )
+        # Vestigial (never in defaults)
+        assert "supportive housing" not in names
+        # Generic shelter modes: KEPT (regression fix)
+        for kept in ["safe haven", "transitional independent living (til)",
+                     "housing lottery", "crisis", "drop-in center",
+                     "referral", "assessment"]:
+            assert kept in names, (
+                f"'{kept}' should be KEPT in narrowed query "
+                f"(generic shelter mode, not population-specific), got {names}"
             )
 
     def test_narrowing_excludes_other_family_composition_child(self):
@@ -257,26 +320,70 @@ class TestShelterNarrowWithParent:
         assert "families" not in names_alone
 
     def test_no_family_status_returns_full_default(self):
-        """Without family_status, chatbot uses the full 18-taxonomy default
-        (YourPeer-equivalent parent + all non-zero children).
+        """Without family_status, chatbot uses the default shelter taxonomy list.
 
-        DB verified April 16, 2026: 19 Shelter children total, 17 with
-        non-zero service counts + 1 parent = 18. Cooling Center (0) and
-        Intake (0) are omitted.
+        DB verified April 16, 2026: 19 Shelter children total.
+        OMITTED from default (the May 2026 audit clarified these):
+          - Cooling Center (0 services)        — vestigial
+          - Intake (0 services)                 — vestigial
+          - Supportive Housing (0 services)     — vestigial (removed May 2026
+            per TAXONOMY_AUDIT_MAY2026.md Ticket J)
+          - Residential Recovery (2 services)   — removed May 2026 per
+            TAXONOMY_AUDIT_MAY2026.md §VIII (the CREATE Inc. bug). These
+            are substance-use treatment programs that confused the
+            "I need a place to sleep tonight" use case. Still reachable
+            via mental_health template and via service_detail narrowing
+            ("detox", "sober living", etc.).
+          - Veterans Short-Term Housing (2 services) — removed May 2026
+            audit follow-up. Population-specific to veterans; added back
+            via shelter enrichment when populations contains "veteran".
+          - Warming Center (1 service)          — removed May 2026 audit
+            follow-up. Seasonal; added back via shelter enrichment when
+            slots["_cold_context"] is True.
         """
         names = _shelter_tax()
         expected_members = {
-            "shelter", "transitional independent living (til)", "supportive housing",
-            "housing lottery", "veterans short-term housing", "warming center",
-            "safe haven", "youth", "families", "single adult", "senior",
+            "shelter", "transitional independent living (til)",
+            "housing lottery", "safe haven",
+            "youth", "families", "single adult", "senior",
             "lgbtq young adult", "veterans",
-            # Service-type Shelter children (added after Covenant House / Safe
+            # Service-mode Shelter children (added after Covenant House / Safe
             # Horizon DB verification):
             "crisis", "drop-in center", "referral", "assessment",
-            "residential recovery",
         }
         assert set(names) == expected_members, (
             f"Default shelter taxonomies changed. Expected {expected_members}, got {set(names)}"
+        )
+
+    def test_residential_recovery_not_in_shelter_default(self):
+        """Residential Recovery is NOT in default shelter (May 2026 audit fix).
+
+        Per TAXONOMY_AUDIT_MAY2026.md §VIII (the CREATE Inc. bug):
+        a user typing "I need shelter" got CREATE Inc., a chemical-dependence
+        treatment program tagged at Shelter › Residential Recovery, as the top
+        result. The user bailed to yourpeer.nyc. The fix removes Residential
+        Recovery from the default shelter route; users seeking substance-use
+        services route through mental_health or via service_detail narrowing
+        ("detox", "sober living", "halfway houses", etc.).
+        """
+        names = set(TEMPLATES["shelter"]["default_params"]["taxonomy_names"])
+        assert "residential recovery" not in names, (
+            "Residential Recovery must not be in shelter default — see the "
+            "CREATE Inc. user-testing bug in TAXONOMY_AUDIT_MAY2026.md §VIII. "
+            "Substance-use services route via mental_health template."
+        )
+
+    def test_supportive_housing_not_in_shelter_default(self):
+        """Supportive Housing is NOT in default (vestigial, 0 services).
+
+        DB verified April 16, 2026: 0 services tagged with Supportive Housing.
+        Listed in TAXONOMY_AUDIT_MAY2026.md Ticket J for removal. Was
+        previously in the default for forward-compat; audit confirms removal.
+        """
+        names = set(TEMPLATES["shelter"]["default_params"]["taxonomy_names"])
+        assert "supportive housing" not in names, (
+            "Supportive Housing has 0 services tagged (DB verified). "
+            "Removed per TAXONOMY_AUDIT_MAY2026.md Ticket J."
         )
 
 
@@ -343,13 +450,19 @@ class TestShelterSafetyEnrichments:
 
     @pytest.mark.parametrize("gender", ["male", "female", None])
     def test_non_lgbtq_gender_no_safety_add(self, gender):
-        """Non-LGBTQ gender → no LGBTQ safety add (crisis/drop-in not added)."""
+        """Non-LGBTQ gender → no LGBTQ population-specific add (lgbtq young adult
+        not added).
+
+        Note: As of the May 2026 regression fix (TAXONOMY_AUDIT_MAY2026.md §VIII),
+        crisis and drop-in center are now ALWAYS in narrowed taxonomy_names
+        (they're generic shelter modes, not population-specific). This test
+        verifies only that the POPULATION-SPECIFIC LGBTQ child ('lgbtq young
+        adult') is not added when no LGBTQ signal is present.
+        """
         kwargs = {"family_status": "alone"}
         if gender:
             kwargs["gender"] = gender
         names = _shelter_tax(**kwargs)
-        assert "crisis" not in names, f"gender={gender} should not trigger crisis add"
-        assert "drop-in center" not in names, f"gender={gender} should not trigger drop-in add"
         assert "lgbtq young adult" not in names, (
             f"gender={gender} should not trigger lgbtq young adult add"
         )
@@ -404,21 +517,39 @@ class TestShelterSafetyEnrichments:
         assert "shelter" in names
 
     def test_non_dv_population_no_drop_in_add(self):
-        """Unrelated population does not trigger DV enrichment."""
+        """Unrelated population does not trigger DV-specific enrichment.
+
+        Note: As of the May 2026 regression fix (TAXONOMY_AUDIT_MAY2026.md §VIII),
+        crisis and drop-in center are ALWAYS in narrowed taxonomy_names (generic
+        shelter modes). The DV enrichment is therefore a no-op for those two
+        children; it's effectively redundant with the generic-modes preservation.
+        This test now verifies the (still-true) negative: a non-DV population
+        doesn't bring in any LGBTQ-style additions like 'lgbtq young adult'.
+        """
         names = _shelter_tax(populations=["reentry"], family_status="alone")
-        assert "drop-in center" not in names
-        assert "crisis" not in names
+        # Population-specific children that DV/LGBTQ enrichment would add: not present
+        assert "lgbtq young adult" not in names
 
     # --- Pregnant override ---
 
     def test_pregnant_plus_alone_overrides_to_families(self):
-        """Pregnant + alone narrows to families (prenatal services at family shelters)."""
+        """Pregnant + alone narrows to families (prenatal services at family shelters).
+
+        After May 2026 regression fix: narrowed list also includes generic
+        shelter modes (crisis, drop-in center, referral, TIL, safe haven,
+        housing lottery, assessment) regardless of family_status.
+        """
         names = _shelter_tax(populations=["pregnant"], family_status="alone")
-        assert names == ["families", "shelter"], (
-            f"Pregnant + alone should OVERRIDE to ['families', 'shelter'], got {names}"
-        )
+        # Override: families (not single adult) + parent
+        assert "families" in names
+        assert "shelter" in names
         # Specifically must NOT be single-adult narrow
         assert "single adult" not in names
+        # Generic shelter modes still preserved
+        for tx in ("crisis", "drop-in center", "referral",
+                   "transitional independent living (til)",
+                   "safe haven", "housing lottery", "assessment"):
+            assert tx in names, f"pregnant+alone must preserve '{tx}'"
 
     def test_pregnant_plus_with_children_stays_families(self):
         """Pregnant + with_children is already families narrow; override is a no-op."""
@@ -429,14 +560,25 @@ class TestShelterSafetyEnrichments:
         """Pregnant alone (no family_status) → default list (no narrow to trigger override).
 
         Pregnant only matters as an override IN THE CONTEXT OF family_status=alone.
+
+        After May 2026 audit fixes (TAXONOMY_AUDIT_MAY2026.md §VIII + Ticket J):
+        default has 14 entries — was 18, minus 4:
+          - residential recovery (CREATE Inc. bug)
+          - supportive housing (vestigial 0-service taxonomy)
+          - veterans short-term housing (conditional on veteran population)
+          - warming center (conditional on cold_context signal)
         """
         names = _shelter_tax(populations=["pregnant"])
-        # Default full list
+        # Default list
         assert "families" in names
         assert "single adult" in names
         assert "shelter" in names
-        # Default should be 18 entries (all non-zero Shelter children + parent)
-        assert len(names) == 18
+        # Default should be 14 entries after May 2026 audit fixes
+        assert len(names) == 14, (
+            f"Default shelter list expected 14 entries (May 2026 audit fixes: "
+            f"removed residential recovery, supportive housing, veterans "
+            f"short-term housing, warming center), got {len(names)}: {names}"
+        )
 
 
 # =============================================================================
@@ -1573,7 +1715,9 @@ class TestShelterDefaultCompleteness:
     will fire for drift. This class documents WHY each entry is present.
     """
 
-    # DB-verified non-zero Shelter children (April 16, 2026 prod query)
+    # DB-verified non-zero Shelter children (April 16, 2026 prod query).
+    # These appear in the DB but two are intentionally OMITTED from the
+    # shelter template default (see DB_VERIFIED_OMITTED_FROM_DEFAULT below).
     DB_VERIFIED_SHELTER_CHILDREN = {
         "crisis": 13,
         "single adult": 38,
@@ -1593,21 +1737,48 @@ class TestShelterDefaultCompleteness:
         "warming center": 1,
     }
 
+    # Children with non-zero services that are nonetheless intentionally
+    # OMITTED from the shelter template default (May 2026 audit decisions).
+    # Tests for these live in TestPhantomTaxonomyGuards and the
+    # TestShelterDefaultTaxonomies::test_*_not_in_shelter_default tests.
+    DB_VERIFIED_OMITTED_FROM_DEFAULT = {
+        # Removed May 2026 per TAXONOMY_AUDIT_MAY2026.md §VIII — CREATE Inc.
+        # user-testing bug. Substance-use treatment programs that confused
+        # "I need a place to sleep tonight" queries. Still reachable via
+        # mental_health template + service_detail narrowing ("detox", etc.).
+        "residential recovery",
+        # Removed May 2026 audit follow-up. Population-specific to veterans;
+        # the shelter enrichment in rag/__init__.py adds it back when
+        # populations contains "veteran".
+        "veterans short-term housing",
+        # Removed May 2026 audit follow-up. Seasonal service; the shelter
+        # enrichment adds it back when slots["_cold_context"] is True
+        # (detected by _extract_cold_context in slot_extraction_regex.py).
+        "warming center",
+    }
+
     # DB-verified zero-service Shelter children (intentionally omitted)
     DB_VERIFIED_ZERO_SERVICE_CHILDREN = {
         "cooling center": 0,
         "intake": 0,
-        "supportive housing": 0,  # In default for forward-compat (was there pre-audit)
+        # Removed May 2026 per TAXONOMY_AUDIT_MAY2026.md Ticket J (vestigial).
+        "supportive housing": 0,
     }
 
     @pytest.mark.parametrize("child,count", list(DB_VERIFIED_SHELTER_CHILDREN.items()))
     def test_nonzero_shelter_child_in_default(self, child, count):
         """Every Shelter child with >0 tagged services must be in the
-        default taxonomy list. Omitting one makes those services invisible
-        to default shelter queries.
+        default taxonomy list, EXCEPT those in DB_VERIFIED_OMITTED_FROM_DEFAULT
+        (where the audit determined the cost of inclusion exceeds the benefit).
 
         DB verified: {child} has {count} tagged services.
         """
+        if child in self.DB_VERIFIED_OMITTED_FROM_DEFAULT:
+            pytest.skip(
+                f"'{child}' is intentionally omitted from shelter default per "
+                f"TAXONOMY_AUDIT_MAY2026.md (see test_residential_recovery_"
+                f"not_in_shelter_default and similar)."
+            )
         names = _shelter_tax()
         assert child in names, (
             f"Shelter child '{child}' ({count} services in DB) is missing "
@@ -1623,11 +1794,13 @@ class TestShelterDefaultCompleteness:
         assert "shelter" in names
 
     def test_zero_service_children_intentionally_omitted(self):
-        """Cooling Center and Intake have 0 tagged services and are
-        intentionally excluded from the default to keep the list clean.
+        """Cooling Center, Intake, and Supportive Housing all have 0 tagged
+        services and are intentionally excluded from the default to keep
+        the list clean.
 
-        Supportive Housing also has 0 services but is retained for
-        forward-compatibility (it was in the original 7-taxonomy list).
+        Supportive Housing was previously retained for forward-compat; the
+        May 2026 taxonomy audit (Ticket J) confirmed 0 services tagged and
+        recommended removal.
         """
         names = _shelter_tax()
         assert "cooling center" not in names, (
@@ -1636,9 +1809,9 @@ class TestShelterDefaultCompleteness:
         assert "intake" not in names, (
             "Intake has 0 services — should be omitted from default"
         )
-        # Supportive Housing IS in default despite 0 services (legacy inclusion)
-        assert "supportive housing" in names, (
-            "Supportive Housing is retained in default for forward-compat"
+        assert "supportive housing" not in names, (
+            "Supportive Housing has 0 services — removed per "
+            "TAXONOMY_AUDIT_MAY2026.md Ticket J (vestigial cleanup)."
         )
 
 
@@ -1740,19 +1913,29 @@ class TestDBVerifiedTaxonomyParentage:
         assert "substance use treatment" in mental_names
 
     def test_residential_recovery_is_shelter_child_in_mental_health(self):
-        """Residential Recovery (2 services) is parented under Shelter
+        """Residential Recovery (2 services) is parented under Shelter in the DB
         but lives in the mental_health template (recovery programs).
 
-        DB verified: parent_name = 'Shelter'. Also included in shelter
-        default for completeness.
+        DB verified: parent_name = 'Shelter'.
+
+        May 2026 update (TAXONOMY_AUDIT_MAY2026.md §VIII, the CREATE Inc. bug):
+        Residential Recovery was REMOVED from the shelter default. These are
+        substance-use treatment programs that confused "I need a place to
+        sleep tonight" queries. They remain reachable through:
+          - mental_health template default (asserted below), AND
+          - service_detail narrowing for "detox", "sober living",
+            "halfway houses", "rehab services" (see rag/__init__.py
+            _DETAIL_TO_TAXONOMY_NARROWING).
         """
         shelter_names = set(TEMPLATES["shelter"]["default_params"]["taxonomy_names"])
         mental_names = set(TEMPLATES["mental_health"]["default_params"]["taxonomy_names"])
-        assert "residential recovery" in shelter_names, (
-            "Residential Recovery is a Shelter child (DB verified)"
+        assert "residential recovery" not in shelter_names, (
+            "Residential Recovery was removed from shelter default per "
+            "TAXONOMY_AUDIT_MAY2026.md §VIII (CREATE Inc. bug)."
         )
         assert "residential recovery" in mental_names, (
-            "Residential Recovery also in mental_health template (recovery programs)"
+            "Residential Recovery still belongs in mental_health template "
+            "(recovery programs route)."
         )
 
 

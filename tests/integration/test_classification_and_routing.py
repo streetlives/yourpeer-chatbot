@@ -631,6 +631,37 @@ def test_whitespace_message_guard(fresh_session):
     result = send("   ", session_id=fresh_session)
     assert "looking for" in result["response"].lower()
     assert len(result["quick_replies"]) == len(_WELCOME_QUICK_REPLIES)
+def test_empty_message_logs_audit_event(fresh_session):
+    """SMELL-9 resolution: the empty-message guard must log to the audit
+    feed like every other return path. Without this, admin dashboards
+    silently undercount turns — the bot processed a message and produced
+    a response, but `_query_log`/`_events` show no record of it. Companion
+    to `test_empty_message_guard`, which pins the user-facing response;
+    this pins the observability contract.
+    """
+    from app.services import audit_log
+
+    audit_log.clear_audit_log()
+    result = send("", session_id=fresh_session)
+    # User-facing contract still holds.
+    assert "looking for" in result["response"].lower()
+
+    # Observability contract: an `empty_message` conversation_turn event landed.
+    turns = audit_log.get_recent_events(event_type="conversation_turn")
+    empty_turns = [t for t in turns if t.get("category") == "empty_message"]
+    assert len(empty_turns) == 1, (
+        "Expected exactly one conversation_turn event with "
+        "category='empty_message'; got %d. Every return path in "
+        "generate_reply must log a turn so admin dashboards have a "
+        "complete event stream." % len(empty_turns)
+    )
+    e = empty_turns[0]
+    assert e["session_id"] == fresh_session
+    # User message is empty by design.
+    assert e["user_message"] == ""
+    # Quick replies are surfaced in the event payload so the admin
+    # console can show what the user saw.
+    assert len(e["quick_replies"]) == len(_WELCOME_QUICK_REPLIES)
 def test_confused_classification():
     """Confusion phrases should classify as 'confused', not 'general'."""
     # Mock detect_crisis so LLM fail-open doesn't misclassify as crisis

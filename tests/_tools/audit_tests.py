@@ -164,26 +164,79 @@ _PATCH_STRING_RE = re.compile(
 
 def audit_d1_dead_patches(report: Report, test_files: list[Path],
                           symbol_map: dict[str, set[str]]) -> None:
-    """Flag patch targets whose module OR attribute doesn't exist in the backend."""
+    """Flag patch targets whose module OR attribute doesn't exist in the backend.
+
+    The simple case is `patch("app.services.X.foo")` — split on the last dot,
+    check `foo` is defined on or imported into `app.services.X`. Two further
+    patterns are valid and must NOT be flagged:
+
+      1. Chained attribute access into a sub-imported module, e.g.
+         `patch("app.services.X.datetime.datetime")` when X did
+         `import datetime`. Here the "module" part of the target is
+         `app.services.X` (not `app.services.X.datetime`); `datetime` is
+         the live attribute on X, and `datetime.datetime` is the class
+         being replaced via `patch()`'s deep-attribute support.
+
+      2. Same idea two levels deep — `patch("app.services.X.pkg.cls.method")`
+         when X imported `pkg`, pkg owns `cls`, cls owns `method`. We
+         don't have stdlib symbol coverage, so any path whose first
+         hit-in-the-symbol-map prefix is a real module AND whose next
+         component is an imported name on that module is accepted as
+         live. We can't verify the tail beyond that without importing
+         the production code (which the audit deliberately avoids — see
+         the comment at the top of this section).
+
+    Pre-May-2026 the check used only the last-dot split, which produced
+    8 false positives across `tests/unit/test_cold_context_and_prevention_regex.py`
+    on its perfectly valid `patch("app.services.slot_extraction_regex.datetime.datetime")`
+    patches. The bug was masked by no other test using the chained-attribute
+    pattern.
+    """
     for path in test_files:
         text = path.read_text()
         for m in _PATCH_STRING_RE.finditer(text):
             target = m.group(1)
             line = text[: m.start()].count("\n") + 1
-            # Split into module + attr. patch() accepts arbitrarily deep
-            # dotted paths; conventionally the last component is the attr.
-            parts = target.rsplit(".", 1)
-            if len(parts) != 2:
+            parts = target.split(".")
+            if len(parts) < 2:
                 continue
-            module, attr = parts
-            if module not in symbol_map:
-                # Module doesn't exist — definitely dead
+
+            # Walk the dotted path from longest-prefix to shortest, looking
+            # for the longest prefix that names a real backend module.
+            # The next component after that prefix is the patch's first
+            # attribute access — that's what needs to be a name defined on
+            # or imported into the module.
+            #
+            # Example: target = "app.services.slot_extraction_regex.datetime.datetime"
+            #   prefix "app.services.slot_extraction_regex.datetime" → not a module
+            #   prefix "app.services.slot_extraction_regex" → IS a module
+            #     → first attr = "datetime"; does the module import it? Yes.
+            #     → tail "datetime" is a sub-attribute of that imported
+            #        module, which we can't verify without importing — accept.
+            found_module = False
+            for cut in range(len(parts) - 1, 0, -1):
+                candidate_module = ".".join(parts[:cut])
+                if candidate_module in symbol_map:
+                    first_attr = parts[cut]
+                    if first_attr not in symbol_map[candidate_module]:
+                        # The module exists but doesn't define/import the
+                        # first attribute the patch targets — same flavor
+                        # of bug the original check caught.
+                        report.add(
+                            "D1", path, line,
+                            f"patch({target!r}) — "
+                            f"{first_attr!r} not in {candidate_module}",
+                        )
+                    # else: first attr is a real symbol on a real module.
+                    # Any deeper components are sub-attribute accesses
+                    # that patch() walks at runtime; we don't try to
+                    # verify them statically.
+                    found_module = True
+                    break
+
+            if not found_module:
                 report.add("D1", path, line,
                            f"patch({target!r}) — module not found")
-                continue
-            if attr not in symbol_map[module]:
-                report.add("D1", path, line,
-                           f"patch({target!r}) — {attr!r} not in {module}")
 
 
 # --------------------------------------------------------------------------
