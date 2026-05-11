@@ -7,4 +7,4 @@ SQLAlchemy>=2.0.0
 psycopg2-binary>=2.9.12
 anthropic>=0.97.0
 sentence-transformers>=5.4.1
-shapely>=2.0.0
+shapely>=2.1.2
