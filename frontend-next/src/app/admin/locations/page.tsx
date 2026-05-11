@@ -33,14 +33,20 @@ import { AlertCircle } from "lucide-react";
  *   2.  Freshness histogram                              (section 2a)
  *   3.  Borough breakdown                                (section 3a)
  *   4.  Service-category × borough heatmap               (section 3b)
- *   5.  Coordinate validation                            (section 3c)
+ *   5.  Stale categories                                 (section 4b)
  *   6.  Service-type coverage with demand:supply         (section 4a)
- *   7.  Stale categories                                 (section 4b)
+ *   7.  Coordinate validation                            (section 3c)
  *   8.  Location feedback (per-criterion + most-flagged) (sections 5a+5b)
  *   9.  Recent feedback comments                         (section 5c)
  *   10. Data integrity callouts                          (section 6)
  *   11. Activity over time                               (section 7)
  *   12. Locations needing review (triage table)          (section 2b — placed last)
+ *
+ * Section numbers come from the original spec and no longer match the
+ * display order — the spec's 3c/4a/4b cluster was reshuffled
+ * (heatmap → stale → coverage → coords) so admins read the by-category
+ * narrative as a continuous block before pivoting to coordinate
+ * issues. Don't rely on section numbers to read the page top-down.
  *
  * Cross-component state coordination is intentionally minimal: only
  * the freshness-histogram → triage-table click-through needs lifting.
@@ -147,19 +153,23 @@ export default function LocationsPage() {
         <ServiceBoroughHeatmap />
       </AdminSection>
 
-      {/* Section 3c: coordinate validation. Surfaces data-quality bugs:
-       *  coords outside NYC, or coords that disagree with the stated city. */}
+      {/* Section 4b: stale categories — taxonomies where no offering
+       *  location has been verified in 180+ days. Sits between the
+       *  service-category heatmap and the per-taxonomy coverage table
+       *  so admins read "which categories exist, where" → "which are
+       *  going stale" → "where the supply/demand gaps are" as a single
+       *  thematic block. */}
       <AdminSection
-        title="Coordinate validation"
+        title="Stale categories"
         description={
           <>
-            Locations whose lat/lon doesn&apos;t match their declared city.
-            Outside-NYC issues are likely typo&apos;d coordinates;
-            borough-mismatch issues need manual verification — either side could be wrong.
+            Taxonomies where every offering location is &gt;180 days old. These are
+            categories at risk of going stale system-wide — a single fresh location
+            would clear the alert.
           </>
         }
       >
-        <CoordinateIssuesTable />
+        <StaleCategoriesList />
       </AdminSection>
 
       {/* Section 4a: per-taxonomy coverage with demand:supply ratio.
@@ -178,19 +188,24 @@ export default function LocationsPage() {
         <CategoryCoverageTable />
       </AdminSection>
 
-      {/* Section 4b: stale categories — taxonomies where no offering
-       *  location has been verified in 180+ days. */}
+      {/* Section 3c: coordinate validation. Surfaces data-quality bugs:
+       *  coords outside NYC, or coords that disagree with the stated city.
+       *  Placed AFTER the category-coverage block because coordinate
+       *  issues are a data-quality concern that affects every category
+       *  uniformly — putting it here lets the reader finish the
+       *  by-category narrative before switching to "and on top of that,
+       *  some locations have busted coords." */}
       <AdminSection
-        title="Stale categories"
+        title="Coordinate validation"
         description={
           <>
-            Taxonomies where every offering location is &gt;180 days old. These are
-            categories at risk of going stale system-wide — a single fresh location
-            would clear the alert.
+            Locations whose lat/lon doesn&apos;t match their declared city.
+            Outside-NYC issues are likely typo&apos;d coordinates;
+            borough-mismatch issues need manual verification — either side could be wrong.
           </>
         }
       >
-        <StaleCategoriesList />
+        <CoordinateIssuesTable />
       </AdminSection>
 
       {/* Sections 5a + 5b: location feedback aggregates. The component

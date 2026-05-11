@@ -179,53 +179,55 @@ export function LocationsTable({
       )}
 
       {data && (
-        <>
-          <div className="bg-white border border-neutral-200 rounded-lg overflow-hidden dark:bg-neutral-900 dark:border-neutral-800">
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead className="bg-neutral-50 dark:bg-neutral-800/50">
+        <div className="bg-white border border-neutral-200 rounded-lg overflow-hidden dark:bg-neutral-900 dark:border-neutral-800">
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead className="bg-neutral-50 dark:bg-neutral-800/50">
+                <tr>
+                  <SortHeader label="Location" field="name" current={sortKey} dir={sortDir} onClick={handleSortClick} />
+                  <SortHeader label="Organization" field="organization" current={sortKey} dir={sortDir} onClick={handleSortClick} />
+                  <SortHeader label="Borough" field="city" current={sortKey} dir={sortDir} onClick={handleSortClick} />
+                  <SortHeader label="Services" field="service_count" current={sortKey} dir={sortDir} onClick={handleSortClick} className="text-right" />
+                  <th className="px-4 py-3 text-xs uppercase tracking-wider font-semibold text-neutral-400 text-left">Categories</th>
+                  <SortHeader label="Last verified" field="last_validated_at" current={sortKey} dir={sortDir} onClick={handleSortClick} />
+                  <th className="px-4 py-3 text-xs uppercase tracking-wider font-semibold text-neutral-400 text-center">Data</th>
+                  <SortHeader label="Recent flags" field="recent_flags" current={sortKey} dir={sortDir} onClick={handleSortClick} className="text-right" />
+                  <th className="px-4 py-3 text-xs uppercase tracking-wider font-semibold text-neutral-400 text-right">Open</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.locations.length === 0 && (
                   <tr>
-                    <SortHeader label="Location" field="name" current={sortKey} dir={sortDir} onClick={handleSortClick} />
-                    <SortHeader label="Organization" field="organization" current={sortKey} dir={sortDir} onClick={handleSortClick} />
-                    <SortHeader label="Borough" field="city" current={sortKey} dir={sortDir} onClick={handleSortClick} />
-                    <SortHeader label="Services" field="service_count" current={sortKey} dir={sortDir} onClick={handleSortClick} className="text-right" />
-                    <th className="px-4 py-3 text-xs uppercase tracking-wider font-semibold text-neutral-400 text-left">Categories</th>
-                    <SortHeader label="Last verified" field="last_validated_at" current={sortKey} dir={sortDir} onClick={handleSortClick} />
-                    <th className="px-4 py-3 text-xs uppercase tracking-wider font-semibold text-neutral-400 text-center">Data</th>
-                    <SortHeader label="Recent flags" field="recent_flags" current={sortKey} dir={sortDir} onClick={handleSortClick} className="text-right" />
-                    <th className="px-4 py-3 text-xs uppercase tracking-wider font-semibold text-neutral-400 text-right">Open</th>
+                    <td colSpan={9} className="px-4 py-10 text-center text-neutral-400">
+                      No locations match these filters.
+                    </td>
                   </tr>
-                </thead>
-                <tbody>
-                  {data.locations.length === 0 && (
-                    <tr>
-                      <td colSpan={9} className="px-4 py-10 text-center text-neutral-400">
-                        No locations match these filters.
-                      </td>
-                    </tr>
-                  )}
-                  {data.locations.map((loc) => (
-                    <LocationRow key={loc.location_id} loc={loc} />
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                )}
+                {data.locations.map((loc) => (
+                  <LocationRow key={loc.location_id} loc={loc} />
+                ))}
+              </tbody>
+            </table>
           </div>
 
-          <div className="mt-4">
-            <TablePagination
-              totalItems={data.total}
-              page={data.page}
-              pageSize={pageSize}
-              onPageChange={setPage}
-              onPageSizeChange={(ps) => {
-                setPageSize(ps);
-                setPage(1);
-              }}
-              ariaLabel="Locations table pagination"
-            />
-          </div>
-        </>
+          {/* TablePagination sits INSIDE the card so its existing
+              `border-t` visually attaches to the table (the previous
+              `mt-4` wrapper produced a floating, disconnected control).
+              The pagination's own `bg-neutral-50` matches the table
+              header, so the card reads as a single unit:
+              header → rows → footer. */}
+          <TablePagination
+            totalItems={data.total}
+            page={data.page}
+            pageSize={pageSize}
+            onPageChange={setPage}
+            onPageSizeChange={(ps) => {
+              setPageSize(ps);
+              setPage(1);
+            }}
+            ariaLabel="Locations table pagination"
+          />
+        </div>
       )}
     </div>
   );

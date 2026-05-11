@@ -3,6 +3,7 @@
 
 "use client";
 
+import { useState } from "react";
 import { AlertCircle, AlertTriangle, ExternalLink, MapPin } from "lucide-react";
 import type {
   CoordinateIssuesResponse,
@@ -29,7 +30,13 @@ import { useAdminFetch } from "@/hooks/use-admin-fetch";
  *     filtering to the correct one.
  *
  * Header includes an "X of Y locations have issues" framing so admins
- * can see the scale at a glance.
+ * can see the scale at a glance, plus two toggle pills (one per issue
+ * kind) for narrowing the view. Outside-NYC tends to dominate the row
+ * count in production data; toggling it off lets admins focus on the
+ * smaller borough-mismatch backlog without scrolling past dozens of
+ * obvious typo rows. Toggles affect only the rendered table — the
+ * count strip continues to show the full totals so admins see what's
+ * been hidden.
  *
  * Empty state ("No coordinate issues — all locations match their
  * declared city") gets a subtle ✓ green callout. This is the
@@ -41,6 +48,13 @@ export function CoordinateIssuesTable() {
     "/api/admin/locations/coordinate-issues",
   );
 
+  // Issue-type filters. Both default to ON so first render shows the
+  // full table; admins toggle OFF to narrow. Local state — no URL sync
+  // (the table is a single panel; deep-linking a filtered view isn't a
+  // user need yet) and no persistence (workflow is "open the page,
+  // triage, leave" — sticky filters would surprise the next visit).
+  const [showOutsideNYC, setShowOutsideNYC] = useState(true);
+  const [showBoroughMismatch, setShowBoroughMismatch] = useState(true);
 
   if (error) {
     return (
@@ -74,6 +88,18 @@ export function CoordinateIssuesTable() {
 
   const mismatchCount = data.issues.length - data.outside_nyc_count;
 
+  // Apply the toggle filters. A row is "outside NYC" when
+  // `computed_borough === null` (the same predicate `IssueRow` uses
+  // for its rendering branch); the inverse is the borough-mismatch
+  // case. Hidden rows still count in the summary strip totals so
+  // admins can see what's been filtered out.
+  const visibleIssues = data.issues.filter((issue) => {
+    const isOutsideNYC = issue.computed_borough === null;
+    if (isOutsideNYC) return showOutsideNYC;
+    return showBoroughMismatch;
+  });
+  const hiddenCount = data.issues.length - visibleIssues.length;
+
   return (
     <div className="bg-white border border-neutral-200 rounded-lg overflow-hidden dark:bg-neutral-900 dark:border-neutral-800">
       {/* Summary strip — gives the "X of Y" framing before the table */}
@@ -98,6 +124,41 @@ export function CoordinateIssuesTable() {
             )}
           </span>
         </div>
+
+        {/* Issue-type toggles. Only render a toggle for issue kinds
+            that have at least one row — no point offering a "Hide
+            outside NYC" pill when there are zero outside-NYC rows. */}
+        {(data.outside_nyc_count > 0 || mismatchCount > 0) && (
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <span className="text-[11px] uppercase tracking-wider text-amber-800/70 dark:text-amber-300/70">
+              Show
+            </span>
+            {data.outside_nyc_count > 0 && (
+              <FilterPill
+                active={showOutsideNYC}
+                label="Outside NYC"
+                count={data.outside_nyc_count}
+                onToggle={() => setShowOutsideNYC((v) => !v)}
+              />
+            )}
+            {mismatchCount > 0 && (
+              <FilterPill
+                active={showBoroughMismatch}
+                label="Borough mismatch"
+                count={mismatchCount}
+                onToggle={() => setShowBoroughMismatch((v) => !v)}
+              />
+            )}
+            {hiddenCount > 0 && (
+              <span
+                className="text-[11px] text-amber-800/70 dark:text-amber-300/70"
+                aria-live="polite"
+              >
+                {hiddenCount.toLocaleString()} hidden
+              </span>
+            )}
+          </div>
+        )}
       </div>
 
       <div className="overflow-x-auto">
@@ -122,13 +183,78 @@ export function CoordinateIssuesTable() {
             </tr>
           </thead>
           <tbody>
-            {data.issues.map((issue) => (
-              <IssueRow key={issue.location_id} issue={issue} />
-            ))}
+            {visibleIssues.length === 0 ? (
+              <tr>
+                <td
+                  colSpan={5}
+                  className="px-4 py-8 text-center text-sm text-neutral-400 dark:text-neutral-500"
+                >
+                  All issues are hidden by the filters above. Toggle a
+                  pill back on to see them.
+                </td>
+              </tr>
+            ) : (
+              visibleIssues.map((issue) => (
+                <IssueRow key={issue.location_id} issue={issue} />
+              ))
+            )}
           </tbody>
         </table>
       </div>
     </div>
+  );
+}
+
+/**
+ * Two-state toggle pill matching the amber summary-strip palette.
+ * Active = solid amber background, content visible in the table.
+ * Inactive = outlined, content hidden. Includes the row count so
+ * admins know the size of what they're toggling.
+ *
+ * The `aria-pressed` state is the canonical signal for assistive
+ * technology — visual treatment is layered on top. Hit area is the
+ * full pill (button); the count is part of the label, not a separate
+ * focusable element.
+ */
+function FilterPill({
+  active,
+  label,
+  count,
+  onToggle,
+}: {
+  active: boolean;
+  label: string;
+  count: number;
+  onToggle: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-pressed={active}
+      className={[
+        "inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full",
+        "text-[11px] font-medium transition-colors",
+        "focus-visible:outline-none focus-visible:ring-2",
+        "focus-visible:ring-amber-500 focus-visible:ring-offset-1",
+        "focus-visible:ring-offset-amber-50 dark:focus-visible:ring-offset-amber-950/30",
+        active
+          ? "bg-amber-200 text-amber-900 hover:bg-amber-300 dark:bg-amber-900/60 dark:text-amber-100 dark:hover:bg-amber-900/80"
+          : "bg-transparent text-amber-700/70 ring-1 ring-inset ring-amber-300 hover:bg-amber-100 dark:text-amber-300/70 dark:ring-amber-800 dark:hover:bg-amber-900/30",
+      ].join(" ")}
+    >
+      <span
+        className={[
+          "w-1.5 h-1.5 rounded-full",
+          active ? "bg-amber-700 dark:bg-amber-300" : "bg-amber-400/50 dark:bg-amber-700/60",
+        ].join(" ")}
+        aria-hidden="true"
+      />
+      {label}
+      <span className="tabular-nums opacity-80">
+        ({count.toLocaleString()})
+      </span>
+    </button>
   );
 }
 

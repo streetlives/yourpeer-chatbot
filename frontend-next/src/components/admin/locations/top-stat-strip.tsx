@@ -65,14 +65,14 @@ export function LocationsTopStatStrip({ stats }: { stats: LocationsStats }) {
         valueColor="text-green-700 dark:text-green-400"
       />
       <StatCardWithTrend
-        label="Never verified"
-        value={fmt(stats.never_verified_count)}
+        label="Stale (>90d)"
+        value={fmt(stats.stale_count)}
         trend={null}
         valueColor="text-amber-700 dark:text-amber-400"
       />
       <StatCardWithTrend
-        label="Stale (>90d)"
-        value={fmt(stats.stale_count)}
+        label="Never verified"
+        value={fmt(stats.never_verified_count)}
         trend={null}
         valueColor="text-amber-700 dark:text-amber-400"
       />
