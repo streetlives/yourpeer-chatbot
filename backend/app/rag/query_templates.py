@@ -663,35 +663,54 @@ TEMPLATES = {
             FILTER_BY_DESCRIPTION_KEYWORDS,
         ],
         "default_params": {
-            # Full list of Shelter parent + all known children in the Streetlives DB.
+            # Shelter parent + non-vestigial children in the Streetlives DB.
             # YourPeer sends just the "Shelter" parent ID and relies on the API to
             # expand to children server-side. The chatbot queries the DB directly,
             # so children must be enumerated explicitly to get equivalent coverage.
             #
             # Sub-category narrowing (family_status → families / single adult) is
-            # handled in rag/__init__.py by REPLACING this list with the specific
-            # child — matching YourPeer's sub-filter narrowing semantics.
+            # handled in rag/__init__.py. As of the May 2026 taxonomy audit fix,
+            # narrowing PRESERVES the generic shelter-mode children (crisis,
+            # drop-in center, referral, etc.) instead of stripping them — this
+            # fixes the regression where single adults asking for shelter lost
+            # visibility into emergency beds, drop-in centers, and placement
+            # referrals.
             #
-            # DB verified April 16, 2026: 19 Shelter children total. All with
-            # non-zero service counts are included below (18). Omitted:
-            # Cooling Center (0 services), Intake (0 services).
+            # DB verified April 16, 2026: 19 Shelter children total.
+            # OMITTED from default:
+            #   • Cooling Center (0 services)         — vestigial (Ticket J).
+            #   • Intake (0 services)                  — vestigial (Ticket J).
+            #   • Supportive Housing (0 services)      — vestigial (Ticket J,
+            #     audit §IX). Was here for forward-compat; the audit confirms
+            #     it has 0 services tagged and recommends removal.
+            #   • Residential Recovery (2 services)    — REMOVED May 2026 per
+            #     TAXONOMY_AUDIT_MAY2026.md §VIII (the CREATE Inc. bug). These
+            #     are substance-use treatment programs, not shelter; default
+            #     inclusion confused the "I need a place to sleep tonight" ask.
+            #     Still reachable via the mental_health template (recovery
+            #     programs) and via service_detail narrowing ("detox",
+            #     "sober living", etc. — see rag/__init__.py
+            #     _DETAIL_TO_TAXONOMY_NARROWING).
             "taxonomy_names": [
-                # Parent + generic housing types
+                # Parent + generic housing modes (always applicable)
                 "shelter",
                 "transitional independent living (til)",
-                "supportive housing",
                 "housing lottery",
                 "veterans short-term housing",
                 "warming center",
                 "safe haven",
-                # Population-specific shelter children
+                # Population-specific shelter children (kept in default so a
+                # generic "I need shelter" query without a family_status still
+                # surfaces them; narrowing logic in rag/__init__.py strips the
+                # population-children that don't match the user's family_status
+                # while keeping the generic modes above intact).
                 "youth",
                 "families",
                 "single adult",
                 "senior",
                 "lgbtq young adult",
                 "veterans",
-                # Service-type shelter children (added Apr 16, 2026 after
+                # Service-mode shelter children (added Apr 16, 2026 after
                 # Covenant House / Safe Horizon DB verification revealed these
                 # were missing from the default list, making services like
                 # Emergency Bed Placement and Shelter Placement invisible
@@ -700,14 +719,13 @@ TEMPLATES = {
                 "drop-in center",   # 6 services — day sleeping rooms, drop-in
                 "referral",         # 6 services — shelter placement referrals
                 "assessment",       # 1 service — intake assessment
-                "residential recovery",  # 2 services — also in mental_health template
             ]
         },
         "taxonomy_aliases": [
-            "Shelter", "Transitional Independent Living (TIL)", "Supportive Housing",
+            "Shelter", "Transitional Independent Living (TIL)",
             "Housing Lottery", "Veterans Short-Term Housing", "Warming Center", "Safe Haven",
             "Youth", "Families", "Single Adult", "Senior", "LGBTQ Young Adult", "Veterans",
-            "Crisis", "Drop-in Center", "Referral", "Assessment", "Residential Recovery",
+            "Crisis", "Drop-in Center", "Referral", "Assessment",
         ],
     },
     "clothing": {

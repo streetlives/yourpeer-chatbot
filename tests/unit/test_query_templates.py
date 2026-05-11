@@ -75,13 +75,20 @@ EXPECTED_TAXONOMY_NAMES = {
     },
     "shelter": {
         # Parent + generic housing types
-        "shelter", "transitional independent living (til)", "supportive housing",
+        "shelter", "transitional independent living (til)",
         "housing lottery", "veterans short-term housing", "warming center", "safe haven",
         # Population-specific shelter children (Apr 2026 YourPeer parity update):
         "youth", "families", "single adult", "senior", "lgbtq young adult", "veterans",
-        # Service-type shelter children (Apr 16 DB verification — Covenant House /
+        # Service-mode shelter children (Apr 16 DB verification — Covenant House /
         # Safe Horizon discoverability fix):
-        "crisis", "drop-in center", "referral", "assessment", "residential recovery",
+        "crisis", "drop-in center", "referral", "assessment",
+        # NOTE: "residential recovery" and "supportive housing" were removed
+        # from this set in May 2026 per TAXONOMY_AUDIT_MAY2026.md:
+        #   - residential recovery (§VIII, the CREATE Inc. user-testing bug):
+        #     substance-use treatment programs that confused "I need a place
+        #     to sleep tonight" queries. Still reachable via mental_health
+        #     template + service_detail narrowing.
+        #   - supportive housing (Ticket J): vestigial, 0 services tagged.
     },
     "clothing": {
         "clothing", "clothing pantry", "interview-ready clothing",
@@ -1653,25 +1660,46 @@ def test_shelter_enrichment_senior():
 
 
 def test_shelter_enrichment_families():
-    """Shelter query with family_status=with_children narrows to families + parent shelter.
+    """Shelter query with family_status=with_children narrows to families + parent
+    shelter + generic shelter modes.
 
     DB verification (April 2026) showed the Families child has only 3 services;
     strict YourPeer-style narrowing would often return 0 results. The chatbot
     preserves the parent 'shelter' taxonomy in narrowed queries for better recall
     — documented divergence from YourPeer in QUERY_PARITY_AUDIT.md.
+
+    May 2026 (TAXONOMY_AUDIT_MAY2026.md §VIII): also preserves generic shelter
+    modes (crisis, drop-in center, referral, etc.) — the user-reported "not
+    seeing shelters I would expect" regression fix.
     """
     names = _get_taxonomy_names("shelter", family_status="with_children")
-    assert names == ["families", "shelter"], f"Expected ['families', 'shelter'], got {names}"
+    assert "families" in names
+    assert "shelter" in names
+    for tx in ("crisis", "drop-in center", "referral",
+               "transitional independent living (til)",
+               "safe haven", "housing lottery", "assessment"):
+        assert tx in names, f"with_children must preserve generic mode '{tx}'"
 
 
 def test_shelter_enrichment_single_adult():
-    """Shelter query with family_status=alone narrows to single adult + parent shelter.
+    """Shelter query with family_status=alone narrows to single adult + parent
+    shelter + generic shelter modes.
 
     Single Adult child has 38 services (DB verified). Parent preservation
     ensures the 18 generic-Shelter-tagged services remain visible.
+
+    May 2026 (TAXONOMY_AUDIT_MAY2026.md §VIII): also preserves generic shelter
+    modes (crisis 13 svc, drop-in 6 svc, referral 6 svc, etc.) — single adults
+    plausibly qualify for emergency beds and placement referrals regardless of
+    family composition.
     """
     names = _get_taxonomy_names("shelter", family_status="alone")
-    assert names == ["single adult", "shelter"], f"Expected ['single adult', 'shelter'], got {names}"
+    assert "single adult" in names
+    assert "shelter" in names
+    for tx in ("crisis", "drop-in center", "referral",
+               "transitional independent living (til)",
+               "safe haven", "housing lottery", "assessment"):
+        assert tx in names, f"alone must preserve generic mode '{tx}'"
 
 
 def test_shelter_default_includes_lgbtq_young_adult():
@@ -1694,28 +1722,49 @@ def test_shelter_default_includes_all_children():
         assert child in names, f"Default shelter list missing '{child}'"
 
 
-def test_shelter_narrowing_excludes_generic_siblings():
-    """When family_status narrows, generic sibling housing taxonomies
-    (safe haven, warming center, TIL) are NOT in the final list.
+def test_shelter_narrowing_excludes_population_specific_siblings():
+    """When family_status narrows, POPULATION-specific sibling housing
+    taxonomies (warming center, veterans short-term housing) are NOT in the
+    final list unless a matching signal is present.
 
     Parent 'shelter' IS preserved (see test_shelter_enrichment_families).
     Uses age=30 to avoid triggering the youth safety enrichment.
+
+    May 2026 (TAXONOMY_AUDIT_MAY2026.md §VIII): generic shelter modes
+    (safe haven, TIL, housing lottery, crisis, drop-in center, referral,
+    assessment) are now preserved across narrowing — they're not
+    population-specific.
     """
     names = _get_taxonomy_names("shelter", age=30, family_status="with_children")
-    assert "safe haven" not in names, "Generic 'safe haven' should be excluded under narrow"
-    assert "warming center" not in names, "Generic 'warming center' should be excluded under narrow"
-    assert "single adult" not in names, "Wrong child included under narrow"
+    # Population-specific (no signal): stripped
+    assert "warming center" not in names, "Population-specific 'warming center' should be excluded"
+    assert "single adult" not in names, "Wrong family-composition child included under narrow"
     assert "youth" not in names, "Youth not expected for age 30"
-    assert names == ["families", "shelter"], f"Expected ['families', 'shelter'], got {names}"
+    assert "veterans short-term housing" not in names, "No veteran signal — should be excluded"
+    assert "senior" not in names, "Not senior age — should be excluded"
+    assert "lgbtq young adult" not in names, "No LGBTQ signal — should be excluded"
+    # Generic shelter modes: PRESERVED (regression fix)
+    for kept in ("safe haven", "transitional independent living (til)",
+                 "housing lottery", "crisis", "drop-in center",
+                 "referral", "assessment"):
+        assert kept in names, f"Generic shelter mode '{kept}' should be preserved"
 
 
 def test_shelter_narrowing_youth_safety_add():
     """When family_status narrows BUT user is in the youth age range (16-24),
     'youth' is added back as a safety enrichment so Covenant House / Ali Forney
-    remain discoverable (Cornell sample outcome)."""
+    remain discoverable (Cornell sample outcome).
+
+    The narrowed list now also includes generic shelter modes (May 2026 fix).
+    """
     names = _get_taxonomy_names("shelter", age=19, family_status="with_children")
-    assert names == ["families", "shelter", "youth"], \
-        f"Expected ['families', 'shelter', 'youth'], got {names}"
+    assert "families" in names
+    assert "shelter" in names
+    assert "youth" in names, "age 19 must trigger youth safety add"
+    for tx in ("crisis", "drop-in center", "referral",
+               "transitional independent living (til)",
+               "safe haven", "housing lottery", "assessment"):
+        assert tx in names, f"narrowed list must preserve generic mode '{tx}'"
 
 
 def test_food_no_enrichment():

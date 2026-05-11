@@ -534,14 +534,64 @@ class TestDvShelterEnrichment:
         assert "youth" in p["taxonomy_names"]
         assert "lgbtq young adult" in p["taxonomy_names"]
 
-    def test_narrowing_strips_crisis_and_drop_in(self):
-        """When narrowing fires, crisis/drop-in are stripped (not in narrow set).
-        DV/LGBTQ safety enrichments add them back — tested in TestDvShelterEnrichment."""
+    def test_narrowing_preserves_generic_shelter_modes(self):
+        """REGRESSION FIX (May 2026, TAXONOMY_AUDIT_MAY2026.md §VIII):
+
+        When family_status narrowing fires, the generic shelter-mode children
+        (crisis, drop-in center, referral, TIL, safe haven, housing lottery,
+        assessment) MUST remain in taxonomy_names. These children are NOT
+        population-specific — a single adult or family asking for shelter
+        plausibly qualifies for emergency beds, drop-in day sleeping, and
+        placement-referral services regardless of family composition.
+
+        Previous behavior stripped these out, causing the user-reported
+        "I'm not seeing shelters I would expect" regression (~31 services
+        invisible to narrowed queries).
+        """
+        # family_status="alone" must still include generic shelter modes
+        p_alone = _query("shelter", family_status="alone", age=30)
+        for tx in ("crisis", "drop-in center", "referral",
+                   "transitional independent living (til)",
+                   "safe haven", "housing lottery", "assessment"):
+            assert tx in p_alone["taxonomy_names"], (
+                f"family_status='alone' must preserve '{tx}' "
+                f"(generic shelter mode, not population-specific). "
+                f"Got: {p_alone['taxonomy_names']}"
+            )
+        # The narrowed child is still narrowed correctly
+        assert "single adult" in p_alone["taxonomy_names"]
+        # And the other family-composition child is still stripped
+        assert "families" not in p_alone["taxonomy_names"]
+
+        # family_status="with_children" must also preserve generic modes
+        p_family = _query("shelter", family_status="with_children", age=30)
+        for tx in ("crisis", "drop-in center", "referral",
+                   "transitional independent living (til)",
+                   "safe haven", "housing lottery", "assessment"):
+            assert tx in p_family["taxonomy_names"], (
+                f"family_status='with_children' must preserve '{tx}' "
+                f"(generic shelter mode, not population-specific). "
+                f"Got: {p_family['taxonomy_names']}"
+            )
+        assert "families" in p_family["taxonomy_names"]
+        assert "single adult" not in p_family["taxonomy_names"]
+
+    def test_narrowing_still_strips_population_specific_siblings(self):
+        """Counterpart to test_narrowing_preserves_generic_shelter_modes.
+
+        Narrowing should still exclude POPULATION-specific shelter children
+        that don't match the user's signals (no age, no LGBTQ, no veteran,
+        etc.), because those would be inappropriate matches. Only the
+        generic shelter-mode children stay.
+        """
         p = _query("shelter", family_status="alone", age=30)
-        # Narrowed to single adult + parent only (no safety signals to add them back)
-        assert "crisis" not in p["taxonomy_names"]
-        assert "drop-in center" not in p["taxonomy_names"]
-        assert "referral" not in p["taxonomy_names"]
+        # Population-specific siblings (no signal fired) should still be stripped
+        for tx in ("youth", "senior", "lgbtq young adult", "veterans",
+                   "veterans short-term housing"):
+            assert tx not in p["taxonomy_names"], (
+                f"family_status='alone' age=30 without population signal "
+                f"should not include '{tx}'. Got: {p['taxonomy_names']}"
+            )
 
 
 # =====================================================================

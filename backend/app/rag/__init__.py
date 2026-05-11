@@ -372,15 +372,24 @@ def query_services(
     # YourPeer parity (as of April 2026 source review + DB verification):
     #   - Default shelter search → parent "Shelter" taxonomy, API expands to
     #     all children. Chatbot equivalent: default_params.taxonomy_names
-    #     already lists every Shelter child (see query_templates.py).
+    #     lists Shelter parent + most children (see query_templates.py).
     #   - "families" sub-filter → YourPeer REPLACES taxonomy with "Families"
-    #     child only. Chatbot narrows to ["families", "shelter"] to preserve
-    #     parent — DB shows "Families" child has only 3 services, so strict
-    #     narrowing would often return 0 results. Parent preservation keeps
-    #     the 18 generic Shelter-tagged services visible too.
+    #     child only. Chatbot narrows but preserves "shelter" parent AND the
+    #     generic shelter-mode children (crisis, drop-in center, etc.) so
+    #     family-with-kids users can still see emergency beds and placement
+    #     referrals — services they plausibly qualify for.
     #   - "single adult" sub-filter → YourPeer REPLACES with "Single Adult"
-    #     child + passes ageMin=18, ageMax=99 to API. Chatbot narrows to
-    #     ["single adult", "shelter"] for the same parent-preservation reason.
+    #     child + passes ageMin=18, ageMax=99 to API. Chatbot narrows but
+    #     preserves the same generic shelter modes for the same reason.
+    #
+    # REGRESSION FIX (May 2026 per TAXONOMY_AUDIT_MAY2026.md §VIII):
+    # Previously, the narrowing branches set narrowed=["single adult","shelter"]
+    # or narrowed=["families","shelter"] — stripping out crisis (13 svc),
+    # drop-in center (6 svc), referral (6 svc), TIL (3 svc), safe haven (1 svc),
+    # housing lottery (1 svc), assessment (1 svc) = ~31 services that single
+    # adults / families would qualify for. Users reported "not seeing shelters
+    # they would expect" — the cause was over-aggressive narrowing. The fix is
+    # to keep _SHELTER_GENERIC_MODE_TAXONOMIES (below) in the narrowed list.
     #
     # NOVEL safety enrichments (intentional divergence from YourPeer — flagged
     # in QUERY_PARITY_AUDIT.md). These add population-specific Shelter children
@@ -405,19 +414,38 @@ def query_services(
         base_taxonomies = list(TEMPLATES["shelter"]["default_params"]["taxonomy_names"])
         is_pregnant = bool(populations and "pregnant" in populations)
 
+        # Generic shelter-mode children: shelter children that are NOT
+        # population-specific. A user asking for shelter qualifies for these
+        # regardless of family_status, age, or identity. Preserving them
+        # during family_status narrowing fixes the May 2026 regression where
+        # single adults lost visibility into crisis beds / drop-in centers /
+        # placement referrals. See TAXONOMY_AUDIT_MAY2026.md §VIII for the
+        # per-taxonomy classification rationale.
+        _SHELTER_GENERIC_MODE_TAXONOMIES = [
+            "crisis",                                # 13 svc — emergency placement
+            "drop-in center",                        # 6 svc — day sleeping rooms
+            "referral",                              # 6 svc — shelter placement help
+            "transitional independent living (til)", # 3 svc — independent living
+            "safe haven",                            # 1 svc — specialized shelter
+            "housing lottery",                       # 1 svc — application-based housing
+            "assessment",                            # 1 svc — intake assessment
+        ]
+
         # Step 1: Narrow taxonomy list based on family_status.
-        # When narrowing fires, include the parent "shelter" taxonomy so
-        # generic-tagged services remain visible (DB verification showed
-        # the Families child has only 3 services, Single Adult has 38,
-        # while the Shelter parent alone has 18 generic-tagged services
-        # that a strict narrow would exclude).
+        # When narrowing fires, include:
+        #   - the family-composition child the user qualifies for
+        #     (single adult or families)
+        #   - the parent "shelter" taxonomy (preserves the 18 generic-tagged
+        #     services that lack a child taxonomy)
+        #   - the generic shelter-mode children (preserves ~31 services that
+        #     apply regardless of family composition — see comment above).
         if family_status in ("with_children", "with_family"):
-            narrowed = ["families", "shelter"]
+            narrowed = ["families", "shelter"] + list(_SHELTER_GENERIC_MODE_TAXONOMIES)
         elif family_status == "alone" and is_pregnant:
             # Novel override: pregnant + alone → families (for prenatal services).
-            narrowed = ["families", "shelter"]
+            narrowed = ["families", "shelter"] + list(_SHELTER_GENERIC_MODE_TAXONOMIES)
         elif family_status == "alone":
-            narrowed = ["single adult", "shelter"]
+            narrowed = ["single adult", "shelter"] + list(_SHELTER_GENERIC_MODE_TAXONOMIES)
         else:
             # No family_status → use the full shelter taxonomy list (equivalent
             # to YourPeer's default: parent Shelter ID + API expansion).
