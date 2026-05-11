@@ -8,6 +8,7 @@ import type { Metadata } from "next";
 import { AdminNav } from "@/components/admin/admin-nav";
 import { AdminAuthGuard } from "@/components/admin/admin-auth-guard";
 import { LogoutButton } from "@/components/admin/logout-button";
+import { ThemeToggle } from "@/components/theme-toggle";
 
 export const metadata: Metadata = {
   title: "YourPeer — Staff Review Console",
@@ -31,7 +32,17 @@ export default function AdminLayout({
                 Staff Review Console
               </span>
             </div>
-            <LogoutButton />
+            {/* ThemeToggle sits to the LEFT of Sign out so staff can flip
+                between light and dark while auditing admin-panel dark-mode
+                coverage. The toggle is shared with the chat — same button,
+                same cycle (system → light → dark → system), same hydration
+                guard. Currently dark mode is partially implemented across
+                the admin panel; this gives reviewers a one-click way to see
+                which components still need work. */}
+            <div className="flex items-center gap-2">
+              <ThemeToggle />
+              <LogoutButton />
+            </div>
           </header>
 
           <AdminNav />
