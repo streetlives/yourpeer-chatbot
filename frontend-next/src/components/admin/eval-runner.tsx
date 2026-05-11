@@ -202,8 +202,9 @@ export function EvalRunner({ onComplete }: EvalRunnerProps) {
       >
         <option value="">All scenarios</option>
         <option value="5">5 scenarios (quick)</option>
-        <option value="10">10 scenarios</option>
-        <option value="20">20 scenarios</option>
+        <option value="25">25 scenarios</option>
+        <option value="50">50 scenarios</option>
+        <option value="100">100 scenarios</option>
       </select>
 
       <button

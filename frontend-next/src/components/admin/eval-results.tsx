@@ -29,6 +29,20 @@ interface EvalResultsProps {
   report: EvalReport;
 }
 
+/**
+ * Discriminated union for the scenario-list filter. Three modes:
+ *   - `all`: every scenario in the report
+ *   - `failures`: scenarios scoring < 4.0 or erroring (the inverse
+ *     of the "passing" definition used in the dashboard summary)
+ *   - `category`: scenarios whose `category` matches `name`
+ *
+ * Kept local to this module — only `EvalResults` consumes it.
+ */
+type ScenarioFilter =
+  | { kind: "all" }
+  | { kind: "failures" }
+  | { kind: "category"; name: string };
+
 export function EvalResults({ report }: EvalResultsProps) {
   const { summary } = report;
 
@@ -38,10 +52,12 @@ export function EvalResults({ report }: EvalResultsProps) {
   // the same shape of in-component dialog state.
   const [selectedDimension, setSelectedDimension] = useState<EvalDimension | null>(null);
 
-  // Scenario-list category filter. `null` means "show all". The
-  // chip-row below the "Scenario Details" heading drives this; each
-  // ScenarioCard owns its own collapse state independently.
-  const [filterCategory, setFilterCategory] = useState<string | null>(null);
+  // Scenario-list filter. Three modes: show all, show only failing
+  // scenarios (across all categories), or filter to a specific
+  // category. Using a discriminated union — rather than a single
+  // `string | null` with sentinels — keeps each mode's payload
+  // explicit and makes adding future filter kinds straightforward.
+  const [filter, setFilter] = useState<ScenarioFilter>({ kind: "all" });
 
   // Pre-compute the category histogram so the filter pills can be
   // sorted by frequency (most-populated first) and show counts. We
@@ -60,15 +76,45 @@ export function EvalResults({ report }: EvalResultsProps) {
     return Array.from(counts.entries()).sort(([, a], [, b]) => b - a);
   }, [report.scenarios]);
 
-  // Apply the current filter to the scenario list. Scenarios without
-  // a category survive the "All" view but never match a specific-
-  // category filter (consistent with how the count histogram above
-  // excludes them).
+  // Apply the current filter to the scenario list. The "failures"
+  // mode matches the dashboard's pass definition: a scenario is
+  // passing iff its average_score >= 4.0 AND it didn't error.
+  // Everything else (low scores OR an evaluation error) counts as
+  // a failure for triage purposes. This matches the `passingScenarios`
+  // computation below so the count on the "All Failures" pill and
+  // the count in the summary cards stay aligned.
   const filteredScenarios = useMemo(() => {
     const all = report.scenarios ?? [];
-    if (filterCategory === null) return all;
-    return all.filter((s) => s.category === filterCategory);
-  }, [report.scenarios, filterCategory]);
+    switch (filter.kind) {
+      case "all":
+        return all;
+      case "failures":
+        return all.filter((s) => s.error || s.average_score < 4.0);
+      case "category":
+        return all.filter((s) => s.category === filter.name);
+    }
+  }, [report.scenarios, filter]);
+
+  // Group critical failures by scenario name. The raw `critical_failures`
+  // list is flat — one entry per failure — and the same scenario can
+  // appear multiple times. Grouping lets us collapse the repetition
+  // ("shelter_queens_17 · 2 failures") so a long flat list becomes a
+  // shorter index of affected scenarios. Map preserves insertion order,
+  // so groups appear in the order their first failure was logged
+  // (rather than alphabetical or count-sorted) — matches "list order"
+  // intuition without rearranging anything the user might be tracking.
+  const groupedCriticalFailures = useMemo(() => {
+    const groups = new Map<string, string[]>();
+    for (const cf of report.critical_failures ?? []) {
+      const existing = groups.get(cf.scenario);
+      if (existing) {
+        existing.push(cf.failure);
+      } else {
+        groups.set(cf.scenario, [cf.failure]);
+      }
+    }
+    return Array.from(groups.entries());
+  }, [report.critical_failures]);
 
   const totalScenarioCount = report.scenarios?.length ?? 0;
 
@@ -232,14 +278,14 @@ export function EvalResults({ report }: EvalResultsProps) {
               .map(([cat, avg]) => {
                 const cls =
                   avg >= 4
-                    ? "bg-green-50 text-green-600"
+                    ? "bg-green-50 text-green-600 dark:bg-green-900/30 dark:text-green-300"
                     : avg >= 3
-                      ? "bg-amber-50 text-amber-600"
-                      : "bg-red-50 text-red-600";
+                      ? "bg-amber-50 text-amber-600 dark:bg-amber-900/30 dark:text-amber-300"
+                      : "bg-red-50 text-red-600 dark:bg-red-900/30 dark:text-red-300";
                 return (
                   <span
                     key={cat}
-                    className={`inline-block px-2.5 py-0.5 rounded-full text-xs font-semibold ${cls}`}
+                    className={`inline-block px-2.5 py-1 rounded-full text-sm font-semibold ${cls}`}
                   >
                     {cat}: {avg.toFixed(1)}
                   </span>
@@ -249,19 +295,22 @@ export function EvalResults({ report }: EvalResultsProps) {
         </div>
       )}
 
-      {/* Critical failures */}
-      {report.critical_failures && report.critical_failures.length > 0 && (
+      {/* Critical failures — grouped by scenario. Each group shows
+          the scenario name; if it has more than one failure, the
+          group is collapsible and the failures are revealed on
+          click. With one failure, the failure renders inline (no
+          click required). */}
+      {groupedCriticalFailures.length > 0 && (
         <div className="mb-7" id="eval-critical-failures">
-          <h3 className="text-base font-semibold text-red-600 mb-3">
+          <h3 className="text-base font-semibold text-red-600 dark:text-red-400 mb-3">
             ⚠ Critical Failures
           </h3>
-          {report.critical_failures.map((cf) => (
-            <div
-              key={`${cf.scenario}|${cf.failure}`}
-              className="bg-red-50 rounded-lg px-3.5 py-2.5 mb-1.5 text-sm"
-            >
-              <strong>{cf.scenario}</strong>: {cf.failure}
-            </div>
+          {groupedCriticalFailures.map(([scenario, failures]) => (
+            <CriticalFailureGroup
+              key={scenario}
+              scenario={scenario}
+              failures={failures}
+            />
           ))}
         </div>
       )}
@@ -274,36 +323,47 @@ export function EvalResults({ report }: EvalResultsProps) {
             className="text-sm text-neutral-500 dark:text-neutral-400"
             aria-live="polite"
           >
-            {filterCategory === null
+            {filter.kind === "all"
               ? `${totalScenarioCount} ${totalScenarioCount === 1 ? "scenario" : "scenarios"}`
               : `${filteredScenarios.length} of ${totalScenarioCount} ${totalScenarioCount === 1 ? "scenario" : "scenarios"}`}
           </span>
         </div>
 
-        {/* Category filter chips. Render only when there are
-            categories to filter by (some reports may have scenarios
-            with no `category` field at all — older runs). Buttons
-            with aria-pressed since each is a single-select toggle
-            modifying the shared scenario list below — not tabs into
-            separate panels (which would need role="tablist" +
-            aria-controls + a tabpanel for each). */}
+        {/* Filter chips. "All" + "All Failures" are cross-category
+            shortcuts; the rest are per-category. We render the row
+            whenever there's at least one categorized scenario — that's
+            also when the cross-category options are meaningful (a
+            report with no categories at all probably means an older
+            run, and the filter is then less useful). Buttons with
+            aria-pressed since each is a single-select toggle modifying
+            the shared scenario list below — not tabs into separate
+            panels (which would need role="tablist" + aria-controls +
+            a tabpanel for each). */}
         {categoryCounts.length > 0 && (
           <div
             className="flex flex-wrap gap-1.5 mb-4"
             role="group"
-            aria-label="Filter scenarios by category"
+            aria-label="Filter scenarios"
           >
             <FilterPill
-              active={filterCategory === null}
-              onClick={() => setFilterCategory(null)}
+              active={filter.kind === "all"}
+              onClick={() => setFilter({ kind: "all" })}
               label="All"
               count={totalScenarioCount}
+            />
+            <FilterPill
+              active={filter.kind === "failures"}
+              onClick={() => setFilter({ kind: "failures" })}
+              label="All Failures"
+              count={totalScenarioCount - passingScenarios}
             />
             {categoryCounts.map(([cat, count]) => (
               <FilterPill
                 key={cat}
-                active={filterCategory === cat}
-                onClick={() => setFilterCategory(cat)}
+                active={filter.kind === "category" && filter.name === cat}
+                onClick={() =>
+                  setFilter({ kind: "category", name: cat })
+                }
                 label={formatCategoryLabel(cat)}
                 count={count}
               />
@@ -313,7 +373,9 @@ export function EvalResults({ report }: EvalResultsProps) {
 
         {filteredScenarios.length === 0 ? (
           <div className="text-center py-8 text-sm text-neutral-400">
-            No scenarios in this category.
+            {filter.kind === "failures"
+              ? "No failing scenarios — everything is passing."
+              : "No scenarios in this category."}
           </div>
         ) : (
           filteredScenarios.map((s) => (
@@ -467,11 +529,83 @@ function ScenarioCard({ scenario }: { scenario: EvalScenarioResult }) {
 }
 
 /**
- * One pill in the category filter row. Single-select semantics: the
+ * One scenario's worth of critical failures. Two render modes:
+ *   - Single failure: flat row, same look as the original flat list —
+ *     scenario name in bold, failure text inline. No click needed.
+ *   - Multiple failures: collapsible. Header shows scenario name +
+ *     failure count, body lists the failures when expanded.
+ *
+ * Default-collapsed in the multi case to keep the section short by
+ * default; clicking the header reveals all failures for that
+ * scenario. Per-card local state (same pattern as ScenarioCard above)
+ * — no shared map needed.
+ *
+ * Red tinting reflects the "critical" severity context, consistent
+ * with the section header.
+ */
+function CriticalFailureGroup({
+  scenario,
+  failures,
+}: {
+  scenario: string;
+  failures: string[];
+}) {
+  const [open, setOpen] = useState(false);
+
+  if (failures.length === 1) {
+    return (
+      <div className="bg-red-50 rounded-lg px-3.5 py-2.5 mb-1.5 text-sm dark:bg-red-950/30 dark:text-red-100">
+        <strong>{scenario}</strong>: {failures[0]}
+      </div>
+    );
+  }
+
+  return (
+    <div className="bg-red-50 rounded-lg mb-1.5 dark:bg-red-950/30">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        className="w-full flex items-center gap-2 px-3.5 py-2.5 text-sm text-left rounded-lg hover:bg-red-100/60 transition-colors dark:text-red-100 dark:hover:bg-red-900/30"
+      >
+        <ChevronDown
+          size={14}
+          className={`flex-shrink-0 text-red-600 dark:text-red-400 transition-transform duration-200 ${
+            open ? "" : "-rotate-90"
+          }`}
+          aria-hidden="true"
+        />
+        <strong className="flex-1 min-w-0 truncate">{scenario}</strong>
+        <span className="flex-shrink-0 text-xs text-red-700 dark:text-red-300 tabular-nums">
+          {failures.length} failures
+        </span>
+      </button>
+      {open && (
+        // pl-9 (36px) aligns the bullets with the start of the scenario
+        // name in the header: button px-3.5 (14) + chevron (14) + gap-2
+        // (8) = 36px. Without this, bullets would hang to the left of
+        // the header text and look unanchored.
+        <ul className="text-sm list-disc pl-9 pr-3.5 pb-2.5 pt-0.5 space-y-1 dark:text-red-100">
+          {failures.map((f, i) => (
+            <li key={i}>{f}</li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+/**
+ * One pill in the scenario filter row. Single-select semantics: the
  * caller is responsible for clearing other pills when this one is
- * activated. `aria-selected` reflects the active state for tab-list
- * accessibility. The count is rendered in a muted color when inactive
- * so it doesn't compete with the label for attention.
+ * activated. `aria-pressed` reflects the active state.
+ *
+ * Active styling matches the metrics-sticky-nav active chip: a near-
+ * black fill with white text in light mode, true white fill with
+ * near-black text in dark mode. Both sit at ~18:1 contrast — far above
+ * any threshold and unmistakably "selected". The count number inherits
+ * the chip's text color when active so it stays at full contrast;
+ * inactive pills get a muted neutral count to keep the label primary.
  */
 function FilterPill({
   active,
@@ -491,16 +625,14 @@ function FilterPill({
       onClick={onClick}
       className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-sm font-medium transition-colors ${
         active
-          ? "bg-amber-100 text-amber-900 dark:bg-amber-900/40 dark:text-amber-100"
+          ? "bg-neutral-900 text-white dark:bg-white dark:text-neutral-900"
           : "bg-neutral-100 text-neutral-600 hover:bg-neutral-200 dark:bg-neutral-800 dark:text-neutral-300 dark:hover:bg-neutral-700"
       }`}
     >
       <span>{label}</span>
       <span
         className={`tabular-nums ${
-          active
-            ? "text-amber-700 dark:text-amber-300"
-            : "text-neutral-400 dark:text-neutral-500"
+          active ? "" : "text-neutral-400 dark:text-neutral-500"
         }`}
       >
         {count}
