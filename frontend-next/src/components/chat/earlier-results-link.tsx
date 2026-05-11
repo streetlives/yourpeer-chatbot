@@ -11,8 +11,15 @@
  * or explicit user reset) when there was a previous results message
  * in the wiped conversation. Gives the user two clear choices:
  *
- *   - See earlier results: re-injects the results as a bot message
- *     with a brief "here's what you were looking at before" prefix.
+ *   - See earlier results: injects a single bot message that pairs
+ *     the saved service cards with the orienting prefix "Here are
+ *     the services you were looking at before:" and offers
+ *     fresh-conversation quick replies ("New search" / "Peer
+ *     navigator"). The snapshot's original text — "I found N
+ *     option(s) for you:" with counts specific to the wiped
+ *     session — is intentionally NOT re-rendered: the recall isn't
+ *     a new search and shouldn't read like one. See
+ *     `store.ts::restoreEarlierResults` for the override details.
  *   - Dismiss: silently discards the snapshot.
  *
  * Rationale: in the target use case ("I just found a shelter, session

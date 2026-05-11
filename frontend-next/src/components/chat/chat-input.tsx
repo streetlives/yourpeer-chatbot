@@ -140,14 +140,39 @@ export function ChatInput({ onSend, disabled }: ChatInputProps) {
           autoComplete="off"
           enterKeyHint="send"
           disabled={disabled}
-          className="flex-1 px-4 py-3 border border-neutral-200 rounded-xl bg-white text-neutral-900 text-base outline-none transition-all focus:border-neutral-300 focus:ring-2 focus:ring-amber-300/30 placeholder:text-neutral-400 disabled:opacity-50 dark:bg-neutral-900 dark:border-neutral-700 dark:text-neutral-100 dark:focus:border-neutral-600 dark:placeholder:text-neutral-500"
+          // Font size:
+          //   • `text-base` (16px) on the typed value is deliberate —
+          //     iOS Safari zooms into any form field with computed
+          //     font-size < 16px when focused, which on a chat input
+          //     produces a jarring page rescale every time the user
+          //     taps to type. Don't shrink the typed-value size.
+          //   • `placeholder:text-sm` at max-[379px] DOES shrink only
+          //     the placeholder. On very small phones (320–379px
+          //     viewport) the default 16px "What do you need help
+          //     with?" placeholder gets clipped because the input
+          //     shares the row with two 48px buttons. Shrinking only
+          //     the placeholder (not the typed text) lets the full
+          //     prompt show on first paint while preserving the
+          //     no-zoom contract above. The placeholder vanishes the
+          //     moment the user starts typing, so there's no visible
+          //     size jump during interaction.
+          className="flex-1 min-w-0 px-4 py-3 border border-neutral-200 rounded-xl bg-white text-neutral-900 text-base outline-none transition-all focus:border-neutral-300 focus:ring-2 focus:ring-amber-300/30 placeholder:text-neutral-400 max-[379px]:placeholder:text-sm disabled:opacity-50 dark:bg-neutral-900 dark:border-neutral-700 dark:text-neutral-100 dark:focus:border-neutral-600 dark:placeholder:text-neutral-500"
         />
 
         <button
           type="submit"
           disabled={disabled || !value.trim()}
           aria-label="Send message"
-          className="w-12 h-12 border-none rounded-xl bg-neutral-900 text-white flex items-center justify-center transition-transform hover:scale-[1.04] active:scale-[0.97] disabled:opacity-40 disabled:cursor-not-allowed disabled:transform-none dark:bg-neutral-100 dark:text-neutral-900"
+          // `shrink-0` matches the mic button (VoiceInputButton, which
+          // has `flex-shrink-0` set explicitly). Without it, when the
+          // row gets narrow (very small phones, or a long pending
+          // value pushing the input out) flexbox shrinks the fixed
+          // `w-12` send button below 48px. The mic stayed full size
+          // because it had the protection; the send button visibly
+          // squashed. The fix is to add `shrink-0` here so the input
+          // (which has `min-w-0 flex-1` above) absorbs all of the
+          // width pressure instead.
+          className="shrink-0 w-12 h-12 border-none rounded-xl bg-neutral-900 text-white flex items-center justify-center transition-transform hover:scale-[1.04] active:scale-[0.97] disabled:opacity-40 disabled:cursor-not-allowed disabled:transform-none dark:bg-neutral-100 dark:text-neutral-900"
         >
           <Send size={18} strokeWidth={2.5} />
         </button>
