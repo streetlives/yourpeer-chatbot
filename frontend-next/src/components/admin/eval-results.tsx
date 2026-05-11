@@ -118,6 +118,19 @@ export function EvalResults({ report }: EvalResultsProps) {
 
   const totalScenarioCount = report.scenarios?.length ?? 0;
 
+  // Auto-expand all scenario cards when a non-"All" filter narrows
+  // the list to ≤5 scenarios. At that size the user wants a quick
+  // overview rather than having to click each card individually; at
+  // larger sizes the expanded view would be unwieldy. Applies to both
+  // the per-category filter and the "All Failures" filter — both are
+  // "narrow slice" views where the user is reviewing a specific
+  // subset and benefits from seeing scores and justifications at a
+  // glance. Excluded: the "All" filter, where the list is the full
+  // report and the collapsed view is the right default regardless of
+  // count.
+  const autoExpand =
+    filter.kind !== "all" && filteredScenarios.length <= 5;
+
   // Passing rate: scenarios scoring >= 4.0 average that didn't error.
   // Matches the "scenario passes if its average score across all 11
   // dimensions is ≥4.0" convention used in the eval reports themselves
@@ -433,7 +446,18 @@ export function EvalResults({ report }: EvalResultsProps) {
           </div>
         ) : (
           filteredScenarios.map((s) => (
-            <ScenarioCard key={s.name} scenario={s} />
+            // Key includes autoExpand so that when the user switches
+            // between a small category (defaultOpen=true) and a
+            // larger view, the card remounts with the new initial
+            // state. React's `useState(defaultOpen)` only honors the
+            // initial value at mount — keying on the prop is the
+            // idiomatic way to "reset on prop change" without an
+            // in-effect setState anti-pattern.
+            <ScenarioCard
+              key={`${s.name}__${autoExpand ? "open" : "shut"}`}
+              scenario={s}
+              defaultOpen={autoExpand}
+            />
           ))
         )}
       </div>
@@ -495,14 +519,28 @@ function EvalSummaryCard({
  * the content, and there's no useful "expand for more" target. They
  * render as a flat red-bordered card matching the previous behavior.
  *
+ * `defaultOpen` only takes effect on mount — used by the parent to
+ * request that the card start expanded (e.g., "narrow category,
+ * expand the overview" UX). For the value to re-apply when the
+ * parent's auto-expand decision flips, the parent must change the
+ * card's `key` so React remounts it with fresh `useState`. Pure
+ * `useState(defaultOpen)` without a key strategy would only honor
+ * the value on the very first mount.
+ *
  * Per-card local state (rather than a shared map in the parent) keeps
- * the implementation simple at the cost of losing expand state across
- * filter changes. Verdict: that's actually the right UX — when the
- * filter narrows the visible scenarios, re-collapsing is a useful
- * "you're looking at a different view now" signal.
+ * the implementation simple at the cost of losing manual toggles
+ * when the parent triggers a remount. That's actually the right UX
+ * here — when the filter changes meaningfully, re-syncing to the
+ * default is more useful than remembering scattered per-card states.
  */
-function ScenarioCard({ scenario }: { scenario: EvalScenarioResult }) {
-  const [open, setOpen] = useState(false);
+function ScenarioCard({
+  scenario,
+  defaultOpen = false,
+}: {
+  scenario: EvalScenarioResult;
+  defaultOpen?: boolean;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
 
   if (scenario.error) {
     return (
