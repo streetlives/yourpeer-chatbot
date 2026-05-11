@@ -471,6 +471,94 @@ class TestFallbackIntegration:
         # Still just the 1 main card
         assert len(result["services"]) == 1
 
+    def test_fallback_dedup_to_empty_emits_audit_event(self):
+        """When fallback fully deduplicates against main, an audit event
+        must reach the dashboard. Without this, the dedup-empty case is
+        indistinguishable from 'fallback never ran' in admin metrics.
+
+        Guards TEST_QUALITY_PLAN §3.2 / §5 P0.2. Companion to
+        test_fallback_deduplicates_against_main, which covers the
+        user-facing behavior; this one covers the observability contract.
+        """
+        from app.services import audit_log
+
+        main = [_card("afc", ["Shelter"])]
+        fallback = [_card("afc", ["Shelter", "LGBTQ Young Adult"])]
+        slots = {
+            "service_type": "shelter", "location": "soho",
+            "age": 21, "_gender": "lgbtq",
+        }
+        audit_log.clear_audit_log()
+        result, _calls = _run_execute_with_mock(slots, main, fallback)
+
+        # The user-facing contract still holds.
+        assert "further away" not in result["response"]
+
+        # And the dashboard-visibility contract: a structured event landed.
+        events = audit_log.get_recent_events(
+            event_type="population_fallback_dedup_empty"
+        )
+        assert len(events) == 1, (
+            "Expected exactly one population_fallback_dedup_empty event; "
+            "got %d. The fallback ran, every card was a duplicate, and the "
+            "admin dashboard must be able to count this case." % len(events)
+        )
+        e = events[0]
+        assert "lgbtq" in e["labels"], (
+            "labels must reflect the user-detected populations that drove "
+            "the fallback; expected 'lgbtq' in %r" % e["labels"]
+        )
+        assert e["fetched_count"] == 1, (
+            "fetched_count is the pre-dedup card count from the fallback "
+            "query — 1 in this scenario, not 0 (0 would mean the query "
+            "itself returned nothing, a distinct case)."
+        )
+        assert e["main_result_count"] == 1, (
+            "main_result_count is the dedup target size — the count of "
+            "main-result service_ids the fallback was compared against."
+        )
+
+    def test_fallback_query_returning_no_cards_also_emits_dedup_empty_event(self):
+        """The event fires whenever the fallback ran and produced zero
+        user-visible cards — that's the operational signal admins need.
+
+        Two sub-cases collapse under the same event name and are
+        distinguished by `fetched_count` in the payload:
+          - fetched_count > 0, deduped == 0  → main results already
+            cover the rare-population services
+          - fetched_count == 0               → no rare-population
+            services exist in the catalog for this query
+
+        Both are "fallback feature ran but didn't help this user" from
+        the dashboard's perspective; dashboards that want the finer
+        split can filter on `fetched_count`. Matches the spec in
+        TEST_QUALITY_PLAN §3.2 ("emit when `fallback_cards_after_dedup=0`").
+        """
+        from app.services import audit_log
+
+        main = [_card("g1", ["Shelter", "Single Adult"])]
+        fallback = []  # query returned nothing
+        slots = {
+            "service_type": "shelter", "location": "soho",
+            "age": 21, "_gender": "lgbtq",
+        }
+        audit_log.clear_audit_log()
+        _result, _calls = _run_execute_with_mock(slots, main, fallback)
+
+        events = audit_log.get_recent_events(
+            event_type="population_fallback_dedup_empty"
+        )
+        assert len(events) == 1, (
+            "Fallback ran (calls=2 in this scenario) but produced zero "
+            "fallback cards — the dashboard must see this as a fallback "
+            "non-result, not as 'fallback was never attempted.'"
+        )
+        # fetched_count is the discriminator between the two sub-cases.
+        # Here the query returned nothing, so fetched_count is 0; the
+        # dedupe loop had nothing to do.
+        assert events[0]["fetched_count"] == 0
+        assert events[0]["main_result_count"] == 1
+
     def test_fallback_with_empty_result_does_not_append_note(self):
         """Fallback query ran, returned no matches borough-wide either.
         No note, no cards added — user just sees main results."""

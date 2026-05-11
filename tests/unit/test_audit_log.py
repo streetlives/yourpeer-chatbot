@@ -19,6 +19,7 @@ from app.services.audit_log import (
     log_query_execution,
     log_crisis_detected,
     log_session_reset,
+    log_population_fallback_dedup_empty,
     get_recent_events,
     get_conversation,
     get_conversations_summary,
@@ -294,6 +295,112 @@ def test_log_session_reset():
     assert len(events) == 1
     assert events[0]["type"] == "session_reset"
     assert events[0]["session_id"] == "s1"
+
+
+# -----------------------------------------------------------------------
+# LOG POPULATION FALLBACK DEDUP EMPTY
+# -----------------------------------------------------------------------
+
+def test_log_population_fallback_dedup_empty_basic():
+    """Records a structured event with type, labels, and counts."""
+    clear_audit_log()
+    log_population_fallback_dedup_empty(
+        session_id="s1",
+        labels=["lgbtq", "youth"],
+        fetched_count=3,
+        main_result_count=8,
+    )
+
+    events = get_recent_events()
+    assert len(events) == 1
+    e = events[0]
+    assert e["type"] == "population_fallback_dedup_empty"
+    assert e["session_id"] == "s1"
+    assert e["labels"] == ["lgbtq", "youth"]
+    assert e["fetched_count"] == 3
+    assert e["main_result_count"] == 8
+    assert "timestamp" in e
+
+
+def test_log_population_fallback_dedup_empty_registers_conversation():
+    """When session_id is set, the event is reachable via get_conversation."""
+    clear_audit_log()
+    log_population_fallback_dedup_empty(
+        session_id="s-conv",
+        labels=["veteran"],
+        fetched_count=1,
+        main_result_count=4,
+    )
+
+    conv = get_conversation("s-conv")
+    assert len(conv) == 1
+    assert conv[0]["type"] == "population_fallback_dedup_empty"
+
+
+def test_log_population_fallback_dedup_empty_no_session_does_not_register():
+    """An empty session_id (and no ContextVar) must not collide all
+    'no-session' events under one conversation key. The event still
+    lands in _events for dashboard counting."""
+    clear_audit_log()
+    log_population_fallback_dedup_empty(
+        labels=["senior"],
+        fetched_count=2,
+        main_result_count=5,
+    )
+
+    # Event still recorded
+    events = get_recent_events()
+    assert len(events) == 1
+    assert events[0]["session_id"] == ""
+    # But the empty-string key was NOT registered as a conversation
+    conv = get_conversation("")
+    assert conv == []
+
+
+def test_log_population_fallback_dedup_empty_labels_defensively_copied():
+    """The labels kwarg is converted to a list — passing a generator or
+    set must not crash, and mutating the caller's list afterwards must
+    not change the recorded event."""
+    clear_audit_log()
+    caller_labels = ["youth", "lgbtq"]
+    log_population_fallback_dedup_empty(
+        session_id="s1",
+        labels=caller_labels,
+        fetched_count=2,
+        main_result_count=3,
+    )
+    caller_labels.append("veteran")  # mutate after the call
+
+    events = get_recent_events()
+    assert events[0]["labels"] == ["youth", "lgbtq"]
+
+
+def test_log_population_fallback_dedup_empty_none_labels_yields_empty_list():
+    """Defensive: missing labels kwarg shouldn't crash — record an empty list."""
+    clear_audit_log()
+    log_population_fallback_dedup_empty(
+        session_id="s1",
+        fetched_count=0,
+        main_result_count=0,
+    )
+
+    events = get_recent_events()
+    assert events[0]["labels"] == []
+
+
+def test_log_population_fallback_dedup_empty_filterable_by_type():
+    """The new event type can be retrieved via get_recent_events filter."""
+    clear_audit_log()
+    log_session_reset("s1")
+    log_population_fallback_dedup_empty(
+        session_id="s1", labels=["lgbtq"],
+        fetched_count=1, main_result_count=2,
+    )
+    log_session_reset("s2")
+
+    filtered = get_recent_events(event_type="population_fallback_dedup_empty")
+    assert len(filtered) == 1
+    assert filtered[0]["labels"] == ["lgbtq"]
 
 
 # -----------------------------------------------------------------------
