@@ -356,7 +356,7 @@ The legacy `test_llm_slot_extractor.py`, `test_llm_classifier.py`, `test_llm_mul
 | End-to-end narrative dispatch | 4 | `TestExtractEndToEndNarrative` (no-mock fallback chain) |
 | Live API extraction | 5 | `tests/integration/test_slot_extraction_live.py` (skipped without API key) |
 
-### `test_audit_log.py` — 83 tests
+### `test_audit_log.py` — 89 tests
 
 Validates all 13 public functions in the audit log module.
 
