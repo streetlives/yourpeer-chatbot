@@ -3979,6 +3979,7 @@ try:
     from app.rag import (
         _DETAIL_TO_TAXONOMY_NARROWING as _PROD_DETAIL_TO_TAXONOMY_NARROWING,
         _DETAIL_DESCRIPTION_FILTERS as _PROD_DETAIL_DESCRIPTION_FILTERS,
+        compute_taxonomy_names as _prod_compute_taxonomy_names,
     )
 except ImportError:
     # The eval can be imported in environments that don't have the
@@ -4008,6 +4009,25 @@ except ImportError:
         }
     _PROD_DETAIL_TO_TAXONOMY_NARROWING = {}
     _PROD_DETAIL_DESCRIPTION_FILTERS = {}
+
+    def _prod_compute_taxonomy_names(  # type: ignore[misc]
+        *,
+        template_key,
+        base_taxonomies,
+        family_status=None,
+        age=None,
+        gender=None,
+        populations=None,
+        cold_context=False,
+        service_detail=None,
+        taxonomy_override=None,
+    ):
+        """Fallback when production isn't importable (spot-check tests).
+        Returns the base list unchanged; the mock will degrade to
+        service_type-based filtering (the pre-fix behavior)."""
+        if taxonomy_override is not None:
+            return list(taxonomy_override)
+        return list(base_taxonomies)
 
 
 def _resolve_borough(location: str | None) -> str | None:
@@ -4524,15 +4544,49 @@ def _filter_rows_by_service_detail(
 # next fixture refresh should ensure Families/families-affirming
 # services are represented per borough.
 
-# Taxonomy lists for the shelter narrowing logic. Mirrors
-# rag/__init__.py:218-228 narrowing rules.
-_FAMILY_STATUS_TAXONOMIES = {
-    # with_children / with_family → families + shelter parent
-    "with_children": {"families", "shelter"},
-    "with_family":   {"families", "shelter"},
-    # alone → single-adult + shelter parent
-    "alone":         {"single adult", "shelter"},
-}
+# ---------------------------------------------------------------------------
+# Hard taxonomy filter — matches production's SQL FILTER_BY_TAXONOMY_NAME_IN
+# ---------------------------------------------------------------------------
+# Production's required SQL filter (see `app.rag.query_templates.
+# FILTER_BY_TAXONOMY_NAME_IN`, applied by every template) keeps a row
+# only if its service_taxonomies overlap the computed taxonomy_names
+# list. The mock now does the same: it computes the same list via
+# `compute_taxonomy_names` (single source of truth in `app.rag`) and
+# applies it as a strict overlap filter against ``service_taxonomies``.
+#
+# Before this filter was added (May 2026 audit follow-up), the eval
+# mock filtered only by the broad ``bot_service_type`` column, missing
+# default-list trimming changes — e.g., the May 2026 audit removed
+# Veterans Short-Term Housing and Warming Center from the shelter
+# default, but the eval still surfaced VSTH for non-veteran women
+# shelter queries because the mock's filter was looser than
+# production's. With this filter in place, the eval mirrors what
+# users in production would actually see.
+
+
+def _filter_rows_by_taxonomy_names(
+    rows: list[dict],
+    taxonomy_names: list[str],
+) -> list[dict]:
+    """Keep rows whose ``service_taxonomies`` overlap the given list,
+    case-insensitive. Empty ``taxonomy_names`` returns rows unchanged
+    (an empty list would be an upstream bug, not a filter semantics
+    question).
+
+    Strict on empty result: production's relaxed-search logic retries
+    with looser filters when 0 rows match; the mock surfaces a
+    0-result response and lets the caller carry the broadened-search
+    signal via ``relaxed=True``.
+    """
+    if not taxonomy_names:
+        return rows
+    allowed = {str(t).lower() for t in taxonomy_names}
+    return [
+        r for r in rows
+        if {str(t).lower() for t in (r.get("service_taxonomies") or [])}
+        & allowed
+    ]
+
 
 # Service-name patterns that signal gender-explicit eligibility. Used by
 # the gender exclusion logic. Patterns are matched case-insensitively as
@@ -4582,77 +4636,63 @@ def _filter_rows_by_eligibility(
     age: int | None,
     populations: list | None,
 ) -> list[dict]:
-    """Apply production's eligibility-shaping logic to the row set.
+    """Apply the fixture-side filters production handles via SQL paths
+    the mock can't replicate.
 
-    Three sub-filters compose:
+    The taxonomy-based narrowing that used to live here (family_status
+    + age/population safety enrichments) was extracted into
+    ``app.rag.compute_taxonomy_names`` and is now called once by
+    ``_mock_query_services`` to compute the exact taxonomy list
+    production would compute. That list is then applied as a strict
+    overlap filter against ``service_taxonomies`` via
+    ``_filter_rows_by_taxonomy_names``. **Single source of truth** —
+    when production's default lists or enrichment rules change, the
+    eval mock follows automatically. Before this refactor, the
+    narrowing logic was duplicated here and drifted from production
+    (May 2026 audit: Veterans Short-Term Housing and Warming Center
+    were removed from the shelter default but the eval still surfaced
+    them because the mock's filter was looser than production's).
 
-    1. ``family_status`` taxonomy narrowing (shelter only, mirroring
-       rag/__init__.py:218-228). For ``with_children``/``with_family``,
-       restrict to rows tagged "Families" or "Shelter" (parent). For
-       ``alone``, restrict to "Single Adult" or "Shelter".
+    What remains here is the gender-by-service-name exclusion logic
+    that production handles via the SQL eligibility table — which
+    the fixture doesn't carry. The mock approximates by excluding
+    services whose name explicitly encodes a binary-gender
+    restriction (e.g., "Overnight Men Sign-Up").
 
-    2. ``gender`` exclusion via service_name pattern. When the user's
-       gender doesn't match a row's name-encoded eligibility, filter
-       it out. LGBTQ/trans/nonbinary users see services named "Men..."
-       or "Women..." filtered out (misgendering risk).
+    **Intentional divergence from production for LGBTQ/trans/nonbinary
+    users.** Production skips the eligibility-table filter entirely for
+    these gender values, relying on lgbtq_boost ranking instead. The
+    eval mock CANNOT do the equivalent — there's no eligibility table
+    in the fixture to skip — so it applies the same service_name
+    pattern exclusion as for male/female users. This is stricter than
+    production at the fixture level but correctly captures the
+    misgendering-risk concern.
 
-    3. Age-based safety enrichment (additive). Production adds
-       'youth' for ages 16-24 and 'senior' for age >=62 to the
-       taxonomy list. We can't add rows to the result set (the mock
-       only filters), but we can ensure age-specific rows aren't
-       *excluded* by the family_status narrowing — by widening the
-       allowed taxonomy set to include age-appropriate ones.
+    Args ``age``, ``family_status``, ``populations`` are now consumed
+    purely for the family-status defense-in-depth branch (excluding
+    gender-explicit single-adult facilities when a family-with-kids
+    search has no explicit gender). They no longer influence the
+    taxonomy filter — that's all in ``compute_taxonomy_names``.
 
-    Returns the filtered row list. Permissive on empty: if every row
-    is filtered out, returns the original ``rows`` instead. This
-    matches production's relaxed-search behavior and avoids the
-    "0 results because every row was gender-tagged wrong" trap.
+    Returns the filtered row list. The caller decides whether to
+    relax / retry on 0 results.
     """
     if not rows:
         return rows
 
-    # ---------------- Step 1: family_status taxonomy narrowing ----------------
-    # Only fires for shelter (production's narrowing is shelter-only).
-    if service_type == "shelter" and family_status in _FAMILY_STATUS_TAXONOMIES:
-        allowed = set(_FAMILY_STATUS_TAXONOMIES[family_status])
-
-        # Production's safety_extras: widen the allowed set so age- /
-        # population-specific shelters remain visible despite narrowing.
-        if age is not None and 16 <= age <= 24:
-            allowed.add("youth")
-            # YourPeer also includes "lgbtq young adult" for youth-LGBTQ
-            allowed.add("lgbtq young adult")
-        if age is not None and age >= 62:
-            allowed.add("senior")
-        if populations and "veteran" in populations:
-            allowed.add("veterans")
-            allowed.add("veterans short-term housing")
-        # LGBTQ enrichment — drop-in center + crisis + lgbtq young adult
-        if (
-            gender in ("lgbtq", "transgender", "nonbinary")
-            or (populations and "lgbtq" in populations)
-        ):
-            allowed.update({"drop-in center", "crisis", "lgbtq young adult"})
-        # DV survivor enrichment — drop-in center + crisis
-        if populations and "dv_survivor" in populations:
-            allowed.update({"drop-in center", "crisis"})
-
-        narrowed = [
-            r for r in rows
-            if {str(t).lower() for t in (r.get("service_taxonomies") or [])}
-            & allowed
-        ]
-        # Permissive: if narrowing removes everything, fall back. Without
-        # this, the fixture's thin coverage of family-tagged rows would
-        # produce empty results for many family-status searches.
-        if narrowed:
-            rows = narrowed
-
-    # ---------------- Step 2: gender exclusion via service_name ----------------
+    # ---------------- Gender exclusion via service_name ----------------
     # Production's SQL filter excludes services whose
     # eligibility.gender disagrees with the user's. The fixture
     # doesn't carry eligibility data, so we approximate via
     # service_name pattern.
+    #
+    # Note: the family_status taxonomy narrowing that used to live here
+    # was extracted into `compute_taxonomy_names` in `app.rag.__init__`
+    # and is now applied as a strict ``service_taxonomies`` filter
+    # earlier in `_mock_query_services` — single source of truth with
+    # production. What remains here is the gender / service-name logic,
+    # which approximates production's SQL eligibility filter the
+    # fixture doesn't carry.
     if gender == "male":
         # User is male: filter out women-only services.
         rows = [r for r in rows if not _is_gender_explicit_women_only(r)]
@@ -4704,15 +4744,6 @@ def _filter_rows_by_eligibility(
                 or _is_gender_explicit_women_only(r)
             )
         ]
-
-    # ---------------- Step 3: family_status (no explicit gender) ----------------
-    # When the user has family_status=with_children/with_family but no
-    # explicit gender, production's narrowing already excludes Single
-    # Adult shelters via Step 1. But if the fixture row is tagged
-    # "Single Adult" AND has a gender-explicit name (e.g., "Overnight
-    # Men Sign-Up" tagged Single Adult), Step 1 already removed it.
-    # No additional filter needed here; this comment exists to document
-    # the case explicitly.
 
     return rows
 
@@ -4846,11 +4877,48 @@ def _mock_query_services(*args, **kwargs) -> dict:
             # Strict colocated filter returned something - use it.
             rows = filtered_rows
 
-    # Step 3: apply eligibility shaping (family_status / gender / age).
-    # Production composes these via taxonomy narrowing + SQL gender
-    # filter; the mock approximates via taxonomy filtering on
-    # service_taxonomies and service_name pattern match. See
-    # _filter_rows_by_eligibility for the full mapping.
+    # Step 2.5: STRICT taxonomy filter — matches production's SQL
+    # FILTER_BY_TAXONOMY_NAME_IN, which is a REQUIRED filter on every
+    # template (see `app.rag.query_templates`). Compute the same
+    # taxonomy_names list production would compute via the shared
+    # helper, then keep only rows whose ``service_taxonomies`` overlap.
+    #
+    # Without this step (pre-May-2026), the eval was blind to default-
+    # list trimming changes — e.g., removing "veterans short-term
+    # housing" from the shelter default in production didn't change
+    # eval behavior because the mock was filtering only on the broad
+    # ``bot_service_type`` column. Now any production change that
+    # narrows or widens taxonomy_names is immediately visible in
+    # eval results.
+    template_key = _resolve_template_key(service_type) or service_type
+    if template_key and template_key in _PROD_TEMPLATES:
+        base_taxonomies = _PROD_TEMPLATES[template_key][
+            "default_params"
+        ].get("taxonomy_names", [])
+    else:
+        base_taxonomies = []
+    # cold_context is intentionally False here — production's slot
+    # extractor sets it from the user message (and the NYC winter
+    # season), and `query_services` receives it via kwargs. The eval
+    # mock receives the same kwarg when the chatbot pipeline forwards
+    # it, so we pull it out and pass through.
+    cold_context = bool(kwargs.get("cold_context"))
+    computed_taxonomies = _prod_compute_taxonomy_names(
+        template_key=template_key,
+        base_taxonomies=base_taxonomies,
+        family_status=family_status,
+        age=age,
+        gender=gender,
+        populations=populations,
+        cold_context=cold_context,
+        service_detail=service_detail,
+        taxonomy_override=taxonomy_override,
+    )
+    rows = _filter_rows_by_taxonomy_names(rows, computed_taxonomies)
+
+    # Step 3: apply eligibility shaping (gender exclusion only — the
+    # family_status / population taxonomy narrowing that used to live
+    # here is now handled by Step 2.5 via the production helper).
     rows = _filter_rows_by_eligibility(
         rows,
         service_type=service_type,
@@ -4860,22 +4928,16 @@ def _mock_query_services(*args, **kwargs) -> dict:
         populations=populations,
     )
 
-    # Step 4: honor service_detail (sub-category narrowing).
+    # Step 4: honor service_detail (description-filter approximation).
+    # When service_detail has a _DETAIL_TO_TAXONOMY_NARROWING entry,
+    # the helper in Step 2.5 already replaced taxonomy_names with the
+    # narrowed list — this step adds the description-keyword match
+    # for service_detail values that production handles via
+    # _DETAIL_DESCRIPTION_FILTERS (no taxonomy narrowing, only a
+    # description regex).
     rows = _filter_rows_by_service_detail(rows, service_detail)
 
-    # Step 5: honor taxonomy_override (population-fallback flow).
-    # Production's population-fallback passes a list like ["youth"] or
-    # ["lgbtq young adult"] to filter to population-specific services.
-    # Match case-insensitive against the row's service_taxonomies.
-    if taxonomy_override:
-        override_lower = {str(t).lower() for t in taxonomy_override}
-        rows = [
-            r for r in rows
-            if {str(t).lower() for t in (r.get("service_taxonomies") or [])}
-            & override_lower
-        ]
-
-    # Step 6: honor max_results. Production's population-fallback caps
+    # Step 5: honor max_results. Production's population-fallback caps
     # results at _POPULATION_FALLBACK_MAX (= 3) to keep the fallback
     # section short. Other call sites also use this for pagination.
     if max_results is not None and isinstance(max_results, int):

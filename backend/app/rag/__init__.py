@@ -206,6 +206,144 @@ _DETAIL_DESCRIPTION_FILTERS = {
 }
 
 
+# ---------------------------------------------------------------------------
+# Generic shelter-mode children (May 2026 regression fix). These are
+# shelter children that apply regardless of family_status — they're
+# service-modality categories ("how is shelter delivered") rather than
+# population-specific categories ("who is eligible"). Hoisted to module
+# scope so both `query_services` and the eval mock dispatcher can use
+# the same list. See TAXONOMY_AUDIT_MAY2026.md §VIII for the
+# per-taxonomy classification rationale.
+# ---------------------------------------------------------------------------
+_SHELTER_GENERIC_MODE_TAXONOMIES = (
+    "crisis",                                # 13 svc — emergency placement
+    "drop-in center",                        # 6 svc — day sleeping rooms
+    "referral",                              # 6 svc — shelter placement help
+    "transitional independent living (til)", # 3 svc — independent living
+    "safe haven",                            # 1 svc — specialized shelter
+    "housing lottery",                       # 1 svc — application-based housing
+    "assessment",                            # 1 svc — intake assessment
+)
+
+
+def compute_taxonomy_names(
+    *,
+    template_key: str,
+    base_taxonomies: list,
+    family_status: str = None,
+    age: int = None,
+    gender: str = None,
+    populations: list = None,
+    cold_context: bool = False,
+    service_detail: str = None,
+    taxonomy_override: list = None,
+) -> list:
+    """Return the final `taxonomy_names` list that production's SQL filter
+    will receive for a given request — the same list every shelter-bound
+    decision in `query_services` already computes.
+
+    This is the **single source of truth** for the taxonomy filter:
+    both the production path (`query_services`) and the eval mock
+    dispatcher (`tests/eval/eval_llm_judge.py::_mock_query_services`)
+    call this function. Before this helper existed, the eval mock
+    had its own duplicated narrowing logic that drifted from
+    production — e.g., it didn't honor the May 2026 default-list
+    trimming (Veterans Short-Term Housing, Warming Center, Residential
+    Recovery removals), so the eval was blind to whether those
+    changes actually constrained the result set in production.
+
+    Pure function — no DB or I/O. Decision order matches production's
+    query_services body exactly:
+
+      1. `taxonomy_override` set    → return override list verbatim
+                                       (population-critical fallback path).
+      2. `service_detail` set + has
+         entry in
+         `_DETAIL_TO_TAXONOMY_NARROWING` → return that list verbatim
+                                       (sub-category taxonomy narrowing).
+      3. shelter template            → start from base, apply family_status
+                                       narrowing (preserving generic
+                                       shelter-mode children), then layer
+                                       population/age/cold safety enrichments.
+      4. other templates             → return base_taxonomies as-is.
+
+    Args:
+        template_key:    The resolved template key (e.g. "shelter").
+        base_taxonomies: TEMPLATES[template_key]["default_params"]
+                         ["taxonomy_names"]. Passed in rather than
+                         re-read so callers (eval mock, tests) can
+                         pin a specific snapshot if needed.
+        family_status:   "with_children" | "with_family" | "alone" | None.
+        age, gender, populations: Eligibility + identity signals.
+        cold_context:    True when the slot extractor detected cold/
+                         warming-center context (sets seasonal
+                         enrichment).
+        service_detail:  Sub-category slot (e.g. "soup kitchens").
+        taxonomy_override: Population-fallback override list.
+    """
+    # (1) taxonomy_override short-circuits everything.
+    if taxonomy_override is not None:
+        return list(taxonomy_override)
+
+    # (2) service_detail narrowing replaces the list entirely.
+    if service_detail:
+        narrowed = _DETAIL_TO_TAXONOMY_NARROWING.get(service_detail)
+        if narrowed:
+            return list(narrowed)
+
+    # (3) shelter — family_status narrowing + safety enrichments.
+    if template_key == "shelter":
+        is_pregnant = bool(populations and "pregnant" in populations)
+        generic = list(_SHELTER_GENERIC_MODE_TAXONOMIES)
+
+        # Step 3a: family_status narrowing.
+        if family_status in ("with_children", "with_family"):
+            narrowed = ["families", "shelter"] + generic
+        elif family_status == "alone" and is_pregnant:
+            # Pregnant override: pregnant + alone → families taxonomies
+            # (prenatal-service shelters typically accept pregnant women
+            # without existing children).
+            narrowed = ["families", "shelter"] + generic
+        elif family_status == "alone":
+            narrowed = ["single adult", "shelter"] + generic
+        else:
+            # No family_status → use the full default list.
+            narrowed = list(base_taxonomies)
+
+        # Step 3b: additive safety enrichments. Each adds taxonomies
+        # for users whose identity/situation/age/season would otherwise
+        # filter them out of relevant services.
+        extras = []
+        if age is not None and 16 <= age <= 24:
+            extras.append("youth")
+        is_lgbtq = (
+            gender in ("lgbtq", "transgender", "nonbinary")
+            or (populations and "lgbtq" in populations)
+        )
+        if is_lgbtq:
+            extras.extend(["drop-in center", "crisis", "lgbtq young adult"])
+        if age is not None and age >= 62:
+            extras.append("senior")
+        if populations and "veteran" in populations:
+            extras.extend(["veterans", "veterans short-term housing"])
+        if populations and "dv_survivor" in populations:
+            for tx in ("drop-in center", "crisis"):
+                if tx not in extras:
+                    extras.append(tx)
+        if cold_context:
+            extras.append("warming center")
+
+        # Compose: narrowed list, then extras (dedupe, preserve order).
+        final = list(narrowed)
+        for tx in extras:
+            if tx not in final:
+                final.append(tx)
+        return final
+
+    # (4) non-shelter templates: no shelter-style enrichment.
+    return list(base_taxonomies)
+
+
 def query_services(
     service_type: str,
     location: str = None,
@@ -386,6 +524,15 @@ def query_services(
     # fallback) wants a targeted query with ONLY the rare population-specific
     # taxonomies, not the default list plus enrichment.
     #
+    # The full decision tree (family_status narrowing + safety enrichments
+    # for youth/LGBTQ/senior/veteran/dv_survivor/cold_context) lives in the
+    # `compute_taxonomy_names` helper above this function. The helper is the
+    # single source of truth — both production (via this call) and the eval
+    # mock dispatcher (`tests/eval/eval_llm_judge.py::_mock_query_services`)
+    # consult it, so default-list trimming changes (e.g., the May 2026 audit
+    # follow-ups removing Veterans Short-Term Housing and Warming Center
+    # from the default) are immediately visible to the eval suite.
+    #
     # YourPeer parity (as of April 2026 source review + DB verification):
     #   - Default shelter search → parent "Shelter" taxonomy, API expands to
     #     all children. Chatbot equivalent: default_params.taxonomy_names
@@ -398,130 +545,21 @@ def query_services(
     #   - "single adult" sub-filter → YourPeer REPLACES with "Single Adult"
     #     child + passes ageMin=18, ageMax=99 to API. Chatbot narrows but
     #     preserves the same generic shelter modes for the same reason.
-    #
-    # REGRESSION FIX (May 2026 per TAXONOMY_AUDIT_MAY2026.md §VIII):
-    # Previously, the narrowing branches set narrowed=["single adult","shelter"]
-    # or narrowed=["families","shelter"] — stripping out crisis (13 svc),
-    # drop-in center (6 svc), referral (6 svc), TIL (3 svc), safe haven (1 svc),
-    # housing lottery (1 svc), assessment (1 svc) = ~31 services that single
-    # adults / families would qualify for. Users reported "not seeing shelters
-    # they would expect" — the cause was over-aggressive narrowing. The fix is
-    # to keep _SHELTER_GENERIC_MODE_TAXONOMIES (below) in the narrowed list.
-    #
-    # NOVEL safety enrichments (intentional divergence from YourPeer — flagged
-    # in QUERY_PARITY_AUDIT.md). These add population-specific Shelter children
-    # back on top of narrowing, because narrowing-by-family-composition strips
-    # out services the user plausibly qualifies for based on age/identity:
-    #
-    #   (1) Age 16–24 → add "youth"               (Covenant House, Ali Forney)
-    #   (2) LGBTQ/trans/nonbinary → add           (Ali Forney Center)
-    #       "lgbtq young adult" + "drop-in
-    #       center" + "crisis"
-    #   (3) Age ≥ 62 → add "senior"               (senior-specific shelters)
-    #   (4) Veteran → add "veterans" +            (VA shelters, veteran transitional)
-    #       "veterans short-term housing"
-    #   (5) DV survivor → add "drop-in center"    (Safe Horizon services)
-    #       + "crisis"
-    #
-    # PREGNANT OVERRIDE: pregnant + family_status=alone overrides the
-    # "single adult" narrowing to the families narrow — pregnant women
-    # typically qualify for family shelter for prenatal services even
-    # without existing children.
     if template_key == "shelter" and taxonomy_override is None:
-        base_taxonomies = list(TEMPLATES["shelter"]["default_params"]["taxonomy_names"])
-        is_pregnant = bool(populations and "pregnant" in populations)
-
-        # Generic shelter-mode children: shelter children that are NOT
-        # population-specific. A user asking for shelter qualifies for these
-        # regardless of family_status, age, or identity. Preserving them
-        # during family_status narrowing fixes the May 2026 regression where
-        # single adults lost visibility into crisis beds / drop-in centers /
-        # placement referrals. See TAXONOMY_AUDIT_MAY2026.md §VIII for the
-        # per-taxonomy classification rationale.
-        _SHELTER_GENERIC_MODE_TAXONOMIES = [
-            "crisis",                                # 13 svc — emergency placement
-            "drop-in center",                        # 6 svc — day sleeping rooms
-            "referral",                              # 6 svc — shelter placement help
-            "transitional independent living (til)", # 3 svc — independent living
-            "safe haven",                            # 1 svc — specialized shelter
-            "housing lottery",                       # 1 svc — application-based housing
-            "assessment",                            # 1 svc — intake assessment
-        ]
-
-        # Step 1: Narrow taxonomy list based on family_status.
-        # When narrowing fires, include:
-        #   - the family-composition child the user qualifies for
-        #     (single adult or families)
-        #   - the parent "shelter" taxonomy (preserves the 18 generic-tagged
-        #     services that lack a child taxonomy)
-        #   - the generic shelter-mode children (preserves ~31 services that
-        #     apply regardless of family composition — see comment above).
-        if family_status in ("with_children", "with_family"):
-            narrowed = ["families", "shelter"] + list(_SHELTER_GENERIC_MODE_TAXONOMIES)
-        elif family_status == "alone" and is_pregnant:
-            # Novel override: pregnant + alone → families (for prenatal services).
-            narrowed = ["families", "shelter"] + list(_SHELTER_GENERIC_MODE_TAXONOMIES)
-        elif family_status == "alone":
-            narrowed = ["single adult", "shelter"] + list(_SHELTER_GENERIC_MODE_TAXONOMIES)
-        else:
-            # No family_status → use the full shelter taxonomy list (equivalent
-            # to YourPeer's default: parent Shelter ID + API expansion).
-            narrowed = base_taxonomies
-
-        # Step 2: Population-specific safety enrichments (novel, additive).
-        # These are no-ops when no narrowing fires (taxonomies already in
-        # default list), and restorative when narrowing fires.
-        safety_extras = []
-
-        # (1) Youth age range (16–24) → ensure youth-serving shelters are visible
-        if age is not None and 16 <= age <= 24:
-            safety_extras.append("youth")
-
-        # (2) LGBTQ/trans/nonbinary → affirming services visible
-        # "drop-in center" + "crisis" are separate Shelter children that
-        # contain LGBTQ-affirming services (DB verified: Drop-in Center
-        # and Crisis are parented under Shelter, not Health).
-        # "lgbtq young adult" is a Shelter child that narrowing strips out.
-        #
-        # Check both gender AND populations: "transman" maps to gender="male"
-        # (the identified gender) but slot_extraction_regex adds "lgbtq" to
-        # _populations to preserve the LGBTQ signal for enrichment.
-        _is_lgbtq = (
-            gender in ("lgbtq", "transgender", "nonbinary")
-            or (populations and "lgbtq" in populations)
+        base_taxonomies = TEMPLATES["shelter"]["default_params"]["taxonomy_names"]
+        user_params["taxonomy_names"] = compute_taxonomy_names(
+            template_key="shelter",
+            base_taxonomies=base_taxonomies,
+            family_status=family_status,
+            age=age,
+            gender=gender,
+            populations=populations,
+            cold_context=cold_context,
+            # service_detail handled separately below (it can replace
+            # taxonomy_names AGAIN via _DETAIL_TO_TAXONOMY_NARROWING).
+            service_detail=None,
+            taxonomy_override=None,
         )
-        if _is_lgbtq:
-            safety_extras.extend(["drop-in center", "crisis", "lgbtq young adult"])
-
-        # (3) Senior age (≥ 62) → senior-specific shelters visible
-        if age is not None and age >= 62:
-            safety_extras.append("senior")
-
-        # (4) Veteran → veteran-specific shelters visible
-        if populations and "veteran" in populations:
-            safety_extras.extend(["veterans", "veterans short-term housing"])
-
-        # (5) DV survivor → DV-tagged services (often under Crisis/Drop-in Center)
-        if populations and "dv_survivor" in populations:
-            for tx in ("drop-in center", "crisis"):
-                if tx not in safety_extras:
-                    safety_extras.append(tx)
-
-        # (6) Cold context → surface Warming Center.
-        # Warming Center (1 svc) is seasonal and was removed from the
-        # shelter default in May 2026 (TAXONOMY_AUDIT_MAY2026.md §VIII).
-        # Conditional inclusion when the user message mentions freezing
-        # cold, warming centers, or "out of the cold" — detected by
-        # `_extract_cold_context` in slot_extraction_regex.py.
-        if cold_context:
-            safety_extras.append("warming center")
-
-        # Compose final taxonomy list (dedupe while preserving order).
-        final = list(narrowed)
-        for tx in safety_extras:
-            if tx not in final:
-                final.append(tx)
-        user_params["taxonomy_names"] = final
 
     # -----------------------------------------------------------------
     # Sub-category narrowing (Phase 4)

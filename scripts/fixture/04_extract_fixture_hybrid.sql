@@ -99,8 +99,18 @@ WITH classified AS (
         (SELECT ARRAY_AGG(DISTINCT t_own.name ORDER BY t_own.name)
            FROM service_taxonomy st_own
                 JOIN taxonomies t_own ON st_own.taxonomy_id = t_own.id
-          WHERE st_own.service_id = s.id
-            AND t_own.name NOT IN ('Other service')) AS service_taxonomies,
+          WHERE st_own.service_id = s.id) AS service_taxonomies,
+        -- ^^ May 2026 fix: removed `AND t_own.name NOT IN ('Other service')` so
+        -- services whose only DB tag is 'Other service' are preserved with that
+        -- tag in the fixture rather than dropped to NULL. The strict taxonomy
+        -- filter in tests/eval/eval_llm_judge.py::_mock_query_services (May
+        -- 2026 audit follow-up) requires a non-empty service_taxonomies array
+        -- to match any template's default. Pre-fix, ~40 'other'-bucket rows
+        -- (Health Services Hotline, Public Benefits Enrollment, Community
+        -- Services, Code Blue, Kindergarten, etc.) had NULL service_taxonomies
+        -- and were unreachable from any service_type query. The exclusion is
+        -- preserved below in `also_available` where filtering out the generic
+        -- 'Other service' parent reduces co-location noise.
         (SELECT ARRAY_AGG(DISTINCT t_co.name ORDER BY t_co.name)
            FROM service_at_locations sal_co
                 JOIN services s_co ON sal_co.service_id = s_co.id
