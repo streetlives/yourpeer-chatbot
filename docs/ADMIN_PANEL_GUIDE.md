@@ -201,18 +201,21 @@ one chip per section. Each chip has a status dot:
 
 - **Red** — at least one off-target metric in that section
 - **Amber** — at least one warning, no off-target
-- **Gray (neutral)** — no measurable issues: on-target, no-data, or
-  tracking-only metrics all roll up here. The decision to use neutral
-  gray rather than green is deliberate — see the comment in
-  `metrics-sticky-nav.tsx` — so that "healthy" sections don't read as
-  "ignore me."
+- **Green** — at least one on-target metric, no warnings or
+  off-targets (the section is measurably passing)
+- **Gray** — only no-data and/or tracking-only metrics. Tracking rows
+  are informational with no target, and no-data rows aren't
+  measurable yet, so neither earns a green dot on its own — there's
+  no measurable signal to read either way
 
 The active chip (the section currently in view) gets a filled
 background — driven by an IntersectionObserver as you scroll. Click a
-chip to jump to that section. The dot color escalates from neutral on
-the worst-case metric in the section: any off-target wins (red),
-otherwise any warning wins (amber), otherwise gray. So a red dot
-means something in that section needs attention.
+chip to jump to that section. The dot color cascades through the
+worst-case metric status in the section: any off-target wins (red);
+otherwise any warning wins (amber); otherwise any on-target wins
+(green); otherwise gray. So a red dot means something in that
+section needs attention, and a green dot means everything measurable
+in that section is currently passing.
 
 **"Show only issues" toggle.** Filters every section down to just the
 metrics currently flagged red or amber. Useful when triaging.

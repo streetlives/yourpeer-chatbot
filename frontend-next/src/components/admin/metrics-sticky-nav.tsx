@@ -27,12 +27,21 @@ interface MetricsStickyNavProps {
  *
  * Renders one chip per section (1-9) showing its number + short label
  * + a status dot. The dot's color summarizes the section's worst-case
- * metric status:
+ * metric status, with green reserved for sections that are
+ * measurably passing:
  *   - red: at least one off-target metric (something needs fixing)
  *   - amber: warning(s) but no off-target (worth watching)
- *   - gray: section has no measurable issues (on-target / no-data /
- *           tracking) — neutral dot rather than green, to avoid
- *           encouraging admins to ignore them
+ *   - green: at least one on-target metric, no warnings or off-targets
+ *           (section is measurably passing — there's something to
+ *           celebrate AND nothing flagged)
+ *   - gray: only no-data and/or tracking-only metrics (section has no
+ *           measurable signal yet — not a pass, not a fail)
+ *
+ * The split between green and gray is deliberate: tracking-only and
+ * no-data rows shouldn't masquerade as "healthy" by getting a green
+ * dot, because there's nothing yet to be healthy *about*. A section
+ * earns green only when at least one metric is measured AND meeting
+ * its target.
  *
  * Clicking a chip scrolls the matching section into view. Sections
  * with anchor `metrics-section-N` receive the smooth-scroll behavior;
@@ -63,11 +72,20 @@ export function MetricsStickyNav({
         {sections.map((s) => {
           const issues = countIssues(s.statuses);
           const offTargets = s.statuses.filter((x) => x === "off-target").length;
-          // Dot color priority: off-target > warning > neutral
+          const onTargets = s.statuses.filter((x) => x === "on-target").length;
+          // Dot color priority: off-target > warning > on-target > neutral.
+          // Green requires the section to have at least one measurably-
+          // passing metric AND no warnings or off-targets — so there's
+          // something to celebrate and nothing currently flagged. A
+          // section whose statuses are entirely no-data / tracking-only
+          // stays gray: tracking rows are informational and no-data rows
+          // aren't measurable yet, so neither earns "this is good."
           const dotClass = offTargets > 0
             ? "bg-red-500 dark:bg-red-400"
             : issues > 0
             ? "bg-amber-500 dark:bg-amber-400"
+            : onTargets > 0
+            ? "bg-green-500 dark:bg-green-400"
             : "bg-neutral-300 dark:bg-neutral-700";
           const ariaLabel = issues > 0
             ? `Section ${s.id} ${s.shortLabel}, ${issues} ${
