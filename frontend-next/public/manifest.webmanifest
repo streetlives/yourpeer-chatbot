@@ -1,6 +1,6 @@
 {
-  "name": "YourPeer — Find Services",
-  "short_name": "YourPeer",
+  "name": "YourPeer AI Chat — Find Services",
+  "short_name": "YourPeer AI Chat",
   "description": "Find shelter, food, and other services in NYC. Your conversation is private.",
   "start_url": "/",
   "scope": "/",
