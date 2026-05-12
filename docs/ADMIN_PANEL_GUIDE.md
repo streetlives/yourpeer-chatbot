@@ -34,8 +34,11 @@ rubric, see [EVALUATION_TESTING.md](EVALUATION_TESTING.md).
 ## Accessing the console
 
 **URL.** `/admin` on the deployed Next.js frontend. The bare `/admin`
-path redirects to `/admin/overview`, which is the canonical landing
-page (`src/app/admin/page.tsx`).
+path is a server-side redirect to `/admin/overview`, the canonical
+landing page (`src/app/admin/overview/page.tsx`). The redirect itself
+lives in `src/app/admin/page.tsx` — a one-line `redirect()` call from
+`next/navigation` that short-circuits the response before any HTML
+is sent, so the browser lands on `/admin/overview` directly.
 
 **Sign in.** Single password, set server-side as the `ADMIN_API_KEY`
 environment variable on the backend. Enter it on the login form; on
@@ -132,24 +135,52 @@ color (green / amber / red) based on the thresholds shipped in
 
 The Confirm Rate card replaces a legacy "Crises Detected" count
 because a bare crisis count is uninformative without context (you
-can't have a "high" or "low" crisis count out of context). Per-category
-crisis breakdown lives in the Operations block below.
+can't have a "high" or "low" crisis count out of context). The
+per-category crisis breakdown lives in the Crisis Activity panel
+of the Operations block below.
 
 ### Operations block
 
-Charts derived from `get_stats()`:
+Section header "Operations" with the subtitle: *When and where users
+need help, session engagement patterns, and post-results behavior.
+Informs peer navigator staffing and database coverage priorities.*
+Below that, five inline widgets render in a responsive 2-up grid
+(driven entirely by `AdminStats` from `get_stats()` — no charting
+library, all Tailwind primitives). Each widget owns its own
+empty-state copy so a brand-new deploy with no traffic still reads
+sensibly:
 
-- **Crisis categories widget** — per-category counts of detected
-  crises (domestic violence, suicidal ideation, etc.) plus a "fail
-  open" count showing how often the LLM crisis detector errored and
-  fell through to the regex layer
-- **Service-type distribution** — what categories users are asking
-  for
-- **No-result by service** — which service types are failing most
-  often
-- **Top no-result phrases** — exact user phrasings that produced zero
-  results (a backlog for slot-extraction improvements)
-- **Bot repetition** — sessions where the bot repeated itself
+- **When (Hourly Traffic)** — 24-bar histogram of conversation turns
+  by hour of day, anchored to ET (so midnight ET is the leftmost
+  bar even though the backend buckets by UTC). The peak hour is
+  highlighted in solid amber for one-glance staffing reads;
+  subtitle shows total events and the peak hour
+- **Where (Top Locations)** — ranked horizontal bars of user-stated
+  locations by query volume, with no-result rate as a trailing
+  secondary signal. Locations with elevated no-result rates are
+  color-coded (amber 25–50%, red ≥ 50%) so underserved areas are
+  the visually loudest rows
+- **How Long (Session Duration)** — vertical bars over 5 buckets
+  (<1m, 1–3m, 3–7m, 7–15m, 15m+). The 3–7m bucket is the
+  peer-navigator handoff target range; a footer row surfaces the
+  share of multi-turn sessions currently in that band
+- **Engagement** — paired view in one card. Top: turn-count
+  distribution (1 / 2–3 / 4–6 / 7–10 / 11+ turns). Bottom: the
+  post-results follow-up rate (% of result-receiving sessions that
+  asked a question after results were shown). The pairing separates
+  "users got an answer and left" from "users couldn't get what they
+  wanted" from "users dug in deeply"
+- **Crisis Activity** — full-width block with its own section header
+  and two side-by-side panels: **Last 24 Hours** (rolling, anchored
+  to now) and **All-Time** (cumulative). Each panel shows a
+  per-category breakdown (domestic violence, suicide/self-harm,
+  medical emergency, trafficking, etc.) as horizontal bars sorted
+  by count, falling back to a green "✓ No crises detected…"
+  sentinel when the breakdown is empty. The 24h panel has a footer
+  pointer to the Recent Activity feed below for drilling into
+  individual events. Replaces the older single-panel
+  "Crisis Categories widget" — comparing 24h shape against the
+  cumulative shape is the operational signal
 
 ### Recent Activity feed
 
@@ -170,15 +201,18 @@ one chip per section. Each chip has a status dot:
 
 - **Red** — at least one off-target metric in that section
 - **Amber** — at least one warning, no off-target
-- **Green** — at least one on-target metric, no warnings or off-targets
-- **Gray** — only no-data or tracking-only metrics (nothing measurably
-  passing or failing yet)
+- **Gray (neutral)** — no measurable issues: on-target, no-data, or
+  tracking-only metrics all roll up here. The decision to use neutral
+  gray rather than green is deliberate — see the comment in
+  `metrics-sticky-nav.tsx` — so that "healthy" sections don't read as
+  "ignore me."
 
 The active chip (the section currently in view) gets a filled
 background — driven by an IntersectionObserver as you scroll. Click a
-chip to jump to that section. The dot color cascades from worst-case
-metric in the section, so a red dot means there's something that
-needs attention there.
+chip to jump to that section. The dot color escalates from neutral on
+the worst-case metric in the section: any off-target wins (red),
+otherwise any warning wins (amber), otherwise gray. So a red dot
+means something in that section needs attention.
 
 **"Show only issues" toggle.** Filters every section down to just the
 metrics currently flagged red or amber. Useful when triaging.
@@ -227,7 +261,8 @@ Anonymized list of every session. The table shows:
 | Slots | The final slot values from the session (service_type, location, age, gender, family_status) — truncated with full value on hover |
 | Last Active | Relative time of the most recent turn |
 
-**Sorting.** Every column is sortable. Click a header to toggle
+**Sorting.** Every column except Slots is sortable (Session, Turns,
+Outcome, and Last Active). Click a header to toggle
 ascending/descending. Default sort: Last Active descending.
 
 **Filters.** Above the table:
@@ -558,10 +593,11 @@ cost calculator's traffic projections.
 
 ### "Did the bot miss a crisis today?"
 Overview → System Health (confirm backend is healthy) → look at the
-Crisis Categories widget in the Operations block. Then Conversations
-tab → filter Outcome to Crisis to see the sessions where crisis was
-flagged, and the Query Log for any session that ended without a
-result.
+Crisis Activity block in the Operations block, starting with the
+**Last 24 Hours** panel for what's been flagged recently. Then
+Conversations tab → filter Outcome to Crisis to see the sessions where
+crisis was flagged, and the Query Log for any session that ended
+without a result.
 
 ### "Why is the no-result rate up?"
 Metrics tab → Section 1 — confirms it's up. Then Section 7 —
