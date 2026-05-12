@@ -1,5 +1,5 @@
 # Direct dependencies only — transitive deps resolved by pip
-fastapi>=0.100.0
+fastapi>=0.136.1
 uvicorn>=0.46.0
 pydantic>=2.13.4
 python-dotenv>=1.0.0
