@@ -144,7 +144,7 @@ export function TranscriptDrawer({
         <Dialog.Content className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-2xl max-w-[900px] w-[92%] max-h-[85vh] overflow-y-auto p-7 z-50 animate-in fade-in slide-in-from-bottom-2">
           <div className="flex justify-between items-start mb-4">
             <div>
-              <Dialog.Title className="text-base font-semibold">
+              <Dialog.Title className="text-base font-semibold text-neutral-900 dark:text-neutral-100">
                 Session {sessionId.slice(0, 12)}…
               </Dialog.Title>
               {/* Visually-hidden description for screen readers — Radix
@@ -340,7 +340,7 @@ function TurnEvent({ e, diff }: { e: AuditEvent; diff: SlotDiff | undefined }) {
           <div className="text-xs font-semibold text-amber-600 dark:text-amber-300 mb-1">
             User · {formatTimeOfDayWithSeconds(e.timestamp)}
           </div>
-          <div className="text-sm whitespace-pre-wrap leading-relaxed">{e.user_message}</div>
+          <div className="text-sm text-neutral-700 dark:text-neutral-200 whitespace-pre-wrap leading-relaxed">{e.user_message}</div>
         </div>
       )}
       {/* Bot turn */}
@@ -348,7 +348,7 @@ function TurnEvent({ e, diff }: { e: AuditEvent; diff: SlotDiff | undefined }) {
         <div className="text-xs font-semibold text-neutral-500 dark:text-neutral-400 mb-1">
           Bot
         </div>
-        <div className="text-sm whitespace-pre-wrap leading-relaxed">{e.bot_response}</div>
+        <div className="text-sm text-neutral-700 dark:text-neutral-200 whitespace-pre-wrap leading-relaxed">{e.bot_response}</div>
 
         {/* Per-turn slot diff — preferred over flat slots dump */}
         {diff && (diff.added.length > 0 || diff.overwritten.length > 0 || diff.removed.length > 0) && (
@@ -397,7 +397,7 @@ function QueryEvent({ e }: { e: AuditEvent }) {
       <div className="text-xs font-semibold text-emerald-600 dark:text-emerald-300 mb-1">
         Query · {formatTimeOfDayWithSeconds(e.timestamp)}
       </div>
-      <div className="text-sm font-mono">
+      <div className="text-sm font-mono text-neutral-700 dark:text-neutral-200">
         <span className="font-semibold">{e.template_name}</span>
         {" → "}
         <span className={resultColor}>

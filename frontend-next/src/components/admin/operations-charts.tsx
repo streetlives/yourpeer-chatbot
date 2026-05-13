@@ -226,6 +226,7 @@ function VerticalBars({
                         : "bg-amber-300/70 hover:bg-amber-400 dark:bg-amber-400/60 dark:hover:bg-amber-400"
                   }`}
                   style={{ height: heightStyle }}
+                  aria-label={`${it.label}: ${it.value}`}
                 />
               </Tooltip>
             </div>
@@ -356,6 +357,7 @@ function HorizontalBars({
             <Tooltip content={it.label}>
               <div
                 className="min-w-[120px] max-w-[160px] flex-shrink-0 flex items-center gap-1 text-neutral-700 font-medium dark:text-neutral-300"
+                aria-label={it.label}
               >
                 {it.icon && (
                   <span className="flex-shrink-0 text-neutral-400 dark:text-neutral-500" aria-hidden="true">
@@ -370,7 +372,20 @@ function HorizontalBars({
                 className="h-full bg-amber-300/70 rounded dark:bg-amber-400/60"
                 style={{ width: `${pct}%` }}
               />
-              <div className="absolute inset-0 flex items-center pl-2 text-xs font-mono text-neutral-700 font-semibold dark:text-neutral-200">
+              {/* In-bar value. Sits over the amber fill in both
+               *  modes. text-neutral-700 reads as near-black on the
+               *  light-mode amber-300/70 fill; in dark mode, the
+               *  amber-400/60 fill still renders as a saturated
+               *  gold, so we anchor the value text at
+               *  text-neutral-900 (the darkest available shade)
+               *  rather than the lighter dark:text-neutral-200 that
+               *  the rest of the dark-mode text uses. The
+               *  neutral-900 vs neutral-200 inversion is the point:
+               *  on this specific surface (amber fill) the
+               *  high-contrast reading is dark-text-on-gold in
+               *  both themes, not light-text-on-gold in dark
+               *  mode. */}
+              <div className="absolute inset-0 flex items-center pl-2 text-xs font-mono text-neutral-700 dark:text-neutral-900 font-semibold">
                 {it.value}
               </div>
             </div>

@@ -38,12 +38,25 @@ const STATUS_COLORS: Record<MetricStatus, string> = {
   "tracking": "text-blue-500",
 };
 
+// Pill backgrounds. Each entry follows the same shape: light-mode
+// uses a 50-shade fill + 600-shade text; dark-mode uses a 900/30
+// fill (the /30 is a 30% alpha so the tint blends with the dark
+// card surface rather than reading as a solid block) + 300-shade
+// text for legibility. This is the same recipe used by the badges
+// in event-feed.tsx and conversation-table.tsx, so dark-mode pills
+// across the whole admin section read as one consistent palette.
+//
+// "tracking" keeps text-blue-500 in light mode (its pre-existing
+// shade) rather than upgrading to text-blue-600 to match
+// event-feed — staying out of the light-mode treatment since the
+// reported issue was dark-mode only, and shifting the light shade
+// would be a separate decision.
 const PILL_BG: Record<MetricStatus, string> = {
-  "on-target": "bg-green-50 text-green-600",
-  warning: "bg-amber-50 text-amber-600",
-  "off-target": "bg-red-50 text-red-600",
-  "no-data": "bg-neutral-100 text-neutral-400",
-  "tracking": "bg-blue-50 text-blue-500",
+  "on-target": "bg-green-50 text-green-600 dark:bg-green-900/30 dark:text-green-300",
+  warning: "bg-amber-50 text-amber-600 dark:bg-amber-900/30 dark:text-amber-300",
+  "off-target": "bg-red-50 text-red-600 dark:bg-red-900/30 dark:text-red-300",
+  "no-data": "bg-neutral-100 text-neutral-400 dark:bg-neutral-800 dark:text-neutral-500",
+  "tracking": "bg-blue-50 text-blue-500 dark:bg-blue-900/30 dark:text-blue-300",
 };
 
 export function statusClass(
