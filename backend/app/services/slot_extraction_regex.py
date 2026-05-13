@@ -314,38 +314,53 @@ SERVICE_KEYWORDS = {
         "academic enrichment", "continued education",
     ],
 
-    # --- Other Services (taxonomy: Other service) ---
-    # Includes housing assistance programs (rental assistance, Section 8,
-    # eviction prevention, etc.) — YourPeer surfaces these under "Other service".
-    # "housing" alone stays in shelter (ambiguous → urgent interpretation).
+    # --- Benefits (taxonomy: Other service › Benefits + Other service › Taxes) ---
+    # Promoted from `other` in Phase B per TAXONOMY_AUDIT_MAY2026.md §IX
+    # Ticket D. DB coverage: 32 Benefits leaf + 2 Taxes leaf (Phase B doc
+    # folds tax prep into benefits since most NYC tax-prep clinics are
+    # EITC-focused / benefits-adjacent) + ~50 additional name-pattern
+    # matches against `Other service` parent-direct via
+    # FILTER_BY_TAXONOMY_OR_NAME_PATTERN.
     #
-    # NOTE (April 2026 audit): a dedicated "housing_assistance" service type
-    # was briefly split out as a Phase 2 feature, then removed to match
-    # YourPeer's taxonomy structure. The audit-regression tests in
-    # TestHousingAssistanceRemoval enforce that these keywords stay here.
-    # service_detail is still set (see _NOTABLE_SUB_TYPES below) so the
-    # narrowing-within-other mechanism in rag/__init__.py can kick in.
-    "other": [
-        "other services", "other service",
-        "benefits", "ebt", "food stamps", "medicaid",
-        # "snap" moved to _WORD_BOUNDARY_KEYWORDS — "Snapchat" collision (REGEX_AUDIT)
-        "social security", "disability", "public assistance",
-        "identification", "birth certificate", "need an id",
-        "free phone", "wifi", "internet", "charging",
-        # "mail" moved to _WORD_BOUNDARY_KEYWORDS — "email"/"gmail" collision (REGEX_AUDIT)
-        "mailing address", "storage", "locker",
-        "welfare", "cash assistance", "state id", "nyc id",
-        # "free id" — NYC's IDNYC program is the canonical free ID
-        # service. Listed here (not just in _NOTABLE_SUB_TYPES) so the
-        # longest-keyword-wins matcher prefers it over the bare "id"
-        # word-boundary match.
-        "free id",
-        "metro card", "charger", "charging station",
-        # "transit" moved to _WORD_BOUNDARY_KEYWORDS — "transition" collision (REGEX_AUDIT)
-        # NYC-specific (P3 audit)
-        "voter registration", "replacement id",
-        "tax prep", "tax preparation", "free tax",
-        # Housing programs (non-emergency — rental/eviction/vouchers)
+    # Migration history (read carefully — there are two doc layers):
+    #
+    # Layer 1 (April 15, 2026 — QUERY_PARITY_AUDIT.md):
+    #   Removed the dedicated `housing_assistance` service_type because
+    #   YourPeer's frontend has no equivalent. Section 8 / NYCHA / rental
+    #   assistance / eviction prevention keywords collapsed into
+    #   SERVICE_KEYWORDS["other"]. The TestHousingAssistanceRemoval
+    #   regression class in test_audit_regression.py enforced this.
+    #
+    # Layer 2 (May 2026 — PHASE_B_PROMOTION_PLAN.md, supersedes Layer 1):
+    #   User-testing (end user 3, mens-shelter resident) flagged that
+    #   Section 8 / vouchers don't fit "other" mentally — they're benefit-
+    #   enrollment requests, distinct from emergency shelter. Phase B
+    #   Ticket D moves these to `benefits`, which IS net-new for the
+    #   product line (YourPeer's frontend has no benefits chip either).
+    #   The TestHousingAssistanceRemoval class is updated to enforce
+    #   the new routing: housing-program keywords route to `benefits`,
+    #   NOT `other`. The dedicated `housing_assistance` template still
+    #   doesn't exist (Layer 1's primary guard) — these keywords flow
+    #   through the `benefits` template instead.
+    #
+    # service_detail values from _NOTABLE_SUB_TYPES carry through
+    # unchanged. The _DETAIL_DESCRIPTION_FILTERS regex narrowings
+    # ("Section 8 vouchers", "rental assistance", "NYCHA housing",
+    # "financial services", "disability services") now fire under the
+    # benefits template's optional FILTER_BY_DESCRIPTION_KEYWORDS
+    # instead of `other`'s.
+    "benefits": [
+        # SNAP / EBT / food stamps (migrated from `other`)
+        "benefits", "ebt", "food stamps",
+        # Medicaid / Medicare / health insurance enrollment (migrated)
+        "medicaid", "health insurance", "insurance enrollment",
+        "enroll in insurance",
+        # Cash assistance / public assistance / welfare (migrated)
+        "public assistance", "cash assistance", "welfare",
+        # Social Security / disability benefits (migrated)
+        "social security", "disability benefits",
+        # Housing programs (migrated from `other` per Phase B Ticket D —
+        # supersedes April 2026 parity-audit decision).
         "rental assistance", "help with rent", "behind on rent",
         "rent arrears", "eviction prevention",
         "housing voucher", "housing assistance",
@@ -354,35 +369,89 @@ SERVICE_KEYWORDS = {
         "homeless prevention",
         "affordable housing", "nycha", "housing connect",
         "subsidized housing", "housing lottery",
-        # --- Phase 1 audit: new clusters (886 services discovered) ---
-        # Financial (32 services, 0% prior coverage)
+        # Tax prep (migrated; folded into benefits per Phase B Ticket D
+        # decision — most NYC tax-prep clinics are EITC-focused).
+        "tax prep", "tax preparation", "free tax",
+        # Financial cluster (migrated — 32 services; all benefits-adjacent
+        # in user mental model: counseling on benefits/budgets/credit).
         "financial help", "financial advice", "financial advisor",
         "money management", "budgeting", "credit counseling",
         "debt help", "financial literacy",
         "help with money", "bad with money", "money problems",
+        # New high-confidence additions surfaced by Phase B name-pattern
+        # analysis of `Other service` parent-direct service names:
+        "benefits enrollment", "benefits assistance",
+        "low income tax", "free tax prep",
+        "snap application", "snap enrollment",
+        "liheap", "energy assistance",
+        "government assistance", "government benefits",
+        "emergency funding", "emergency assistance",
+    ],
+
+    # --- Other Services (taxonomy: Other service) ---
+    # Holds the residual `Other service` parent-direct catch-all after
+    # education (Ticket C) and benefits (Ticket D) have been promoted.
+    # Remaining keywords cover IDs, connectivity (free phone / wifi /
+    # charging), mail/storage, and miscellaneous utility services that
+    # YourPeer also surfaces under "Other service".
+    #
+    # NOTE (April 2026 audit, superseded May 2026): a dedicated
+    # `housing_assistance` service type was briefly split out, then
+    # removed to match YourPeer's taxonomy structure. Housing keywords
+    # initially collapsed back into `other`; Phase B Ticket D then moved
+    # them to `benefits` per user-testing evidence. The
+    # TestHousingAssistanceRemoval class still enforces that the
+    # `housing_assistance` template doesn't get reintroduced.
+    "other": [
+        "other services", "other service",
+        # Identification (kept — distinct from benefits enrollment)
+        "identification", "birth certificate", "need an id",
+        "state id", "nyc id",
+        # "free id" — NYC's IDNYC program is the canonical free ID
+        # service. Listed here (not just in _NOTABLE_SUB_TYPES) so the
+        # longest-keyword-wins matcher prefers it over the bare "id"
+        # word-boundary match.
+        "free id",
+        # Connectivity (kept)
+        "free phone", "wifi", "internet", "charging",
+        "metro card", "charger", "charging station",
+        # Mail / storage (kept)
+        # "mail" moved to _WORD_BOUNDARY_KEYWORDS — "email"/"gmail" collision (REGEX_AUDIT)
+        "mailing address", "storage", "locker",
+        # "snap" / "transit" moved to _WORD_BOUNDARY_KEYWORDS — collisions.
+        # Disability term (note: "disability" alone is ambiguous — it can
+        # mean either a population modifier OR a benefits ask. "disability
+        # benefits" specifically routes to benefits via the dedicated
+        # keyword above. Bare "disability" stays here as a population-
+        # adjacent generic ask; the "disability services" keyword below
+        # handles the catchall framing.)
+        "disability",
+        # Voter registration (kept — civic, not benefits)
+        "voter registration", "replacement id",
+        # Tax prep / housing programs / financial cluster — MIGRATED to
+        # SERVICE_KEYWORDS["benefits"] in Phase B (TAXONOMY_AUDIT_MAY2026.md
+        # §IX Ticket D). The financial cluster historically contributed 32
+        # services and the housing-programs cluster ~30; both are
+        # benefit-enrollment requests per Phase B doc's user-testing
+        # rationale (end user 3's "Section 8 doesn't fit anywhere clean"
+        # observation). Tests in TestHousingAssistanceRemoval and the new
+        # TestBenefitsPromotion enforce the routing destination.
+        # --- Phase 1 audit: residual clusters (kept in `other`) ---
         # Education / ESL / GED — MIGRATED to SERVICE_KEYWORDS["education"]
-        # in Phase B (TAXONOMY_AUDIT_MAY2026.md §IX Ticket C). The cluster
-        # historically contributed ~131 services to `service_type=other`;
-        # those services are now reachable via `service_type=education`,
-        # which surfaces both leaf-tagged (Education taxonomy, 101 services)
-        # and parent-direct tagging-debt entries (via the OR'd query
-        # template's service-name pattern fallback). Keep the breadcrumb
-        # in place — the test_audit_regression suite includes a regression
-        # guard (TestEducationPromotion) that fails if any of these keywords
-        # reappear in "other".
-        # Senior services (23 services)
+        # in Phase B (Ticket C). See note in education block for details.
+        # Senior services (23 services) — kept; senior-adjacency is a
+        # population modifier, not a benefits ask per se.
         "senior center", "senior services", "older adult",
         "aging services", "elder services",
-        # Re-entry (40 services)
+        # Re-entry (40 services) — kept; re-entry is a population modifier,
+        # not a benefits ask (re-entry services include case management,
+        # mentorship, housing — broader than benefits enrollment).
         "reentry", "re-entry", "released from jail",
         "released from prison", "just got out of jail",
-        # Documents
+        # Documents (non-ID)
         "social security card", "document translation",
         # Transit / mobility
         "access-a-ride", "transportation help",
-        # Insurance enrollment
-        "health insurance", "insurance enrollment",
-        "enroll in insurance",
         # LGBTQ non-shelter services (13 services)
         "lgbtq services", "lgbtq support", "lgbtq center",
         "queer services", "queer community",
@@ -395,8 +464,14 @@ SERVICE_KEYWORDS = {
         # for the migrated entries and rationale, and
         # _DETAIL_TO_TAXONOMY_NARROWING for the leaf-taxonomy narrowing
         # that pairs with the move.
-        # Disability (additional terms — "disability" already above)
-        "disabled", "disability benefits", "disability services",
+        # Disability (population-modifier framing — "disability benefits"
+        # specifically moved to SERVICE_KEYWORDS["benefits"] in Phase B
+        # Ticket D since it's an explicit benefit-enrollment ask).
+        # "disability services" / "disabled" / "accessible services"
+        # stay here — they describe a population characteristic and
+        # surface broader services (housing, employment, health) than
+        # benefits alone.
+        "disabled", "disability services",
         "accessible services",
     ],
 }
@@ -417,8 +492,15 @@ _WORD_BOUNDARY_KEYWORDS = {
     "stress": "mental_health", # was colliding with "stressed out", "so stressed"
                                # (emotional expressions, not service requests)
     # Phase 1 audit additions — short terms that collide as substrings
-    "ssi": "other",            # was in SERVICE_KEYWORDS, collides with "mission", "passion"
-    "ssdi": "other",           # collides with nothing known but too short to risk
+    # ssi/ssdi routed to `benefits` after Phase B Ticket D promotion
+    # (TAXONOMY_AUDIT_MAY2026.md §IX). Supplemental Security Income (SSI)
+    # and Social Security Disability Insurance (SSDI) are both federal
+    # benefits programs; users asking "where can I apply for SSI" want
+    # benefits-enrollment help. _NOTABLE_SUB_TYPES still maps both to
+    # "disability services" for service_detail; the description filter
+    # narrows accordingly inside the benefits template.
+    "ssi": "benefits",         # was in SERVICE_KEYWORDS, collides with "mission", "passion"
+    "ssdi": "benefits",        # collides with nothing known but too short to risk
     "hiv": "medical",          # collides with "shiver", "archive"
     # esl/ged routed to `education` after Phase B promotion
     # (TAXONOMY_AUDIT_MAY2026.md §IX Ticket C). Both are word-boundary
@@ -1028,7 +1110,7 @@ def _find_contradiction_signal(text: str) -> int:
 #   Tier 1 — life / safety:                shelter, medical
 #   Tier 2 — survival + behavioral health: food, mental_health
 #   Tier 3 — physiological, non-critical:  clothing, personal_care
-#   Tier 4 — stability:                    legal, employment, education
+#   Tier 4 — stability:                    legal, employment, education, benefits
 #   Tier 5 — support:                      other
 #
 # If a new service category gets added to SERVICE_KEYWORDS, add it
@@ -1049,6 +1131,13 @@ _SERVICE_NEED_PRIORITY = {
     # employment and legal below shelter/food. Promoted in Phase B per
     # TAXONOMY_AUDIT_MAY2026.md §IX Ticket C.
     "education": 4,
+    # Benefits enrollment is foundational to stable housing/food/health
+    # (Tier 4 — stability). SNAP enrollment, Medicaid signup, Section 8
+    # applications all increase the durability of other services. If a
+    # user asks for "food AND SNAP," food wins on priority (immediate
+    # hunger > program enrollment). Promoted in Phase B per
+    # TAXONOMY_AUDIT_MAY2026.md §IX Ticket D.
+    "benefits": 4,
     "other": 5,
 }
 

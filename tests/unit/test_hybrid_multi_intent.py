@@ -663,10 +663,11 @@ class TestNeedBasedPriority:
             "shelter": 1, "medical": 1,
             "food": 2, "mental_health": 2,
             "clothing": 3, "personal_care": 3,
-            # Tier 4 — stability: legal, employment, education
-            # (education promoted in Phase B Ticket C —
-            # TAXONOMY_AUDIT_MAY2026.md §IX).
-            "legal": 4, "employment": 4, "education": 4,
+            # Tier 4 — stability: legal, employment, education, benefits
+            # (education promoted in Phase B Ticket C, benefits in
+            # Ticket D — TAXONOMY_AUDIT_MAY2026.md §IX).
+            "legal": 4, "employment": 4,
+            "education": 4, "benefits": 4,
             "other": 5,
         }
         for cat in all_categories:

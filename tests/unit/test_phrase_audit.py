@@ -254,10 +254,12 @@ class TestP3ServiceKeywords:
         ("I need suboxone", "medical"),
         ("where do I get narcan", "medical"),
         ("is there a walk-in clinic nearby", "medical"),
-        # Other
+        # Other (residual after Phase B promotions)
         ("I need help with voter registration", "other"),
         ("I need a replacement ID", "other"),
-        ("where can I get free tax prep", "other"),
+        # Tax prep promoted to benefits in Phase B Ticket D (most NYC
+        # tax-prep clinics are EITC-focused / benefits-adjacent).
+        ("where can I get free tax prep", "benefits"),
     ])
     def test_nyc_service_extraction(self, phrase, expected_type):
         slots = extract_slots(phrase)

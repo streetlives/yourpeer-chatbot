@@ -720,6 +720,41 @@ _EDUCATION_NAME_PATTERN = (
 )
 
 
+# Benefits (Ticket D — DB: 32 Benefits leaf + 2 Taxes leaf + estimated
+# ~50 parent-direct via name-pattern). Branches cover the benefit-
+# enrollment clusters surfaced by the audit: SNAP/food stamps,
+# Medicaid/insurance enrollment, cash/public assistance, Social Security
+# (SSI/SSDI), disability benefits, LIHEAP/energy assistance, housing
+# programs (Section 8/vouchers/rental assistance/NYCHA/eviction
+# prevention), financial counseling, and tax prep (folded in per Phase
+# B Ticket D — most NYC tax clinics are EITC-focused).
+#
+# Note on word-boundary `\b`: PostgreSQL POSIX ARE treats `\b` as a
+# synonym for `\y` (word boundary) outside bracket expressions. This is
+# the same anchoring used by _EDUCATION_NAME_PATTERN above and verified
+# against prod data via the Phase B doc's methodology.
+_BENEFITS_NAME_PATTERN = (
+    r"\b("
+    r"benefits?(?:\s+(?:assistance|enrollment|coordinator))?|"
+    r"snap(?:\s+application)?|"
+    r"food\s+stamps|food\s+benefits|"
+    r"public\s+(?:assistance|benefits)|"
+    r"cash\s+assistance|"
+    r"medicaid(?:\s+(?:enrollment|wellcare))?|health\s+insurance\s+enrollment|"
+    r"ssi|ssdi|social\s+security|"
+    r"disability\s+(?:benefits|advocacy)|"
+    r"liheap|low.income\s+home\s+energy|"
+    r"voucher|section\s+8|"
+    r"rental\s+assistance|housing\s+(?:assistance|consultations|counseling)|"
+    r"eviction\s+prevention|"
+    r"financial\s+(?:assistance|counseling|aid|advisor|coaching)|"
+    r"government\s+(?:assistance|benefits)|"
+    r"emergency\s+(?:funding|crisis\s+assistance)|"
+    r"tax\s+(?:prep|clinic|assistance)|free\s+tax|low.income\s+tax"
+    r")\b"
+)
+
+
 # ---------------------------------------------------------------------------
 # TEMPLATE DEFINITIONS
 # ---------------------------------------------------------------------------
@@ -1065,11 +1100,58 @@ TEMPLATES = {
         },
         "taxonomy_aliases": ["Education"],
     },
+    "benefits": {
+        "name": "BenefitsQuery",
+        "description": (
+            "Find benefits enrollment and financial assistance (SNAP/EBT, "
+            "Medicaid, SSI, cash assistance, Section 8/vouchers, rental "
+            "assistance, NYCHA, tax prep)"
+        ),
+        # Phase B Ticket D promotion. Same OR'd-filter pattern as education:
+        # matches BOTH leaf-tagged services (Other service › Benefits + Taxes,
+        # 34 services total) AND parent-direct tagging-debt services whose
+        # name matches _BENEFITS_NAME_PATTERN (~50 additional). See
+        # TAXONOMY_AUDIT_MAY2026.md §IX, PHASE_B_PROMOTION_PLAN.md.
+        #
+        # Supersedes the April 2026 parity-audit decision that collapsed
+        # housing programs (Section 8 / rental assistance / NYCHA /
+        # eviction prevention) into `service_type=other`. Per Phase B,
+        # user-testing (end user 3, mens-shelter resident) showed these
+        # are benefit-enrollment asks in user mental model, not "other".
+        # The TestHousingAssistanceRemoval class is updated to enforce
+        # the new routing while keeping its primary guard intact
+        # (the dedicated `housing_assistance` TEMPLATE remains removed).
+        "required_filters": [
+            FILTER_BY_TAXONOMY_OR_NAME_PATTERN,
+            FILTER_NOT_HIDDEN,
+            FILTER_BY_STATE_NY,
+        ],
+        "optional_filters": [
+            FILTER_BY_CITY,
+            FILTER_BY_CITY_IN_BOROUGH,
+            FILTER_BY_CITY_LIKE,
+            FILTER_BY_PROXIMITY,
+            FILTER_BY_AGE_ELIGIBILITY,
+            FILTER_BY_GENDER_ELIGIBILITY,
+            FILTER_BY_DESCRIPTION_KEYWORDS,
+        ],
+        "default_params": {
+            # Both Benefits AND Taxes leaves — per Phase B Ticket D, tax
+            # prep is benefits-adjacent (most NYC tax-prep clinics are
+            # EITC-focused, helping low-income filers maximize benefits).
+            # Promoting Taxes separately would overspecify; folding it in
+            # matches user mental model.
+            "taxonomy_names": ["benefits", "taxes"],
+            "service_name_pattern": _BENEFITS_NAME_PATTERN,
+        },
+        "taxonomy_aliases": ["Benefits", "Taxes"],
+    },
     "other": {
         "name": "OtherServicesQuery",
         "description": (
-            "Find benefits, case workers, and miscellaneous Other-service-tree "
-            "services (education/legal/employment/immigration are now their "
+            "Find IDs, mail/storage, connectivity (free phone/wifi/charging), "
+            "case workers, and miscellaneous Other-service-tree services "
+            "(education/benefits/legal/employment/immigration are now their "
             "own service_types)"
         ),
         "required_filters": [FILTER_BY_TAXONOMY_NAME_IN, FILTER_NOT_HIDDEN, FILTER_BY_STATE_NY],
@@ -1081,16 +1163,16 @@ TEMPLATES = {
             FILTER_BY_DESCRIPTION_KEYWORDS,
         ],
         "default_params": {
-            # Other-service-tree taxonomies only.
+            # Other-service-tree taxonomies only — the residual catch-all
+            # after Phase B Tickets C (education) and D (benefits) moved
+            # their leaves to dedicated templates.
             #
             # May 2026 fix (TAXONOMY_AUDIT_MAY2026.md §VIII follow-up):
             # the previous default included 15 taxonomies parented under
             # *other* DB trees, polluting `service_type=other` results with
             # shelter / personal-care / clothing services. Specifically the
             # 10 Shelter children listed below were causing shelter services
-            # to surface in non-shelter queries (e.g., a "benefits in Brooklyn"
-            # search returning a Single Adult shelter, because both `single
-            # adult` and `benefits` were in the taxonomy_names IN clause).
+            # to surface in non-shelter queries.
             #
             # The eval suite already noted the symptom — see
             # `natural_drop_in_center` scenario description in
@@ -1113,31 +1195,39 @@ TEMPLATES = {
             #   • pets                 → Other-tree but VESTIGIAL (0 services,
             #                            audit Ticket J)
             #   • education            → PROMOTED to `service_type=education`
-            #                            in Phase B (TAXONOMY_AUDIT_MAY2026.md
-            #                            §IX Ticket C). The 101 leaf-tagged
-            #                            Education services + name-pattern
+            #                            in Phase B (Ticket C). 101 leaf-
+            #                            tagged services + name-pattern
             #                            matches against `Other service`
-            #                            parent-direct are now reachable via
+            #                            parent-direct now reachable via
             #                            the education template's OR'd filter.
+            #   • benefits, taxes      → PROMOTED to `service_type=benefits`
+            #                            in Phase B (Ticket D). 32 Benefits
+            #                            + 2 Taxes leaf-tagged services +
+            #                            ~50 name-pattern matches against
+            #                            `Other service` parent-direct now
+            #                            reachable via the benefits
+            #                            template's OR'd filter. Housing
+            #                            programs (Section 8, NYCHA, rental
+            #                            assistance, eviction prevention)
+            #                            also migrated per Phase B doc's
+            #                            user-testing rationale.
             #
             # KEPT (all Other-service-tree children with non-zero services
             # that aren't already promoted to a dedicated template):
             "taxonomy_names": [
                 "other service",  # parent — 1,105 services tagged here directly
-                "benefits",       # 32 svc — pending Phase B Ticket D promotion
                 "case workers",   # 28 svc — pending Phase B Ticket E promotion
                 "free wifi",      # 8 svc
                 "mail",           # 6 svc
-                "taxes",          # 2 svc
                 # NOT included (promoted to their own templates):
                 #   legal services, immigration services → legal template
                 #   employment, internship               → employment template
                 #   education                            → education template
+                #   benefits, taxes                      → benefits template
             ]
         },
         "taxonomy_aliases": [
-            "Other service", "Benefits", "Case Workers",
-            "Free Wifi", "Mail", "Taxes",
+            "Other service", "Case Workers", "Free Wifi", "Mail",
         ],
     },
     "org_name": {

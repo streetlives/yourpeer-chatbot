@@ -156,35 +156,44 @@ class TestImmigrationAdvanced:
 
 
 class TestFinancial:
-    """32 services — sample query 'I am so bad with money' had 0% coverage."""
+    """Financial cluster — 32 services. Sample query 'I am so bad with money'
+    had 0% coverage before Phase 1 audit added the keyword cluster.
+
+    Phase B Ticket D (May 2026) — promoted from `other` to `benefits`. The
+    financial cluster is benefit-enrollment-adjacent in user mental model
+    (budget counseling, credit counseling, debt help → benefits-eligible
+    services). service_detail values from _NOTABLE_SUB_TYPES carry through
+    unchanged; the _DETAIL_DESCRIPTION_FILTERS regex narrowings
+    ('financial services', 'budgeting help') now fire under the benefits
+    template's optional description filter."""
 
     def test_financial_help(self):
         r = extract_slots("I need financial help")
-        assert r["service_type"] == "other"
+        assert r["service_type"] == "benefits"
         assert r["service_detail"] == "financial services"
 
     def test_bad_with_money(self):
         """The original sample query that failed."""
         r = extract_slots("I am so bad with money")
-        assert r["service_type"] == "other"
+        assert r["service_type"] == "benefits"
         assert r["service_detail"] == "financial services"
 
     def test_budgeting(self):
         r = extract_slots("I need help with budgeting")
-        assert r["service_type"] == "other"
+        assert r["service_type"] == "benefits"
         assert r["service_detail"] == "budgeting help"
 
     def test_financial_literacy(self):
         r = extract_slots("I need financial literacy")
-        assert r["service_type"] == "other"
+        assert r["service_type"] == "benefits"
 
     def test_credit_counseling(self):
         r = extract_slots("I need credit counseling")
-        assert r["service_type"] == "other"
+        assert r["service_type"] == "benefits"
 
     def test_money_management(self):
         r = extract_slots("I need money management")
-        assert r["service_type"] == "other"
+        assert r["service_type"] == "benefits"
 
 
 class TestEducation:
@@ -460,8 +469,9 @@ class TestPeerNavigatorSampleQueries:
         assert r["_gender"] == "male"
 
     def test_bad_with_money(self):
+        # Financial cluster routed to benefits in Phase B Ticket D.
         r = extract_slots("I am so bad with money.")
-        assert r["service_type"] == "other"
+        assert r["service_type"] == "benefits"
 
     def test_detox_manhattan(self):
         # Substance-use intent (detox) routes to medical, not mental_health.
@@ -716,10 +726,11 @@ class TestDescriptionFilter:
         """Word-boundary keywords must set service_detail so the
         description filter can trigger."""
         wb_cases = [
-            # ESL/GED routed to education in Phase B Ticket C; rest unchanged.
+            # ESL/GED routed to education in Phase B Ticket C; SSI routed
+            # to benefits in Phase B Ticket D; SYEP unchanged.
             ("I need ESL", "education", "English classes"),
             ("I need my GED", "education", "GED programs"),
-            ("I'm on SSI", "other", "disability services"),
+            ("I'm on SSI", "benefits", "disability services"),
             # "parole" and "prep" retired from word-boundary (REGEX_AUDIT) —
             # now handled by semantic layer. Remaining cases still test the
             # word-boundary → service_detail pipeline.

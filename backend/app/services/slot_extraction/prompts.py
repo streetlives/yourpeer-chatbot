@@ -48,6 +48,14 @@ _SERVICE_TYPE_ENUM = [
     # parent-direct (ESL/GED/adult-education/etc.) via the OR'd query
     # template filter. See PHASE_B_PROMOTION_PLAN.md.
     "education",
+    # Promoted out of `other` per TAXONOMY_AUDIT_MAY2026.md §IX Ticket D
+    # (Phase B). DB: 32 services at `Other service › Benefits` leaf + 2
+    # at `Other service › Taxes` (tax prep folded in per Phase B doc) +
+    # ~50 additional name-pattern matches against `Other service`
+    # parent-direct (SNAP/SSI/Medicaid/Section 8/rental assistance/etc.).
+    # Supersedes the April 2026 parity-audit decision to collapse housing
+    # programs into `other` — see TestHousingAssistanceRemoval.
+    "benefits",
     "other",
 ]
 
@@ -87,7 +95,10 @@ _EXTRACT_SLOTS_TOOL = {
                     "employment = jobs, resume help, training. "
                     "education = ESL, GED, adult education, literacy, "
                     "computer classes, citizenship classes, college prep. "
-                    "other = benefits, SNAP, IDs, birth certificates, free phones."
+                    "benefits = SNAP/EBT, Medicaid, SSI, cash assistance, "
+                    "Section 8, rental assistance, NYCHA, tax prep. "
+                    "other = IDs, birth certificates, free phones, mail, "
+                    "free wifi, charging stations."
                 ),
             },
             "service_detail": {

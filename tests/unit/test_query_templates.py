@@ -130,6 +130,15 @@ EXPECTED_TAXONOMY_NAMES = {
         # tagging-debt bucket via the service_name_pattern branch.
         "education",
     },
+    "benefits": {
+        # Phase B Ticket D — promoted out of `other` (TAXONOMY_AUDIT_MAY2026.md
+        # §IX). Both Benefits (32 services) and Taxes (2 services) leaves
+        # route here; tax prep folded into benefits per Phase B doc
+        # (EITC-focused tax clinics are benefits-adjacent). The OR'd
+        # filter handles parent-direct tagging-debt for SNAP/Medicaid/
+        # Section 8/SSI/etc. via the service_name_pattern branch.
+        "benefits", "taxes",
+    },
     "other": {
         # May 2026 cleanup (TAXONOMY_AUDIT_MAY2026.md §VIII follow-up):
         # Other-service-tree taxonomies only. Previously included 15
@@ -137,10 +146,11 @@ EXPECTED_TAXONOMY_NAMES = {
         # Clothing) plus 1 phantom and 1 vestigial. See query_templates.py
         # for the per-taxonomy removal rationale.
         #
-        # "education" was removed from this set in Phase B (Ticket C) —
-        # the 101 Education services route via service_type=education now.
-        "other service", "benefits", "case workers",
-        "free wifi", "mail", "taxes",
+        # Phase B Ticket C (May 2026) — `education` removed from this set;
+        # the 101 Education services route via service_type=education.
+        # Phase B Ticket D (May 2026) — `benefits` and `taxes` removed
+        # from this set; both leaves route via service_type=benefits.
+        "other service", "case workers", "free wifi", "mail",
     },
 }
 
@@ -553,17 +563,27 @@ def test_personal_care_includes_hygiene_and_haircut():
     assert "haircut" in names, "haircut missing from personal_care template"
 
 
-def test_other_includes_benefits():
-    """Benefits must be in other template.
+def test_benefits_template_includes_benefits_and_taxes_leaves():
+    """Benefits template must include both `benefits` and `taxes` leaves.
 
-    Previously also asserted 'drop-in center' here, but Drop-in Center is
-    a Shelter child (per `test_drop_in_center_is_shelter_child` in
-    test_audit_regression.py). The May 2026 cleanup removed it from the
-    `other` template's default — see TAXONOMY_AUDIT_MAY2026.md §VIII
-    follow-up and the cross-tree pollution comment in query_templates.py.
+    Previously this test was `test_other_includes_benefits` and asserted
+    benefits in the `other` template. Phase B Ticket D promoted benefits
+    out of `other`; both the `Benefits` (32 services) and `Taxes` (2
+    services) DB leaves now route through the dedicated benefits template
+    via FILTER_BY_TAXONOMY_OR_NAME_PATTERN. Tax prep is folded into the
+    benefits template per Phase B doc decision (most NYC tax-prep clinics
+    are EITC-focused / benefits-adjacent).
     """
-    names = TEMPLATES["other"]["default_params"]["taxonomy_names"]
-    assert "benefits" in names, "benefits missing from other template"
+    names = TEMPLATES["benefits"]["default_params"]["taxonomy_names"]
+    assert "benefits" in names, "benefits leaf missing from benefits template"
+    assert "taxes" in names, "taxes leaf missing from benefits template"
+
+    # Inverse: benefits/taxes must NOT remain in `other` after promotion
+    other_names = TEMPLATES["other"]["default_params"]["taxonomy_names"]
+    assert "benefits" not in other_names, \
+        "benefits taxonomy still in `other` — promotion incomplete"
+    assert "taxes" not in other_names, \
+        "taxes taxonomy still in `other` — promotion incomplete"
 
 
 def test_other_excludes_shelter_tree_taxonomies():

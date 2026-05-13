@@ -326,11 +326,16 @@ def test_health_alone_is_medical():
         f"Expected 'medical', got '{slots['service_type']}'"
 
 
-def test_food_stamps_is_other():
-    """'Food stamps' should match other (benefits), not food."""
+def test_food_stamps_is_benefits():
+    """'Food stamps' should match benefits (Phase B Ticket D), not food.
+
+    SNAP / EBT / food stamps are benefit-enrollment requests (signing up
+    for the federal SNAP program), distinct from "where can I get a meal
+    right now" (which is food). Phase B Ticket D promoted these from
+    `other` to `benefits` along with the rest of the benefits cluster."""
     slots = extract_slots("How do I apply for food stamps")
-    assert slots["service_type"] == "other", \
-        f"Expected 'other', got '{slots['service_type']}'"
+    assert slots["service_type"] == "benefits", \
+        f"Expected 'benefits', got '{slots['service_type']}'"
 
 
 def test_legal_aid_is_legal():

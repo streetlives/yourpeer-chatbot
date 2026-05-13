@@ -378,6 +378,10 @@ _SERVICE_LABELS = {
     # avoids "education programs" to keep parallel structure with the
     # other plural-noun labels.
     "education": "education and learning programs",
+    # Phase B Ticket D — promoted out of "other". Supersedes the April
+    # 2026 housing_assistance collapse; housing programs now surface as
+    # benefits enrollment in user-facing copy.
+    "benefits": "benefits enrollment and financial assistance",
     "other": "other services",
 }
 
