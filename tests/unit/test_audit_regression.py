@@ -2025,7 +2025,11 @@ class TestTemplateShapeInvariants:
 
     EXPECTED_TEMPLATES = {
         "food", "shelter", "clothing", "personal_care", "medical",
-        "mental_health", "legal", "employment", "other", "org_name",
+        "mental_health", "legal", "employment",
+        # Promoted out of `other` in Phase B per
+        # TAXONOMY_AUDIT_MAY2026.md §IX Ticket C.
+        "education",
+        "other", "org_name",
     }
 
     def test_exact_template_set(self):
@@ -2042,7 +2046,7 @@ class TestTemplateShapeInvariants:
     @pytest.mark.parametrize("template_key",
                              ["food", "shelter", "clothing", "personal_care",
                               "medical", "mental_health", "legal", "employment",
-                              "other"])
+                              "education", "other"])
     def test_template_has_required_keys(self, template_key):
         """Every service template has the required structure."""
         t = TEMPLATES[template_key]
@@ -2053,7 +2057,7 @@ class TestTemplateShapeInvariants:
     @pytest.mark.parametrize("template_key",
                              ["food", "shelter", "clothing", "personal_care",
                               "medical", "mental_health", "legal", "employment",
-                              "other"])
+                              "education", "other"])
     def test_template_taxonomy_names_lowercase(self, template_key):
         """Taxonomy names in default_params must be lowercase (matches SQL casing)."""
         names = TEMPLATES[template_key]["default_params"].get("taxonomy_names", [])

@@ -2694,7 +2694,11 @@ class TestPromptSanity:
     def test_service_type_enum_has_expected_values(self):
         expected = {
             "food", "shelter", "clothing", "personal_care",
-            "medical", "mental_health", "legal", "employment", "other",
+            "medical", "mental_health", "legal", "employment",
+            # Promoted out of `other` per TAXONOMY_AUDIT_MAY2026.md §IX
+            # Ticket C (Phase B). See PHASE_B_PROMOTION_PLAN.md.
+            "education",
+            "other",
         }
         assert set(_SERVICE_TYPE_ENUM) == expected
 

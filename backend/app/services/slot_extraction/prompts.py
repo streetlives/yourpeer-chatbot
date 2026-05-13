@@ -41,7 +41,14 @@ unrequested — see Behavior #23 in the migration doc).
 
 _SERVICE_TYPE_ENUM = [
     "food", "shelter", "clothing", "personal_care",
-    "medical", "mental_health", "legal", "employment", "other",
+    "medical", "mental_health", "legal", "employment",
+    # Promoted out of `other` per TAXONOMY_AUDIT_MAY2026.md §IX Ticket C
+    # (Phase B). DB: 101 services at `Other service › Education` leaf +
+    # ~80-130 additional name-pattern matches against `Other service`
+    # parent-direct (ESL/GED/adult-education/etc.) via the OR'd query
+    # template filter. See PHASE_B_PROMOTION_PLAN.md.
+    "education",
+    "other",
 ]
 
 # ---------------------------------------------------------------------------
@@ -78,6 +85,8 @@ _EXTRACT_SLOTS_TOOL = {
                     "anxiety, support groups (NOT substance use). "
                     "legal = lawyers, immigration, eviction, legal aid. "
                     "employment = jobs, resume help, training. "
+                    "education = ESL, GED, adult education, literacy, "
+                    "computer classes, citizenship classes, college prep. "
                     "other = benefits, SNAP, IDs, birth certificates, free phones."
                 ),
             },

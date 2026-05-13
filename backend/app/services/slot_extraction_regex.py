@@ -264,6 +264,56 @@ SERVICE_KEYWORDS = {
         "vocational training",
     ],
 
+    # --- Education (taxonomy: Other service › Education) ---
+    # Promoted from `other` in Phase B per TAXONOMY_AUDIT_MAY2026.md §IX
+    # Ticket C. DB coverage: 101 services at the `Education` leaf + ~80-130
+    # additional name-pattern matches against `Other service` parent-direct
+    # via FILTER_BY_TAXONOMY_OR_NAME_PATTERN (see query_templates.py).
+    #
+    # Migration note (from `other`):
+    #   The keywords below ("english class", "english classes", "learn
+    #   english", "high school equivalency", "adult education", "adult
+    #   literacy", "computer class", "computer skills", "digital literacy",
+    #   "computer training") previously lived in SERVICE_KEYWORDS["other"]
+    #   under the "Education / ESL / GED (131 services)" comment block.
+    #   Removed there to avoid double-routing — longest-first sort in
+    #   _extract_all_service_types means whichever bucket is checked first
+    #   wins, and "other"'s position earlier in the dict made it win for
+    #   no clear reason.
+    #
+    # The two word-boundary tokens "esl" and "ged" are routed to education
+    # via _WORD_BOUNDARY_KEYWORDS (not here) — they collide as substrings
+    # of common English words (esl→diesel/weasel, ged→aged/managed) and
+    # need word-boundary matching to be safe.
+    #
+    # _NOTABLE_SUB_TYPES already maps "esl"→"English classes" and
+    # "ged"→"GED programs" — these service_detail labels carry through
+    # the education promotion unchanged. _DETAIL_DESCRIPTION_FILTERS in
+    # rag/__init__.py already has regex narrowings for "English classes",
+    # "GED programs", "adult education", "computer classes", and
+    # "digital literacy" — they now fire under service_type=education
+    # instead of service_type=other.
+    "education": [
+        # English / ESL (migrated from other)
+        "english class", "english classes", "learn english",
+        "english as a second language",
+        # GED / high school equivalency (migrated from other)
+        "high school equivalency", "hse classes",
+        # Adult education (migrated from other)
+        "adult education", "adult literacy", "adult learning",
+        # Computer / digital literacy (migrated from other)
+        "computer class", "computer classes", "computer skills",
+        "computer training", "digital literacy", "tech training",
+        # New high-confidence additions (Phase B Ticket C — service
+        # categories with DB-verified parent-direct service-name matches
+        # surfaced by the name-pattern fallback):
+        "citizenship class", "citizenship classes", "citizenship prep",
+        "college prep", "college access", "college success",
+        "head start", "early childhood education",
+        "literacy program", "literacy zone",
+        "academic enrichment", "continued education",
+    ],
+
     # --- Other Services (taxonomy: Other service) ---
     # Includes housing assistance programs (rental assistance, Section 8,
     # eviction prevention, etc.) — YourPeer surfaces these under "Other service".
@@ -310,11 +360,16 @@ SERVICE_KEYWORDS = {
         "money management", "budgeting", "credit counseling",
         "debt help", "financial literacy",
         "help with money", "bad with money", "money problems",
-        # Education / ESL / GED (131 services)
-        "english class", "english classes", "learn english",
-        "high school equivalency", "adult education", "adult literacy",
-        "computer class", "computer skills", "digital literacy",
-        "computer training",
+        # Education / ESL / GED — MIGRATED to SERVICE_KEYWORDS["education"]
+        # in Phase B (TAXONOMY_AUDIT_MAY2026.md §IX Ticket C). The cluster
+        # historically contributed ~131 services to `service_type=other`;
+        # those services are now reachable via `service_type=education`,
+        # which surfaces both leaf-tagged (Education taxonomy, 101 services)
+        # and parent-direct tagging-debt entries (via the OR'd query
+        # template's service-name pattern fallback). Keep the breadcrumb
+        # in place — the test_audit_regression suite includes a regression
+        # guard (TestEducationPromotion) that fails if any of these keywords
+        # reappear in "other".
         # Senior services (23 services)
         "senior center", "senior services", "older adult",
         "aging services", "elder services",
@@ -365,8 +420,14 @@ _WORD_BOUNDARY_KEYWORDS = {
     "ssi": "other",            # was in SERVICE_KEYWORDS, collides with "mission", "passion"
     "ssdi": "other",           # collides with nothing known but too short to risk
     "hiv": "medical",          # collides with "shiver", "archive"
-    "esl": "other",            # collides with "diesel", "weasel"
-    "ged": "other",            # collides with "aged", "managed", "changed"
+    # esl/ged routed to `education` after Phase B promotion
+    # (TAXONOMY_AUDIT_MAY2026.md §IX Ticket C). Both are word-boundary
+    # sensitive — "esl" inside diesel/weasel, "ged" inside aged/managed/
+    # changed — so they must stay in _WORD_BOUNDARY_KEYWORDS rather than
+    # SERVICE_KEYWORDS["education"]. _NOTABLE_SUB_TYPES still maps
+    # esl→"English classes" and ged→"GED programs" for service_detail.
+    "esl": "education",        # collides with "diesel", "weasel"
+    "ged": "education",        # collides with "aged", "managed", "changed"
     "syep": "employment",      # collides with nothing but 4 chars, be safe
     # NOTE: "sober" was removed (bug-hunt #10). It used to map to
     # mental_health here as a fallback, but:
@@ -967,7 +1028,7 @@ def _find_contradiction_signal(text: str) -> int:
 #   Tier 1 — life / safety:                shelter, medical
 #   Tier 2 — survival + behavioral health: food, mental_health
 #   Tier 3 — physiological, non-critical:  clothing, personal_care
-#   Tier 4 — stability:                    legal, employment
+#   Tier 4 — stability:                    legal, employment, education
 #   Tier 5 — support:                      other
 #
 # If a new service category gets added to SERVICE_KEYWORDS, add it
@@ -982,6 +1043,12 @@ _SERVICE_NEED_PRIORITY = {
     "personal_care": 3,
     "legal": 4,
     "employment": 4,
+    # Education is a stability/growth investment (Tier 4, same as
+    # employment and legal). If a user asks for "food AND ESL classes,"
+    # food wins on priority (Tier 2). Same Housing-First logic that puts
+    # employment and legal below shelter/food. Promoted in Phase B per
+    # TAXONOMY_AUDIT_MAY2026.md §IX Ticket C.
+    "education": 4,
     "other": 5,
 }
 

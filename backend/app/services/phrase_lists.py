@@ -374,6 +374,10 @@ _SERVICE_LABELS = {
     "mental_health": "mental health support",
     "legal": "legal help",
     "employment": "job help",
+    # Phase B Ticket C — promoted out of "other". The label intentionally
+    # avoids "education programs" to keep parallel structure with the
+    # other plural-noun labels.
+    "education": "education and learning programs",
     "other": "other services",
 }
 

@@ -273,6 +273,48 @@ SERVICE_ROUTES = {
         "I can't get hired because of my record",
     ],
 
+    "education": [
+        # Phase B Ticket C — promoted out of `other`. Coverage spans the
+        # six sub-clusters surfaced by TAXONOMY_AUDIT_MAY2026.md §III
+        # word-frequency analysis: ESL/language, GED/equivalency, adult
+        # education/literacy, computer/digital literacy, citizenship/civics,
+        # college prep.
+        # ESL / English
+        "I want to learn English",
+        "where can I take ESL classes",
+        "I need to improve my English",
+        "are there free English classes nearby",
+        "I want to learn English as a second language",
+        # GED / high school equivalency
+        "I need to get my GED",
+        "where can I study for the GED",
+        "I want to finish high school",
+        "where can I get my high school equivalency",
+        "I never finished high school and want to go back",
+        # Adult education / literacy
+        "I'm looking for adult education programs",
+        "I need adult literacy help",
+        "where can I take adult classes",
+        # Computer / digital literacy
+        "I need to learn how to use a computer",
+        "where can I take a computer class",
+        "I want to improve my computer skills",
+        # Citizenship / civics
+        "I need citizenship classes",
+        "where can I prepare for the citizenship test",
+        # College prep / access
+        "I need help applying to college",
+        "where can I get college prep classes",
+        # Negation phrasings — required by
+        # test_hybrid_multi_intent::TestRouteNegationCoverage. Use the
+        # canonical negation tokens (don't / can't / haven't / no one
+        # etc.) the test checks for; "never" / "dropped out" don't
+        # qualify.
+        "I don't have my high school diploma",
+        "I haven't finished school",
+        "I can't read or write very well",
+    ],
+
     # --- housing_assistance route retired (April 15, 2026 audit) ---
     # housing_assistance was collapsed into SERVICE_KEYWORDS['other'] with
     # a description filter on the 'other' template (matches YourPeer).

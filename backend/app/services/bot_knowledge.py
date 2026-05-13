@@ -108,10 +108,11 @@ TOPICS = {
             "food (pantries, soup kitchens), shelter (emergency, transitional), "
             "clothing, showers & personal care, health care (medical, dental, "
             "vision), mental health (counseling, substance use), legal help "
-            "(immigration, eviction), jobs & training, and other services "
-            "like benefits (SNAP/EBT), IDs, and drop-in centers."
+            "(immigration, eviction), jobs & training, education (ESL, GED, "
+            "adult education, computer classes), and other services like "
+            "benefits (SNAP/EBT), IDs, and drop-in centers."
         ),
-        "summary": "Searches 9 service categories across NYC's five boroughs",
+        "summary": "Searches 10 service categories across NYC's five boroughs",
         "source": "slot_extraction_regex.py → SERVICE_KEYWORDS",
     },
 
@@ -455,6 +456,14 @@ def build_capability_context() -> str:
         "mental_health": "Mental health: counseling, therapy, substance use, AA/NA",
         "legal": "Legal help: immigration, eviction, asylum, legal aid",
         "employment": "Jobs: employment programs, job training, resume help",
+        # Phase B Ticket C — promoted out of "other" (TAXONOMY_AUDIT_MAY2026.md
+        # §IX). DB: 101 leaf-tagged Education services + name-pattern matches
+        # against `Other service` parent-direct for ~80-130 additional
+        # services (ESL, GED, adult ed, computer classes, citizenship, etc.).
+        "education": (
+            "Education: ESL, GED, adult education, literacy, computer classes, "
+            "citizenship classes, college prep"
+        ),
         # "housing_assistance" retired April 15, 2026 — rental assistance,
         # Section 8, NYCHA, eviction prevention, etc. are now surfaced via
         # the 'other' category (see semantic_routes.py). The 'other' label

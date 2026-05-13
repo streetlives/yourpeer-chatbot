@@ -188,33 +188,43 @@ class TestFinancial:
 
 
 class TestEducation:
-    """131 services — ESL, GED, computer classes."""
+    """Education promotion (Phase B Ticket C — TAXONOMY_AUDIT_MAY2026.md §IX).
+
+    Previously these keywords routed to `service_type=other`; after promotion
+    they route to `service_type=education`, which queries the Education leaf
+    (101 services) plus name-pattern matches against `Other service`
+    parent-direct (~80-130 additional services) via the OR'd query filter.
+
+    Word-boundary collision tests (test_esl_not_diesel, test_ged_not_managed,
+    etc.) still expect `service_type is None` — those validate the boundary
+    matching, not the routing destination.
+    """
 
     def test_english_classes(self):
         r = extract_slots("I need English classes")
-        assert r["service_type"] == "other"
+        assert r["service_type"] == "education"
         assert r["service_detail"] == "English classes"
 
     def test_learn_english(self):
         r = extract_slots("I want to learn english")
-        assert r["service_type"] == "other"
+        assert r["service_type"] == "education"
 
     def test_adult_education(self):
         r = extract_slots("I need adult education")
-        assert r["service_type"] == "other"
+        assert r["service_type"] == "education"
         assert r["service_detail"] == "adult education"
 
     def test_computer_class(self):
         r = extract_slots("I need a computer class")
-        assert r["service_type"] == "other"
+        assert r["service_type"] == "education"
 
     def test_digital_literacy(self):
         r = extract_slots("I need digital literacy")
-        assert r["service_type"] == "other"
+        assert r["service_type"] == "education"
 
     def test_esl_word_boundary(self):
         r = extract_slots("I need ESL")
-        assert r["service_type"] == "other"
+        assert r["service_type"] == "education"
 
     def test_esl_not_diesel(self):
         """'esl' should NOT match inside 'diesel'."""
@@ -223,7 +233,7 @@ class TestEducation:
 
     def test_ged_word_boundary(self):
         r = extract_slots("I need my GED")
-        assert r["service_type"] == "other"
+        assert r["service_type"] == "education"
 
     def test_ged_not_managed(self):
         """'ged' should NOT match inside 'managed'."""
@@ -232,7 +242,26 @@ class TestEducation:
 
     def test_high_school_equivalency(self):
         r = extract_slots("I need my high school equivalency")
-        assert r["service_type"] == "other"
+        assert r["service_type"] == "education"
+
+    # New tests for keywords added during the Phase B promotion that
+    # weren't in the legacy `other` list — citizenship/college-prep cluster.
+
+    def test_citizenship_class(self):
+        r = extract_slots("I need a citizenship class")
+        assert r["service_type"] == "education"
+
+    def test_college_prep(self):
+        r = extract_slots("I need college prep")
+        assert r["service_type"] == "education"
+
+    def test_head_start(self):
+        r = extract_slots("looking for head start")
+        assert r["service_type"] == "education"
+
+    def test_literacy_program(self):
+        r = extract_slots("I need a literacy program")
+        assert r["service_type"] == "education"
 
 
 class TestSenior:
@@ -611,18 +640,28 @@ class TestTaxonomyNarrowing:
 
 
 class TestDescriptionFilter:
-    """4b: For 'other' sub-types, description keyword filter narrows
-    results by matching against service descriptions."""
+    """4b: For sub-types of `other` and `education`, description keyword
+    filter narrows results by matching against service descriptions.
+
+    The mechanism is the same in both service_types: when a sub-type
+    (e.g. "English classes") sets service_detail, the description regex
+    pattern from _DETAIL_DESCRIPTION_FILTERS gets bound into the optional
+    FILTER_BY_DESCRIPTION_KEYWORDS filter. The only thing that changed
+    in Phase B Ticket C is which template the filter runs against:
+    English classes / GED programs / adult education / computer classes /
+    digital literacy used to fire against the `other` template's
+    taxonomy_names; they now fire against the `education` template's
+    OR'd filter (taxonomy + name-pattern fallback)."""
 
     def test_esl_gets_description_filter(self):
-        """'ESL' → other with description pattern for English classes."""
+        """'ESL' → education with description pattern for English classes."""
         r = extract_slots("I need ESL")
-        assert r["service_type"] == "other"
+        assert r["service_type"] == "education"
         assert r["service_detail"] == "English classes"
 
     def test_ged_gets_description_filter(self):
         r = extract_slots("I need my GED")
-        assert r["service_type"] == "other"
+        assert r["service_type"] == "education"
         assert r["service_detail"] == "GED programs"
 
     def test_english_classes_description_pattern(self):
@@ -677,8 +716,9 @@ class TestDescriptionFilter:
         """Word-boundary keywords must set service_detail so the
         description filter can trigger."""
         wb_cases = [
-            ("I need ESL", "other", "English classes"),
-            ("I need my GED", "other", "GED programs"),
+            # ESL/GED routed to education in Phase B Ticket C; rest unchanged.
+            ("I need ESL", "education", "English classes"),
+            ("I need my GED", "education", "GED programs"),
             ("I'm on SSI", "other", "disability services"),
             # "parole" and "prep" retired from word-boundary (REGEX_AUDIT) —
             # now handled by semantic layer. Remaining cases still test the
