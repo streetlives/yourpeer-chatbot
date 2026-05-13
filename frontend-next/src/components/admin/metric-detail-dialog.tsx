@@ -3,6 +3,7 @@
 
 "use client";
 
+import type { ReactNode } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { X } from "lucide-react";
 import type { MetricDefinition } from "@/lib/admin/metric-definitions";
@@ -10,9 +11,16 @@ import type { MetricDefinition } from "@/lib/admin/metric-definitions";
 interface MetricDetailDialogProps {
   metric: MetricDefinition;
   onClose: () => void;
+  /** Optional extra content rendered at the bottom of the dialog body,
+   *  after the Status Note (if any). Use for live-data drill-downs
+   *  that the static MetricDefinition fields can't express on their
+   *  own — e.g. the per-task latency breakdown when "Latency p50 /
+   *  p95" is opened. Keep self-contained: render its own header,
+   *  layout, and dark-mode styling. */
+  extraSection?: ReactNode;
 }
 
-export function MetricDetailDialog({ metric, onClose }: MetricDetailDialogProps) {
+export function MetricDetailDialog({ metric, onClose, extraSection }: MetricDetailDialogProps) {
   return (
     <Dialog.Root open onOpenChange={(open) => !open && onClose()}>
       <Dialog.Portal>
@@ -83,6 +91,8 @@ export function MetricDetailDialog({ metric, onClose }: MetricDetailDialogProps)
                 </p>
               </div>
             )}
+
+            {extraSection}
           </div>
         </Dialog.Content>
       </Dialog.Portal>

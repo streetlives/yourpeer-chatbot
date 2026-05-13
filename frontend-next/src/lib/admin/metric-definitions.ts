@@ -846,5 +846,38 @@ export function findMetricDefinition(name: string): MetricDefinition | undefined
       phase: "Pilot",
     };
   }
+  // Dynamic no-result rows: "No-Result: FoodQuery", "No-Result:
+  // ShelterQuery", etc. These are per-template breakdowns of the
+  // Section 2 no-result rate — previously crammed into a single
+  // subtitle, now their own MetricRows so a 100%-of-1-query template
+  // doesn't sit visually alongside a 0%-of-62-queries template with
+  // equal weight.
+  if (name.startsWith("No-Result: ")) {
+    const template = name.slice("No-Result: ".length);
+    const isPrimary = PRIMARY_NO_RESULT_TEMPLATES.has(template);
+    return {
+      name,
+      section: "2.1",
+      definition: `Fraction of ${template} queries that returned zero results. Each query template has its own no-result profile — FoodQuery and ShelterQuery are the primary use cases with tight coverage expectations; specialized templates (OrgNameQuery, EligibilityQuery, etc.) have looser thresholds because their inputs are narrower and their coverage gaps are expected.`,
+      formula: `${template} queries with result_count = 0 / total ${template} queries`,
+      target: isPrimary ? "≤ 10%" : "Baseline tracking (specialized template)",
+      rationale: isPrimary
+        ? "Food and shelter are the population's most common needs and the dataset is densest in those categories — a high no-result rate here points at either a coverage gap worth investigating or a query-template extraction bug. Below 10% is the working assumption; above 25% warrants a same-week look."
+        : "Specialized templates (org lookup, eligibility, etc.) cover narrower territory and naturally see thinner volume. The no-result rate is informational rather than threshold-enforced: a 100% rate on one query is usually a typo or a niche ask, not a data bug. Below-threshold sample sizes are flagged with a low-confidence pill so single-query rates don't read as systemic.",
+      phase: "Pilot",
+    };
+  }
   return undefined;
 }
+
+/** Query templates whose no-result rate is held to the ≤ 10% target.
+ *  Other templates render the same row shape but with "Baseline
+ *  tracking" as the target and "tracking" as the status — their
+ *  no-result rate is informational, not graded.
+ *
+ *  Kept here next to findMetricDefinition since the per-template
+ *  metric definition needs the same list. Single source of truth. */
+export const PRIMARY_NO_RESULT_TEMPLATES = new Set<string>([
+  "FoodQuery",
+  "ShelterQuery",
+]);
