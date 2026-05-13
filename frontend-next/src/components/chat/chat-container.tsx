@@ -288,17 +288,58 @@ export function ChatContainer() {
       // 820px cap left ~200px of dead whitespace on either side of a
       // standard 1280×720 desktop monitor and clipped the rightmost
       // service card in the results carousel.
-      className="flex flex-col max-w-[1024px] mx-auto pl-[max(env(safe-area-inset-left,0px),0.75rem)] pr-[max(env(safe-area-inset-right,0px),0.75rem)] sm:pl-[max(env(safe-area-inset-left,0px),1rem)] sm:pr-[max(env(safe-area-inset-right,0px),1rem)] min-h-dvh"
-      style={{
-        // Vertical safe-area handling: keep these as inline style
-        // because there's no responsive breakpoint to compose with —
-        // top inset is just the inset, bottom inset is inset + the
-        // existing pb-7 (1.75rem) spacing. env() values evaluate to 0
-        // on devices without insets, so this is a no-op on a desktop
-        // browser or a non-notched phone.
-        paddingTop: "env(safe-area-inset-top, 0px)",
-        paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 1.75rem)",
-      }}
+      //
+      // Height policy: `h-dvh overflow-hidden` (not `min-h-dvh`).
+      // The container is a fixed-height shell sized exactly to the
+      // viewport. Why this matters:
+      //
+      //   • `min-h-dvh` only set a floor — when content exceeded
+      //     viewport (e.g. when a backend-unreachable banner appeared
+      //     above the chat log), the container grew past 100dvh, the
+      //     <body> scrolled, and the input row was pushed below the
+      //     fold. Users on mobile lost their typing affordance every
+      //     time the backend hiccuped.
+      //
+      //   • `h-dvh` pins the height. The interior is a flex column
+      //     where banners and the input row claim their natural
+      //     heights and the chat-area wrapper (flex-1 min-h-0)
+      //     absorbs the remainder. Adding a banner now shrinks the
+      //     chat panel instead of pushing the input off-screen; the
+      //     scroll panel inside still scrolls its messages.
+      //
+      //   • `overflow-hidden` belongs on THIS div, not on body/html.
+      //     The admin section shares the global stylesheet and needs
+      //     <body> to scroll for its long pages; scoping the clip to
+      //     the chat container keeps the chat shell self-contained
+      //     without bleeding into admin.
+      //
+      //   • iOS keyboard handling stays correct via the
+      //     `interactiveWidget: "resizes-content"` viewport meta in
+      //     app/layout.tsx — dvh shrinks when the keyboard opens, so
+      //     h-dvh tracks the real visible area rather than the
+      //     pre-keyboard viewport.
+      //
+      // Vertical safe-area handling — folded into the className via
+      // Tailwind arbitrary values (calc/env are valid inside `[]`)
+      // rather than the previous inline `style` prop. The switch was
+      // forced when bottom padding got a breakpoint:
+      //
+      //   • Mobile (< sm): inset + 0.75rem. The original 1.75rem of
+      //     extra padding was sized for a desktop layout where the
+      //     viewport has room to spare; on a 700px phone it ate ~28px
+      //     of vertical space that the chat panel could otherwise
+      //     use. 0.75rem still gives the input row visible breathing
+      //     room above the home indicator without burning real
+      //     estate.
+      //   • Desktop (sm+): inset + 1.75rem, the original spacing.
+      //     Desktop viewports are tall and the bottom gap reads as
+      //     intentional whitespace rather than wasted height.
+      //
+      // env() values evaluate to 0 on devices without insets, so the
+      // bottom value collapses to a flat `padding-bottom: 0.75rem`
+      // on non-notched mobiles and `1.75rem` on desktop browsers —
+      // notched phones add their inset on top.
+      className="flex flex-col max-w-[1024px] mx-auto pl-[max(env(safe-area-inset-left,0px),0.75rem)] pr-[max(env(safe-area-inset-right,0px),0.75rem)] pt-[env(safe-area-inset-top,0px)] pb-[calc(env(safe-area-inset-bottom,0px)+0.75rem)] sm:pl-[max(env(safe-area-inset-left,0px),1rem)] sm:pr-[max(env(safe-area-inset-right,0px),1rem)] sm:pb-[calc(env(safe-area-inset-bottom,0px)+1.75rem)] h-dvh overflow-hidden"
     >
       {/* Header layout — responsive:
        *   • Mobile (< sm, ~640px): two rows.
@@ -363,7 +404,20 @@ export function ChatContainer() {
             <QuickExit />
           </div>
         </div>
-        <span className="text-xs sm:text-sm text-neutral-400 dark:text-neutral-500 leading-tight">
+        {/* Subtitle. `max-sm:-mt-1` (-4px) on mobile only pulls the
+            subtitle visually closer to the title row above it.
+            Background: the title row uses `items-center` to keep
+            the h1 vertically aligned with the taller theme-toggle
+            and Leave-site buttons; that centering leaves a few px
+            of empty space below the h1's text baseline but inside
+            the row's bounding box. The flex column's `gap-0`
+            already adds nothing between children, so this dead
+            space was the entire perceived gap above the subtitle.
+            The negative margin tightens that gap without resizing
+            the buttons or changing alignment. Reset on sm+ where
+            the subtitle renders inline with the title rather than
+            below it. */}
+        <span className="text-xs sm:text-sm text-neutral-400 dark:text-neutral-500 leading-tight max-sm:-mt-1">
           Find services near you
         </span>
         {/* Right cluster on DESKTOP only — sits at the trailing edge
@@ -426,8 +480,21 @@ export function ChatContainer() {
           previously needed to anchor a floating bottom-right
           feedback row; the feedback row now renders inline inside
           the latest bot message instead, but the wrapper stays for
-          layout consistency. */}
-      <div className="relative flex-1 min-h-0">
+          layout consistency.
+          
+          Bottom margin keeps a visible gap between the white chat
+          panel and the ChatInput below it. Without it, the panel's
+          rounded-2xl corner sat almost flush against the input
+          field's top edge and read as "one big control" at a glance.
+            • Mobile (mb-2, 8px): tight, because mobile real estate
+              is at a premium and the panel + input already feel
+              close-coupled at this width.
+            • Desktop (sm:mb-4, 16px): more breathing room to match
+          Either way the gap comes out of the wrapper's flex-1
+          allocation (the panel inside is `h-full`), so it shrinks
+          the chat panel by 8-12px rather than pushing the input
+          row off-screen. */}
+      <div className="relative flex-1 min-h-0 mb-2 sm:mb-3 md:mb-4">
         <div
           ref={chatRef}
           role="log"
@@ -435,39 +502,28 @@ export function ChatContainer() {
           aria-live="polite"
           aria-relevant="additions"
           tabIndex={0}
-          // Height policy:
-          //   • Mobile (< sm): no min-height. The chat region uses
-          //     `flex-1` from the parent + h-full here to fill the
-          //     space the header and ChatInput leave behind. Quick
-          //     replies (rendered inside this scroll region) used
-          //     to push the region's content past the 400px minimum
-          //     and add ~80px of pill height on top, which combined
-          //     with the always-on `min-h-[400px]` made the *total*
-          //     of header + chat region + input + safe-area exceed
-          //     100dvh — the small phantom mobile scroll the user
-          //     was reporting on iPhone 12 (844px viewport).
-          //   • Desktop (sm+): keep min-h-[400px] so the region
-          //     doesn't visually collapse on empty state. Plenty of
-          //     viewport on desktop, no overflow risk.
+          // Height policy (paired with the outer container's
+          // `h-dvh overflow-hidden`):
           //
+          //   • flex-1 on the wrapper above + `h-full` here makes
+          //     the panel claim whatever vertical space the outer
+          //     shell has after the header, banners, and input row
+          //     take their natural sizes. When a banner appears,
+          //     the wrapper shrinks and this panel shrinks with it
+          //     — never overflowing the shell.
           //
-          // max-h-[80dvh]: caps the panel at 80% of viewport height
-          // on tall monitors. This is a deliberate point on a
-          // tradeoff: the wrapper's `flex-1` reserves all remaining
-          // column space (= viewport − header − ChatInput − padding),
-          // and the inner panel grows via `h-full` to fill that
-          // wrapper. If we remove the cap, the panel fills the full
-          // reserved space — which on a 1200px-tall viewport reads as
-          // visually overwhelming. If we set the cap too low (e.g.
-          // 60dvh), the panel is short but a visible empty gap opens
-          // between the panel bottom and the input top, because the
-          // wrapper is still `flex-1` and absorbs the slack as dead
-          // space inside itself. 80dvh tunes the gap small on
-          // typical laptop viewports while keeping the panel from
-          // dominating the screen on tall ones. Dial down (75, 70)
-          // for a shorter panel + larger gap; dial up (85, 90) for
-          // a taller panel + smaller gap.
-          className="bg-white border border-neutral-200 rounded-2xl h-full sm:min-h-[400px] max-h-[80dvh] overflow-y-auto p-3 sm:p-5 flex flex-col gap-2.5 shadow-sm focus:outline-none focus:ring-2 focus:ring-amber-300/30 dark:bg-neutral-900 dark:border-neutral-800"
+          //   • max-h-[80dvh]: caps the panel on tall monitors. The
+          //     wrapper's `flex-1` reserves all remaining column
+          //     space; on a 1200px-tall viewport that's ~1000px,
+          //     which fills the screen with a single white panel
+          //     and reads as visually overwhelming. The cap leaves
+          //     ~20dvh of gap below the panel on tall screens,
+          //     which the eye reads as breathing room. Dial down
+          //     (75, 70) for a shorter panel + larger gap; dial up
+          //     (85, 90) for the opposite. The cap is a no-op when
+          //     the wrapper is shorter than 80dvh, so it only
+          //     affects desktop with no banners.
+          className="bg-white border border-neutral-200 rounded-2xl h-full max-h-[80dvh] overflow-y-auto p-3 sm:p-5 flex flex-col gap-2.5 shadow-sm focus:outline-none focus:ring-2 focus:ring-amber-300/30 dark:bg-neutral-900 dark:border-neutral-800"
         >
           {!hydrated ? (
             <p className="text-neutral-400 text-sm">Loading…</p>
