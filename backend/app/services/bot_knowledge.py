@@ -108,10 +108,12 @@ TOPICS = {
             "food (pantries, soup kitchens), shelter (emergency, transitional), "
             "clothing, showers & personal care, health care (medical, dental, "
             "vision), mental health (counseling, substance use), legal help "
-            "(immigration, eviction), jobs & training, and other services "
-            "like benefits (SNAP/EBT), IDs, and drop-in centers."
+            "(immigration, eviction), jobs & training, education (ESL, GED, "
+            "adult education, computer classes), benefits (SNAP, Medicaid, "
+            "Section 8, rental assistance), and other services like IDs and "
+            "drop-in centers."
         ),
-        "summary": "Searches 9 service categories across NYC's five boroughs",
+        "summary": "Searches 11 service categories across NYC's five boroughs",
         "source": "slot_extraction_regex.py → SERVICE_KEYWORDS",
     },
 
@@ -455,12 +457,32 @@ def build_capability_context() -> str:
         "mental_health": "Mental health: counseling, therapy, substance use, AA/NA",
         "legal": "Legal help: immigration, eviction, asylum, legal aid",
         "employment": "Jobs: employment programs, job training, resume help",
+        # Phase B Ticket C — promoted out of "other" (TAXONOMY_AUDIT_MAY2026.md
+        # §IX). DB: 101 leaf-tagged Education services + name-pattern matches
+        # against `Other service` parent-direct for ~80-130 additional
+        # services (ESL, GED, adult ed, computer classes, citizenship, etc.).
+        "education": (
+            "Education: ESL, GED, adult education, literacy, computer classes, "
+            "citizenship classes, college prep"
+        ),
+        # Phase B Ticket D — promoted out of "other". Supersedes the April
+        # 2026 parity-audit decision that collapsed housing programs into
+        # "other"; user-testing showed Section 8 / rental assistance / NYCHA
+        # fit benefits-enrollment mental model, not "other miscellaneous".
+        "benefits": (
+            "Benefits: SNAP/EBT, Medicaid, SSI, cash assistance, "
+            "Section 8 / vouchers, rental assistance, NYCHA, eviction "
+            "prevention, tax prep, financial counseling"
+        ),
         # "housing_assistance" retired April 15, 2026 — rental assistance,
-        # Section 8, NYCHA, eviction prevention, etc. are now surfaced via
-        # the 'other' category (see semantic_routes.py). The 'other' label
-        # below was updated to mention housing help so users searching for
-        # rental assistance still see it listed among supported categories.
-        "other": "Other: benefits (SNAP/EBT/Medicaid), IDs, rental assistance, Section 8, NYCHA, drop-in centers, free phones",
+        # Section 8, NYCHA, eviction prevention, etc. initially collapsed
+        # into 'other'; then Phase B Ticket D moved them to 'benefits' per
+        # user-testing evidence. The 'other' label below covers only the
+        # residual after both promotions.
+        "other": (
+            "Other: IDs, birth certificates, free phones, free wifi, "
+            "charging stations, mail/mailing address, case workers"
+        ),
     }
     for cat in service_cats:
         label = _SERVICE_LABELS.get(cat, cat)

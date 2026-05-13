@@ -235,6 +235,76 @@ FILTER_BY_TAXONOMY_NAME_IN = (
     ["taxonomy_names"],
 )
 
+# Taxonomy match OR service-name-pattern fallback for the tagging-debt bucket.
+#
+# Background — TAXONOMY_AUDIT_MAY2026.md §III + Ticket K (cross-cutting):
+# The Streetlives DB has 1,105 services tagged directly at `Other service`
+# parent (no specific child leaf) — 31% of the entire database. Word-frequency
+# analysis on those names reveals systematic tagging debt where services that
+# clearly belong under an existing leaf (Education, Benefits, Immigration
+# Services, Case Workers) are tagged at the parent instead. For
+# `service_type=education` (Phase B Ticket C), the DB has 101 services at the
+# leaf but an estimated 80-130 additional education-shaped services sitting
+# in the parent-direct bucket — services named "Adult Education", "ESL",
+# "GED Prep", "Citizenship Classes", etc. that the data team hasn't yet
+# retagged to the leaf.
+#
+# This filter lets a promoted service_type surface BOTH:
+#   (a) services tagged at the relevant child leaf(s) via :taxonomy_names, AND
+#   (b) services tagged at `Other service` parent-direct whose `services.name`
+#       matches :service_name_pattern — the regex name-pattern fallback.
+#
+# The two branches are OR'd inside a single parenthesized group so the filter
+# composes correctly with the AND'd chain of other WHERE clauses in
+# `build_query`. The name-pattern branch is intentionally narrow: it ONLY
+# matches services tagged at `Other service` parent-direct (`t.name = 'other
+# service' AND t.parent_id IS NULL`). It does NOT scan the whole DB — a
+# substring match for "Adult Education" against every service.name would
+# pick up unrelated services (e.g. a shelter named "St. Patrick's Adult
+# Center" wouldn't, but the principle stands).
+#
+# Forward-compat: when the Streetlives data team works through Ticket A and
+# retags parent-direct services to their proper leaves, this filter
+# gracefully degrades — leaf matches subsume name-pattern matches, and
+# `SELECT DISTINCT s.id` in the base query collapses any double-counting.
+# Tagging cleanup improves nothing visible to the user but doesn't break
+# anything. That's the point: this filter makes the chatbot's behavior
+# forward-compatible with the data-team work without depending on it.
+#
+# Templates using this filter MUST provide both `taxonomy_names` (list) and
+# `service_name_pattern` (regex string) in their `default_params`. Templates
+# that don't need name-pattern fallback should continue to use
+# `FILTER_BY_TAXONOMY_NAME_IN`. The two filters are mutually exclusive —
+# a template uses one or the other, never both.
+#
+# Why a single compound filter rather than two ANDed/ORed filters in the
+# template list: `build_query` joins `required_filters` with `" AND "`.
+# Splitting the OR across two list entries would require special-case logic
+# (either rewriting the join or interpreting filter strings starting with
+# "OR"). Wrapping the entire OR-group in one parenthesized SQL expression
+# means the AND-join works correctly and the filter list stays a flat data
+# structure of self-contained SQL fragments.
+FILTER_BY_TAXONOMY_OR_NAME_PATTERN = (
+    """(
+        EXISTS (
+            SELECT 1 FROM service_taxonomy st
+            JOIN taxonomies t ON st.taxonomy_id = t.id
+            WHERE st.service_id = s.id AND LOWER(t.name) = ANY(:taxonomy_names)
+        )
+        OR (
+            s.name ~* :service_name_pattern
+            AND EXISTS (
+                SELECT 1 FROM service_taxonomy st_pd
+                JOIN taxonomies t_pd ON st_pd.taxonomy_id = t_pd.id
+                WHERE st_pd.service_id = s.id
+                  AND LOWER(t_pd.name) = 'other service'
+                  AND t_pd.parent_id IS NULL
+            )
+        )
+    )""",
+    ["taxonomy_names", "service_name_pattern"],
+)
+
 # Co-located service filter — finds locations where a DIFFERENT service
 # at the same location matches a second set of taxonomy names.
 # Used when the user asks for multiple services (e.g. "food and clothing").
@@ -599,6 +669,101 @@ _DEFAULT_MAX_RESULTS = 10
 
 
 # ---------------------------------------------------------------------------
+# SERVICE-NAME PATTERNS — Phase B / Ticket K
+# ---------------------------------------------------------------------------
+# Regex patterns used by FILTER_BY_TAXONOMY_OR_NAME_PATTERN to surface
+# `Other service` parent-direct services whose service.name matches a
+# curated pattern. These supplement leaf-tagged matches when Streetlives
+# tagging hasn't caught up to a service's true category.
+#
+# PostgreSQL POSIX (ARE) regex flavor — word-boundary notes:
+#   - `\m` matches start of a word (transition non-word → word).
+#   - `\M` matches end of a word (transition word → non-word).
+#   - **Do NOT use `\b`.** In PostgreSQL ARE, `\b` matches the BACKSPACE
+#     character (\x08), not a word boundary — despite some PG documentation
+#     listing it as a synonym for `\y`. Empirical testing in production
+#     (May 2026) confirmed `s.name ~* '\besl\b'` returns 0 matches even
+#     when ESL services exist; `s.name ~* '\mesl\M'` returns the matches
+#     correctly. Project convention: always use `\m...\M`. See
+#     tests/unit/test_narrowing.py::TestWordBoundaryCorrectness for the
+#     regression guard, and the comment in rag/__init__.py near "ID
+#     services" for the original discovery.
+#   - `(?:...)` is the non-capturing group, supported in ARE.
+#   - `~*` (used by the filter) is case-insensitive matching.
+#   - No Python-specific syntax (no `(?P<name>...)`, no `(?i)` inline
+#     flag — case-insensitivity comes from the operator).
+#
+# Patterns are written as parenthesized alternations of branches; each
+# branch matches a distinct service name shape (e.g. "Adult Education"
+# vs "ESL Plus" vs "Citizenship Classes"). \m...\M anchors on both ends
+# prevent substring false positives (e.g. "esl" inside "diesel" / "weasel").
+#
+# DB-verification methodology: each pattern was sanity-checked against
+# a sample of Other-service-parent-direct service names from the May
+# 2026 audit (Appendix A's alphabetical sample). The intent is to
+# match 50–150 additional services per promoted service_type without
+# false-positive matches in unrelated trees (which the filter already
+# rules out by anchoring to t.name = 'other service' AND parent_id IS NULL).
+
+# Education (Ticket C — DB: 101 leaf + estimated 80–130 parent-direct)
+# Branches cover the four sub-clusters observed in the parent-direct
+# bucket: adult-ed, language/ESL, equivalency/GED, citizenship/civics,
+# tech/digital-literacy, and college-access.
+_EDUCATION_NAME_PATTERN = (
+    r"\m("
+    r"adult\s+education|adult\s+literacy|adult\s+learning|"
+    r"academic\s+enrichment|"
+    r"esl|english\s+(?:as\s+a\s+second|classes|language)|"
+    r"ged|hse|high\s+school\s+equivalency|"
+    r"citizenship\s+(?:class|test|prep)|"
+    r"attain|"
+    r"college\s+(?:access|prep|success|preparedness)|"
+    r"continued\s+education|"
+    r"literacy\s+(?:program|zone|project)|"
+    r"educational\s+services|"
+    r"early\s+childhood\s+education|"
+    r"pre-?k\s+to\s+12|"
+    r"head\s+start|"
+    r"computer\s+(?:classes|skills|lab)|digital\s+literacy|"
+    r"tech\s+training|advanced\s+technology\s+training"
+    r")\M"
+)
+
+
+# Benefits (Ticket D — DB: 32 Benefits leaf + 2 Taxes leaf + estimated
+# ~50 parent-direct via name-pattern). Branches cover the benefit-
+# enrollment clusters surfaced by the audit: SNAP/food stamps,
+# Medicaid/insurance enrollment, cash/public assistance, Social Security
+# (SSI/SSDI), disability benefits, LIHEAP/energy assistance, housing
+# programs (Section 8/vouchers/rental assistance/NYCHA/eviction
+# prevention), financial counseling, and tax prep (folded in per Phase
+# B Ticket D — most NYC tax clinics are EITC-focused).
+#
+# Uses `\m...\M` word-boundary anchors per project convention — see the
+# note at the top of this section for the `\b` gotcha.
+_BENEFITS_NAME_PATTERN = (
+    r"\m("
+    r"benefits?(?:\s+(?:assistance|enrollment|coordinator))?|"
+    r"snap(?:\s+application)?|"
+    r"food\s+stamps|food\s+benefits|"
+    r"public\s+(?:assistance|benefits)|"
+    r"cash\s+assistance|"
+    r"medicaid(?:\s+(?:enrollment|wellcare))?|health\s+insurance\s+enrollment|"
+    r"ssi|ssdi|social\s+security|"
+    r"disability\s+(?:benefits|advocacy)|"
+    r"liheap|low.income\s+home\s+energy|"
+    r"voucher|section\s+8|"
+    r"rental\s+assistance|housing\s+(?:assistance|consultations|counseling)|"
+    r"eviction\s+prevention|"
+    r"financial\s+(?:assistance|counseling|aid|advisor|coaching)|"
+    r"government\s+(?:assistance|benefits)|"
+    r"emergency\s+(?:funding|crisis\s+assistance)|"
+    r"tax\s+(?:prep|clinic|assistance)|free\s+tax|low.income\s+tax"
+    r")\M"
+)
+
+
+# ---------------------------------------------------------------------------
 # TEMPLATE DEFINITIONS
 # ---------------------------------------------------------------------------
 # Each template specifies which filters are always applied and which are
@@ -902,9 +1067,131 @@ TEMPLATES = {
             "Residential Recovery", "Support Groups",
         ],
     },
+    "education": {
+        "name": "EducationQuery",
+        "description": (
+            "Find education and learning programs (ESL, GED, adult education, "
+            "computer classes, citizenship classes, college prep)"
+        ),
+        # Phase B Ticket C promotion. Uses the OR'd filter so the query
+        # matches BOTH leaf-tagged services (Other service › Education, 101
+        # services) AND parent-direct tagging-debt services whose name
+        # matches _EDUCATION_NAME_PATTERN. See TAXONOMY_AUDIT_MAY2026.md
+        # §IX and PHASE_B_PROMOTION_PLAN.md.
+        #
+        # Note: FILTER_BY_DESCRIPTION_KEYWORDS is intentionally NOT in
+        # optional_filters. The description filter was designed for wide
+        # templates (e.g. `other` at ~1,400 services) as a sub-narrowing
+        # mechanism keyed off `service_detail`. For promoted narrow templates
+        # like this one, the taxonomy + name-pattern OR'd filter already
+        # narrows aggressively (~165 services NYC-wide); AND-ing a
+        # description filter on top reduces this to single digits before
+        # location filtering, producing 0-result outcomes — confirmed
+        # empirically May 2026 via the post-`\b`-fix eval (96 benefits
+        # candidates → 6 after `financial` description filter → ~0 after
+        # borough narrowing). The user's `service_detail` value is still
+        # set and surfaces in the confirmation message ("I'll look for ESL
+        # classes in..."), but does not narrow the SQL. Post-SQL ranking
+        # or sub-narrowing can be added later if needed. See
+        # docs/design/STREETLIVES_DATA_GOTCHAS.md §VII
+        # "Description filtering does not compose with narrow templates."
+        "required_filters": [
+            FILTER_BY_TAXONOMY_OR_NAME_PATTERN,
+            FILTER_NOT_HIDDEN,
+            FILTER_BY_STATE_NY,
+        ],
+        "optional_filters": [
+            FILTER_BY_CITY,
+            FILTER_BY_CITY_IN_BOROUGH,
+            FILTER_BY_CITY_LIKE,
+            FILTER_BY_PROXIMITY,
+            FILTER_BY_AGE_ELIGIBILITY,
+            FILTER_BY_GENDER_ELIGIBILITY,
+        ],
+        "default_params": {
+            # Only the leaf — Education is a single Other-service child. The
+            # parent-direct tagging-debt bucket is reached via the
+            # service_name_pattern branch of FILTER_BY_TAXONOMY_OR_NAME_PATTERN.
+            #
+            # Internship deliberately omitted: the audit (TAXONOMY_AUDIT_MAY2026.md
+            # Appendix A) shows ONE Internship taxonomy under `Other service`
+            # with 3 services. It's already used by the `employment` template
+            # (and conceptually belongs there — internships are employment-
+            # adjacent). Including it here would double-route the same 3
+            # services to both templates.
+            "taxonomy_names": ["education"],
+            "service_name_pattern": _EDUCATION_NAME_PATTERN,
+        },
+        "taxonomy_aliases": ["Education"],
+    },
+    "benefits": {
+        "name": "BenefitsQuery",
+        "description": (
+            "Find benefits enrollment and financial assistance (SNAP/EBT, "
+            "Medicaid, SSI, cash assistance, Section 8/vouchers, rental "
+            "assistance, NYCHA, tax prep)"
+        ),
+        # Phase B Ticket D promotion. Same OR'd-filter pattern as education:
+        # matches BOTH leaf-tagged services (Other service › Benefits + Taxes,
+        # 34 services total) AND parent-direct tagging-debt services whose
+        # name matches _BENEFITS_NAME_PATTERN (~50 additional). See
+        # TAXONOMY_AUDIT_MAY2026.md §IX, PHASE_B_PROMOTION_PLAN.md.
+        #
+        # Supersedes the April 2026 parity-audit decision that collapsed
+        # housing programs (Section 8 / rental assistance / NYCHA /
+        # eviction prevention) into `service_type=other`. Per Phase B,
+        # user-testing (end user 3, mens-shelter resident) showed these
+        # are benefit-enrollment asks in user mental model, not "other".
+        # The TestHousingAssistanceRemoval class is updated to enforce
+        # the new routing while keeping its primary guard intact
+        # (the dedicated `housing_assistance` TEMPLATE remains removed).
+        #
+        # Note: FILTER_BY_DESCRIPTION_KEYWORDS is intentionally NOT in
+        # optional_filters. Same rationale as the education template above
+        # — narrow promoted templates have the taxonomy + name-pattern
+        # OR'd filter doing the narrowing; AND-ing description filtering
+        # on top reduces results to 0 before location filtering. The
+        # empirical case (May 2026): 96 benefits candidates NYC-wide →
+        # 6 after `financial` description filter → 0 after Manhattan
+        # narrowing for `peer_bad_with_money`; → 22 after `food stamps`
+        # filter → ~0 after Brooklyn narrowing for `peer_food_stamps_apply`.
+        # service_detail still populates the confirmation message
+        # ("I'll look for food stamps / SNAP in Brooklyn") but does not
+        # narrow the SQL. See docs/design/STREETLIVES_DATA_GOTCHAS.md
+        # §VII "Description filtering does not compose with narrow
+        # templates."
+        "required_filters": [
+            FILTER_BY_TAXONOMY_OR_NAME_PATTERN,
+            FILTER_NOT_HIDDEN,
+            FILTER_BY_STATE_NY,
+        ],
+        "optional_filters": [
+            FILTER_BY_CITY,
+            FILTER_BY_CITY_IN_BOROUGH,
+            FILTER_BY_CITY_LIKE,
+            FILTER_BY_PROXIMITY,
+            FILTER_BY_AGE_ELIGIBILITY,
+            FILTER_BY_GENDER_ELIGIBILITY,
+        ],
+        "default_params": {
+            # Both Benefits AND Taxes leaves — per Phase B Ticket D, tax
+            # prep is benefits-adjacent (most NYC tax-prep clinics are
+            # EITC-focused, helping low-income filers maximize benefits).
+            # Promoting Taxes separately would overspecify; folding it in
+            # matches user mental model.
+            "taxonomy_names": ["benefits", "taxes"],
+            "service_name_pattern": _BENEFITS_NAME_PATTERN,
+        },
+        "taxonomy_aliases": ["Benefits", "Taxes"],
+    },
     "other": {
         "name": "OtherServicesQuery",
-        "description": "Find benefits, case workers, education, and miscellaneous Other-service-tree services",
+        "description": (
+            "Find IDs, mail/storage, connectivity (free phone/wifi/charging), "
+            "case workers, and miscellaneous Other-service-tree services "
+            "(education/benefits/legal/employment/immigration are now their "
+            "own service_types)"
+        ),
         "required_filters": [FILTER_BY_TAXONOMY_NAME_IN, FILTER_NOT_HIDDEN, FILTER_BY_STATE_NY],
         "optional_filters": [
             FILTER_BY_CITY,
@@ -914,16 +1201,16 @@ TEMPLATES = {
             FILTER_BY_DESCRIPTION_KEYWORDS,
         ],
         "default_params": {
-            # Other-service-tree taxonomies only.
+            # Other-service-tree taxonomies only — the residual catch-all
+            # after Phase B Tickets C (education) and D (benefits) moved
+            # their leaves to dedicated templates.
             #
             # May 2026 fix (TAXONOMY_AUDIT_MAY2026.md §VIII follow-up):
             # the previous default included 15 taxonomies parented under
             # *other* DB trees, polluting `service_type=other` results with
             # shelter / personal-care / clothing services. Specifically the
             # 10 Shelter children listed below were causing shelter services
-            # to surface in non-shelter queries (e.g., a "benefits in Brooklyn"
-            # search returning a Single Adult shelter, because both `single
-            # adult` and `benefits` were in the taxonomy_names IN clause).
+            # to surface in non-shelter queries.
             #
             # The eval suite already noted the symptom — see
             # `natural_drop_in_center` scenario description in
@@ -945,25 +1232,40 @@ TEMPLATES = {
             #                            April 2026 verification)
             #   • pets                 → Other-tree but VESTIGIAL (0 services,
             #                            audit Ticket J)
+            #   • education            → PROMOTED to `service_type=education`
+            #                            in Phase B (Ticket C). 101 leaf-
+            #                            tagged services + name-pattern
+            #                            matches against `Other service`
+            #                            parent-direct now reachable via
+            #                            the education template's OR'd filter.
+            #   • benefits, taxes      → PROMOTED to `service_type=benefits`
+            #                            in Phase B (Ticket D). 32 Benefits
+            #                            + 2 Taxes leaf-tagged services +
+            #                            ~50 name-pattern matches against
+            #                            `Other service` parent-direct now
+            #                            reachable via the benefits
+            #                            template's OR'd filter. Housing
+            #                            programs (Section 8, NYCHA, rental
+            #                            assistance, eviction prevention)
+            #                            also migrated per Phase B doc's
+            #                            user-testing rationale.
             #
             # KEPT (all Other-service-tree children with non-zero services
             # that aren't already promoted to a dedicated template):
             "taxonomy_names": [
                 "other service",  # parent — 1,105 services tagged here directly
-                "benefits",       # 32 svc
-                "case workers",   # 28 svc
-                "education",      # 101 svc — pending Phase B promotion
+                "case workers",   # 28 svc — pending Phase B Ticket E promotion
                 "free wifi",      # 8 svc
                 "mail",           # 6 svc
-                "taxes",          # 2 svc
-                # NOT included (intentionally promoted to their own templates):
+                # NOT included (promoted to their own templates):
                 #   legal services, immigration services → legal template
                 #   employment, internship               → employment template
+                #   education                            → education template
+                #   benefits, taxes                      → benefits template
             ]
         },
         "taxonomy_aliases": [
-            "Other service", "Benefits", "Case Workers", "Education",
-            "Free Wifi", "Mail", "Taxes",
+            "Other service", "Case Workers", "Free Wifi", "Mail",
         ],
     },
     "org_name": {

@@ -31,6 +31,10 @@ _RAG_INIT = (
     Path(__file__).resolve().parent.parent.parent
     / "backend" / "app" / "rag" / "__init__.py"
 )
+_QUERY_TEMPLATES = (
+    Path(__file__).resolve().parent.parent.parent
+    / "backend" / "app" / "rag" / "query_templates.py"
+)
 
 
 # -----------------------------------------------------------------------
@@ -389,19 +393,73 @@ class TestMutualExclusion:
 # =====================================================================
 
 class TestWordBoundaryCorrectness:
-    """No pattern in the codebase should use \\b (backspace in PostgreSQL)."""
+    """No SQL-bound regex pattern in the codebase should use \\b — it's the
+    backspace character in PostgreSQL ARE, NOT a word boundary, despite
+    some PG docs listing it as a synonym for \\y. Empirical testing
+    confirmed `\\besl\\b` matches zero services in prod; `\\mesl\\M`
+    matches them correctly. Project convention: always \\m...\\M.
 
-    def _all_patterns(self) -> dict:
-        with open(_RAG_INIT) as f:
+    This class scans two files where SQL-bound regex patterns live:
+    rag/__init__.py (_DETAIL_DESCRIPTION_FILTERS, population patterns)
+    and rag/query_templates.py (the Phase B service-name patterns
+    _EDUCATION_NAME_PATTERN, _BENEFITS_NAME_PATTERN). Adding a new
+    SQL-bound pattern file elsewhere → extend this scan."""
+
+    def _patterns_from(self, path) -> dict:
+        with open(path) as f:
             src = f.read()
+        # Match `"key": r"pattern"` (the _DETAIL_DESCRIPTION_FILTERS shape)
+        # and bare module-level `_NAME_PATTERN = r"..."` constants alike.
+        # The string source is searched directly for any raw-string literal
+        # containing backslash-b so multi-line concatenated patterns are
+        # also caught.
         return dict(re.findall(r'"([^"]+)"\s*:\s*r"([^"]+)"', src))
 
-    def test_no_backslash_b(self):
-        for detail, pat in self._all_patterns().items():
+    def _raw_source(self, path) -> str:
+        with open(path) as f:
+            return f.read()
+
+    def test_no_backslash_b_in_rag_init(self):
+        """rag/__init__.py: per-detail description filter patterns."""
+        for detail, pat in self._patterns_from(_RAG_INIT).items():
             assert "\\b" not in pat, (
                 f"'{detail}' uses \\b (backspace in PG, not word boundary). "
                 f"Use \\m...\\M instead. Pattern: {pat}"
             )
+
+    def test_no_backslash_b_in_query_templates(self):
+        """query_templates.py: Phase B service-name patterns
+        (_EDUCATION_NAME_PATTERN, _BENEFITS_NAME_PATTERN, and any future
+        promoted-type patterns).
+
+        These are multi-line concatenated raw strings (r"\\m(" ... r")\\M"),
+        not the single-line `"key": r"pat"` shape the dict-pattern parser
+        catches. Scan the raw source for any raw-string literal containing
+        `\\b`. This is conservative — it would also flag a comment that
+        included `\\b` as a literal, but the file convention is to write
+        such references in prose with backticks rather than escaped raw
+        strings, so false positives shouldn't fire.
+        """
+        src = self._raw_source(_QUERY_TEMPLATES)
+        # Find raw-string literals containing \b
+        # (matches r"\b" or r"...\b..." across line continuations)
+        offending = re.findall(r'r"[^"]*\\b[^"]*"', src)
+        # Filter out any matches inside a comment line — comments
+        # describing the gotcha are legitimate.
+        problematic = []
+        for match in offending:
+            # Find the line this match is on and check if it's a comment
+            idx = src.find(match)
+            line_start = src.rfind("\n", 0, idx) + 1
+            line_prefix = src[line_start:idx].lstrip()
+            if not line_prefix.startswith("#"):
+                problematic.append(match)
+        assert not problematic, (
+            f"query_templates.py contains raw-string regex literals with "
+            f"\\b — these are silently dead in PostgreSQL ARE (\\b is the "
+            f"backspace character, NOT a word boundary). Use \\m...\\M "
+            f"instead. Offending literals: {problematic}"
+        )
 
 
 class TestWordBoundaryFalsePositives:
@@ -673,6 +731,65 @@ class TestTemplateWiring:
             "taxonomy_names": ["health"],
         })
         assert "description_pattern" not in sql
+
+
+class TestPromotedTemplatesOmitDescriptionFilter:
+    """Phase B (May 2026) architectural invariant.
+
+    Templates promoted out of `other` to be their own narrow service_type
+    (education, benefits, and future case_management) intentionally do NOT
+    include FILTER_BY_DESCRIPTION_KEYWORDS in their optional_filters.
+
+    Rationale: description filtering was designed as sub-narrowing for the
+    wide `other` template (~1,400 services). For narrow promoted templates
+    where the taxonomy + name-pattern OR'd filter already narrows
+    aggressively (~96 benefits services, ~165 education services
+    NYC-wide), AND-ing description filtering on top reduces results to
+    near-zero before location filtering — empirically verified May 2026 in
+    the post-`\\b`-fix eval:
+
+      benefits candidates NYC-wide:                    96
+      + `financial|money|budget` description filter:    6
+      + `food stamp|SNAP|EBT` description filter:      22
+
+      After borough narrowing → 0–3 (insufficient for usable results).
+
+    service_detail is still extracted and surfaces in the confirmation
+    message ("I'll look for ESL classes in Brooklyn"); it just doesn't
+    narrow the SQL. Post-SQL ranking or sub-narrowing can be added later
+    without re-introducing the AND-chain problem.
+
+    See docs/design/STREETLIVES_DATA_GOTCHAS.md §VII for the canonical
+    write-up.
+    """
+
+    PROMOTED_NARROW_TEMPLATES = ["education", "benefits"]
+
+    @pytest.mark.parametrize("template_key", PROMOTED_NARROW_TEMPLATES)
+    def test_no_description_filter_in_optional(self, template_key):
+        from app.rag.query_templates import FILTER_BY_DESCRIPTION_KEYWORDS
+        tmpl = TEMPLATES[template_key]
+        assert FILTER_BY_DESCRIPTION_KEYWORDS not in tmpl["optional_filters"], (
+            f"Template '{template_key}' has FILTER_BY_DESCRIPTION_KEYWORDS "
+            f"in optional_filters. Per Phase B (May 2026), promoted narrow "
+            f"templates intentionally omit description filtering — the "
+            f"taxonomy + name-pattern OR'd filter is sufficient narrowing, "
+            f"and AND-ing description filter on top empirically reduces "
+            f"results to 0 before location narrowing. See "
+            f"docs/design/STREETLIVES_DATA_GOTCHAS.md §VII "
+            f"'Description filtering does not compose with narrow templates.'"
+        )
+
+    @pytest.mark.parametrize("template_key", PROMOTED_NARROW_TEMPLATES)
+    def test_no_description_filter_in_required(self, template_key):
+        """Defense in depth: description filter must not be required either."""
+        from app.rag.query_templates import FILTER_BY_DESCRIPTION_KEYWORDS
+        tmpl = TEMPLATES[template_key]
+        assert FILTER_BY_DESCRIPTION_KEYWORDS not in tmpl["required_filters"], (
+            f"Template '{template_key}' has FILTER_BY_DESCRIPTION_KEYWORDS "
+            f"in required_filters — would force description matching on "
+            f"every query, breaking the no-detail case."
+        )
 
 
 # =====================================================================

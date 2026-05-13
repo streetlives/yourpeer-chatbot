@@ -107,16 +107,41 @@ def _shelter_tax(**kwargs) -> list[str]:
 
 class TestHousingAssistanceRemoval:
     """
-    WHY: April 15, 2026 audit found the chatbot had a dedicated
-    housing_assistance template that did not exist in YourPeer. YourPeer
-    surfaces rental assistance, Section 8, eviction prevention, NYCHA, etc.
-    via the 'Other service' taxonomy tree. The dedicated template was
-    removed; keywords now route to 'other'. This class prevents accidental
-    reintroduction.
+    WHY (two-layer history):
+
+    Layer 1 (April 15, 2026 — QUERY_PARITY_AUDIT.md):
+        Removed the dedicated `housing_assistance` template because
+        YourPeer's frontend had no equivalent. Section 8 / NYCHA /
+        rental assistance / eviction prevention keywords collapsed into
+        SERVICE_KEYWORDS["other"]. The original tests in this class
+        enforced routing to `other`.
+
+    Layer 2 (May 2026 — PHASE_B_PROMOTION_PLAN.md, SUPERSEDES Layer 1
+    for routing):
+        User-testing (end user 3, mens-shelter resident) flagged that
+        Section 8 / vouchers don't fit "other" mentally. Phase B Ticket
+        D moves these to `benefits`. The dedicated `housing_assistance`
+        TEMPLATE remains removed (Layer 1's primary structural guard);
+        these keywords flow through the `benefits` template instead.
+
+    What this class guards in its current form:
+        1. `housing_assistance` template still does NOT exist (Layer 1
+           primary guard — never re-introduce a separate template).
+        2. Housing keywords route to `benefits` (Layer 2 routing
+           destination — was `other` pre-Phase B).
+        3. service_detail is still set on housing sub-types so the
+           description filter narrows results inside the benefits
+           template.
     """
 
     def test_template_does_not_exist(self):
-        """The dedicated template must stay removed."""
+        """The dedicated template must stay removed.
+
+        Phase B Ticket D promoted housing keywords to `benefits` — that
+        does NOT mean re-introducing a dedicated housing_assistance
+        template. The benefits template handles all benefit-enrollment
+        asks (SNAP, Medicaid, SSI, housing programs).
+        """
         assert "housing_assistance" not in TEMPLATES, (
             "housing_assistance template was removed to match YourPeer. "
             "If reintroducing, update QUERY_PARITY_AUDIT.md to document the divergence."
@@ -127,6 +152,14 @@ class TestHousingAssistanceRemoval:
 
         Any legacy caller producing service_type='housing_assistance' should
         still get a valid template key so queries don't break silently.
+
+        Note: the redirect target is still 'other' rather than 'benefits'
+        because resolve_template_key is a pure compatibility shim for the
+        retired service_type literal — it predates the Phase B promotion.
+        Legacy callers using 'housing_assistance' are by definition not
+        going through the Phase B routing path (which sets
+        service_type='benefits' from the keyword extractor). The shim's
+        only job is to keep a stale caller's query from crashing.
         """
         assert resolve_template_key("housing_assistance") == "other"
 
@@ -141,14 +174,22 @@ class TestHousingAssistanceRemoval:
         )
 
     def test_service_keywords_has_no_housing_assistance_group(self):
-        """SERVICE_KEYWORDS must not have a housing_assistance keyword group."""
+        """SERVICE_KEYWORDS must not have a housing_assistance keyword group.
+
+        Housing keywords live in SERVICE_KEYWORDS['benefits'] after
+        Phase B Ticket D (previously in SERVICE_KEYWORDS['other'] per
+        Layer 1). No dedicated housing_assistance group should exist.
+        """
         assert "housing_assistance" not in SERVICE_KEYWORDS, (
             "Housing keywords (rental assistance, Section 8, etc.) should be "
-            "in SERVICE_KEYWORDS['other'], not a separate housing_assistance group."
+            "in SERVICE_KEYWORDS['benefits'] after Phase B Ticket D, "
+            "not a separate housing_assistance group."
         )
 
-    def test_housing_keywords_route_to_other(self):
-        """Slot extraction produces service_type='other' for housing program phrases."""
+    def test_housing_keywords_route_to_benefits(self):
+        """Slot extraction produces service_type='benefits' for housing
+        program phrases (Phase B Ticket D — supersedes the April 2026
+        decision to route them to 'other')."""
         for phrase in [
             "I need rental assistance",
             "I'm behind on rent",
@@ -160,14 +201,15 @@ class TestHousingAssistanceRemoval:
             "I need homeless prevention help",
         ]:
             slots = extract_slots(phrase)
-            assert slots["service_type"] == "other", (
-                f"'{phrase}' should route to 'other' (YourPeer parity), got {slots['service_type']}"
+            assert slots["service_type"] == "benefits", (
+                f"'{phrase}' should route to 'benefits' after Phase B Ticket D, "
+                f"got {slots['service_type']}"
             )
 
     def test_housing_keywords_set_service_detail_for_description_filter(self):
         """Housing sub-type keywords must set service_detail so the description
-        filter fires in rag/__init__.py — this is how the narrowing-within-other
-        mechanism works without a dedicated template."""
+        filter fires inside the benefits template — same narrowing mechanism
+        as before, just under a different parent service_type."""
         expectations = {
             "I need rental assistance": "rental assistance",
             "how do I apply for NYCHA": "NYCHA housing",
@@ -177,7 +219,7 @@ class TestHousingAssistanceRemoval:
         for phrase, expected_detail in expectations.items():
             slots = extract_slots(phrase)
             assert slots["service_detail"] == expected_detail, (
-                f"'{phrase}' lost service_detail — description filter won't fire in 'other' template"
+                f"'{phrase}' lost service_detail — description filter won't fire in 'benefits' template"
             )
 
     def test_evicted_still_routes_to_shelter(self):
@@ -2025,7 +2067,17 @@ class TestTemplateShapeInvariants:
 
     EXPECTED_TEMPLATES = {
         "food", "shelter", "clothing", "personal_care", "medical",
-        "mental_health", "legal", "employment", "other", "org_name",
+        "mental_health", "legal", "employment",
+        # Promoted out of `other` in Phase B per
+        # TAXONOMY_AUDIT_MAY2026.md §IX Ticket C.
+        "education",
+        # Promoted out of `other` in Phase B per
+        # TAXONOMY_AUDIT_MAY2026.md §IX Ticket D. Supersedes the April
+        # 2026 parity-audit decision to collapse housing programs into
+        # `other`. See TestHousingAssistanceRemoval for the routing
+        # invariant.
+        "benefits",
+        "other", "org_name",
     }
 
     def test_exact_template_set(self):
@@ -2042,7 +2094,7 @@ class TestTemplateShapeInvariants:
     @pytest.mark.parametrize("template_key",
                              ["food", "shelter", "clothing", "personal_care",
                               "medical", "mental_health", "legal", "employment",
-                              "other"])
+                              "education", "benefits", "other"])
     def test_template_has_required_keys(self, template_key):
         """Every service template has the required structure."""
         t = TEMPLATES[template_key]
@@ -2053,7 +2105,7 @@ class TestTemplateShapeInvariants:
     @pytest.mark.parametrize("template_key",
                              ["food", "shelter", "clothing", "personal_care",
                               "medical", "mental_health", "legal", "employment",
-                              "other"])
+                              "education", "benefits", "other"])
     def test_template_taxonomy_names_lowercase(self, template_key):
         """Taxonomy names in default_params must be lowercase (matches SQL casing)."""
         names = TEMPLATES[template_key]["default_params"].get("taxonomy_names", [])

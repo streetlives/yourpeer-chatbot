@@ -273,6 +273,48 @@ SERVICE_ROUTES = {
         "I can't get hired because of my record",
     ],
 
+    "education": [
+        # Phase B Ticket C — promoted out of `other`. Coverage spans the
+        # six sub-clusters surfaced by TAXONOMY_AUDIT_MAY2026.md §III
+        # word-frequency analysis: ESL/language, GED/equivalency, adult
+        # education/literacy, computer/digital literacy, citizenship/civics,
+        # college prep.
+        # ESL / English
+        "I want to learn English",
+        "where can I take ESL classes",
+        "I need to improve my English",
+        "are there free English classes nearby",
+        "I want to learn English as a second language",
+        # GED / high school equivalency
+        "I need to get my GED",
+        "where can I study for the GED",
+        "I want to finish high school",
+        "where can I get my high school equivalency",
+        "I never finished high school and want to go back",
+        # Adult education / literacy
+        "I'm looking for adult education programs",
+        "I need adult literacy help",
+        "where can I take adult classes",
+        # Computer / digital literacy
+        "I need to learn how to use a computer",
+        "where can I take a computer class",
+        "I want to improve my computer skills",
+        # Citizenship / civics
+        "I need citizenship classes",
+        "where can I prepare for the citizenship test",
+        # College prep / access
+        "I need help applying to college",
+        "where can I get college prep classes",
+        # Negation phrasings — required by
+        # test_hybrid_multi_intent::TestRouteNegationCoverage. Use the
+        # canonical negation tokens (don't / can't / haven't / no one
+        # etc.) the test checks for; "never" / "dropped out" don't
+        # qualify.
+        "I don't have my high school diploma",
+        "I haven't finished school",
+        "I can't read or write very well",
+    ],
+
     # --- housing_assistance route retired (April 15, 2026 audit) ---
     # housing_assistance was collapsed into SERVICE_KEYWORDS['other'] with
     # a description filter on the 'other' template (matches YourPeer).
@@ -281,49 +323,91 @@ SERVICE_ROUTES = {
     # etc.) via the 'other' cluster. Semantic routing for these phrasings
     # was dropped along with the dedicated service type.
     #
-    # If production data shows we're missing coverage on indirect phrasings,
-    # the utterances below can be promoted into the 'other' route (mind
-    # cross-route duplicates — "where can I apply for Section 8" etc. are
-    # a natural fit for 'other' since Section 8 is a benefits application):
-    #     "I need help paying my rent"
-    #     "I'm behind on rent and might get evicted"
-    #     "where can I apply for Section 8" / "... for NYCHA"
-    #     "I need rental assistance" / "... eviction prevention help"
-    #     "where can I find affordable housing" / "... a housing voucher"
-    #     "I need homeless prevention services"
-    #     "I'm about to lose my apartment"
-    #     "I got an eviction notice and need help"
-    #     "I can't afford my rent anymore"
-    #     "I have nowhere to move because rent is too high"
+    # SUPERSEDED May 2026 — Phase B Ticket D promoted housing programs
+    # (rental assistance, Section 8, NYCHA, eviction prevention) and the
+    # broader benefits cluster (SNAP, Medicaid, SSI, cash assistance, tax
+    # prep, financial counseling) to `service_type=benefits`. The
+    # benefits semantic route below covers all of these phrasings
+    # explicitly. The original April-2026 note is preserved for the
+    # housing-program reasoning trail.
+
+    "benefits": [
+        # Phase B Ticket D — promoted out of `other`. Coverage spans the
+        # six sub-clusters surfaced by Phase B doc's keyword inventory:
+        # SNAP/food stamps, Medicaid/insurance enrollment, cash/public
+        # assistance, Social Security (SSI/SSDI), housing programs
+        # (Section 8/vouchers/NYCHA/rental assistance), financial
+        # counseling, tax prep.
+        # SNAP / food stamps / EBT
+        "I need help applying for food stamps",
+        "I need help with my SNAP application",
+        "where can I apply for EBT",
+        # Cash assistance / public assistance / welfare
+        "I need cash assistance",
+        "where can I apply for public assistance",
+        "I need help with welfare",
+        # Medicaid / insurance enrollment
+        "I need help with Medicaid",
+        "I need help enrolling in health insurance",
+        "where can I sign up for Medicaid",
+        # SSI / SSDI / Social Security
+        "I need help applying for SSI",
+        "I need help with my Social Security",
+        "how do I apply for disability benefits",
+        # Housing programs (migrated from `other` per Phase B Ticket D —
+        # supersedes the April 2026 retired housing_assistance comments
+        # immediately above. End user 3's user-testing feedback drove
+        # this routing decision.)
+        "I need rental assistance",
+        "I'm behind on rent and might get evicted",
+        "where can I apply for Section 8",
+        "where can I apply for NYCHA",
+        "I need eviction prevention help",
+        "where can I find affordable housing",
+        "I need a housing voucher",
+        "I got an eviction notice and need help",
+        # Tax prep / financial counseling
+        "I need help with tax preparation",
+        "I need financial counseling",
+        "I need help with budgeting",
+        "I need free tax prep",
+        # LIHEAP / energy assistance
+        "I need help paying my electric bill",
+        "I need energy assistance",
+        # Negation phrasings (HYBRID_MULTI_INTENT). The test in
+        # test_hybrid_multi_intent::TestRouteNegationCoverage checks for
+        # ≥2 utterances containing NEGATION_WORDS (don't / can't /
+        # haven't / nowhere / etc.).
+        "I can't get my benefits without help",
+        "I don't have Medicaid yet",
+        "I can't afford my rent anymore",
+        "I have no income and need help",
+    ],
 
     "other": [
-        "I need help applying for food stamps",
+        # Residual after Phase B Tickets C (education) and D (benefits)
+        # promotions. Covers IDs, connectivity, mail/storage, case
+        # workers — the genuinely-miscellaneous remaining cluster.
         "where can I get a free phone",
         "I need to get an ID",
-        "I need help with my benefits",
         "where can I charge my phone",
         "I need a mailing address",
-        "I need help with my SNAP application",
         "where can I get free wifi",
-        "I need help with Medicaid",
-        "I need financial counseling",
         "I need help getting my birth certificate",
-        "I need help with budgeting",
         "I need a metro card",
         "where can I get a state ID",
-        "I need help enrolling in health insurance",
-        "I need help with tax preparation",
-        "I need computer classes",
-        "I need to learn English",
         # Coverage for retired regex keywords (REGEX_AUDIT)
         "I need help getting a transit pass",
         # Coverage for moved regex keywords (REGEX_AUDIT_2)
         "I need a place to store my belongings",
         "is there storage for my stuff",
         "I need to charge my phone and it's dead",
+        # Case workers / navigators (residual until Phase B Ticket E
+        # promotes `case_management` to its own service_type)
+        "I need a case worker",
+        "I need help navigating services",
         # Negation phrasings (HYBRID_MULTI_INTENT)
         "I don't have an ID",
-        "I can't get my benefits without help",
         "I don't have anywhere to keep my things",
         "I have no phone and need one",
     ],

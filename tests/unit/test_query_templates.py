@@ -24,6 +24,10 @@ from app.rag.query_templates import (
     _compute_schedule_status,
     TEMPLATES,
     _BASE_QUERY,
+    FILTER_BY_TAXONOMY_NAME_IN,
+    FILTER_BY_TAXONOMY_OR_NAME_PATTERN,
+    FILTER_NOT_HIDDEN,
+    FILTER_BY_STATE_NY,
 )
 
 
@@ -119,14 +123,34 @@ EXPECTED_TAXONOMY_NAMES = {
         "mental health", "substance use treatment",
         "residential recovery", "support groups",
     },
+    "education": {
+        # Phase B Ticket C — promoted out of `other` (TAXONOMY_AUDIT_MAY2026.md
+        # §IX). Only the leaf is in default taxonomy_names; the OR'd filter
+        # (FILTER_BY_TAXONOMY_OR_NAME_PATTERN) handles the parent-direct
+        # tagging-debt bucket via the service_name_pattern branch.
+        "education",
+    },
+    "benefits": {
+        # Phase B Ticket D — promoted out of `other` (TAXONOMY_AUDIT_MAY2026.md
+        # §IX). Both Benefits (32 services) and Taxes (2 services) leaves
+        # route here; tax prep folded into benefits per Phase B doc
+        # (EITC-focused tax clinics are benefits-adjacent). The OR'd
+        # filter handles parent-direct tagging-debt for SNAP/Medicaid/
+        # Section 8/SSI/etc. via the service_name_pattern branch.
+        "benefits", "taxes",
+    },
     "other": {
         # May 2026 cleanup (TAXONOMY_AUDIT_MAY2026.md §VIII follow-up):
         # Other-service-tree taxonomies only. Previously included 15
         # cross-tree taxonomies (10 Shelter children, 4 Personal Care, 1
         # Clothing) plus 1 phantom and 1 vestigial. See query_templates.py
         # for the per-taxonomy removal rationale.
-        "other service", "benefits", "case workers", "education",
-        "free wifi", "mail", "taxes",
+        #
+        # Phase B Ticket C (May 2026) — `education` removed from this set;
+        # the 101 Education services route via service_type=education.
+        # Phase B Ticket D (May 2026) — `benefits` and `taxes` removed
+        # from this set; both leaves route via service_type=benefits.
+        "other service", "case workers", "free wifi", "mail",
     },
 }
 
@@ -250,6 +274,192 @@ def test_no_taxonomy_name_in_wrong_template():
         f"Only {expected_overlap} should be shared."
 
 
+# -----------------------------------------------------------------------
+# FILTER_BY_TAXONOMY_OR_NAME_PATTERN — Phase B / Ticket K infrastructure
+# -----------------------------------------------------------------------
+# These tests cover the OR-composed filter used by service_types promoted
+# out of the `Other service` parent-direct bucket (education, benefits,
+# case_management — see TAXONOMY_AUDIT_MAY2026.md §IX, PHASE_B_PROMOTION_PLAN.md).
+# The filter lets a template match BOTH:
+#   (a) services tagged at relevant leaf taxonomies (taxonomy_names IN-list)
+#   (b) services tagged at `Other service` parent-direct whose
+#       services.name matches a curated regex (service_name_pattern)
+# combined via a single parenthesized OR-group so the AND-chain in
+# build_query composes correctly.
+#
+# Templates currently using this filter: (none yet — populated in Phase B
+# commits 1-3 for education, benefits, case_management). These tests
+# validate the filter mechanism so the per-promotion work can use it
+# safely. A guard test (`test_filter_taxonomy_or_name_pattern_mutual_exclusion`)
+# locks in the invariant that the new filter and FILTER_BY_TAXONOMY_NAME_IN
+# are mutually exclusive — a template uses one or the other, never both.
+
+
+def test_filter_taxonomy_or_name_pattern_shape():
+    """The filter must be a (sql_string, required_keys_list) tuple, matching
+    every other filter constant in query_templates.py."""
+    assert isinstance(FILTER_BY_TAXONOMY_OR_NAME_PATTERN, tuple), \
+        "FILTER_BY_TAXONOMY_OR_NAME_PATTERN must be a (sql, keys) tuple"
+    assert len(FILTER_BY_TAXONOMY_OR_NAME_PATTERN) == 2, \
+        "Expected (sql_string, required_keys) — 2-tuple"
+    sql, keys = FILTER_BY_TAXONOMY_OR_NAME_PATTERN
+    assert isinstance(sql, str) and sql.strip(), "SQL fragment must be a non-empty string"
+    assert keys == ["taxonomy_names", "service_name_pattern"], (
+        f"Filter must require exactly ['taxonomy_names', 'service_name_pattern'], "
+        f"got {keys}"
+    )
+
+
+def test_filter_taxonomy_or_name_pattern_sql_structure():
+    """The SQL must contain both branches (taxonomy IN-match AND name-pattern
+    match against `Other service` parent-direct), OR'd inside a single
+    parenthesized group."""
+    sql, _ = FILTER_BY_TAXONOMY_OR_NAME_PATTERN
+    sql_no_comments = _strip_sql_comments(sql)
+    sql_normalized = " ".join(sql_no_comments.split())  # collapse whitespace
+
+    # Branch A: taxonomy IN-match (same shape as FILTER_BY_TAXONOMY_NAME_IN)
+    assert ":taxonomy_names" in sql_normalized, "Missing taxonomy_names bind variable"
+    assert "ANY(:taxonomy_names)" in sql_normalized, (
+        "Missing ANY(:taxonomy_names) — taxonomy IN-match branch must use the same "
+        "ANY-array semantics as FILTER_BY_TAXONOMY_NAME_IN for consistent matching."
+    )
+
+    # Branch B: name-pattern match against Other service parent-direct
+    assert ":service_name_pattern" in sql_normalized, "Missing service_name_pattern bind variable"
+    assert "s.name ~*" in sql_normalized, (
+        "Name-pattern branch must use PostgreSQL POSIX case-insensitive regex (~*) — "
+        "case-sensitive ~ would miss 'ESL' vs 'esl' name variants."
+    )
+    # Anchor to Other service PARENT-DIRECT — must not scan the whole DB
+    assert "'other service'" in sql_normalized.lower(), (
+        "Name-pattern branch must anchor to t.name = 'other service' — without this, "
+        "the regex would match any service in any tree (e.g. a shelter named "
+        "'Adult Center' would falsely match an education pattern)."
+    )
+    assert "parent_id IS NULL" in sql_normalized, (
+        "Name-pattern branch must require t.parent_id IS NULL — this restricts to "
+        "the parent-direct 1,105-service tagging-debt bucket, not Other service's "
+        "leaf children (which are already covered by their own promoted templates)."
+    )
+
+    # OR between the two branches
+    assert " OR " in sql_normalized, "Branches must be combined with OR, not AND"
+
+
+def test_filter_taxonomy_or_name_pattern_is_parenthesized():
+    """The whole filter must be wrapped in one top-level parenthesized group
+    so it composes correctly when `build_query` joins WHERE clauses with
+    `" AND "`. Without outer parens, AND-precedence would bind tighter than
+    the inner OR and break the intended (A OR B) AND (other filters) shape.
+    """
+    sql, _ = FILTER_BY_TAXONOMY_OR_NAME_PATTERN
+    stripped = sql.strip()
+    assert stripped.startswith("("), (
+        "Filter SQL must start with '(' so the AND-join in build_query doesn't "
+        "let the inner OR get pulled apart by operator precedence."
+    )
+    assert stripped.endswith(")"), "Filter SQL must end with ')' to close the outer group"
+
+    # Sanity: the outer parens are balanced and actually wrap the entire
+    # expression, not just a sub-clause. Walk the string tracking depth;
+    # depth must return to 0 only at the final char.
+    depth = 0
+    final_zero_idx = -1
+    # Strip line/block comments before paren-walk — comments may contain
+    # unbalanced parens in prose (e.g. "(see foo)" inside a `-- ...` comment).
+    stripped_no_comments = _strip_sql_comments(stripped).strip()
+    for i, ch in enumerate(stripped_no_comments):
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if depth == 0:
+                final_zero_idx = i
+    assert final_zero_idx == len(stripped_no_comments) - 1, (
+        "Outer parens don't wrap the entire expression — depth returned to 0 "
+        f"at index {final_zero_idx} of {len(stripped_no_comments) - 1}. "
+        "The filter would compose incorrectly with the AND-join in build_query."
+    )
+
+
+def test_filter_taxonomy_or_name_pattern_mutual_exclusion_with_taxonomy_in():
+    """A template must use FILTER_BY_TAXONOMY_NAME_IN OR
+    FILTER_BY_TAXONOMY_OR_NAME_PATTERN, never both. Both filters bind
+    :taxonomy_names; using both in one template would mean the same param
+    list satisfies two separate WHERE clauses with redundant taxonomy
+    semantics — at best a no-op, at worst an over-restriction.
+
+    Currently no templates use the new filter (Phase B commits 1-3 will
+    add education/benefits/case_management). This test locks in the
+    invariant before that work starts."""
+    or_pattern_sql, _ = FILTER_BY_TAXONOMY_OR_NAME_PATTERN
+    in_only_sql, _ = FILTER_BY_TAXONOMY_NAME_IN
+
+    for key, template in TEMPLATES.items():
+        if key == "org_name":
+            continue
+        required = template.get("required_filters", [])
+        required_sqls = [sql for sql, _ in required]
+        uses_in_only = in_only_sql in required_sqls
+        uses_or_pattern = or_pattern_sql in required_sqls
+        assert not (uses_in_only and uses_or_pattern), (
+            f"Template '{key}' uses both FILTER_BY_TAXONOMY_NAME_IN and "
+            f"FILTER_BY_TAXONOMY_OR_NAME_PATTERN. Pick one — they're "
+            f"mutually exclusive."
+        )
+
+
+def test_filter_taxonomy_or_name_pattern_build_query_end_to_end():
+    """Synthetic template proof: build_query produces valid SQL when a
+    template uses FILTER_BY_TAXONOMY_OR_NAME_PATTERN. Injects a test
+    template into TEMPLATES via monkeypatch, runs build_query, asserts
+    the generated SQL contains both branches and the required bind vars."""
+    # Synthetic template mimicking the shape Phase B commits will produce
+    # for education / benefits / case_management. The exact taxonomy and
+    # pattern values aren't load-bearing — what matters is that build_query
+    # composes the filter correctly into the WHERE clause.
+    test_template = {
+        "name": "TestQuery",
+        "description": "Synthetic test template for the OR'd filter",
+        "required_filters": [
+            FILTER_BY_TAXONOMY_OR_NAME_PATTERN,
+            FILTER_NOT_HIDDEN,
+            FILTER_BY_STATE_NY,
+        ],
+        "optional_filters": [],
+        "default_params": {
+            "taxonomy_names": ["education"],
+            # Trivially-matching regex — \w matches any word character.
+            # Anchored with \m...\M (project convention; \b is the
+            # backspace character in PostgreSQL ARE, not a word boundary —
+            # see test_narrowing.py::TestWordBoundaryCorrectness).
+            "service_name_pattern": r"\m\w+\M",
+        },
+        "taxonomy_aliases": ["Education"],
+    }
+
+    with patch.dict(TEMPLATES, {"_test_or_pattern": test_template}):
+        sql, params = build_query("_test_or_pattern", {})
+
+    # Both bind vars must be present in the assembled params
+    assert "taxonomy_names" in params, "taxonomy_names must reach the bound params"
+    assert "service_name_pattern" in params, "service_name_pattern must reach the bound params"
+    assert params["taxonomy_names"] == ["education"], \
+        f"taxonomy_names value drift: {params['taxonomy_names']}"
+    assert params["service_name_pattern"] == r"\m\w+\M", \
+        f"service_name_pattern value drift: {params['service_name_pattern']}"
+
+    # Both branches must appear in the WHERE-composed SQL
+    sql_no_comments = _strip_sql_comments(sql)
+    assert "ANY(:taxonomy_names)" in sql_no_comments, \
+        "Taxonomy IN-match branch missing from generated query"
+    assert ":service_name_pattern" in sql_no_comments, \
+        "Name-pattern bind variable missing from generated query"
+    assert "s.name ~*" in sql_no_comments, \
+        "Name-pattern regex operator missing from generated query"
+
+
 def test_food_includes_soup_kitchen():
     """Soup Kitchen (180 services) must be in food template — biggest fix from DB audit."""
     names = TEMPLATES["food"]["default_params"]["taxonomy_names"]
@@ -354,17 +564,27 @@ def test_personal_care_includes_hygiene_and_haircut():
     assert "haircut" in names, "haircut missing from personal_care template"
 
 
-def test_other_includes_benefits():
-    """Benefits must be in other template.
+def test_benefits_template_includes_benefits_and_taxes_leaves():
+    """Benefits template must include both `benefits` and `taxes` leaves.
 
-    Previously also asserted 'drop-in center' here, but Drop-in Center is
-    a Shelter child (per `test_drop_in_center_is_shelter_child` in
-    test_audit_regression.py). The May 2026 cleanup removed it from the
-    `other` template's default — see TAXONOMY_AUDIT_MAY2026.md §VIII
-    follow-up and the cross-tree pollution comment in query_templates.py.
+    Previously this test was `test_other_includes_benefits` and asserted
+    benefits in the `other` template. Phase B Ticket D promoted benefits
+    out of `other`; both the `Benefits` (32 services) and `Taxes` (2
+    services) DB leaves now route through the dedicated benefits template
+    via FILTER_BY_TAXONOMY_OR_NAME_PATTERN. Tax prep is folded into the
+    benefits template per Phase B doc decision (most NYC tax-prep clinics
+    are EITC-focused / benefits-adjacent).
     """
-    names = TEMPLATES["other"]["default_params"]["taxonomy_names"]
-    assert "benefits" in names, "benefits missing from other template"
+    names = TEMPLATES["benefits"]["default_params"]["taxonomy_names"]
+    assert "benefits" in names, "benefits leaf missing from benefits template"
+    assert "taxes" in names, "taxes leaf missing from benefits template"
+
+    # Inverse: benefits/taxes must NOT remain in `other` after promotion
+    other_names = TEMPLATES["other"]["default_params"]["taxonomy_names"]
+    assert "benefits" not in other_names, \
+        "benefits taxonomy still in `other` — promotion incomplete"
+    assert "taxes" not in other_names, \
+        "taxes taxonomy still in `other` — promotion incomplete"
 
 
 def test_other_excludes_shelter_tree_taxonomies():

@@ -568,7 +568,7 @@ export function WhereWidget({ stats }: { stats: AdminStats }) {
     let label: string;
     let icon: React.ReactNode | undefined;
     if (e.label === "__near_me__") {
-      label = "Near me (geolocation)";
+      label = "Near me (geoloc.)";
       icon = <LocateFixed size={12} />;
     } else {
       label = e.label.charAt(0).toUpperCase() + e.label.slice(1);

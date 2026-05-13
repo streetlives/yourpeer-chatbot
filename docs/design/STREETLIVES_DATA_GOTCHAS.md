@@ -194,18 +194,21 @@ Roughly 40-80% of services have any walk-in schedule data; nearly zero have it f
 
 ## V. Streetlives API — query mechanics
 
-### `service_at_location` (singular) is canonical; `services_at_locations` (plural) is empty legacy
+### `service_at_locations` (singular service, plural locations) is the canonical join table
 
-The DB has TWO tables that look like they could be the join between services and locations:
+The DB has historically had confusion about which table joins services to locations. Three names show up in older docs and the wild:
 
-- `service_at_location` (singular) — **3,445 rows. Canonical. Use this one.**
-- `services_at_locations` (plural) — **0 rows. Legacy cruft. Do not use.**
+| Name | Status | Evidence |
+|---|---|---|
+| **`service_at_locations`** (singular service, plural locations) | **Canonical. Use this one.** | Production query templates use this (`backend/app/rag/query_templates.py:164` and elsewhere). |
+| `service_at_location` (singular both) | Does not exist | `SELECT FROM service_at_location` raises `relation "service_at_location" does not exist` (verified May 2026). Earlier versions of this doc incorrectly claimed this was canonical with 3,445 rows. |
+| `services_at_locations` (plural both) | Legacy cruft, empty | Returns no rows but no error. The silent-empty failure mode that costs a new maintainer an afternoon. |
 
-A query against the plural form returns no rows but no error — silently empty result sets. This is the kind of mistake that costs a new maintainer an afternoon of debugging "where is the data?" before they think to check whether they're hitting the right table. Always verify the singular form when writing new SQL.
+The naming is genuinely awkward — neither pure singular nor pure plural — which is probably why the doc got it wrong originally. Always check the production query files (`backend/app/rag/query_templates.py`) rather than relying on this entry's memory if in doubt.
 
-(This same singular/plural pattern exists for `service_taxonomy` (singular, canonical) vs. `service_taxonomies` (plural, **does not exist** — querying it raises `relation does not exist`, which at least fails loudly. The locations join is the silent one.)
+(This singular/plural confusion does NOT exist for `service_taxonomy` (singular, canonical) vs. `service_taxonomies` (plural, **does not exist** — querying it raises `relation does not exist`, which at least fails loudly).)
 
-**Recommendation**: this should also be noted in the Streetlives onboarding wiki at the top of any "DB schema overview" section.
+**Recommendation**: this should also be noted in the Streetlives onboarding wiki at the top of any "DB schema overview" section. The row count for `service_at_locations` is not pinned in this doc because it drifts with data ingestion; run `SELECT COUNT(*) FROM service_at_locations` against prod if you need the current number.
 
 ### The API filters by exact `taxonomyId` match — no subtree expansion
 
@@ -325,6 +328,49 @@ The chatbot has 79+ description regex patterns (`_DETAIL_DESCRIPTION_FILTERS` in
 
 Caveat: 79 patterns means 79 places for false positives. April 2026 verification ran each pattern against prod and found 1 dead pattern (`dialysis services`: 0 matches) — removed. 7 patterns are very broad (>200 matches) and are documented as functional but worth monitoring. Adding a new pattern: validate against prod first. (Source: `QUERY_PARITY_AUDIT.md` §9 "Description filter pattern validation")
 
+### PostgreSQL POSIX regex: `\b` is the backspace character, not a word boundary
+
+When binding regex patterns into SQL via `~*` (case-insensitive POSIX match), **`\b` is the backspace character `\x08`, not a word-boundary anchor** — despite some PostgreSQL documentation listing it as a synonym for `\y`. A pattern like `s.name ~* '\besl\b'` returns zero matches even when ESL services exist. The correct anchors in PostgreSQL ARE are `\m` (start of word) and `\M` (end of word).
+
+Verified empirically, May 2026, against prod:
+
+| Pattern | Matches | Interpretation |
+|---|---:|---|
+| `s.name ~* 'esl'` | 7 | Correct — no boundary, plain substring |
+| `s.name ~* '\besl\b'` | **0** | `\b` interpreted as backspace; matches nothing |
+| `s.name ~* '\mesl\M'` | 7 | Correct word-boundary behavior |
+
+**Convention.** Use `\m...\M` in any regex that lands in SQL — `_DETAIL_DESCRIPTION_FILTERS` in `rag/__init__.py` (e.g. `r"\mSSI\M|\mSSDI\M"`), the service-name patterns in `rag/query_templates.py` (`_EDUCATION_NAME_PATTERN`, `_BENEFITS_NAME_PATTERN`), and any future SQL-bound regex constants. This is PostgreSQL-specific: Python's `re` module treats `\b` as a word boundary correctly, so the in-process regexes in `services/slot_extraction_regex.py` (compiled with `re.compile`, matched against user text in-process) use `\b` and that is correct for that layer.
+
+**Enforced by:** `tests/unit/test_narrowing.py::TestWordBoundaryCorrectness` scans both `rag/__init__.py` and `rag/query_templates.py` for raw-string regex literals containing `\b` and fails the build on any hit (comment lines excluded). When you add a new file containing SQL-bound regex constants, extend that scan to cover it.
+
+**How it was found.** Phase B Ticket C and Ticket D (May 2026) introduced `_EDUCATION_NAME_PATTERN` and `_BENEFITS_NAME_PATTERN` using `\b` (the author followed the PG ARE doc claim that `\b` is a synonym for `\y`; this setup doesn't honor that claim). The patterns silently matched zero services in production. Two eval scenarios (`peer_bad_with_money`, `peer_food_stamps_apply`) surfaced the bug by returning zero benefits results despite correct routing; the 5 static SQL-structure tests on the filter passed throughout because they never executed the SQL against a DB. The fix is mechanical (s/`\b`/`\m`/ leading, s/`\b`/`\M`/ trailing). The underlying lesson — that "compiles fine, returns zero rows" is invisible to static tests — is the more durable one.
+
+(Source: Phase B coverage investigation, May 2026; see also the comment block at `rag/__init__.py:135-139` for the original `ID services` discovery that established the project convention.)
+
+### Description filtering does not compose with narrow templates
+
+`FILTER_BY_DESCRIPTION_KEYWORDS` was designed as a sub-narrowing mechanism for the wide `other` template (~1,400 services), keyed off `service_detail` and applied as an AND filter on top of the taxonomy IN-match. **It does not compose with narrow templates** — when AND'd onto a service-type that's already aggressively narrowed by taxonomy + name-pattern, the intersection collapses to near-zero before location filtering even runs.
+
+Empirically verified, May 2026, post-`\m...\M` fix:
+
+| Filter stage | Candidate count |
+|---|---:|
+| `service_type=benefits` taxonomy + name-pattern OR'd filter, NYC-wide | **96** |
+| + `description ~* '\mfinancial\M\|money management\|budget\|credit\|debt'` | **6** |
+| + `description ~* 'food stamp\|SNAP\|EBT\|electronic benefit'` | **22** |
+| + Brooklyn / Manhattan / Bronx borough polygon | **0–3** |
+
+The 0–3 outcome explains why the post-`\b`-fix eval still produced empty result sets for `peer_bad_with_money`, `peer_food_stamps_apply`, `benefits_queens`, and `natural_benefits_ebt` — the fix restored Tier 1's name-pattern matching, but the AND-chain with description filtering still produced zero. The relaxed-query fallback exists but does not reliably drop the description filter for the OR'd-filter templates.
+
+**Convention.** Templates promoted out of `other` to their own narrow service_type omit `FILTER_BY_DESCRIPTION_KEYWORDS` from both `required_filters` and `optional_filters`. Currently this is `education` and `benefits` (Phase B Tickets C and D, May 2026); `case_management` will follow when promoted. The wide `other` template retains description filtering because its taxonomy alone returns ~1,400 services and description filtering is the primary narrowing mechanism there.
+
+**What still works.** `service_detail` is still extracted, still appears in the confirmation message ("I'll look for ESL classes in Brooklyn"), and still routes correctly. The promoted templates simply return the full taxonomy + name-pattern slice in the user's location rather than sub-narrowing inside that slice. If post-SQL sub-narrowing turns out to be valuable for specific sub-types (e.g., to rank SNAP-mentioning services ahead of Medicaid-mentioning ones inside a "food stamps" query), it can be added at the response-building layer without re-introducing the SQL AND-chain.
+
+**Enforced by:** `tests/unit/test_narrowing.py::TestPromotedTemplatesOmitDescriptionFilter` asserts the negative invariant — promoted narrow templates must not have `FILTER_BY_DESCRIPTION_KEYWORDS` in either filter list. Adding a new promoted template → add it to `PROMOTED_NARROW_TEMPLATES` in that class.
+
+(Source: Phase B coverage investigation, May 2026; eval run 2026-05-13 — `peer_bad_with_money` zero-result diagnosis.)
+
 ### Some chatbot SERVICE_KEYWORDS are domain-specific and easy to mis-route
 
 Some keywords look like everyday English but the chatbot routes them to specific service types:
@@ -335,7 +381,7 @@ Some keywords look like everyday English but the chatbot routes them to specific
 - `pads` → personal_care (hygiene, NOT iPads — word-boundary protected)
 - `vision` → medical (eye care, NOT future plans)
 
-See `audits/REGEX_AUDIT.md` for the full collision-risk analysis and remediation history. Word-boundary protection (`\b` in regex) is now standard for most of these. (Source: `audits/REGEX_AUDIT.md`)
+See `audits/REGEX_AUDIT.md` for the full collision-risk analysis and remediation history. Word-boundary protection (`\b` in **Python** regex, used in `services/slot_extraction_regex.py`) is now standard for most of these — `\b` is the correct word-boundary anchor in Python's `re` module. **Do not** carry this pattern into SQL-bound regex: see the entry above on PostgreSQL POSIX regex, where `\b` is the backspace character and `\m`/`\M` are the correct anchors. (Source: `audits/REGEX_AUDIT.md`)
 
 ### Some "service categories" the chatbot uses are actually population modifiers
 
@@ -428,3 +474,6 @@ The drift checker (`scripts/check_docs.py`) does not currently scan this doc. If
 ## Document history
 
 - **May 2026 — initial creation.** Consolidated findings from `audits/QUERY_PARITY_AUDIT.md` (April 2026), `audits/BOUNDARY_AUDIT.md` (April 2026), `audits/REGEX_AUDIT.md` (April 2026), `audits/TAXONOMY_AUDIT_MAY2026.md` (May 2026), and informal observations from `streetlives-api-service.ts` review.
+- **May 2026 — PostgreSQL POSIX regex `\b`/`\m`/`\M` entry added** (§VII). Found during Phase B coverage investigation: `\b` is the backspace character in PG ARE, not a word boundary; project convention is `\m...\M` for SQL-bound regex. Existing SERVICE_KEYWORDS entry in §VII updated to disambiguate Python `\b` (works) from PG `\b` (does not).
+- **May 2026 — Description filtering does not compose with narrow templates** (§VII). Added after the post-`\b`-fix eval showed all four benefits scenarios still returning 0 results. Diagnosis: `FILTER_BY_DESCRIPTION_KEYWORDS` AND'd onto `FILTER_BY_TAXONOMY_OR_NAME_PATTERN` reduces 96 candidates to 6–22 NYC-wide, then to 0 after borough narrowing. Mitigation: `education` and `benefits` templates now omit description filtering; promoted-template invariant enforced by `TestPromotedTemplatesOmitDescriptionFilter`.
+- **May 2026 — `service_at_locations` table-name correction** (§V). The doc had previously claimed `service_at_location` (singular both) was canonical with 3,445 rows. Production code uses `service_at_locations` (singular service, plural locations); the previously-listed name does not exist as a table at all. Caught when Query B of the Phase B coverage investigation raised `relation does not exist`. Row count removed from the doc since it drifts with ingestion.

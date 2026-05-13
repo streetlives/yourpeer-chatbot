@@ -177,6 +177,14 @@ class TestRouteDefinitions:
         expected = {
             "medical", "shelter", "food", "clothing", "personal_care",
             "mental_health", "legal", "employment",
+            # Phase B Ticket C — promoted out of `other` per
+            # TAXONOMY_AUDIT_MAY2026.md §IX.
+            "education",
+            # Phase B Ticket D — promoted out of `other` per
+            # TAXONOMY_AUDIT_MAY2026.md §IX. Supersedes the April 2026
+            # parity-audit decision to collapse housing programs into
+            # `other`.
+            "benefits",
             "other",
         }
         assert expected == set(SERVICE_ROUTES.keys())

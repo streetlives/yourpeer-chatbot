@@ -178,10 +178,12 @@ def test_employment_keywords():
 
 
 def test_other_keywords():
-    """Benefits/ID/misc phrases should extract service_type=other."""
+    """Misc phrases (IDs, connectivity) should extract service_type=other.
+
+    SNAP / food stamps were promoted to `benefits` in Phase B Ticket D;
+    see test_benefits_keywords below. Birth certificates, IDs, and free
+    wifi remain in `other` — they're utility services, not benefits."""
     phrases = [
-        "How do I get SNAP benefits?",
-        "I need help with food stamps",
         "I need an ID",
         "I need a birth certificate",
         "Is there free wifi anywhere?",
@@ -189,6 +191,18 @@ def test_other_keywords():
     for phrase in phrases:
         slots = extract_slots(phrase)
         assert slots["service_type"] == "other", f"Failed on: {phrase} → {slots['service_type']}"
+
+
+def test_benefits_keywords():
+    """SNAP / food stamps / benefits-cluster phrases should extract
+    service_type=benefits (Phase B Ticket D)."""
+    phrases = [
+        "How do I get SNAP benefits?",
+        "I need help with food stamps",
+    ]
+    for phrase in phrases:
+        slots = extract_slots(phrase)
+        assert slots["service_type"] == "benefits", f"Failed on: {phrase} → {slots['service_type']}"
 
 
 def test_no_service_type():
@@ -930,16 +944,30 @@ def test_new_legal_keywords():
 
 
 def test_new_other_keywords():
-    """Newly added other-services keywords should match."""
+    """Newly added other-services keywords should match.
+
+    Welfare / cash assistance were promoted to `benefits` in Phase B
+    Ticket D — see test_new_benefits_keywords. State IDs and metro
+    cards remain in `other` (utility services, not benefit-enrollment)."""
     phrases = [
-        "How do I get welfare?",
-        "I need cash assistance",
         "Where do I get a state ID?",
         "I need a metro card",
     ]
     for phrase in phrases:
         slots = extract_slots(phrase)
         assert slots["service_type"] == "other", f"Failed on: {phrase} → {slots['service_type']}"
+
+
+def test_new_benefits_keywords():
+    """Welfare / cash-assistance phrases should match benefits (Phase B
+    Ticket D — promoted out of `other`)."""
+    phrases = [
+        "How do I get welfare?",
+        "I need cash assistance",
+    ]
+    for phrase in phrases:
+        slots = extract_slots(phrase)
+        assert slots["service_type"] == "benefits", f"Failed on: {phrase} → {slots['service_type']}"
 
 
 def test_new_urgency_keywords():
@@ -1356,11 +1384,13 @@ def test_extract_all_complex_multi_intent():
 def test_extract_all_find_scans_forward():
     """find() should scan past overlapping spans to find later occurrences.
     Bug: 'food stamps and food' — first 'food' at pos 7 is inside 'food stamps',
-    but 'food' at pos 23 is independent and should be found."""
+    but 'food' at pos 23 is independent and should be found.
+
+    'food stamps' routes to `benefits` after Phase B Ticket D (was `other`)."""
     from app.services.slot_extraction_regex import _extract_all_service_types
     results = _extract_all_service_types("I need food stamps and food")
     types = [r[0] for r in results]
-    assert "other" in types, "'food stamps' should match 'other' category"
+    assert "benefits" in types, "'food stamps' should match 'benefits' category"
     assert "food" in types, "'food' after 'food stamps' should also be found"
 
 
