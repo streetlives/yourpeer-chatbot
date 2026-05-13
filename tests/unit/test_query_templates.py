@@ -430,10 +430,11 @@ def test_filter_taxonomy_or_name_pattern_build_query_end_to_end():
         "optional_filters": [],
         "default_params": {
             "taxonomy_names": ["education"],
-            # Trivially-matching regex — \w matches any word character. The
-            # real Phase B patterns are much narrower; this is just enough
-            # to exercise the bind-variable plumbing.
-            "service_name_pattern": r"\b\w+\b",
+            # Trivially-matching regex — \w matches any word character.
+            # Anchored with \m...\M (project convention; \b is the
+            # backspace character in PostgreSQL ARE, not a word boundary —
+            # see test_narrowing.py::TestWordBoundaryCorrectness).
+            "service_name_pattern": r"\m\w+\M",
         },
         "taxonomy_aliases": ["Education"],
     }
@@ -446,7 +447,7 @@ def test_filter_taxonomy_or_name_pattern_build_query_end_to_end():
     assert "service_name_pattern" in params, "service_name_pattern must reach the bound params"
     assert params["taxonomy_names"] == ["education"], \
         f"taxonomy_names value drift: {params['taxonomy_names']}"
-    assert params["service_name_pattern"] == r"\b\w+\b", \
+    assert params["service_name_pattern"] == r"\m\w+\M", \
         f"service_name_pattern value drift: {params['service_name_pattern']}"
 
     # Both branches must appear in the WHERE-composed SQL

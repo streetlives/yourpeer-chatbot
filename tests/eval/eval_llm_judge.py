@@ -974,10 +974,20 @@ SCENARIOS = [
         "id": "benefits_queens",
         "name": "Benefits help in Queens",
         "category": "happy_path",
-        "description": "User asks for help with public benefits.",
+        "description": (
+            "User asks for help with public benefits. Phase B Ticket D "
+            "(May 2026 — TAXONOMY_AUDIT_MAY2026.md §IX) promoted "
+            "benefit-enrollment asks (SNAP, Medicaid, SSI, housing "
+            "programs) out of `other` into their own `benefits` "
+            "service_type. The confirmation should now read 'benefits "
+            "enrollment and financial assistance' (per "
+            "phrase_lists._SERVICE_LABELS['benefits']) rather than "
+            "the generic 'other services' framing that user-testing "
+            "found dismissive."
+        ),
         "user_turns": ["Can you help me apply for SNAP benefits in Jamaica?"],
         "expected": {
-            "service_type": "other",
+            "service_type": "benefits",
             "location_contains": "jamaica",
         },
     },
@@ -1749,12 +1759,22 @@ SCENARIOS = [
     },
     {
         "id": "natural_benefits_ebt",
-        "name": "EBT / SNAP phrasing routes to other",
+        "name": "EBT / SNAP phrasing routes to benefits",
         "category": "natural_language",
-        "description": "User asks about SNAP or EBT — should route to other template (Benefits taxonomy).",
+        "description": (
+            "User asks about SNAP or EBT — should route to the "
+            "`benefits` template (Phase B Ticket D — promoted out of "
+            "`other` per TAXONOMY_AUDIT_MAY2026.md §IX). Pre-Phase B "
+            "this scenario expected service_type='other' with the "
+            "Benefits taxonomy reached through the `other` template; "
+            "post-Phase B, `benefits` is its own service_type and "
+            "template, with both leaf-tagged (Benefits + Taxes "
+            "taxonomies) and name-pattern-matched parent-direct "
+            "services reachable via FILTER_BY_TAXONOMY_OR_NAME_PATTERN."
+        ),
         "user_turns": ["How do I sign up for EBT in the Bronx?"],
         "expected": {
-            "service_type": "other",
+            "service_type": "benefits",
             "location_contains": "bronx",
             "should_reach_confirmation": True,
         },
@@ -2410,10 +2430,16 @@ SCENARIOS = [
         "description": "Asylum seekers commonly need immigration legal help, "
                        "benefits enrollment, and food simultaneously. The "
                        "extractor correctly identifies all three services "
-                       "(food + legal/asylum + other/food-stamps) and uses "
+                       "(food + legal/asylum + benefits/food-stamps) and uses "
                        "priority-ordering to pick food as primary (Tier 2 "
                        "survival), with legal and benefits queued as "
-                       "additional services. Mirrors the sister scenario "
+                       "additional services. After Phase B Ticket D (May "
+                       "2026), 'food stamps' routes to `benefits` rather "
+                       "than `other` — the queue ordering is unchanged "
+                       "(legal and benefits both Tier 4, broken by text "
+                       "position: 'asylum case' appears before 'food "
+                       "stamps' so legal stays the immediate-next service). "
+                       "Mirrors the sister scenario "
                        "`multi_asylum_seeker_food_legal`. "
                        "(Cultural-responsiveness acknowledgment of the "
                        "asylum-seeker context is tracked separately as "
@@ -3288,11 +3314,18 @@ SCENARIOS = [
         "id": "peer_bad_with_money",
         "name": "Financial literacy — 'I am so bad with money'",
         "category": "natural_language",
-        "description": "User expresses a financial literacy need without naming a "
-                       "specific service. Streetlives peer navigators expect this to "
-                       "surface DYCD Youth Drop-in Centers (financial advisors), "
-                       "RiseBoro, or doobneek. System needs follow-up to determine "
-                       "age (DYCD requires under 25). Maps to 'other' service type.",
+        "description": (
+            "User expresses a financial literacy need without naming a "
+            "specific service. Streetlives peer navigators expect this "
+            "to surface DYCD Youth Drop-in Centers (financial "
+            "advisors), RiseBoro, or doobneek. System needs follow-up "
+            "to determine age (DYCD requires under 25). Maps to "
+            "`benefits` service type after Phase B Ticket D — the "
+            "financial cluster (financial help / budgeting / credit "
+            "counseling / money management / bad with money) was "
+            "promoted out of `other` in May 2026, since these are "
+            "benefit-enrollment-adjacent in user mental model."
+        ),
         "user_turns": [
             "I am so bad with money.",
             "I'm 22",
@@ -3300,14 +3333,19 @@ SCENARIOS = [
             "Yes, search",
         ],
         "expected": {
-            "service_type": "other",
+            "service_type": "benefits",
             "location_contains": "east village",
             "age": 22,
             "should_reach_confirmation": True,
-            "notes": "Indirect need — no service keyword present. The unified "
-                     "LLM gate should classify as 'other' (financial services). "
-                     "If regex misses, the system should still ask clarifying "
-                     "questions rather than showing a generic response.",
+            "notes": (
+                "Indirect need — no service keyword present in the "
+                "narrow sense, but the longest-keyword-wins matcher "
+                "picks up 'bad with money' (a Phase 1 audit addition). "
+                "Post-Phase B (Ticket D), this routes to `benefits` "
+                "rather than `other`. If the regex misses, the system "
+                "should still ask clarifying questions rather than "
+                "showing a generic response."
+            ),
         },
     },
     {
@@ -3574,21 +3612,35 @@ SCENARIOS = [
         "id": "peer_food_stamps_apply",
         "name": "Benefits — 'can I get food stamps'",
         "category": "happy_path",
-        "description": "Straightforward benefits request. 'Food stamps' maps to "
-                       "'other' (benefits category). Tests whether the system "
-                       "routes to benefits rather than food.",
+        "description": (
+            "Straightforward benefits request. 'Food stamps' / SNAP / "
+            "EBT route to `benefits` (Phase B Ticket D — promoted out "
+            "of `other` per TAXONOMY_AUDIT_MAY2026.md §IX). Critical "
+            "regression test: routing must distinguish 'where can I "
+            "GET FOOD STAMPS' (SNAP enrollment → benefits) from "
+            "'where can I GET FOOD' (immediate meals → food). The "
+            "longest-keyword-wins matcher ensures 'food stamps' (11 "
+            "chars) beats bare 'food' (4 chars), so the benefits "
+            "routing fires correctly."
+        ),
         "user_turns": [
             "can I get food stamps",
             "Brooklyn",
             "Yes, search",
         ],
         "expected": {
-            "service_type": "other",
+            "service_type": "benefits",
             "location_contains": "brooklyn",
             "should_reach_confirmation": True,
-            "notes": "'Food stamps' maps to 'other' (SNAP/EBT category), NOT "
-                     "'food'. Confirmation should mention 'benefits' or 'SNAP' "
-                     "rather than generic 'other services'.",
+            "notes": (
+                "'Food stamps' maps to `benefits` (SNAP/EBT category) "
+                "after Phase B Ticket D, NOT `food` (immediate meals). "
+                "Confirmation should read 'benefits enrollment and "
+                "financial assistance' per phrase_lists.py — explicit "
+                "framing matches the user's mental model and avoids "
+                "the dismissive 'other services' label that "
+                "user-testing flagged."
+            ),
         },
     },
     {

@@ -676,8 +676,18 @@ _DEFAULT_MAX_RESULTS = 10
 # curated pattern. These supplement leaf-tagged matches when Streetlives
 # tagging hasn't caught up to a service's true category.
 #
-# PostgreSQL POSIX (ARE) regex flavor:
-#   - `\b` is the general word boundary (synonym for `\y` in ARE).
+# PostgreSQL POSIX (ARE) regex flavor — word-boundary notes:
+#   - `\m` matches start of a word (transition non-word → word).
+#   - `\M` matches end of a word (transition word → non-word).
+#   - **Do NOT use `\b`.** In PostgreSQL ARE, `\b` matches the BACKSPACE
+#     character (\x08), not a word boundary — despite some PG documentation
+#     listing it as a synonym for `\y`. Empirical testing in production
+#     (May 2026) confirmed `s.name ~* '\besl\b'` returns 0 matches even
+#     when ESL services exist; `s.name ~* '\mesl\M'` returns the matches
+#     correctly. Project convention: always use `\m...\M`. See
+#     tests/unit/test_narrowing.py::TestWordBoundaryCorrectness for the
+#     regression guard, and the comment in rag/__init__.py near "ID
+#     services" for the original discovery.
 #   - `(?:...)` is the non-capturing group, supported in ARE.
 #   - `~*` (used by the filter) is case-insensitive matching.
 #   - No Python-specific syntax (no `(?P<name>...)`, no `(?i)` inline
@@ -685,8 +695,8 @@ _DEFAULT_MAX_RESULTS = 10
 #
 # Patterns are written as parenthesized alternations of branches; each
 # branch matches a distinct service name shape (e.g. "Adult Education"
-# vs "ESL Plus" vs "Citizenship Classes"). Word-boundary anchors on
-# both ends prevent substring false positives.
+# vs "ESL Plus" vs "Citizenship Classes"). \m...\M anchors on both ends
+# prevent substring false positives (e.g. "esl" inside "diesel" / "weasel").
 #
 # DB-verification methodology: each pattern was sanity-checked against
 # a sample of Other-service-parent-direct service names from the May
@@ -700,7 +710,7 @@ _DEFAULT_MAX_RESULTS = 10
 # bucket: adult-ed, language/ESL, equivalency/GED, citizenship/civics,
 # tech/digital-literacy, and college-access.
 _EDUCATION_NAME_PATTERN = (
-    r"\b("
+    r"\m("
     r"adult\s+education|adult\s+literacy|adult\s+learning|"
     r"academic\s+enrichment|"
     r"esl|english\s+(?:as\s+a\s+second|classes|language)|"
@@ -716,7 +726,7 @@ _EDUCATION_NAME_PATTERN = (
     r"head\s+start|"
     r"computer\s+(?:classes|skills|lab)|digital\s+literacy|"
     r"tech\s+training|advanced\s+technology\s+training"
-    r")\b"
+    r")\M"
 )
 
 
@@ -729,12 +739,10 @@ _EDUCATION_NAME_PATTERN = (
 # prevention), financial counseling, and tax prep (folded in per Phase
 # B Ticket D — most NYC tax clinics are EITC-focused).
 #
-# Note on word-boundary `\b`: PostgreSQL POSIX ARE treats `\b` as a
-# synonym for `\y` (word boundary) outside bracket expressions. This is
-# the same anchoring used by _EDUCATION_NAME_PATTERN above and verified
-# against prod data via the Phase B doc's methodology.
+# Uses `\m...\M` word-boundary anchors per project convention — see the
+# note at the top of this section for the `\b` gotcha.
 _BENEFITS_NAME_PATTERN = (
-    r"\b("
+    r"\m("
     r"benefits?(?:\s+(?:assistance|enrollment|coordinator))?|"
     r"snap(?:\s+application)?|"
     r"food\s+stamps|food\s+benefits|"
@@ -751,7 +759,7 @@ _BENEFITS_NAME_PATTERN = (
     r"government\s+(?:assistance|benefits)|"
     r"emergency\s+(?:funding|crisis\s+assistance)|"
     r"tax\s+(?:prep|clinic|assistance)|free\s+tax|low.income\s+tax"
-    r")\b"
+    r")\M"
 )
 
 
@@ -1070,6 +1078,23 @@ TEMPLATES = {
         # services) AND parent-direct tagging-debt services whose name
         # matches _EDUCATION_NAME_PATTERN. See TAXONOMY_AUDIT_MAY2026.md
         # §IX and PHASE_B_PROMOTION_PLAN.md.
+        #
+        # Note: FILTER_BY_DESCRIPTION_KEYWORDS is intentionally NOT in
+        # optional_filters. The description filter was designed for wide
+        # templates (e.g. `other` at ~1,400 services) as a sub-narrowing
+        # mechanism keyed off `service_detail`. For promoted narrow templates
+        # like this one, the taxonomy + name-pattern OR'd filter already
+        # narrows aggressively (~165 services NYC-wide); AND-ing a
+        # description filter on top reduces this to single digits before
+        # location filtering, producing 0-result outcomes — confirmed
+        # empirically May 2026 via the post-`\b`-fix eval (96 benefits
+        # candidates → 6 after `financial` description filter → ~0 after
+        # borough narrowing). The user's `service_detail` value is still
+        # set and surfaces in the confirmation message ("I'll look for ESL
+        # classes in..."), but does not narrow the SQL. Post-SQL ranking
+        # or sub-narrowing can be added later if needed. See
+        # docs/design/STREETLIVES_DATA_GOTCHAS.md §VII
+        # "Description filtering does not compose with narrow templates."
         "required_filters": [
             FILTER_BY_TAXONOMY_OR_NAME_PATTERN,
             FILTER_NOT_HIDDEN,
@@ -1082,7 +1107,6 @@ TEMPLATES = {
             FILTER_BY_PROXIMITY,
             FILTER_BY_AGE_ELIGIBILITY,
             FILTER_BY_GENDER_ELIGIBILITY,
-            FILTER_BY_DESCRIPTION_KEYWORDS,
         ],
         "default_params": {
             # Only the leaf — Education is a single Other-service child. The
@@ -1121,6 +1145,21 @@ TEMPLATES = {
         # The TestHousingAssistanceRemoval class is updated to enforce
         # the new routing while keeping its primary guard intact
         # (the dedicated `housing_assistance` TEMPLATE remains removed).
+        #
+        # Note: FILTER_BY_DESCRIPTION_KEYWORDS is intentionally NOT in
+        # optional_filters. Same rationale as the education template above
+        # — narrow promoted templates have the taxonomy + name-pattern
+        # OR'd filter doing the narrowing; AND-ing description filtering
+        # on top reduces results to 0 before location filtering. The
+        # empirical case (May 2026): 96 benefits candidates NYC-wide →
+        # 6 after `financial` description filter → 0 after Manhattan
+        # narrowing for `peer_bad_with_money`; → 22 after `food stamps`
+        # filter → ~0 after Brooklyn narrowing for `peer_food_stamps_apply`.
+        # service_detail still populates the confirmation message
+        # ("I'll look for food stamps / SNAP in Brooklyn") but does not
+        # narrow the SQL. See docs/design/STREETLIVES_DATA_GOTCHAS.md
+        # §VII "Description filtering does not compose with narrow
+        # templates."
         "required_filters": [
             FILTER_BY_TAXONOMY_OR_NAME_PATTERN,
             FILTER_NOT_HIDDEN,
@@ -1133,7 +1172,6 @@ TEMPLATES = {
             FILTER_BY_PROXIMITY,
             FILTER_BY_AGE_ELIGIBILITY,
             FILTER_BY_GENDER_ELIGIBILITY,
-            FILTER_BY_DESCRIPTION_KEYWORDS,
         ],
         "default_params": {
             # Both Benefits AND Taxes leaves — per Phase B Ticket D, tax
