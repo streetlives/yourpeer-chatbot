@@ -1162,6 +1162,10 @@ def check_service_category_enumeration(args):
         "mental_health": "mental health",
         "legal": "legal",
         "employment": "employment",
+        # Phase B promotions (May 2026) — see TAXONOMY_AUDIT_MAY2026.md §IX
+        # Tickets C and D. These are narrow templates promoted out of `other`.
+        "education": "education",
+        "benefits": "benefits",
         "other": "other services",
     }
 

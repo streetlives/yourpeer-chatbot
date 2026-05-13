@@ -396,7 +396,7 @@ With the semantic layer handling generalization, the regex layer can be reduced 
 
 ### Short Term (Pilot)
 
-Define 9 service routes + 6 population routes with 10-15 utterances each from the sample queries document, field experience, and eval scenarios. This gives immediate coverage for novel phrasings without keyword patching.
+Define 11 service routes + 6 population routes with 10-15 utterances each from the sample queries document, field experience, and eval scenarios. This gives immediate coverage for novel phrasings without keyword patching.
 
 ### Medium Term (Post-Pilot)
 

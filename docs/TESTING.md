@@ -252,7 +252,7 @@ Validates the main chatbot routing — message classification (split classifier 
 | Escalation phrase variants | 3 | "connect with a person" routes to escalation, "connect with peer navigator" routes to escalation, peer navigator label standardized |
 | Location change UX | 1 | Location change shows "Use my location" as first option |
 
-### `test_slot_extraction_regex.py` — 118 tests
+### `test_slot_extraction_regex.py` — 120 tests
 
 Validates the regex-based slot extraction pipeline.
 
@@ -308,7 +308,7 @@ Validates location normalization, borough expansion, proximity search, and that 
 | Neighborhood proximity | 15 | All neighborhoods have coordinates within NYC bounds, proximity search integration |
 | DB connection | 1 | `test_connection` returns False without DATABASE_URL |
 
-### `test_query_templates.py` — 146 tests
+### `test_query_templates.py` — 151 tests
 
 Validates query template correctness, SQL structure, service card formatting, schedule computation, result sorting, and shelter taxonomy enrichment.
 
