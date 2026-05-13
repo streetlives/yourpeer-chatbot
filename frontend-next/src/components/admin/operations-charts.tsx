@@ -7,6 +7,8 @@
 "use client";
 
 import type { AdminStats } from "@/lib/chat/types";
+import { LocateFixed } from "lucide-react";
+import { Tooltip } from "./tooltip";
 import { utcHourToET, etHourToUtcHour } from "@/lib/admin/format-time";
 import {
   TURN_COUNT_BUCKET_KEYS,
@@ -92,17 +94,75 @@ function VerticalBars({
   items,
   highlightIndex,
   height = 96,
+  medianReferenceLine = false,
 }: {
-  items: Array<{ label: string; sublabel?: string; value: number; }>;
+  items: Array<{
+    label: string;
+    sublabel?: string;
+    value: number;
+    /** Optional text rendered above the bar (e.g. the exact count
+     *  on a peak hour or every bar in a small histogram). Skip on
+     *  zero-value bars to avoid a label floating at chart bottom
+     *  with no bar to anchor it. */
+    valueLabel?: string;
+  }>;
   /** Index of the item to highlight (e.g. peak hour). -1 to skip. */
   highlightIndex?: number;
   /** Pixel height of the bar area. Default 96px (h-24). */
   height?: number;
+  /** When true, draw a thin dashed horizontal line at the median
+   *  bar height. Useful as a visual anchor on skewed distributions
+   *  where one peak dominates and most other bars look flat — the
+   *  line tells the eye "these bars are above the typical, these
+   *  are below." Suppressed when the median is 0 (would render at
+   *  the chart's bottom edge, redundant with the axis). */
+  medianReferenceLine?: boolean;
 }) {
   const maxValue = Math.max(1, ...items.map((it) => it.value));
 
+  // Median bar value, expressed as a % of maxValue so it can be
+  // applied directly to `bottom` for absolute positioning. Sorted
+  // ascending; for even N we average the two middle bars (the
+  // conventional definition). Memo'd would be nice but the array
+  // is tiny (≤24 items) and this only runs on data-change anyway.
+  let medianPct: number | null = null;
+  if (medianReferenceLine && items.length > 0) {
+    const sorted = items.map((it) => it.value).sort((a, b) => a - b);
+    const mid = Math.floor(sorted.length / 2);
+    const median = sorted.length % 2 === 0
+      ? (sorted[mid - 1] + sorted[mid]) / 2
+      : sorted[mid];
+    if (median > 0) {
+      medianPct = (median / maxValue) * 100;
+    }
+  }
+
+  // Reserve a small strip above the bars for value labels when any
+  // item carries one. Empty when no labels are set, so widgets that
+  // don't use valueLabel render at their original height. The strip
+  // is fixed-height so the bar baseline doesn't shift between
+  // re-renders as values change.
+  const hasAnyValueLabel = items.some(
+    (it) => it.valueLabel !== undefined && it.valueLabel !== "",
+  );
+
   return (
     <div className="w-full">
+      {/* Value-label strip — fixed-height so the bar area below
+          stays at exactly `height` pixels regardless of which bars
+          carry labels. */}
+      {hasAnyValueLabel && (
+        <div className="flex gap-[2px] h-4 mb-0.5">
+          {items.map((it, i) => (
+            <div
+              key={i}
+              className="flex-1 min-w-0 text-center text-[0.65rem] font-semibold text-neutral-600 dark:text-neutral-300 leading-none flex items-end justify-center"
+            >
+              {it.valueLabel ?? ""}
+            </div>
+          ))}
+        </div>
+      )}
       {/* Bar row.
        *
        * IMPORTANT: do NOT add `items-end` here. The earlier version had it,
@@ -118,11 +178,28 @@ function VerticalBars({
        * the bottom of that 96px column, giving the same visual intent
        * `items-end` was meant to provide — but without breaking
        * percentage-height resolution.
+       *
+       * `relative` added so the median reference line (when enabled)
+       * can be absolutely positioned within the bar area. Since the
+       * line is `position: absolute`, it's removed from the flex flow
+       * and doesn't displace the bar columns.
        */}
       <div
-        className="flex gap-[2px]"
+        className="flex gap-[2px] relative"
         style={{ height: `${height}px` }}
       >
+        {/* Median reference line. Dashed, low-contrast, no label —
+            it's a visual anchor for "above/below the typical bar
+            height", not data in its own right. The exact median
+            value is reachable via each bar's title-attribute
+            tooltip if a user wants the number. */}
+        {medianPct !== null && (
+          <div
+            className="absolute inset-x-0 border-t border-dashed border-neutral-300 dark:border-neutral-700 pointer-events-none"
+            style={{ bottom: `${medianPct}%` }}
+            aria-hidden="true"
+          />
+        )}
         {items.map((it, i) => {
           // Floor at 1px so empty buckets are visually claimed. Without
           // this, a 24-bar chart with a single zero in the middle looks
@@ -139,17 +216,18 @@ function VerticalBars({
               key={i}
               className="flex-1 min-w-0 flex flex-col items-center justify-end gap-0.5"
             >
-              <div
-                title={`${it.label}: ${it.value}`}
-                className={`w-full rounded-t-[2px] transition-all ${
-                  isHighlight
-                    ? "bg-amber-400 dark:bg-amber-500"
-                    : it.value === 0
-                      ? "bg-neutral-100 dark:bg-neutral-800"
-                      : "bg-amber-300/70 hover:bg-amber-400 dark:bg-amber-400/60 dark:hover:bg-amber-400"
-                }`}
-                style={{ height: heightStyle }}
-              />
+              <Tooltip content={`${it.label}: ${it.value}`}>
+                <div
+                  className={`w-full rounded-t-[2px] transition-all ${
+                    isHighlight
+                      ? "bg-amber-400 dark:bg-amber-500"
+                      : it.value === 0
+                        ? "bg-neutral-100 dark:bg-neutral-800"
+                        : "bg-amber-300/70 hover:bg-amber-400 dark:bg-amber-400/60 dark:hover:bg-amber-400"
+                  }`}
+                  style={{ height: heightStyle }}
+                />
+              </Tooltip>
             </div>
           );
         })}
@@ -227,6 +305,13 @@ function HorizontalBars({
     secondary?: string;
     /** Color treatment for the secondary label. Default neutral. */
     secondaryColor?: "neutral" | "warn" | "danger";
+    /** Optional small icon rendered to the left of the label.
+     *  Used to mark rows that mean something structurally
+     *  different from their neighbors — e.g. a geolocation
+     *  "near me" row in a list of named boroughs, where mixing
+     *  the two in one ranking would otherwise quietly conflate
+     *  unlike things. */
+    icon?: React.ReactNode;
   }>;
   maxRows?: number;
 }) {
@@ -256,13 +341,30 @@ function HorizontalBars({
              *  wrapping. Beyond max-w (rare — only "Suicide / Self-
              *  Harm" approaches it) labels still get an ellipsis via
              *  truncate, but the cap is generous enough to fit every
-             *  current crisis category fully. */}
-            <div
-              className="min-w-[120px] max-w-[160px] flex-shrink-0 truncate whitespace-nowrap text-neutral-700 font-medium dark:text-neutral-300"
-              title={it.label}
-            >
-              {it.label}
-            </div>
+             *  current crisis category fully.
+             *
+             *  The inner flex + gap is so an optional `icon` sits
+             *  beside the label text. `truncate` lives on the text
+             *  span (not the parent), so an icon doesn't get cut
+             *  off if the label happens to be near the max-width. */}
+            {/* Tooltip surfaces the full label when it's truncated.
+             *  For labels that fit fully within the max-w cap, the
+             *  tooltip simply re-states what's visible — slight
+             *  redundancy but Radix won't suppress it for that case
+             *  without us tracking truncation state, and the cost of
+             *  the extra bubble is small. */}
+            <Tooltip content={it.label}>
+              <div
+                className="min-w-[120px] max-w-[160px] flex-shrink-0 flex items-center gap-1 text-neutral-700 font-medium dark:text-neutral-300"
+              >
+                {it.icon && (
+                  <span className="flex-shrink-0 text-neutral-400 dark:text-neutral-500" aria-hidden="true">
+                    {it.icon}
+                  </span>
+                )}
+                <span className="truncate whitespace-nowrap">{it.label}</span>
+              </div>
+            </Tooltip>
             <div className="flex-1 h-[18px] bg-neutral-100 rounded overflow-hidden relative dark:bg-neutral-800">
               <div
                 className="h-full bg-amber-300/70 rounded dark:bg-amber-400/60"
@@ -325,7 +427,7 @@ export function WhenWidget({ stats }: { stats: AdminStats }) {
   // render as zero-bars rather than missing columns — the dict is
   // sparse on the backend, but our chart is dense by design.
   const hourly = tod.hourly as Record<string, number>;
-  const bars = Array.from({ length: 24 }, (_, etHour) => {
+  const rawBars = Array.from({ length: 24 }, (_, etHour) => {
     const utcHour = etHourToUtcHour(etHour);
     const value = hourly[String(utcHour)] ?? 0;
     return {
@@ -341,9 +443,23 @@ export function WhenWidget({ stats }: { stats: AdminStats }) {
   // mutable accumulator inside Array.from). Seeded with 0 because
   // bars is always 24 long (the Array.from above) — comparing against
   // -1 would leave best stuck at -1 for the all-zero case.
-  const peakEtIndex = bars.reduce(
-    (best, bar, i) => (bar.value > bars[best].value ? i : best),
+  const peakEtIndex = rawBars.reduce(
+    (best, bar, i) => (bar.value > rawBars[best].value ? i : best),
     0,
+  );
+
+  // Attach the peak count as a value-label on the peak bar only.
+  // A 24-bar chart with all-bar labels would crowd; the peak is
+  // the value users actually need to read at a glance (staffing
+  // decisions are driven by the peak hour's count, not by the
+  // distribution shape's exact values). The rest stay as anonymous
+  // bars; their counts remain available via the per-bar
+  // title-attribute tooltip.
+  const peakValue = rawBars[peakEtIndex]?.value ?? 0;
+  const bars = rawBars.map((b, i) =>
+    i === peakEtIndex && peakValue > 0
+      ? { ...b, valueLabel: String(peakValue) }
+      : b,
   );
 
   // Subtitle peak label: prefer the backend's peak_hour_utc (it's the
@@ -361,10 +477,15 @@ export function WhenWidget({ stats }: { stats: AdminStats }) {
       title="When (Hourly Traffic)"
       subtitle={`${tod.total_events} events${peakLabel ? ` · peak ${peakLabel}` : ""}`}
     >
+      {/* medianReferenceLine on the When chart is meaningful: with
+          24 hourly buckets the line reads as "typical-hour traffic"
+          and the bars above/below it carry useful operational
+          signal (staffing-heavier vs lighter hours). */}
       <VerticalBars
         items={bars}
         highlightIndex={peakEtIndex}
         height={96}
+        medianReferenceLine
       />
     </WidgetCard>
   );
@@ -411,8 +532,36 @@ export function WhereWidget({ stats }: { stats: AdminStats }) {
       e.noResultRate >= 0.5 ? "danger"
         : e.noResultRate >= 0.25 ? "warn"
           : "neutral";
+
+    // Display formatting:
+    //
+    //   - Borough names come from the backend lowercase (the chat-side
+    //     slot extractor normalizes to lowercase). Title-case them at
+    //     render time so they read as proper nouns and match the
+    //     Locations tab's casing — without round-tripping a transform
+    //     through the backend or relying on every consumer to remember
+    //     to title-case.
+    //
+    //   - `__near_me__` is the synthetic key the backend uses for
+    //     coordinate-based queries (when a user said "near me" or
+    //     shared geolocation, and no named borough was extracted). In
+    //     a "user-stated locations" ranking, it's structurally
+    //     different from the named-borough rows — the user didn't
+    //     pick a place; we asked for their position. We rename it to
+    //     a human label and attach a small icon to mark the
+    //     distinction without splitting the row out of the chart.
+    let label: string;
+    let icon: React.ReactNode | undefined;
+    if (e.label === "__near_me__") {
+      label = "Near me (geolocation)";
+      icon = <LocateFixed size={12} />;
+    } else {
+      label = e.label.charAt(0).toUpperCase() + e.label.slice(1);
+    }
+
     return {
-      label: e.label,
+      label,
+      icon,
       value: e.value,
       secondary,
       secondaryColor,
@@ -477,10 +626,22 @@ export function HowLongWidget({ stats }: { stats: AdminStats }) {
     Object.keys(buckets).filter((k) => !ORDER.includes(k)),
   );
 
-  const items = ordered.map((key) => ({
-    label: LABEL_BY_KEY[key] ?? key.replace(/_/g, " "),
-    value: buckets[key] ?? 0,
-  }));
+  // valueLabel on every non-zero bar — with 5 buckets the chart
+  // has room for the counts without crowding, and reading the
+  // exact number is more useful than estimating from bar height
+  // when the buckets carry operational meaning (the 3-7m bar's
+  // count is paired with the handoff-range footer below). Skip
+  // labels on zero bars: with justify-end positioning, an
+  // unanchored "0" would float at chart bottom and read as
+  // belonging to the wrong bar.
+  const items = ordered.map((key) => {
+    const value = buckets[key] ?? 0;
+    return {
+      label: LABEL_BY_KEY[key] ?? key.replace(/_/g, " "),
+      value,
+      valueLabel: value > 0 ? String(value) : undefined,
+    };
+  });
 
   const median = sd.median_duration_sec;
   const medianStr = median != null ? `${Math.round(median)}s` : null;
@@ -580,10 +741,19 @@ export function EngagementWidget({ stats }: { stats: AdminStats }) {
     Object.keys(dist).filter((k) => !ORDER.includes(k)),
   );
 
-  const items = ordered.map((key) => ({
-    label: LABEL_BY_KEY[key] ?? key.replace(/_/g, " "),
-    value: dist[key] ?? 0,
-  }));
+  // valueLabel on each non-zero bar — 5-bucket distribution has
+  // room for all counts without crowding, and the operational
+  // signal (which buckets are over- or under-represented) is more
+  // legible when readers can read the numbers directly. Zero-value
+  // buckets still render as thin neutral stubs but without a label.
+  const items = ordered.map((key) => {
+    const value = dist[key] ?? 0;
+    return {
+      label: LABEL_BY_KEY[key] ?? key.replace(/_/g, " "),
+      value,
+      valueLabel: value > 0 ? String(value) : undefined,
+    };
+  });
 
   const postPct = pre?.engagement_rate != null
     ? `${Math.round(pre.engagement_rate * 100)}%`
@@ -597,7 +767,16 @@ export function EngagementWidget({ stats }: { stats: AdminStats }) {
       title="Engagement"
       subtitle={`${sm.total_sessions} session${sm.total_sessions !== 1 ? "s" : ""} · turn-count distribution`}
     >
-      <VerticalBars items={items} height={80} />
+      {/* medianReferenceLine here is a softer signal than on the
+          When chart: the buckets are independent categories (turn
+          counts), not a time series, so the "median bar height"
+          isn't a statistical median of the underlying user
+          population — it's a visual median across the five
+          buckets. The line still helps when one bucket dominates
+          (a flat 2-3-turn spike makes the others look noisy);
+          it's there as an anchor, not as a claim about typical
+          session length. */}
+      <VerticalBars items={items} height={80} medianReferenceLine />
 
       {/* Post-results engagement — rendered as a paired stat below the
           distribution bars. Same widget, two related signals; users

@@ -6,6 +6,7 @@
 import { AlertCircle } from "lucide-react";
 import type { BoroughBreakdownResponse } from "@/lib/admin/locations-types";
 import { useAdminFetch } from "@/hooks/use-admin-fetch";
+import { Tooltip } from "@/components/admin/tooltip";
 
 /**
  * Section 3a — borough breakdown table.
@@ -70,13 +71,14 @@ export function BoroughBreakdownTable() {
               <th scope="col" className="px-4 py-3 text-xs font-semibold text-neutral-500 dark:text-neutral-400 text-right">
                 Locations
               </th>
-              <th
-                scope="col"
-                className="px-4 py-3 text-xs font-semibold text-neutral-500 dark:text-neutral-400 text-right"
-                title="Count of service-at-location pairs in this borough. A multi-service location contributes one entry per service — sum across boroughs is larger than the 'Total services' stat (which counts distinct services in the catalog)."
-              >
-                Service entries
-              </th>
+              <Tooltip content="Count of service-at-location pairs in this borough. A multi-service location contributes one entry per service — sum across boroughs is larger than the 'Total services' stat (which counts distinct services in the catalog).">
+                <th
+                  scope="col"
+                  className="px-4 py-3 text-xs font-semibold text-neutral-500 dark:text-neutral-400 text-right"
+                >
+                  Service entries
+                </th>
+              </Tooltip>
               <th scope="col" className="px-4 py-3 text-xs font-semibold text-neutral-500 dark:text-neutral-400 text-right">
                 Avg entries/loc
               </th>
@@ -156,10 +158,14 @@ function VerifiedBar({ pct }: { pct: number | null }) {
   return (
     <div className="flex items-center gap-2 min-w-[120px]">
       <div className="flex-1 h-2 rounded-full bg-neutral-100 dark:bg-neutral-800 overflow-hidden">
+        {/* No tooltip on the bar — the exact percentage is already
+         *  rendered as text immediately to the right (`{pct.toFixed(1)}%`)
+         *  so a hover tooltip would just repeat what the user can
+         *  already read. Removed during the Radix Tooltip migration
+         *  rather than re-wrapping a redundant native title. */}
         <div
           className={`h-full ${colorClass} rounded-full transition-all`}
           style={{ width: `${Math.min(100, Math.max(2, pct))}%` }}
-          title={`${pct.toFixed(1)}%`}
         />
       </div>
       <span className="text-xs text-neutral-700 dark:text-neutral-300 tabular-nums w-12 text-right">

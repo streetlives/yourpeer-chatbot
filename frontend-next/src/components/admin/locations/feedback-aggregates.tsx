@@ -11,6 +11,7 @@ import type {
   FeedbackCriterion,
 } from "@/lib/admin/locations-types";
 import { useAdminFetch } from "@/hooks/use-admin-fetch";
+import { Tooltip } from "@/components/admin/tooltip";
 import {
   FEEDBACK_CRITERIA,
   FEEDBACK_CRITERION_LABELS,
@@ -263,13 +264,14 @@ function MostFlaggedTable({ data }: { data: FeedbackAggregatesResponse }) {
                   {FEEDBACK_CRITERION_LABELS[crit]}
                 </th>
               ))}
-              <th
-                scope="col"
-                className="px-3 py-3 text-right text-xs font-semibold text-neutral-500 dark:text-neutral-400 whitespace-nowrap"
-                title="Smoothed via Laplace add-one ((neg+1)/(total+2)) to avoid 100% cliffs at low samples. Raw ratio shown alongside."
-              >
-                Negative ratio
-              </th>
+              <Tooltip content="Smoothed via Laplace add-one ((neg+1)/(total+2)) to avoid 100% cliffs at low samples. Raw ratio shown alongside.">
+                <th
+                  scope="col"
+                  className="px-3 py-3 text-right text-xs font-semibold text-neutral-500 dark:text-neutral-400 whitespace-nowrap"
+                >
+                  Negative ratio
+                </th>
+              </Tooltip>
               <th scope="col" className="px-3 py-3 text-right text-xs font-semibold text-neutral-500 dark:text-neutral-400">
                 Comments
               </th>

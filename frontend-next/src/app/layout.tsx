@@ -98,7 +98,26 @@ export default function RootLayout({
     // hydration mismatch warning. The FOUC script is the canonical
     // pattern for this; suppressing the warning is correct here and
     // ONLY here — body content is not affected.
-    <html lang="en" className={inter.className} suppressHydrationWarning>
+    //
+    // data-scroll-behavior="smooth": opt-in marker for Next.js 15+
+    // route-transition handling. Our globals.css sets
+    // `html { scroll-behavior: smooth }` so anchor links inside a
+    // page animate (the Metrics sticky-nav chips rely on this). But
+    // when Next does its scroll-to-top on a NEW route, the same CSS
+    // rule animates that jump too — which feels wrong (users expect
+    // page changes to land instantly at the top). Adding this
+    // attribute tells Next to temporarily disable smooth scroll
+    // during its own route-change scroll, then re-enable it, so we
+    // keep the in-page smoothness without the cross-page animation.
+    // Without this attribute Next 15 emits a console warning at
+    // dev time pointing at this exact docs page:
+    // https://nextjs.org/docs/messages/missing-data-scroll-behavior
+    <html
+      lang="en"
+      className={inter.className}
+      data-scroll-behavior="smooth"
+      suppressHydrationWarning
+    >
       {/* Next's metadata export writes into <head> automatically; this
           explicit <head> is additive and hosts tags Next can't emit via
           the Metadata API (apple-touch-startup-image with per-device

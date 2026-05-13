@@ -8,6 +8,7 @@ import type { QueryLogEntry } from "@/lib/chat/types";
 import { useSortableTable } from "@/hooks/use-sortable-table";
 import { SortableHeader } from "./sortable-header";
 import { QueryDetailDrawer } from "./query-detail-drawer";
+import { Tooltip } from "./tooltip";
 import { formatRelativeTime, formatAbsoluteTooltip } from "@/lib/admin/format-time";
 import { TablePagination, DEFAULT_PAGE_SIZE, type PageSize } from "./table-pagination";
 
@@ -102,18 +103,21 @@ export function QueryLogTable({ queries }: QueryLogTableProps) {
                     aria-label={`View details for ${q.template_name} query`}
                     className="cursor-pointer hover:bg-amber-50/50 dark:hover:bg-amber-900/15 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 focus-visible:ring-offset-1"
                   >
-                    <td
-                      className="px-4 py-2.5 font-mono text-xs border-b border-neutral-100 dark:border-neutral-800"
-                      title={formatAbsoluteTooltip(q.timestamp)}
-                    >
-                      {formatRelativeTime(q.timestamp)}
-                    </td>
+                    <Tooltip content={formatAbsoluteTooltip(q.timestamp)}>
+                      <td
+                        className="px-4 py-2.5 font-mono text-xs border-b border-neutral-100 dark:border-neutral-800"
+                      >
+                        {formatRelativeTime(q.timestamp)}
+                      </td>
+                    </Tooltip>
                     <td className="px-4 py-2.5 font-semibold border-b border-neutral-100 dark:border-neutral-800">
                       {q.template_name}
                     </td>
-                    <td className="px-4 py-2.5 text-xs text-neutral-500 dark:text-neutral-400 max-w-[250px] truncate border-b border-neutral-100 dark:border-neutral-800" title={params}>
-                      {params || "—"}
-                    </td>
+                    <Tooltip content={params}>
+                      <td className="px-4 py-2.5 text-xs text-neutral-500 dark:text-neutral-400 max-w-[250px] truncate border-b border-neutral-100 dark:border-neutral-800">
+                        {params || "—"}
+                      </td>
+                    </Tooltip>
                     <td className="px-4 py-2.5 border-b border-neutral-100 dark:border-neutral-800">
                       <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-semibold ${
                         q.result_count > 0 ? "bg-green-50 text-green-600 dark:bg-green-900/30 dark:text-green-300" : "bg-red-50 text-red-600 dark:bg-red-900/30 dark:text-red-300"

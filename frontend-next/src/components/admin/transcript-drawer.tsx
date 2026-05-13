@@ -11,6 +11,7 @@ import { X } from "lucide-react";
 import { useMemo } from "react";
 import type { AuditEvent } from "@/lib/chat/types";
 import { formatTimeOfDayWithSeconds } from "@/lib/admin/format-time";
+import { Tooltip } from "./tooltip";
 import {
   FEEDBACK_CRITERIA,
   FEEDBACK_CRITERION_LABELS,
@@ -478,25 +479,25 @@ function SlotEvolutionPanel({ turns, finalSlots }: SlotEvolutionPanelProps) {
                 .join("\n")
             : undefined;
           return (
-            <span
-              key={key}
-              title={tooltip}
-              className={`inline-flex items-baseline gap-1 px-2 py-1 rounded-md text-xs font-mono border ${
-                overwritten
-                  ? "bg-amber-50 border-amber-200 text-amber-800 dark:bg-amber-900/20 dark:border-amber-900/40 dark:text-amber-200"
-                  : "bg-neutral-50 border-neutral-200 text-neutral-700 dark:bg-neutral-800/40 dark:border-neutral-800 dark:text-neutral-200"
-              }`}
-            >
-              <span className="font-semibold">{key}</span>
-              <span>=</span>
-              <span>{value}</span>
-              {setOnTurn != null && (
-                <span className="text-neutral-400 dark:text-neutral-500 text-[0.65rem] ml-0.5">
-                  T{setOnTurn + 1}
-                  {overwritten ? "*" : ""}
-                </span>
-              )}
-            </span>
+            <Tooltip key={key} content={tooltip}>
+              <span
+                className={`inline-flex items-baseline gap-1 px-2 py-1 rounded-md text-xs font-mono border ${
+                  overwritten
+                    ? "bg-amber-50 border-amber-200 text-amber-800 dark:bg-amber-900/20 dark:border-amber-900/40 dark:text-amber-200"
+                    : "bg-neutral-50 border-neutral-200 text-neutral-700 dark:bg-neutral-800/40 dark:border-neutral-800 dark:text-neutral-200"
+                }`}
+              >
+                <span className="font-semibold">{key}</span>
+                <span>=</span>
+                <span>{value}</span>
+                {setOnTurn != null && (
+                  <span className="text-neutral-400 dark:text-neutral-500 text-[0.65rem] ml-0.5">
+                    T{setOnTurn + 1}
+                    {overwritten ? "*" : ""}
+                  </span>
+                )}
+              </span>
+            </Tooltip>
           );
         })}
       </div>

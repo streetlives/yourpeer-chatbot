@@ -7,6 +7,7 @@ import { useMemo, useState } from "react";
 import { AlertCircle, ChevronDown, ChevronUp } from "lucide-react";
 import type { HeatmapResponse, HeatmapCategory, BoroughLabel } from "@/lib/admin/locations-types";
 import { useAdminFetch } from "@/hooks/use-admin-fetch";
+import { Tooltip } from "@/components/admin/tooltip";
 
 // Default top-N matching the backend constant. Surfaced here as a
 // const so future tuning lives in one place. Backend's
@@ -236,13 +237,16 @@ function CategoryRow({
           cellClass = "bg-amber-400 text-neutral-900 dark:bg-amber-600/70 dark:text-neutral-50 font-semibold";
         }
         return (
-          <td
+          <Tooltip
             key={b}
-            className={`px-3 py-2.5 text-center text-sm tabular-nums transition-colors ${cellClass}`}
-            title={`${b} · ${category.name}: ${value.toLocaleString()} location${value === 1 ? "" : "s"}`}
+            content={`${b} · ${category.name}: ${value.toLocaleString()} location${value === 1 ? "" : "s"}`}
           >
-            {value === 0 ? "—" : value.toLocaleString()}
-          </td>
+            <td
+              className={`px-3 py-2.5 text-center text-sm tabular-nums transition-colors ${cellClass}`}
+            >
+              {value === 0 ? "—" : value.toLocaleString()}
+            </td>
+          </Tooltip>
         );
       })}
       {/* Total column — always neutral, not heat-mapped (a heat scale

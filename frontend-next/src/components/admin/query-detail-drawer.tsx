@@ -6,6 +6,7 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import { X } from "lucide-react";
 import type { QueryLogEntry } from "@/lib/chat/types";
+import { Tooltip } from "./tooltip";
 
 interface QueryDetailDrawerProps {
   query: QueryLogEntry;
@@ -87,9 +88,14 @@ export function QueryDetailDrawer({ query, onClose }: QueryDetailDrawerProps) {
                 <div className="text-xs font-semibold text-neutral-500 dark:text-neutral-400 mb-1">
                   Session
                 </div>
-                <div className="text-sm font-mono text-neutral-500 dark:text-neutral-400" title={query.session_id}>
-                  {query.session_id.slice(0, 12)}…
-                </div>
+                <Tooltip content={query.session_id}>
+                  <div
+                    className="text-sm font-mono text-neutral-500 dark:text-neutral-400"
+                    aria-label={`Session ${query.session_id}`}
+                  >
+                    {query.session_id.slice(0, 12)}…
+                  </div>
+                </Tooltip>
               </div>
             )}
 

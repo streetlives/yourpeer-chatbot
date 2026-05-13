@@ -775,7 +775,6 @@ export default function MetricsPage() {
           <MetricsSection
             sectionId={5}
             shortLabel="Intake"
-            defaultOpen={false}
             title="5 · Intake & Confirmation Flow"
             description="How well the chatbot collects structured fields and guides users through confirmation. High confirmation rates and low correction rates indicate the slot extractor is working."
           >

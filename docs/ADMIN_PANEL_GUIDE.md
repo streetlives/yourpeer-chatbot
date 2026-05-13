@@ -133,6 +133,13 @@ color (green / amber / red) based on the thresholds shipped in
 | User Feedback | ≥ 70% | % of post-response thumbs-up out of total thumbs |
 | No-Result Rate | ≤ 15% | % of queries returning zero services |
 
+**Click any card** to open a plain-English explainer dialog — what
+the number means, how it's computed in one sentence, what counts as
+good, and why it's on the dashboard. The explanations are written
+for first-time readers; the technical formula and METRICS.md section
+number live on the Metrics tab. Dialog content is sourced from
+`src/lib/admin/stat-card-definitions.ts`.
+
 The Confirm Rate card replaces a legacy "Crises Detected" count
 because a bare crisis count is uninformative without context (you
 can't have a "high" or "low" crisis count out of context). The
@@ -193,8 +200,13 @@ badge, a one-line detail, and a session-id prefix.
 
 ## Tab 2 — Metrics
 
-The deep dashboard. 9 collapsible sections; sections 1–4 are open by
-default, 5–9 are closed (click to expand).
+The deep dashboard. 9 collapsible sections; sections 1–5 are open by
+default, 6–9 are closed (click to expand). Intake &amp; Confirmation
+Flow (§5) was promoted from default-closed to default-open because
+its rows — slot confirmation rate, slot correction rate, confirm
+rate — are upstream signals for the Overview's Task Completion and
+Confirmation Confirm Rate cards, so the metrics page should surface
+them without a click.
 
 **Sticky nav strip.** At the top of the Metrics tab is a chip row with
 one chip per section. Each chip has a status dot:
@@ -350,7 +362,12 @@ order:
     shows least-recently-verified locations first (never-verified at
     the top). Filters: borough, age bucket, data-quality issues.
     Clicking a freshness histogram bar above drives this table's age
-    filter
+    filter. The **Categories** cell lists up to three taxonomies per
+    row (top by service count) with a trailing **+N** marker for any
+    remainder — click +N to fetch and inline-expand the full list
+    via `GET /admin/api/locations/{id}/categories`. The default
+    response stays small (3 names per row) and the long tail is
+    fetched only when a staffer actually wants it
 
 **Cross-reference contract.** Borough labels, age buckets, feedback
 criteria, and integrity callout IDs are shared between frontend and
@@ -658,7 +675,7 @@ authoritative sources for each section:
 | Tab structure | `frontend-next/src/components/admin/admin-nav.tsx` |
 | Layout / header / theme toggle | `frontend-next/src/app/admin/layout.tsx` |
 | Auth flow | `frontend-next/src/components/admin/admin-auth-guard.tsx`, `login-form.tsx`, `logout-button.tsx`, `src/app/api/admin/[...slug]/route.ts` |
-| Overview tab | `frontend-next/src/app/admin/overview/page.tsx`, `system-health.tsx`, `operations-charts.tsx`, `event-feed.tsx` |
+| Overview tab | `frontend-next/src/app/admin/overview/page.tsx`, `system-health.tsx`, `operations-charts.tsx`, `event-feed.tsx`, `stat-card.tsx`, `stat-card-detail-dialog.tsx`, `src/lib/admin/stat-card-definitions.ts` |
 | Metrics tab structure | `frontend-next/src/app/admin/metrics/page.tsx`, `metrics-section.tsx`, `metric-row.tsx`, `metrics-sticky-nav.tsx` |
 | Metric definitions / targets | `docs/ops/METRICS.md` (single source of truth for definitions; rendered into Metrics tab dialogs) |
 | Conversations tab | `frontend-next/src/components/admin/conversation-table.tsx`, `transcript-drawer.tsx` |

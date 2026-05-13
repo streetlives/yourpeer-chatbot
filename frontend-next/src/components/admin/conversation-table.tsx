@@ -11,6 +11,7 @@ import type { ConversationSummary, AuditEvent } from "@/lib/chat/types";
 import { fetchConversationDetail } from "@/lib/chat/api";
 import { useSortableTable } from "@/hooks/use-sortable-table";
 import { SortableHeader } from "./sortable-header";
+import { Tooltip } from "./tooltip";
 import { TranscriptDrawer } from "./transcript-drawer";
 import { TablePagination, DEFAULT_PAGE_SIZE, type PageSize } from "./table-pagination";
 
@@ -230,9 +231,14 @@ export function ConversationTable({ conversations }: ConversationTableProps) {
                       aria-label={`View transcript for session ${c.session_id.slice(0, 12)}`}
                       className="cursor-pointer hover:bg-amber-50/50 dark:hover:bg-amber-900/15 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 focus-visible:ring-offset-1"
                     >
-                      <td className="px-4 py-2.5 font-mono text-xs text-neutral-500 dark:text-neutral-400 border-b border-neutral-100 dark:border-neutral-800" title={c.session_id}>
-                        {c.session_id.slice(0, 12)}…
-                      </td>
+                      <Tooltip content={c.session_id}>
+                        <td
+                          className="px-4 py-2.5 font-mono text-xs text-neutral-500 dark:text-neutral-400 border-b border-neutral-100 dark:border-neutral-800"
+                          aria-label={`Session ${c.session_id}`}
+                        >
+                          {c.session_id.slice(0, 12)}…
+                        </td>
+                      </Tooltip>
                       <td className="px-4 py-2.5 border-b border-neutral-100 dark:border-neutral-800">
                         {c.turn_count}
                       </td>
@@ -252,12 +258,13 @@ export function ConversationTable({ conversations }: ConversationTableProps) {
                           </span>
                         )}
                       </td>
-                      <td
-                        className="px-4 py-2.5 text-sm border-b border-neutral-100 dark:border-neutral-800 max-w-[300px] truncate"
-                        title={slots}
-                      >
-                        {slots}
-                      </td>
+                      <Tooltip content={slots}>
+                        <td
+                          className="px-4 py-2.5 text-sm border-b border-neutral-100 dark:border-neutral-800 max-w-[300px] truncate"
+                        >
+                          {slots}
+                        </td>
+                      </Tooltip>
                       <td className="px-4 py-2.5 font-mono text-xs text-neutral-400 dark:text-neutral-500 border-b border-neutral-100 dark:border-neutral-800">
                         {/* Absolute timestamp here, unlike event-feed and
                             query-log which use formatRelativeTime. The

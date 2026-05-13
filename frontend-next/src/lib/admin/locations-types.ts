@@ -125,6 +125,32 @@ export interface LocationsListResponse {
 }
 
 // -----------------------------------------------------------------
+// GET /api/admin/locations/{location_id}/categories — on-demand
+// fetch for the locations-table "+N" expand affordance.
+//
+// `service_categories` on a row from /list is capped at the top 3 to
+// keep the default response slim; the remainder count is surfaced
+// as `service_categories_more`. When a staffer clicks the "+N"
+// indicator, the frontend hits this endpoint with the row's
+// `location_id` and renders the full list inline.
+//
+// Ordering matches the /list cap: service count desc, then name asc
+// — so the first three entries here equal what the row was already
+// showing collapsed, and the rest follow in the same precedence.
+// -----------------------------------------------------------------
+
+export interface LocationCategoriesResponse {
+  /** Echoed back so the client can defend against out-of-order
+   *  responses if multiple fetches are in flight. */
+  location_id: string;
+  /** All distinct taxonomy names for the location. May be empty
+   *  (deleted catalog row or location with no offered services),
+   *  in which case the client should fall back to the collapsed
+   *  top-3 display rather than show a blank cell. */
+  categories: string[];
+}
+
+// -----------------------------------------------------------------
 // GET /api/admin/locations/freshness-histogram — section 2a
 // -----------------------------------------------------------------
 
