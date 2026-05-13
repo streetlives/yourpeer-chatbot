@@ -19,7 +19,17 @@
  *      column, which left a large empty gap to its right on wide
  *      desktops.
  *   3. Current — `130px`, font-mono numeric value.
- *   4. Status — `110px`, pill.
+ *   4. Status — `170px`, pill. Was 110px and sized for the canonical
+ *      labels ("✓ On target", "⚠ Watch", etc., all under ~14 chars),
+ *      but `MetricRow.statusOverride` lets callers pass arbitrary
+ *      content — and the longest current overrides ("n=12345 (low
+ *      confidence)", "34% of sessions") push 16-24 chars. At 110px
+ *      those wrapped to two lines, which made `rounded-full` render
+ *      with oversized rounded ends (the radius is half the
+ *      now-doubled height) and read as visually broken. 170px fits
+ *      the longest seen override on a single line at text-xs with
+ *      the pill's px-2 padding, so the rounded-full pill silhouette
+ *      stays intact.
  *   5. Phase — `90px`, pill.
  *
  * Tailwind's JIT scanner only picks up class strings that appear literally
@@ -27,4 +37,4 @@
  * here) rather than a runtime computed value.
  */
 export const METRIC_GRID_COLS =
-  "grid-cols-[minmax(240px,1fr)_140px_130px_110px_90px]";
+  "grid-cols-[minmax(240px,1fr)_140px_130px_170px_90px]";

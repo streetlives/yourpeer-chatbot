@@ -6,6 +6,7 @@
 import type { AuditEvent } from "@/lib/chat/types";
 import { useSortableTable } from "@/hooks/use-sortable-table";
 import { SortableHeader } from "./sortable-header";
+import { Tooltip } from "./tooltip";
 import { formatRelativeTime, formatAbsoluteTooltip } from "@/lib/admin/format-time";
 import {
   FEEDBACK_CRITERIA,
@@ -204,21 +205,31 @@ export function EventFeed({ events }: EventFeedProps) {
 
             return (
               <tr key={rowKey} className="hover:bg-neutral-50/50 dark:hover:bg-neutral-800/40">
-                <td
-                  className="px-4 py-2.5 font-mono text-xs border-b border-neutral-100 dark:border-neutral-800"
-                  title={timeTooltip}
-                >
-                  {time}
-                </td>
+                <Tooltip content={timeTooltip}>
+                  <td
+                    className="px-4 py-2.5 font-mono text-xs border-b border-neutral-100 dark:border-neutral-800"
+                  >
+                    {time}
+                  </td>
+                </Tooltip>
                 <td className="px-4 py-2.5 border-b border-neutral-100 dark:border-neutral-800">
                   {typeBadge(ev.type)}
                 </td>
                 <td className="px-4 py-2.5 border-b border-neutral-100 dark:border-neutral-800">
                   {detail}
                 </td>
-                <td className="px-4 py-2.5 font-mono text-xs text-neutral-400 dark:text-neutral-500 border-b border-neutral-100 dark:border-neutral-800" title={ev.session_id || ""}>
-                  {ev.session_id ? `${ev.session_id.slice(0, 12)}…` : ""}
-                </td>
+                {/* Truncated session id; full value in tooltip for
+                    copy-paste reference. aria-label duplicates the
+                    value so screen readers reach it without needing
+                    to focus the cell. */}
+                <Tooltip content={ev.session_id || ""}>
+                  <td
+                    className="px-4 py-2.5 font-mono text-xs text-neutral-400 dark:text-neutral-500 border-b border-neutral-100 dark:border-neutral-800"
+                    aria-label={ev.session_id ? `Session ${ev.session_id}` : undefined}
+                  >
+                    {ev.session_id ? `${ev.session_id.slice(0, 12)}…` : ""}
+                  </td>
+                </Tooltip>
               </tr>
             );
           })}

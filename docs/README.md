@@ -12,7 +12,8 @@ Read these in order. They're all at the top level of `docs/`:
 3. **[architecture.md](architecture.md)** — one-page high-level architecture overview.
 4. **[FEATURES.md](FEATURES.md)** — full feature reference by area (conversation, crisis, search, cards, privacy, accessibility, staff tools). Living document; update when shipping a feature.
 5. **[CHATBOT_BEHAVIOR.md](CHATBOT_BEHAVIOR.md)** — routing pipeline, message categories, emotional handling, crisis step-down, guardrails, how to extend. Living document.
-6. **[TESTING.md](TESTING.md)** — how the test suite is organized, how to run it, where to add new tests. Also documents the test-quality infrastructure (coverage gate, static audit, mutation testing on safety-critical modules); for the full operator's guide see `../TEST_INFRASTRUCTURE.md`.
+6. **[ADMIN_PANEL_GUIDE.md](ADMIN_PANEL_GUIDE.md)** — staff guide to the `/admin` console: what each of the 7 tabs shows, how to use the eval runner, where signals come from. Read this before triaging a user-reported issue or running an eval.
+7. **[TESTING.md](TESTING.md)** — how the test suite is organized, how to run it, where to add new tests. Also documents the test-quality infrastructure (coverage gate, static audit, mutation testing on safety-critical modules); for the full operator's guide see `../TEST_INFRASTRUCTURE.md`.
 For deployment details, see **[DEPLOY.md](DEPLOY.md)**. For Claude Code / AI-assisted development context, see **[CLAUDE.md](CLAUDE.md)**.
  
 ## Directory layout
@@ -21,7 +22,7 @@ For deployment details, see **[DEPLOY.md](DEPLOY.md)**. For Claude Code / AI-ass
 docs/
   README.md                       ← you are here
   ONBOARDING.md, SETUP.md, DEPLOY.md, architecture.md, CLAUDE.md
-  FEATURES.md, CHATBOT_BEHAVIOR.md, TESTING.md
+  FEATURES.md, CHATBOT_BEHAVIOR.md, ADMIN_PANEL_GUIDE.md, TESTING.md
  
   design/      how specific features are designed and why
   audits/      point-in-time analyses and reports

@@ -12,6 +12,7 @@ locks the surface in place.
 from app.services.locations_admin.aggregations import (
     get_locations_stats,
     get_locations_list,
+    get_location_categories,
     get_freshness_histogram,
     get_locations_by_borough,
     get_service_borough_heatmap,
@@ -38,6 +39,7 @@ from app.services.locations_admin.aggregations import (
 __all__ = [
     "get_locations_stats",
     "get_locations_list",
+    "get_location_categories",
     "get_freshness_histogram",
     "get_locations_by_borough",
     "get_service_borough_heatmap",

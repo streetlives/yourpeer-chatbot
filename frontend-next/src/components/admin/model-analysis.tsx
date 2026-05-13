@@ -61,14 +61,27 @@ export function ModelAnalysis() {
       </h2>
       <CostCalculator />
 
-      {/* Sources */}
-      <details className="mb-4">
+      {/* Sources. The id and per-row ids let the citation buttons
+       *  inside ModelCard expand this section and scroll to the
+       *  matching row — see openSourceAndScroll() in model-card.tsx.
+       *  Keep them in sync with what that function looks up. */}
+      <details id="sources-methodology" className="mb-4">
         <summary className="text-sm font-semibold text-neutral-700 dark:text-neutral-300 cursor-pointer hover:text-neutral-900 dark:hover:text-neutral-100 pb-2 border-b border-neutral-200 dark:border-neutral-800">
           Sources &amp; methodology
         </summary>
         <div className="mt-3 space-y-1.5">
           {SOURCES.map((s) => (
-            <div key={s.id} className="text-sm text-neutral-500 dark:text-neutral-400 leading-relaxed">
+            <div
+              key={s.id}
+              id={`source-${s.id}`}
+              // scroll-mt offsets the smooth-scroll target so the row
+              // doesn't land flush against the top of the viewport
+              // when block: "center" can't fully center it (e.g. when
+              // it's the last row in the list). 16px of breathing room
+              // makes the highlighted row visually distinct from the
+              // surrounding chrome.
+              className="text-sm text-neutral-500 dark:text-neutral-400 leading-relaxed scroll-mt-4"
+            >
               <span className="text-neutral-400 dark:text-neutral-500">[{s.id}]</span>{" "}
               <a
                 href={s.url}

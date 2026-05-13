@@ -48,12 +48,30 @@ export function CoordinateIssuesTable() {
     "/api/admin/locations/coordinate-issues",
   );
 
-  // Issue-type filters. Both default to ON so first render shows the
-  // full table; admins toggle OFF to narrow. Local state — no URL sync
-  // (the table is a single panel; deep-linking a filtered view isn't a
-  // user need yet) and no persistence (workflow is "open the page,
-  // triage, leave" — sticky filters would surprise the next visit).
-  const [showOutsideNYC, setShowOutsideNYC] = useState(true);
+  // Issue-type filters.
+  //
+  // Borough-mismatch defaults to ON — those rows are the ones a
+  // staffer can actually triage (each one is a yes/no decision
+  // between "address is wrong" and "coords are wrong"), and the
+  // backlog is small enough to scan end-to-end.
+  //
+  // Outside-NYC defaults to OFF. In production data, out-of-state
+  // typos dominate the issue count — the rationale comment at the
+  // top of the file already calls this out as "toggling it off lets
+  // admins focus on the smaller borough-mismatch backlog without
+  // scrolling past dozens of obvious typo rows." Defaulting it OFF
+  // makes the recommended triage view the page's starting state
+  // instead of requiring every staffer to click the toggle before
+  // they can work. The summary strip still shows the full
+  // outside-NYC count, so it's visible-but-collapsed, not hidden.
+  //
+  // Local state — no URL sync (the table is a single panel;
+  // deep-linking a filtered view isn't a user need yet) and no
+  // persistence (workflow is "open the page, triage, leave" —
+  // sticky filters would surprise the next visit). Toggling back
+  // ON is one click, so power-users who want the full view can
+  // still get there easily.
+  const [showOutsideNYC, setShowOutsideNYC] = useState(false);
   const [showBoroughMismatch, setShowBoroughMismatch] = useState(true);
 
   if (error) {

@@ -3,6 +3,7 @@
 
 "use client";
 
+import type { ReactNode } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { X } from "lucide-react";
 import type { MetricDefinition } from "@/lib/admin/metric-definitions";
@@ -10,16 +11,23 @@ import type { MetricDefinition } from "@/lib/admin/metric-definitions";
 interface MetricDetailDialogProps {
   metric: MetricDefinition;
   onClose: () => void;
+  /** Optional extra content rendered at the bottom of the dialog body,
+   *  after the Status Note (if any). Use for live-data drill-downs
+   *  that the static MetricDefinition fields can't express on their
+   *  own — e.g. the per-task latency breakdown when "Latency p50 /
+   *  p95" is opened. Keep self-contained: render its own header,
+   *  layout, and dark-mode styling. */
+  extraSection?: ReactNode;
 }
 
-export function MetricDetailDialog({ metric, onClose }: MetricDetailDialogProps) {
+export function MetricDetailDialog({ metric, onClose, extraSection }: MetricDetailDialogProps) {
   return (
     <Dialog.Root open onOpenChange={(open) => !open && onClose()}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 bg-black/50 z-50 animate-in fade-in" />
         <Dialog.Content className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-2xl max-w-[560px] w-[90%] max-h-[80vh] overflow-y-auto p-7 z-50 animate-in fade-in slide-in-from-bottom-2">
           <div className="flex justify-between items-center mb-5">
-            <Dialog.Title className="text-base font-semibold">
+            <Dialog.Title className="text-base font-semibold text-neutral-900 dark:text-neutral-100">
               {metric.name}
             </Dialog.Title>
             <Dialog.Close asChild>
@@ -83,6 +91,8 @@ export function MetricDetailDialog({ metric, onClose }: MetricDetailDialogProps)
                 </p>
               </div>
             )}
+
+            {extraSection}
           </div>
         </Dialog.Content>
       </Dialog.Portal>

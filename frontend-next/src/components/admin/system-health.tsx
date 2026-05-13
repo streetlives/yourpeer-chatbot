@@ -8,6 +8,7 @@
 
 import { useEffect, useState } from "react";
 import type { HealthCheckResponse } from "@/lib/chat/types";
+import { Tooltip } from "./tooltip";
 
 function formatUptime(seconds: number): string {
   if (seconds < 60) return `${seconds}s`;
@@ -175,7 +176,9 @@ export function SystemHealth() {
               >
                 <StatusDot status={row.status} />
                 <span className="text-sm font-medium text-slate-700 dark:text-slate-200 flex-shrink-0">{row.name}</span>
-                <span className="text-sm text-slate-500 dark:text-slate-400 truncate" title={row.detail}>{row.detail}</span>
+                <Tooltip content={row.detail}>
+                  <span className="text-sm text-slate-500 dark:text-slate-400 truncate">{row.detail}</span>
+                </Tooltip>
               </div>
             );
           })}

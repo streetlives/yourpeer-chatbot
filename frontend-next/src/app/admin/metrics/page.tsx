@@ -14,7 +14,7 @@ import { MetricRow, statusClass, fmtMetric } from "@/components/admin/metric-row
 import { MetricsSkeleton } from "@/components/admin/loading-skeleton";
 import { MetricDetailDialog } from "@/components/admin/metric-detail-dialog";
 import { MetricsStickyNav } from "@/components/admin/metrics-sticky-nav";
-import { findMetricDefinition } from "@/lib/admin/metric-definitions";
+import { findMetricDefinition, PRIMARY_NO_RESULT_TEMPLATES } from "@/lib/admin/metric-definitions";
 import type { MetricDefinition } from "@/lib/admin/metric-definitions";
 import {
   IssueFilterContext,
@@ -578,17 +578,52 @@ export default function MetricsPage() {
             title="2 · Are the Results Good?"
             description="Quality of search results and service data. Informs query template tuning, database coverage, and multi-intent handling."
           >
+            {/* No-Result by Service: one row per query template. The
+             *  prior single-row treatment crammed all templates into a
+             *  comma-separated subtitle, which meant "OrgNameQuery:
+             *  100% (1q)" rendered visually identical to "FoodQuery:
+             *  0% (62q)" — alarming for a single-sample outlier. Per-
+             *  template rows give each template its own status, low-n
+             *  flag, and click-through to a definition that explains
+             *  the per-template threshold story. Sort by no-result
+             *  rate descending so high-risk templates float to top;
+             *  primary-template targets (≤ 10%) flow from the
+             *  PRIMARY_NO_RESULT_TEMPLATES set so the definition
+             *  dialog and the row agree on which threshold applies. */}
             {noResultBySvc && Object.keys(noResultBySvc).length > 0 && (
-              <MetricRow onClick={onMetricClick}
-                name="No-Result by Service"
-                subtitle={Object.entries(noResultBySvc as Record<string, { total_queries: number; no_result_rate: number }>)
+              <>
+                {Object.entries(noResultBySvc as Record<string, { total_queries: number; no_result_rate: number }>)
                   .sort(([, a], [, b]) => b.no_result_rate - a.no_result_rate)
-                  .map(([svc, info]) => `${svc}: ${Math.round(info.no_result_rate * 100)}% (${info.total_queries}q)`)
-                  .join(" · ")}
-                target="≤ 10% for food/shelter"
-                value={`${Object.keys(noResultBySvc).length} categories`}
-                status="tracking"
-              />
+                  .map(([svc, info]) => {
+                    const isPrimary = PRIMARY_NO_RESULT_TEMPLATES.has(svc);
+                    const lowN = isLowN(info.total_queries);
+                    // Status policy:
+                    //  - Low-n: "no-data" with low-confidence pill,
+                    //    regardless of rate (a 100% rate on n=1 is
+                    //    not actionable).
+                    //  - Primary template (food/shelter): grade
+                    //    against ≤ 10% target.
+                    //  - Specialized template: "tracking" — the
+                    //    rate is informational, not threshold-gated.
+                    const status = lowN
+                      ? "no-data"
+                      : isPrimary
+                        ? statusClass(info.no_result_rate, 0.10, "lte", 0.25)
+                        : "tracking";
+                    return (
+                      <MetricRow
+                        key={svc}
+                        onClick={onMetricClick}
+                        name={`No-Result: ${svc}`}
+                        subtitle={`${info.total_queries} ${info.total_queries === 1 ? "query" : "queries"} sent${isPrimary ? " · primary template (food/shelter)" : ""}`}
+                        target={isPrimary ? "≤ 10%" : "Baseline tracking"}
+                        value={`${Math.round(info.no_result_rate * 100)}%`}
+                        status={status}
+                        statusOverride={lowN && info.total_queries > 0 ? `n=${info.total_queries} (low confidence)` : undefined}
+                      />
+                    );
+                  })}
+              </>
             )}
             <MetricRow onClick={onMetricClick}
               name="Relaxed Query Rate"
@@ -604,7 +639,7 @@ export default function MetricsPage() {
               value={fmtMetric(stats.data_freshness_rate, true)}
               status={statusClass(stats.data_freshness_rate, 0.8, "gte", 0.6)}
             />
-            <MetricRow onClick={onMetricClick} name="Eligibility Fit Rate" subtitle="% of results matching all stated user criteria" target="≥ 95%" value="By design (canary)" status="no-data" phase="Post-pilot" />
+            <MetricRow onClick={onMetricClick} name="Eligibility Fit Rate" subtitle="% of results matching all stated user criteria" target="≥ 95%" value="Pending canary suite" status="no-data" phase="Post-pilot" />
             <MetricRow onClick={onMetricClick}
               name="Queue Offers"
               subtitle="Times the bot offered a second service after delivering results"
@@ -717,39 +752,87 @@ export default function MetricsPage() {
               status={statusClass(repRate?.repetition_rate ?? null, 0.05, "lte", 0.15)}
             />
             {toneEntries.length > 0 ? (
-              <>
-                {toneEntries.slice(0, 6).map(([tone, count]) => {
-                  const pct = totalTurnsForToneRate > 0 ? Math.round((count / totalTurnsForToneRate) * 100) : null;
-                  return (
-                    <MetricRow onClick={onMetricClick}
-                      key={tone}
-                      name={`Tone: ${tone.charAt(0).toUpperCase() + tone.slice(1)}`}
-                      subtitle={`${count} turn${count !== 1 ? "s" : ""} detected`}
-                      target="Baseline tracking"
-                      value={fmtMetric(
-                        totalTurnsForToneRate > 0 ? count / totalTurnsForToneRate : null,
-                        true,
-                      )}
-                      status={pct !== null ? "tracking" : "no-data"}
-                      statusOverride={pct !== null ? `${pct}%` : undefined}
+              toneClassifierDegenerate ? (
+                /* Degenerate-classifier collapse: the banner above
+                 * already tells the "classifier rarely firing" story.
+                 * Showing six "Tone: X 0%" rows beneath it duplicates
+                 * that message with low-information visual weight, so
+                 * fold all per-tone rows into a single disclosure.
+                 * Native <details> avoids new useState — the section
+                 * defaults to collapsed but is one click away. When
+                 * classifier coverage improves and the degenerate
+                 * flag clears, the normal per-tone-row layout in the
+                 * else-branch below takes over again. */
+                <details className="group border-b border-neutral-100 dark:border-neutral-800 last:border-b-0">
+                  <summary className="flex items-center gap-2 py-2.5 cursor-pointer list-none text-sm text-neutral-600 dark:text-neutral-300 hover:text-neutral-900 dark:hover:text-neutral-100 select-none">
+                    <ChevronRight
+                      size={14}
+                      className="text-neutral-400 dark:text-neutral-500 transition-transform group-open:rotate-90"
+                      aria-hidden
                     />
-                  );
-                })}
-                {toneEntries.length > 6 && (
-                  // No onClick here: the dynamic name "+ N more tones" doesn't
-                  // match any METRIC_DEFINITIONS entry, so a click would be a
-                  // silent no-op. The row is informational; tone definitions
-                  // live on the individual "Tone: X" rows above which DO have
-                  // a dynamic-fallback definition in findMetricDefinition().
-                  <MetricRow
-                    name={`+ ${toneEntries.length - 6} more tone${toneEntries.length - 6 !== 1 ? "s" : ""}`}
-                    subtitle={toneEntries.slice(6).map(([t, c]) => `${t}: ${c}`).join(" · ")}
-                    target="—"
-                    value={`${toneEntries.slice(6).reduce((s, [, c]) => s + c, 0)} turns`}
-                    status="tracking"
-                  />
-                )}
-              </>
+                    <span>
+                      Tone distribution
+                      <span className="text-neutral-400 dark:text-neutral-500 ml-1.5">
+                        ({toneEntries.length} {toneEntries.length === 1 ? "tone" : "tones"} ·{" "}
+                        {toneEntries.reduce((s, [, c]) => s + c, 0)} turn{toneEntries.reduce((s, [, c]) => s + c, 0) !== 1 ? "s" : ""} detected — expand for per-tone breakdown)
+                      </span>
+                    </span>
+                  </summary>
+                  <div className="pb-1">
+                    {toneEntries.map(([tone, count]) => {
+                      const pct = totalTurnsForToneRate > 0 ? Math.round((count / totalTurnsForToneRate) * 100) : null;
+                      return (
+                        <MetricRow onClick={onMetricClick}
+                          key={tone}
+                          name={`Tone: ${tone.charAt(0).toUpperCase() + tone.slice(1)}`}
+                          subtitle={`${count} turn${count !== 1 ? "s" : ""} detected`}
+                          target="Baseline tracking"
+                          value={fmtMetric(
+                            totalTurnsForToneRate > 0 ? count / totalTurnsForToneRate : null,
+                            true,
+                          )}
+                          status={pct !== null ? "tracking" : "no-data"}
+                          statusOverride={pct !== null ? `${pct}%` : undefined}
+                        />
+                      );
+                    })}
+                  </div>
+                </details>
+              ) : (
+                <>
+                  {toneEntries.slice(0, 6).map(([tone, count]) => {
+                    const pct = totalTurnsForToneRate > 0 ? Math.round((count / totalTurnsForToneRate) * 100) : null;
+                    return (
+                      <MetricRow onClick={onMetricClick}
+                        key={tone}
+                        name={`Tone: ${tone.charAt(0).toUpperCase() + tone.slice(1)}`}
+                        subtitle={`${count} turn${count !== 1 ? "s" : ""} detected`}
+                        target="Baseline tracking"
+                        value={fmtMetric(
+                          totalTurnsForToneRate > 0 ? count / totalTurnsForToneRate : null,
+                          true,
+                        )}
+                        status={pct !== null ? "tracking" : "no-data"}
+                        statusOverride={pct !== null ? `${pct}%` : undefined}
+                      />
+                    );
+                  })}
+                  {toneEntries.length > 6 && (
+                    // No onClick here: the dynamic name "+ N more tones" doesn't
+                    // match any METRIC_DEFINITIONS entry, so a click would be a
+                    // silent no-op. The row is informational; tone definitions
+                    // live on the individual "Tone: X" rows above which DO have
+                    // a dynamic-fallback definition in findMetricDefinition().
+                    <MetricRow
+                      name={`+ ${toneEntries.length - 6} more tone${toneEntries.length - 6 !== 1 ? "s" : ""}`}
+                      subtitle={toneEntries.slice(6).map(([t, c]) => `${t}: ${c}`).join(" · ")}
+                      target="—"
+                      value={`${toneEntries.slice(6).reduce((s, [, c]) => s + c, 0)} turns`}
+                      status="tracking"
+                    />
+                  )}
+                </>
+              )
             ) : (
               <MetricRow
                 name="No tones detected yet"
@@ -840,13 +923,87 @@ export default function MetricsPage() {
             title="6 · System Internals"
             description="Routing distribution, classifier confidence, recovery rates, and LLM cost/performance. For engineering — not day-to-day monitoring."
           >
-            {/* --- Routing --- */}
-            <MetricRow onClick={onMetricClick} name="Service Flow" subtitle="Turns routed to service search, confirmation, or slot-filling" target="Largest bucket" value={`${routing?.buckets?.service_flow || 0} turns`} status={totalCategorized > 0 ? "tracking" : "no-data"} statusOverride={totalCategorized > 0 ? `${Math.round(((routing?.buckets?.service_flow || 0) / totalCategorized) * 100)}%` : undefined} />
-            <MetricRow onClick={onMetricClick} name="Conversational (Safe)" subtitle="Greetings, thanks, help, bot identity, reset — deterministic handlers" target="—" value={`${routing?.buckets?.conversational || 0} turns`} status={totalCategorized > 0 ? "tracking" : "no-data"} statusOverride={totalCategorized > 0 ? `${Math.round(((routing?.buckets?.conversational || 0) / totalCategorized) * 100)}%` : undefined} />
-            <MetricRow onClick={onMetricClick} name="Post-Results Questions" subtitle="Follow-up questions about displayed services — answered from card data, no LLM" target="Baseline tracking" value={`${routing?.category_distribution?.post_results || 0} turns`} status={totalCategorized > 0 ? "tracking" : "no-data"} statusOverride={totalCategorized > 0 ? `${Math.round(((routing?.category_distribution?.post_results || 0) / totalCategorized) * 100)}%` : undefined} />
-            <MetricRow onClick={onMetricClick} name="Emotional / Frustrated / Confused" subtitle="Tone-aware responses with empathetic framing" target="—" value={`${routing?.buckets?.emotional || 0} turns`} status={totalCategorized > 0 ? "tracking" : "no-data"} statusOverride={totalCategorized > 0 ? `${Math.round(((routing?.buckets?.emotional || 0) / totalCategorized) * 100)}%` : undefined} />
-            <MetricRow onClick={onMetricClick} name="Safety (Crisis + Escalation)" subtitle="Crisis resources shown or peer navigator offered" target="—" value={`${routing?.buckets?.safety || 0} turns`} status={totalCategorized > 0 ? "tracking" : "no-data"} statusOverride={totalCategorized > 0 ? `${Math.round(((routing?.buckets?.safety || 0) / totalCategorized) * 100)}%` : undefined} />
-            <MetricRow onClick={onMetricClick} name="Recovery (Correction / Disambiguation)" subtitle="User corrected a misunderstanding, clarified ambiguity, or rejected results" target="—" value={`${routing?.buckets?.recovery || 0} turns`} status={totalCategorized > 0 ? "tracking" : "no-data"} statusOverride={totalCategorized > 0 ? `${Math.round(((routing?.buckets?.recovery || 0) / totalCategorized) * 100)}%` : undefined} />
+            {/* --- Routing ---
+             *  Six buckets in production data tend to split as
+             *  Service Flow ~75% + Conversational ~18% + four small
+             *  buckets at single-digit percentages. Showing all six
+             *  as always-on rows adds visual noise and tracking pills
+             *  for buckets that are mostly zero. Threshold: buckets
+             *  ≥ 10% render as their own MetricRows; buckets below
+             *  that fold into a single "Other routing" disclosure
+             *  with a per-bucket breakdown inside. The threshold is
+             *  a judgment call (10% feels like the floor at which a
+             *  routing category is structurally important enough to
+             *  watch every page-load); raising it would compact the
+             *  view further, lowering would surface more pills.
+             *
+             *  When totalCategorized is 0 (early in the pilot, no
+             *  audit data yet), the threshold predicate fails for
+             *  every bucket so every bucket falls into the small set
+             *  — render the disclosure with all six inside. */}
+            {(() => {
+              const SMALL_BUCKET_THRESHOLD = 0.10;
+              const buckets: Array<{
+                name: string;
+                subtitle: string;
+                count: number;
+                target: string;
+              }> = [
+                { name: "Service Flow", subtitle: "Turns routed to service search, confirmation, or slot-filling", count: routing?.buckets?.service_flow || 0, target: "Largest bucket" },
+                { name: "Conversational (Safe)", subtitle: "Greetings, thanks, help, bot identity, reset — deterministic handlers", count: routing?.buckets?.conversational || 0, target: "—" },
+                { name: "Post-Results Questions", subtitle: "Follow-up questions about displayed services — answered from card data, no LLM", count: routing?.category_distribution?.post_results || 0, target: "Baseline tracking" },
+                { name: "Emotional / Frustrated / Confused", subtitle: "Tone-aware responses with empathetic framing", count: routing?.buckets?.emotional || 0, target: "—" },
+                { name: "Safety (Crisis + Escalation)", subtitle: "Crisis resources shown or peer navigator offered", count: routing?.buckets?.safety || 0, target: "—" },
+                { name: "Recovery (Correction / Disambiguation)", subtitle: "User corrected a misunderstanding, clarified ambiguity, or rejected results", count: routing?.buckets?.recovery || 0, target: "—" },
+              ];
+              const pct = (count: number) =>
+                totalCategorized > 0 ? Math.round((count / totalCategorized) * 100) : null;
+              const isLarge = (b: { count: number }) =>
+                totalCategorized > 0 && b.count / totalCategorized >= SMALL_BUCKET_THRESHOLD;
+              const large = buckets.filter(isLarge);
+              const small = buckets.filter((b) => !isLarge(b));
+              const smallTotal = small.reduce((s, b) => s + b.count, 0);
+              const smallPct = pct(smallTotal);
+              const renderRow = (b: { name: string; subtitle: string; count: number; target: string }) => {
+                const p = pct(b.count);
+                return (
+                  <MetricRow
+                    key={b.name}
+                    onClick={onMetricClick}
+                    name={b.name}
+                    subtitle={b.subtitle}
+                    target={b.target}
+                    value={`${b.count} turns`}
+                    status={totalCategorized > 0 ? "tracking" : "no-data"}
+                    statusOverride={p !== null ? `${p}%` : undefined}
+                  />
+                );
+              };
+              return (
+                <>
+                  {large.map(renderRow)}
+                  {small.length > 0 && (
+                    <details className="group border-b border-neutral-100 dark:border-neutral-800 last:border-b-0">
+                      <summary className="flex items-center gap-2 py-2.5 cursor-pointer list-none text-sm text-neutral-600 dark:text-neutral-300 hover:text-neutral-900 dark:hover:text-neutral-100 select-none">
+                        <ChevronRight
+                          size={14}
+                          className="text-neutral-400 dark:text-neutral-500 transition-transform group-open:rotate-90"
+                          aria-hidden
+                        />
+                        <span>
+                          Other routing
+                          <span className="text-neutral-400 dark:text-neutral-500 ml-1.5">
+                            ({small.length} {small.length === 1 ? "bucket" : "buckets"}
+                            {smallPct !== null ? ` · ${smallPct}% of turns` : ""} — expand for breakdown)
+                          </span>
+                        </span>
+                      </summary>
+                      <div className="pb-1">{small.map(renderRow)}</div>
+                    </details>
+                  )}
+                </>
+              );
+            })()}
             <MetricRow onClick={onMetricClick} name="⚠ General (LLM-Generated)" subtitle="Turns where the LLM fully generates the response — no template grounding" target="≤ 15% of turns" value={fmtMetric(routing?.general_rate ?? null, true)} status={statusClass(routing?.general_rate ?? null, 0.15, "lte", 0.25)} />
             {routing?.category_distribution && Object.keys(routing.category_distribution).length > 0 && (
               <MetricRow onClick={onMetricClick} name="Full Category Breakdown" subtitle={Object.entries(routing.category_distribution as Record<string, number>).sort(([, a], [, b]) => (b as number) - (a as number)).map(([cat, count]) => `${cat}: ${count}`).join(" · ")} target="—" value={`${Object.keys(routing.category_distribution).length} categories`} status="tracking" />
@@ -1026,6 +1183,80 @@ export default function MetricsPage() {
             <MetricDetailDialog
               metric={selectedMetric}
               onClose={() => setSelectedMetric(null)}
+              extraSection={
+                // Per-task latency breakdown — only meaningful when the
+                // user opened the aggregate Latency row and we actually
+                // have a by_task breakdown to show. The data is already
+                // in scope (llmMetrics.by_task is computed at the top of
+                // the component); the dialog just surfaces it sorted by
+                // avg latency descending so the latency-hog floats to
+                // top. Renders nothing for any other metric.
+                selectedMetric.name === "Latency p50 / p95" &&
+                llmMetrics?.by_task &&
+                Object.keys(llmMetrics.by_task).length > 0 ? (
+                  <div>
+                    <div className="text-xs font-semibold text-neutral-500 dark:text-neutral-400 mb-1">
+                      Per-Task Breakdown
+                    </div>
+                    <p className="text-xs text-neutral-500 dark:text-neutral-400 mb-2 leading-relaxed">
+                      Average latency per LLM task, sorted by latency. When the aggregate p50 is in Watch state, one task usually dominates — finding it is the first step toward deciding whether to tune the task, adjust the model, or accept the structural cost.
+                    </p>
+                    <div className="rounded-lg border border-neutral-200 dark:border-neutral-800 overflow-hidden">
+                      <table className="w-full text-sm">
+                        <thead className="bg-neutral-50 dark:bg-neutral-800/40 text-xs text-neutral-500 dark:text-neutral-400 font-semibold">
+                          <tr>
+                            <th className="text-left px-3 py-2">Task</th>
+                            <th className="text-right px-3 py-2">Calls</th>
+                            <th className="text-right px-3 py-2">Avg latency</th>
+                          </tr>
+                        </thead>
+                        <tbody className="font-mono text-xs">
+                          {Object.entries(
+                            llmMetrics.by_task as Record<
+                              string,
+                              { calls: number; avg_latency_ms: number }
+                            >,
+                          )
+                            .sort(([, a], [, b]) => b.avg_latency_ms - a.avg_latency_ms)
+                            .map(([task, info], idx, arr) => {
+                              // Flag rows that exceed the 600ms p50 target —
+                              // these are the candidates for tuning. Using
+                              // the same threshold as the row's status logic
+                              // (line ~870) keeps the "Watch" call and the
+                              // dialog's flagged rows in sync.
+                              const overTarget = info.avg_latency_ms > 600;
+                              return (
+                                <tr
+                                  key={task}
+                                  className={
+                                    idx < arr.length - 1
+                                      ? "border-b border-neutral-100 dark:border-neutral-800"
+                                      : ""
+                                  }
+                                >
+                                  <td className="px-3 py-2 text-neutral-700 dark:text-neutral-200">
+                                    {task}
+                                  </td>
+                                  <td className="px-3 py-2 text-right text-neutral-600 dark:text-neutral-300">
+                                    {info.calls.toLocaleString()}
+                                  </td>
+                                  <td
+                                    className={`px-3 py-2 text-right ${overTarget ? "text-amber-600 dark:text-amber-400 font-semibold" : "text-neutral-700 dark:text-neutral-200"}`}
+                                  >
+                                    {info.avg_latency_ms}ms
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                        </tbody>
+                      </table>
+                    </div>
+                    <p className="text-xs text-neutral-400 dark:text-neutral-500 mt-2">
+                      Amber rows exceed the 600ms p50 target. Tasks routed to Sonnet structurally exceed the target — see Calls by Model for the model-mix context.
+                    </p>
+                  </div>
+                ) : undefined
+              }
             />
           )}
         </>

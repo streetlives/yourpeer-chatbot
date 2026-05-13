@@ -2636,3 +2636,53 @@ def get_locations_timeseries() -> dict:
         "weeks": weeks_out,
         "total_weeks": TIMESERIES_WEEKS,
     }
+# =============================================================================
+# PATCH: add this function to
+#        backend/app/services/locations_admin/aggregations.py
+#
+# Placement: append at the very end of the file (after
+# `get_locations_timeseries`). No imports need to change — `_execute_sql`
+# is already imported at the top of the module.
+# =============================================================================
+
+def get_location_categories(location_id: str) -> dict:
+    """All distinct service categories for a single location.
+
+    Powers the locations-table click-to-expand affordance on the "+N"
+    overflow marker. The main /list endpoint caps each row's
+    `service_categories` at 3 names (see the enrichment CTE in
+    `get_locations_list`) so the default response stays small —
+    typical visit fetches one page of locations and never needs the
+    extra names. When a staffer needs the full taxonomy list for one
+    location, the frontend calls this endpoint with that location's
+    id and renders the result inline.
+
+    Ordering: same logic as the list endpoint's top-3 — service count
+    descending, then name ascending as a stable tie-breaker. That way
+    the names users see expanded read as a superset of what they saw
+    collapsed (the first three match exactly, then the rest follow
+    in the same precedence the cap would have used).
+
+    Returns the location_id back in the response so the frontend can
+    confirm it's rendering the right row (defensive against
+    out-of-order responses if multiple fetches were in flight).
+
+    An unknown location_id returns an empty categories list rather
+    than a 404 — same shape so the client doesn't need a separate
+    error branch for "no taxonomy rows" vs "row not found in
+    catalog". The list endpoint's `service_categories_more` count is
+    derived from the same source, so any location with a non-zero
+    `+N` will produce ≥1 row here by construction.
+    """
+    sql = """
+    SELECT t.name
+    FROM service_at_locations sal
+    JOIN service_taxonomy st ON st.service_id = sal.service_id
+    JOIN taxonomies t ON t.id = st.taxonomy_id
+    WHERE sal.location_id::text = :location_id
+    GROUP BY t.name
+    ORDER BY COUNT(*) DESC, t.name
+    """
+    rows = _execute_sql(sql, {"location_id": location_id})
+    categories = [str(r.get("name")) for r in rows if r.get("name")]
+    return {"location_id": location_id, "categories": categories}

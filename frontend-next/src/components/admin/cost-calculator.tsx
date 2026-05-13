@@ -47,7 +47,15 @@ function SliderField({
         step={step}
         value={value}
         onChange={(e) => onChange(Number(e.target.value))}
-        className="w-full accent-neutral-800"
+        // accent-color drives both the filled track and the thumb on
+        // native range inputs (Chrome/Firefox/Safari all support it).
+        // Light mode: neutral-800 reads cleanly as a dark control on
+        // the white card. Dark mode: amber-400 to match the rest of
+        // the admin's interactive elements (config selector, links,
+        // metric callouts) — without an override, browsers fall back
+        // to their default range rendering on dark backgrounds, which
+        // washes out to near-white and reads as inactive.
+        className="w-full accent-neutral-800 dark:accent-amber-400"
       />
     </label>
   );

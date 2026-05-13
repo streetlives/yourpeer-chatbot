@@ -9,6 +9,7 @@ import type {
   FreshnessBucketKey,
 } from "@/lib/admin/locations-types";
 import { useAdminFetch } from "@/hooks/use-admin-fetch";
+import { Tooltip } from "@/components/admin/tooltip";
 
 /**
  * Section 2a — freshness distribution histogram.
@@ -97,11 +98,12 @@ export function FreshnessHistogram({
           const isActive = activeBucket === bucket.key;
 
           const inner = (
-            <div
-              title={`${bucket.label}: ${bucket.count.toLocaleString()}`}
-              className={`w-full rounded-t-[2px] transition-all ${colorClass}`}
-              style={{ height: heightStyle }}
-            />
+            <Tooltip content={`${bucket.label}: ${bucket.count.toLocaleString()}`}>
+              <div
+                className={`w-full rounded-t-[2px] transition-all ${colorClass}`}
+                style={{ height: heightStyle }}
+              />
+            </Tooltip>
           );
 
           // The wrapper is a button when onBucketClick is provided so

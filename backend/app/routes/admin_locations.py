@@ -36,6 +36,7 @@ from fastapi.responses import JSONResponse
 from app.services.locations_admin import (
     get_locations_stats,
     get_locations_list,
+    get_location_categories,
     get_freshness_histogram,
     get_locations_by_borough,
     get_service_borough_heatmap,
@@ -203,6 +204,37 @@ def locations_list(
         )
     except Exception as e:
         return _admin_error("/api/locations/list", e)
+
+
+@router.get("/{location_id}/categories")
+def location_categories(location_id: str):
+    """All distinct service categories for one location.
+
+    Companion to /list — the list endpoint caps each row's
+    `service_categories` at 3 names with the remainder surfaced as a
+    `service_categories_more` count. The locations table renders that
+    count as a clickable "+N" affordance; this endpoint is what the
+    click fetches. Keeping the cap on /list (small per-row payload,
+    quick page render) and routing the long tail through here (only
+    when a staffer asks for it) is the trade-off — the default
+    response stays slim, and the rare full-list reads each get their
+    own bounded query.
+
+    `location_id` is taken from the URL path. We don't validate that
+    the id exists in the catalog — an unknown id returns
+    `{"categories": []}` rather than a 404, which keeps the client's
+    success path narrow (no separate handling for "row gone" vs "row
+    has no taxonomies"). Any non-zero `+N` on the list endpoint
+    implies ≥1 row will come back here by construction, so a real
+    empty response only happens if the catalog row was deleted
+    between the list fetch and the click.
+    """
+    try:
+        return get_location_categories(location_id)
+    except Exception as e:
+        return _admin_error(
+            f"/api/locations/{location_id}/categories", e,
+        )
 
 
 @router.get("/freshness-histogram")

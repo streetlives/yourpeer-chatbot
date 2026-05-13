@@ -10,6 +10,7 @@ import type {
   CategoryCoverageRow,
 } from "@/lib/admin/locations-types";
 import { useAdminFetch } from "@/hooks/use-admin-fetch";
+import { Tooltip } from "@/components/admin/tooltip";
 
 // Categories to show by default. Anything beyond surfaces under a
 // "Show all" toggle so admins can drill into the long tail when
@@ -135,27 +136,29 @@ export function CategoryCoverageTable() {
               >
                 Verified &lt;90d
               </th>
-              <th
-                scope="col"
-                className="px-4 py-3 text-right text-xs font-semibold text-neutral-500 dark:text-neutral-400 whitespace-nowrap"
-                title="Approximate — chat-template demand divided evenly across each template's covered taxonomies."
-              >
-                Demand
-                <Info size={11} className="inline ml-1 -mt-0.5 text-neutral-300 dark:text-neutral-600" aria-hidden="true" />
-              </th>
+              <Tooltip content="Approximate — chat-template demand divided evenly across each template's covered taxonomies.">
+                <th
+                  scope="col"
+                  className="px-4 py-3 text-right text-xs font-semibold text-neutral-500 dark:text-neutral-400 whitespace-nowrap"
+                >
+                  Demand
+                  <Info size={11} className="inline ml-1 -mt-0.5 text-neutral-300 dark:text-neutral-600" aria-hidden="true" />
+                </th>
+              </Tooltip>
               <th
                 scope="col"
                 className="px-4 py-3 text-right text-xs font-semibold text-neutral-500 dark:text-neutral-400 whitespace-nowrap"
               >
                 No-result %
               </th>
-              <th
-                scope="col"
-                className="px-4 py-3 text-right text-xs font-semibold text-neutral-500 dark:text-neutral-400 whitespace-nowrap"
-                title="Demand queries per available location. High = users keep asking, supply is thin."
-              >
-                Demand : Supply
-              </th>
+              <Tooltip content="Demand queries per available location. High = users keep asking, supply is thin.">
+                <th
+                  scope="col"
+                  className="px-4 py-3 text-right text-xs font-semibold text-neutral-500 dark:text-neutral-400 whitespace-nowrap"
+                >
+                  Demand : Supply
+                </th>
+              </Tooltip>
             </tr>
           </thead>
           <tbody>

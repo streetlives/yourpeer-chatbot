@@ -34,7 +34,7 @@ export function DimensionDetailDialog({ dimension, onClose }: DimensionDetailDia
         <Dialog.Content className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 rounded-2xl max-w-[600px] w-[90%] max-h-[85vh] overflow-y-auto p-7 z-50 animate-in fade-in slide-in-from-bottom-2">
           <div className="flex justify-between items-start gap-4 mb-5">
             <div className="flex-1">
-              <Dialog.Title className="text-base font-semibold">
+              <Dialog.Title className="text-base font-semibold text-neutral-900 dark:text-neutral-100">
                 {dimension.label}
               </Dialog.Title>
               <div className="flex flex-wrap items-center gap-2 mt-2">

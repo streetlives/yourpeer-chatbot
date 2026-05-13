@@ -10,6 +10,7 @@ import { useMemo, useState } from "react";
 import { ChevronDown } from "lucide-react";
 import type { EvalReport, EvalScenarioResult } from "@/lib/chat/types";
 import { StatCard } from "./stat-card";
+import { Tooltip } from "./tooltip";
 import { DimensionDetailDialog } from "./dimension-detail-dialog";
 import { EVAL_DIMENSIONS, DIM_SHORT_LABELS, getDimension, warningBoundFor } from "@/lib/admin/eval-dimensions";
 import type { EvalDimension } from "@/lib/admin/eval-dimensions";
@@ -313,11 +314,12 @@ export function EvalResults({ report }: EvalResultsProps) {
                     style={{ width: `${pct}%` }}
                   />
                 </div>
-                <div
-                  className="absolute -top-0.5 h-3 w-0.5 bg-neutral-400 dark:bg-neutral-500 rounded-full"
-                  style={{ left: `${targetPct}%` }}
-                  title={`Target: ${target}/5.0`}
-                />
+                <Tooltip content={`Target: ${target}/5.0`}>
+                  <div
+                    className="absolute -top-0.5 h-3 w-0.5 bg-neutral-400 dark:bg-neutral-500 rounded-full"
+                    style={{ left: `${targetPct}%` }}
+                  />
+                </Tooltip>
               </div>
               <div className={`w-[60px] text-right font-mono font-bold text-sm ${scoreColor}`}>
                 {d.average.toFixed(2)}

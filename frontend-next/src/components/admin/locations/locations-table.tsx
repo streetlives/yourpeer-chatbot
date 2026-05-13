@@ -5,6 +5,7 @@
 
 import { useMemo, useState } from "react";
 import { ExternalLink, AlertCircle, AlertTriangle } from "lucide-react";
+import { Tooltip } from "@/components/admin/tooltip";
 import {
   TablePagination,
   DEFAULT_PAGE_SIZE,
@@ -18,7 +19,9 @@ import type {
   LocationsSortKey,
   LocationsAgeBucket,
   BoroughLabel,
+  LocationCategoriesResponse,
 } from "@/lib/admin/locations-types";
+import { isAdminApiError } from "@/lib/admin/locations-types";
 import { useAdminFetch } from "@/hooks/use-admin-fetch";
 import {
   defaultSortDirForField,
@@ -188,8 +191,29 @@ export function LocationsTable({
                   <SortHeader label="Organization" field="organization" current={sortKey} dir={sortDir} onClick={handleSortClick} />
                   <SortHeader label="Borough" field="city" current={sortKey} dir={sortDir} onClick={handleSortClick} />
                   <SortHeader label="Services" field="service_count" current={sortKey} dir={sortDir} onClick={handleSortClick} className="text-right" />
+                  {/*
+                   * Last verified: whitespace-nowrap so the header
+                   * "Last verified ▲" reads on one line. Auto-layout
+                   * tables grow a non-wrapping column to fit its widest
+                   * cell, pulling width from the more-flexible columns
+                   * (Location / Organization / Borough) automatically —
+                   * Categories doesn't need to be capped tighter to make
+                   * this work. The body cell carries the same rule (see
+                   * LocationRow) so timestamps like "7 years ago" stay
+                   * on one line too.
+                   *
+                   * Categories stays at max-w-[200px] — the original
+                   * cap. Earlier I tried tightening it to 170 to "make
+                   * room" for Last verified, but in real data with
+                   * `+N` overflow markers the resulting truncation was
+                   * worse than the original wrap: strings like
+                   * "Other service, Case W..." +7 lost more meaning to
+                   * the ellipsis than they gained from the column
+                   * shrink. With Last verified holding its own width
+                   * via nowrap, Categories doesn't have to give any up.
+                   */}
                   <th className="px-4 py-3 text-xs font-semibold text-neutral-500 dark:text-neutral-400 text-left">Categories</th>
-                  <SortHeader label="Last verified" field="last_validated_at" current={sortKey} dir={sortDir} onClick={handleSortClick} />
+                  <SortHeader label="Last verified" field="last_validated_at" current={sortKey} dir={sortDir} onClick={handleSortClick} className="whitespace-nowrap" />
                   <th className="px-4 py-3 text-xs font-semibold text-neutral-500 dark:text-neutral-400 text-center">Data</th>
                   <SortHeader label="Recent flags" field="recent_flags" current={sortKey} dir={sortDir} onClick={handleSortClick} className="text-right" />
                   <th className="px-4 py-3 text-xs font-semibold text-neutral-500 dark:text-neutral-400 text-right">Open</th>
@@ -387,15 +411,19 @@ function LocationRow({ loc }: { loc: LocationsListRow }) {
       <td className="px-4 py-3 text-sm text-neutral-600 dark:text-neutral-300 text-right tabular-nums">
         {loc.service_count}
       </td>
-      <td className="px-4 py-3 text-xs text-neutral-500 dark:text-neutral-400 max-w-[200px]">
-        <span className="truncate inline-block max-w-full" title={loc.service_categories.join(", ")}>
-          {loc.service_categories.join(", ") || "—"}
-        </span>
-        {loc.service_categories_more > 0 && (
-          <span className="ml-1 text-neutral-400 dark:text-neutral-500">+{loc.service_categories_more}</span>
-        )}
-      </td>
-      <td className="px-4 py-3 text-sm text-neutral-600 dark:text-neutral-300">
+      {/* Categories cell — handles on-demand expand of the "+N"
+       *  overflow marker. Logic lives in `CategoriesCell` below
+       *  because of its local fetch + loading + error state; keeping
+       *  it inline here would clutter LocationRow with hooks. */}
+      <CategoriesCell loc={loc} />
+      {/* whitespace-nowrap pairs with the same rule on the header so
+          the column claims exactly the width "Last verified ▲" needs,
+          and relative-time strings like "7 years ago" stay on one
+          line. The browser's auto-table layout grows a non-wrapping
+          column to fit its widest cell and pulls the room from
+          flexible columns (Location / Organization / Borough), so we
+          don't have to tighten Categories to make this work. */}
+      <td className="px-4 py-3 text-sm text-neutral-600 dark:text-neutral-300 whitespace-nowrap">
         <LastVerifiedCell value={loc.last_validated_at} />
       </td>
       <td className="px-4 py-3 text-center">
@@ -423,6 +451,149 @@ function LocationRow({ loc }: { loc: LocationsListRow }) {
         </a>
       </td>
     </tr>
+  );
+}
+
+/**
+ * Categories cell with on-demand expansion of the "+N" overflow
+ * marker.
+ *
+ * Default state (collapsed): renders the top-3 category names that
+ * the /list endpoint returned, followed by a clickable "+N" if the
+ * row has additional taxonomies beyond the cap. Clicking "+N" hits
+ * the /api/admin/locations/{id}/categories endpoint and, on success,
+ * replaces the entire cell content with the full taxonomy list.
+ *
+ * Why a local fetch instead of `useAdminFetch`: that hook runs on
+ * mount and is designed for "open the page, load the data" patterns.
+ * We want explicit user opt-in here — most rows never need the
+ * expansion, and pre-fetching one per row would multiply the
+ * page-load cost.
+ *
+ * State machine, briefly:
+ *
+ *     ┌──────────┐  click  ┌─────────┐ success  ┌──────────┐
+ *     │collapsed │ ──────▶ │ loading │ ───────▶ │ expanded │
+ *     │ (default)│         │         │          │  (final) │
+ *     └──────────┘         └─────────┘          └──────────┘
+ *           ▲                  │
+ *           │                  │ error
+ *           └──────────────────┘  (stay collapsed,
+ *                                  show ⚠, allow retry)
+ *
+ * `expanded` is terminal — no collapse-back affordance, intentionally.
+ * Once the full list is fetched and shown there's no reason to hide
+ * it again, and a "Show less" link would clutter cells on a table
+ * that's primarily for scanning. Paginating away or filtering the
+ * table remounts the row and resets state.
+ *
+ * The cell still respects `max-w-[200px]` in both states so an
+ * expanded row with many categories wraps to multiple lines rather
+ * than pushing the rest of the table off-screen.
+ */
+function CategoriesCell({ loc }: { loc: LocationsListRow }) {
+  // `null` when collapsed or after a failed fetch; populated once a
+  // successful response arrives. Used as the single source of truth
+  // for which state we're in — no separate `expanded` boolean needed.
+  const [fullList, setFullList] = useState<string[] | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const collapsedText = loc.service_categories.join(", ") || "—";
+
+  // No expand affordance needed if there's nothing beyond the top 3.
+  // Render the same collapsed text without a button. The em-dash
+  // case (no categories at all) is handled inside collapsedText so
+  // we don't need a separate branch.
+  if (loc.service_categories_more === 0) {
+    return (
+      <td className="px-4 py-3 text-xs text-neutral-500 dark:text-neutral-400 max-w-[200px]">
+        {collapsedText}
+      </td>
+    );
+  }
+
+  // Once expanded, show the full taxonomy list and nothing else.
+  // We don't fall back to the collapsed text on an empty response —
+  // an empty list after a successful fetch is the catalog's actual
+  // answer (e.g. the location was deleted between /list and the
+  // click) and showing the now-stale top-3 would mislead.
+  if (fullList !== null) {
+    return (
+      <td className="px-4 py-3 text-xs text-neutral-500 dark:text-neutral-400 max-w-[200px]">
+        {fullList.length > 0 ? fullList.join(", ") : "—"}
+      </td>
+    );
+  }
+
+  const handleExpand = async () => {
+    // Re-entry guard. With `disabled` on the button this shouldn't
+    // be possible, but a defensive check keeps the click handler
+    // honest if the disabled attribute is ever removed.
+    if (loading) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const url = `/api/admin/locations/${encodeURIComponent(loc.location_id)}/categories`;
+      const res = await fetch(url);
+      const body: unknown = await res.json();
+      if (isAdminApiError(body)) {
+        setError(body.detail);
+      } else {
+        // Trust the response shape — the backend's contract is
+        // pinned by `LocationCategoriesResponse`. A defensive
+        // runtime check would be belt-and-braces; the same
+        // contract assumption holds across every other admin
+        // fetch in this file.
+        const data = body as LocationCategoriesResponse;
+        setFullList(data.categories);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <td className="px-4 py-3 text-xs text-neutral-500 dark:text-neutral-400 max-w-[200px]">
+      {collapsedText}{" "}
+      <button
+        type="button"
+        onClick={handleExpand}
+        disabled={loading}
+        // Resting style matches the previous static "+N" span so the
+        // affordance is unchanged at a glance; hover/focus adds the
+        // amber underline familiar from the YourPeer external link
+        // elsewhere in the table, signalling "this is clickable."
+        // disabled:cursor-wait covers the loading state.
+        aria-label={
+          loading
+            ? `Loading ${loc.service_categories_more} more categories`
+            : `Show ${loc.service_categories_more} more categories`
+        }
+        className="text-neutral-400 dark:text-neutral-500 hover:text-amber-700 dark:hover:text-amber-400 hover:underline underline-offset-2 rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 disabled:cursor-wait disabled:hover:no-underline disabled:hover:text-neutral-400 dark:disabled:hover:text-neutral-500"
+      >
+        {loading ? "…" : `+${loc.service_categories_more}`}
+      </button>
+      {error && (
+        // Error indicator stays small and unobtrusive — the +N button
+        // remains clickable so the user can retry. We don't surface
+        // the error inline because the typical failure mode (server
+        // 500, network blip) is opaque to the staff member and the
+        // retry covers most of it. aria-label carries the detail
+        // unconditionally for screen readers; the Tooltip surfaces
+        // the same detail to sighted users on hover.
+        <Tooltip content={`Failed to load: ${error}. Click +${loc.service_categories_more} to retry.`}>
+          <span
+            className="ml-1 text-red-600 dark:text-red-400"
+            aria-label={`Failed to load more categories: ${error}`}
+          >
+            ⚠
+          </span>
+        </Tooltip>
+      )}
+    </td>
   );
 }
 
@@ -454,34 +625,94 @@ function LastVerifiedCell({ value }: { value: string | null }) {
     : "text-red-700 dark:text-red-400";
 
   return (
-    <span className={cls} title={date.toISOString().slice(0, 10)}>
-      {relative}
-    </span>
+    <Tooltip content={date.toISOString().slice(0, 10)}>
+      <span className={cls}>
+        {relative}
+      </span>
+    </Tooltip>
   );
 }
 
 function DataBadges({ loc }: { loc: LocationsListRow }) {
-  const items: { has: boolean; label: string }[] = [
+  // Each badge represents a different *kind* of data, so the
+  // present/missing tooltip phrasing isn't always uniform. Most
+  // catalog fields read fine with "Has X" / "Missing X" — they
+  // either exist or they don't. Reviews are different: they
+  // accumulate over time as users leave feedback, so "Missing
+  // reviews" mis-implies the data ought to be there. The optional
+  // `tooltipHas` / `tooltipMissing` overrides let a badge spell
+  // out its own wording when the default template would read
+  // wrong; falling back to "Has X" / "Missing X" keeps the other
+  // three concise.
+  const items: {
+    has: boolean;
+    label: string;
+    tooltipHas?: string;
+    tooltipMissing?: string;
+  }[] = [
     { has: loc.has_phone, label: "phone" },
-    { has: loc.has_address, label: "addr" },
-    { has: loc.has_hours, label: "hrs" },
-    { has: loc.has_reviews, label: "rev" },
+    { 
+      has: loc.has_address,
+      label: "addr",
+      tooltipHas: "Has address",
+      tooltipMissing: "No address",
+    },
+    { 
+      has: loc.has_hours,
+      label: "hrs",
+      tooltipHas: "Has hours",
+      tooltipMissing: "No hours",
+    },
+    {
+      has: loc.has_reviews,
+      label: "revs",
+      tooltipHas: "Has user feedback or reviews",
+      tooltipMissing: "No user feedback or reviews yet",
+    },
   ];
+  // Each badge is wrapped in the shared `<Tooltip>` helper, which
+  // wraps Radix Tooltip internally. Three reasons the native `title`
+  // attribute didn't cut it here:
+  //   1. Default browser delay (≈500-1000ms) is long enough that
+  //      readers move on before the tooltip ever appears, especially
+  //      on small ~24px-wide hit targets.
+  //   2. The table sits inside `overflow-hidden` (the white card)
+  //      AND `overflow-x-auto` (the horizontal scroll wrapper). A
+  //      CSS-only tooltip rising above a badge would be clipped by
+  //      either ancestor. The helper portals the content out of the
+  //      DOM tree, escaping the clip.
+  //   3. Native `title` isn't keyboard-accessible — focus alone
+  //      doesn't surface it. Radix shows the tooltip on focus and
+  //      dismisses on Escape; the helper inherits that for free.
+  //
+  // `aria-label` is set on each badge in addition to the tooltip
+  // content. The Radix Trigger wires up the ARIA association between
+  // trigger and the open content, but the explicit aria-label
+  // guarantees screen readers announce the full meaning the moment
+  // focus lands on the badge — without depending on the tooltip
+  // having opened.
   return (
     <div className="inline-flex gap-1">
-      {items.map((it) => (
-        <span
-          key={it.label}
-          title={`${it.has ? "Has" : "Missing"} ${it.label}`}
-          className={`text-xs px-1.5 py-0.5 rounded ${
-            it.has
-              ? "bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300"
-              : "bg-red-50 text-red-700 dark:bg-red-900/30 dark:text-red-300"
-          }`}
-        >
-          {it.label}
-        </span>
-      ))}
+      {items.map((it) => {
+        const tooltip = it.has
+          ? (it.tooltipHas ?? `Has ${it.label}`)
+          : (it.tooltipMissing ?? `Missing ${it.label}`);
+        return (
+          <Tooltip key={it.label} content={tooltip}>
+            <span
+              tabIndex={0}
+              aria-label={tooltip}
+              className={`text-xs px-1.5 py-0.5 rounded cursor-default focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-400 ${
+                it.has
+                  ? "bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300"
+                  : "bg-red-50 text-red-700 dark:bg-red-900/30 dark:text-red-300"
+              }`}
+            >
+              {it.label}
+            </span>
+          </Tooltip>
+        );
+      })}
     </div>
   );
 }
