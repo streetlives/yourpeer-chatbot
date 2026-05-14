@@ -85,6 +85,14 @@ export interface QueuedMessage {
    * fresh UUID when missing.
    */
   requestId?: string;
+  /**
+   * How the user produced this message — "typed" or "quick_reply".
+   * Captured at queue time so flushed messages report the same origin
+   * they would have if they'd gone out live. Optional for backward
+   * compatibility with entries queued by older builds; flush sends
+   * undefined for those, which the backend treats as "typed".
+   */
+  source?: "typed" | "quick_reply";
 }
 
 /** Read the full queue. Returns [] on error or when nothing queued. */

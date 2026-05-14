@@ -51,6 +51,15 @@ export async function sendChatMessage(
    * dedupes retries on this key within a 60-second window.
    */
   requestId?: string,
+  /**
+   * How the user produced this message:
+   *   • "typed"        — keyboard input
+   *   • "quick_reply"  — quick-reply button tap
+   *   • undefined      — omitted from the wire payload (legacy path);
+   *                      the backend treats unknown source the same as
+   *                      "typed" for the confirmation-skip decision.
+   */
+  source?: "typed" | "quick_reply",
 ): Promise<ChatResponse> {
   const idempotencyKey = requestId ?? generateRequestId();
   const res = await fetch("/api/chat", {
@@ -63,6 +72,7 @@ export async function sendChatMessage(
       message,
       session_id: sessionId,
       ...(coords && { latitude: coords.latitude, longitude: coords.longitude }),
+      ...(source && { source }),
     }),
     signal: timeoutSignal(CHAT_TIMEOUT_MS),
   });

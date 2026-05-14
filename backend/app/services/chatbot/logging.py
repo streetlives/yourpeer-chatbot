@@ -23,6 +23,7 @@ def _log_turn(
     tone=None,
     confidence: str = "high",
     confidence_reason: str | None = None,
+    source: str | None = None,
 ) -> None:
     """Log a conversation turn to the audit log.
 
@@ -33,6 +34,13 @@ def _log_turn(
     | "non_service_route"``). See ``_compute_routing_category`` in
     ``pipeline.py``. Both flow into the audit event so downstream
     analytics can graph them independently.
+
+    ``source`` is the user-message origin (``"typed" | "quick_reply"``
+    or None for legacy clients). Persisted on every turn so admin
+    analytics can compute tap-vs-type ratios and study navigation
+    patterns. ``log_conversation_turn`` accepts any non-None kwarg, so
+    None values simply don't appear on the event — keeps the audit
+    feed clean for old data while the field rolls out.
     """
     try:
         bot_response_redacted, _ = redact_pii(result.get("response", ""))
@@ -49,6 +57,7 @@ def _log_turn(
             tone=tone,
             confidence=confidence,
             confidence_reason=confidence_reason,
+            source=source,
         )
     except Exception as e:
         logger.error(f"Failed to log conversation turn: {e}")

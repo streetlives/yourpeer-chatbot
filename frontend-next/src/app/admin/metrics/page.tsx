@@ -362,6 +362,29 @@ export default function MetricsPage() {
   const sessionDur = stats.session_duration;
   const repRate = stats.repetition_rate;
   const llmMetrics = stats.llm_metrics;
+  const nav = stats.navigation;
+  // Subtitle context for the per-turn quick-reply rate: shows how
+  // many turns the rate was actually computed over. The "unknown"
+  // bucket — turns with no source field, typically legacy data —
+  // gets called out separately so admins don't read the rate as
+  // covering 100% of traffic when it doesn't.
+  const navTurnSubtitle = nav?.turns
+    ? `${nav.turns.classified} classified turn${nav.turns.classified !== 1 ? "s" : ""}${
+        nav.turns.unknown ? ` · ${nav.turns.unknown} unknown` : ""
+      }`
+    : "No data yet";
+  const navSessionSubtitle = nav?.sessions
+    ? `${nav.sessions.pure_tap} pure-tap / ${nav.sessions.classified} classified${
+        nav.sessions.incomplete_signal
+          ? ` · ${nav.sessions.incomplete_signal} incomplete`
+          : ""
+      }`
+    : "No data yet";
+  const navSkipSubtitle = nav?.confirmation_skip
+    ? `${nav.confirmation_skip.skipped} skipped / ${
+        nav.confirmation_skip.skipped + nav.confirmation_skip.shown
+      } total confirmation prompts`
+    : "No data yet";
 
   // Sample size for the Emotional → cascading metrics. With n < 5, the
   // 100%/0% rates that fall out are statistically meaningless.
@@ -889,6 +912,37 @@ export default function MetricsPage() {
               target="≤ 10%"
               value={fmtMetric(cb?.abandon_rate ?? null, true)}
               status={statusClass(cb?.abandon_rate ?? null, 0.1, "lte", 0.2)}
+            />
+            {/* ------------------------------------------------------------------ */}
+            {/* Navigation pattern (tap vs type) + confirmation-skip optimization. */}
+            {/* Three rows surfacing _compute_navigation:                           */}
+            {/*  - Quick-Reply Rate:    per-turn distribution                       */}
+            {/*  - Pure-Tap Sessions:   per-session classification (headline)       */}
+            {/*  - Confirmation Skip:   friction reduction from the optimization    */}
+            {/* All three are "tracking" — there's no a priori "good" ratio; the    */}
+            {/* aim is to watch how user behavior trends and validate that the      */}
+            {/* skip optimization is firing the share we expect.                    */}
+            {/* ------------------------------------------------------------------ */}
+            <MetricRow onClick={onMetricClick}
+              name="Quick-Reply Rate"
+              subtitle={`% of turns that arrived as a button tap (${navTurnSubtitle})`}
+              target="Baseline tracking"
+              value={fmtMetric(nav?.turns?.quick_reply_rate ?? null, true)}
+              status={nav?.turns?.quick_reply_rate != null ? "tracking" : "no-data"}
+            />
+            <MetricRow onClick={onMetricClick}
+              name="Pure-Tap Sessions"
+              subtitle={`% of sessions where every turn was a tap (${navSessionSubtitle})`}
+              target="Baseline tracking"
+              value={fmtMetric(nav?.sessions?.pure_tap_rate ?? null, true)}
+              status={nav?.sessions?.pure_tap_rate != null ? "tracking" : "no-data"}
+            />
+            <MetricRow onClick={onMetricClick}
+              name="Confirmation Skip Rate"
+              subtitle={`% of confirmation prompts skipped by the pure-tap optimization (${navSkipSubtitle})`}
+              target="Baseline tracking"
+              value={fmtMetric(nav?.confirmation_skip?.skip_rate ?? null, true)}
+              status={nav?.confirmation_skip?.skip_rate != null ? "tracking" : "no-data"}
             />
             <MetricRow onClick={onMetricClick}
               name="Bot Question Rate"
