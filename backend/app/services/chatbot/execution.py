@@ -50,8 +50,11 @@ logger = logging.getLogger(__name__)
 #
 # This fallback detects that case and runs a second, targeted query that
 # drops proximity in favor of borough-wide, restricted to ONLY the rare
-# taxonomies. Results are appended with a contextual note so the user
-# understands why they're further away.
+# taxonomies. Results are PREPENDED to the carousel with a contextual
+# intro ("Here are some LGBTQ-friendly services that may be helpful, plus
+# N option(s) nearby:") so the population-specific options lead — that's
+# typically what the user actually wants when they've identified as
+# LGBTQ / youth / senior / veteran.
 #
 # See docs/design/POPULATION_FALLBACK_SPEC.md for the full design.
 
@@ -92,8 +95,9 @@ _POPULATION_FALLBACK_LABEL = {
 # _run_population_fallback.
 _POPULATION_RARE_PRIORITY = ("lgbtq", "veteran", "senior", "youth")
 
-# How many fallback cards to append. Kept small so the main (proximity-
-# local) results remain the headline answer.
+# How many fallback cards to surface. Kept small so the
+# population-specific cards lead the carousel without crowding out the
+# main (proximity-local) results that follow them.
 _POPULATION_FALLBACK_MAX = 3
 
 # Reverse lookup: city value (from normalize_location) → canonical borough
@@ -338,7 +342,16 @@ def _run_population_fallback(
     labels: list[str],
     existing_service_ids: set,
 ) -> tuple[list[dict], str]:
-    """Execute the fallback query citywide and return (fallback_cards, note_text).
+    """Execute the fallback query citywide and return (fallback_cards, descriptor).
+
+    ``descriptor`` is a short phrase like ``"LGBTQ-friendly"`` or
+    ``"youth-specific and LGBTQ-friendly"`` that the caller embeds into a
+    sentence such as ``"Here are some {descriptor} services …"``. It is
+    NOT a full sentence with leading newlines — that framing is the
+    caller's job, because fallback cards are now PREPENDED to the
+    carousel (population-specific results lead) and the surrounding
+    bot_response is rebuilt around that ordering rather than tacking on
+    an "also found" tail.
 
     Returns ([], "") when the fallback query errors out or when all
     fallback cards are duplicates of the main results. Never raises — any
@@ -353,9 +366,10 @@ def _run_population_fallback(
     better than no results. See docs/design/POPULATION_FALLBACK_SPEC.md §Scope.
 
     Dedupe still applies, so services from the main query don't double-
-    up. The "further away" note phrasing is accurate for citywide scope
-    too — these cards ARE further from the user, often in a different
-    borough, which is exactly why they need the contextual framing.
+    up. Cards are flagged ``is_population_fallback=True`` so the
+    frontend can visually distinguish them; the per-card
+    ``fallback_population`` attribution names the specific rare label
+    that surfaced each card.
     """
     _age = slots.get("age")
     age_valid = isinstance(_age, int) and _age != "skipped"
@@ -390,11 +404,12 @@ def _run_population_fallback(
     if not deduped:
         # Visibility for admin dashboards: the fallback RAN but every
         # card it found was already in the main results. From the
-        # user's perspective, no "also found X further away" note
-        # appears. Without this log, the state "fallback attempted,
-        # fully deduped to nothing" is indistinguishable in the ops
-        # feed from "fallback was never attempted." See
-        # docs/design/POPULATION_FALLBACK_SPEC.md §Observability.
+        # user's perspective, no "Here are some {label} services …"
+        # intro appears and no extra cards are prepended — the response
+        # is indistinguishable from the no-fallback path. Without this
+        # log, the state "fallback attempted, fully deduped to nothing"
+        # is indistinguishable in the ops feed from "fallback was never
+        # attempted." See docs/design/POPULATION_FALLBACK_SPEC.md §Observability.
         logger.warning(
             "Population fallback dedup-to-empty: labels=%s "
             "fallback_cards_fetched=%d main_result_ids=%d. "
@@ -467,18 +482,20 @@ def _run_population_fallback(
         # preserve the prior behavior for this defensive branch.
         card["fallback_population"] = matched_label or labels[0]
 
-    # Compose the note. Cap at the first two labels to keep prose readable
-    # when a user matches multiple populations (e.g., trans veteran youth).
-    note_parts = [_POPULATION_FALLBACK_LABEL.get(lb, lb) for lb in labels[:2]]
-    if len(note_parts) == 1:
-        note_phrase = note_parts[0]
+    # Compose the descriptor phrase. Cap at the first two labels to keep
+    # prose readable when a user matches multiple populations (e.g., trans
+    # veteran youth). The caller composes the full bot_response sentence
+    # around this descriptor — see _build_success_response for the
+    # "Here are some {descriptor} services …" framing. Returning just the
+    # descriptor (rather than a pre-baked sentence) lets the caller place
+    # the population-specific framing at the START of the response, now
+    # that fallback cards lead the carousel rather than trail it.
+    descriptor_parts = [_POPULATION_FALLBACK_LABEL.get(lb, lb) for lb in labels[:2]]
+    if len(descriptor_parts) == 1:
+        descriptor = descriptor_parts[0]
     else:
-        note_phrase = " and ".join(note_parts)
-    note = (
-        f"\n\nI also found {note_phrase} services further away "
-        f"that may be helpful:"
-    )
-    return deduped, note
+        descriptor = " and ".join(descriptor_parts)
+    return deduped, descriptor
 
 
 def _apply_queue_offer(
@@ -611,7 +628,8 @@ def _build_success_response(
       broadened via the relaxed path
     - Population-critical fallback for shelter queries where no local
       result matches a rare-population taxonomy (LGBTQ YA, youth, senior,
-      veteran) — appends citywide fallback cards with their own note.
+      veteran) — prepends citywide fallback cards so they lead the
+      carousel, and rebuilds the response intro to introduce them first.
 
     Returns (bot_response, services_list, all_services, main_displayed_count,
     result_count, relaxed). The distinction between ``services_list``
@@ -670,11 +688,19 @@ def _build_success_response(
     # from. See _run_population_fallback and
     # docs/design/POPULATION_FALLBACK_SPEC.md §Scope.
     #
-    # Fallback cards are appended to services_list for display but
-    # INTENTIONALLY NOT to all_services. all_services drives pagination
-    # via slots["_last_results"]; fallback cards are supplementary
-    # (shown once with a contextual note) and must not reappear on
-    # subsequent "Show more" pages.
+    # Fallback cards are PREPENDED to services_list so the population-
+    # specific options lead the carousel — that's typically what the
+    # user actually wants when they've identified as LGBTQ / youth /
+    # senior / veteran. (Prior behavior appended them at the end, which
+    # buried them behind generic proximity results — see the R42 eval
+    # finding on natural_lgbtq_youth: Ali Forney was in the fixture but
+    # not surfaced prominently.) They are INTENTIONALLY NOT added to
+    # all_services. all_services drives pagination via
+    # slots["_last_results"]; fallback cards are supplementary (shown
+    # once with a contextual intro) and must not reappear on subsequent
+    # "Show more" pages. ``main_displayed_count`` was captured BEFORE
+    # this block (line ~624) so it still correctly reflects the number
+    # of MAIN cards shown — pagination math is unaffected by prepending.
     if (
         slots.get("service_type") == "shelter"
         and not results.get("relaxed")
@@ -689,13 +715,33 @@ def _build_success_response(
             )
             if not has_match:
                 existing_ids = {c.get("service_id") for c in all_services if c.get("service_id")}
-                fb_cards, fb_note = _run_population_fallback(
+                fb_cards, fb_descriptor = _run_population_fallback(
                     slots, rare_tx, rare_labels, existing_ids
                 )
                 if fb_cards:
-                    services_list = services_list + fb_cards
+                    # Prepend — population-specific cards lead the carousel.
+                    services_list = fb_cards + services_list
                     result_count = len(services_list)
-                    bot_response = bot_response + fb_note
+                    # Rebuild bot_response to match the new ordering: lead
+                    # with the population-specific framing, then introduce
+                    # the main proximity-based results. Replaces the
+                    # "I found N option(s)" intro built around lines
+                    # 656-662, which assumed main results lead. Fallback
+                    # only fires when not relaxed and not colocated, so
+                    # there's no qualifier or co-located labels to carry.
+                    if total_count > main_displayed_count:
+                        bot_response = (
+                            f"Here are some {fb_descriptor} services "
+                            f"that may be helpful, plus {total_count} "
+                            f"option(s) nearby — showing the first "
+                            f"{main_displayed_count}:"
+                        )
+                    else:
+                        bot_response = (
+                            f"Here are some {fb_descriptor} services "
+                            f"that may be helpful, plus {total_count} "
+                            f"option(s) nearby:"
+                        )
                     # Admin-visibility log. Fallback cards are supplementary
                     # (shown once, not paginated) and appear in services_list
                     # for the current response only — they are intentionally
@@ -864,9 +910,9 @@ def _execute_and_respond(
     all_services = []
     # Count of main-query cards in `services_list`. Stays in sync with
     # `len(services_list)` EXCEPT when the population-critical fallback
-    # appends extra cards — those are supplementary and must NOT count
-    # toward pagination (they're shown once with their own note and don't
-    # reappear on "Show more"). See the fallback block below.
+    # adds extra cards — those are supplementary and must NOT count
+    # toward pagination (they're shown once at the START of the carousel
+    # and don't reappear on "Show more"). See the fallback block below.
     _main_displayed_count = 0
     result_count = 0
     relaxed = False
