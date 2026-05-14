@@ -10,8 +10,10 @@ Tests for the population-critical fallback feature.
 When a user belongs to a rare shelter population (LGBTQ, youth, senior,
 veteran) and the proximity-local results contain NO services tagged with
 that population's rare taxonomy, the chatbot runs a secondary borough-wide
-query for those rare taxonomies. Results are appended with a contextual
-note.
+query for those rare taxonomies. Results are PREPENDED to the carousel so
+the population-specific options lead, and the response intro is rebuilt
+as "Here are some {label} services that may be helpful, plus N option(s)
+nearby" to introduce them.
 
 See docs/design/POPULATION_FALLBACK_SPEC.md for the full design, and
 chatbot._compute_rare_population_taxonomies / _run_population_fallback
@@ -317,15 +319,18 @@ class TestFallbackIntegration:
         # Fallback drops gender filter (spec: "NO gender")
         assert calls[1].get("gender") is None
 
-        # Response has both main and fallback sections
+        # Response leads with the fallback intro, then mentions main count
         assert "5 option(s)" in result["response"]
-        assert "further away" in result["response"]
+        assert "may be helpful" in result["response"]
         assert "LGBTQ-friendly" in result["response"]
 
-        # All 6 cards surface (5 main + 1 fallback)
+        # All 6 cards surface (1 fallback + 5 main); fallback leads.
         service_names = [s["service_name"] for s in result["services"]]
         assert "Ali Forney Center" in service_names
         assert len(result["services"]) == 6
+        # Fallback is now PREPENDED — Ali Forney appears before the
+        # generic shelter cards. (Prior behavior appended at end.)
+        assert result["services"][0]["service_name"] == "Ali Forney Center"
 
         # Fallback card carries the marker fields
         afc = next(s for s in result["services"] if s["service_name"] == "Ali Forney Center")
@@ -369,7 +374,7 @@ class TestFallbackIntegration:
         result, calls = _run_execute_with_mock(slots, main, fallback)
         # Only the main call was made
         assert len(calls) == 1
-        assert "further away" not in result["response"]
+        assert "may be helpful" not in result["response"]
         assert not any(s.get("is_population_fallback") for s in result["services"])
 
     def test_no_fallback_for_non_shelter(self):
@@ -382,7 +387,7 @@ class TestFallbackIntegration:
         }
         result, calls = _run_execute_with_mock(slots, main, fallback)
         assert len(calls) == 1
-        assert "further away" not in result["response"]
+        assert "may be helpful" not in result["response"]
 
     def test_no_fallback_for_non_rare_population(self):
         """A 35-year-old cis man searching for shelter — no rare tx applies."""
@@ -467,7 +472,7 @@ class TestFallbackIntegration:
         # 2 calls (main + fallback), but fallback output is deduped away
         assert len(calls) == 2
         assert not any(s.get("is_population_fallback") for s in result["services"])
-        assert "further away" not in result["response"]
+        assert "may be helpful" not in result["response"]
         # Still just the 1 main card
         assert len(result["services"]) == 1
 
@@ -492,7 +497,7 @@ class TestFallbackIntegration:
         result, _calls = _run_execute_with_mock(slots, main, fallback)
 
         # The user-facing contract still holds.
-        assert "further away" not in result["response"]
+        assert "may be helpful" not in result["response"]
 
         # And the dashboard-visibility contract: a structured event landed.
         events = audit_log.get_recent_events(
@@ -570,7 +575,7 @@ class TestFallbackIntegration:
         }
         result, calls = _run_execute_with_mock(slots, main, fallback)
         assert len(calls) == 2  # fallback WAS attempted
-        assert "further away" not in result["response"]
+        assert "may be helpful" not in result["response"]
         assert not any(s.get("is_population_fallback") for s in result["services"])
 
     def test_fallback_cap_honored(self):
@@ -611,7 +616,7 @@ class TestFallbackIntegration:
         assert result["result_count"] == 1
         assert "1 option(s)" in result["response"]
         # No fallback note or cards (because fallback errored)
-        assert "further away" not in result["response"]
+        assert "may be helpful" not in result["response"]
         assert not any(s.get("is_population_fallback") for s in result["services"])
 
     # ---- NOTE LANGUAGE --------------------------------------------------
@@ -921,9 +926,10 @@ class TestFallbackPriorityOrdering:
 
     def test_note_text_still_uses_detection_order(self):
         """The priority fix is scoped to per-card attribution. The
-        composed fallback note ('I also found [labels] services…') must
-        still render in detection order — 'youth-specific and
-        LGBTQ-friendly' for a trans 20yo — so the UX copy is unchanged.
+        composed fallback intro ('Here are some [labels] services that
+        may be helpful…') must still render in detection order —
+        'youth-specific and LGBTQ-friendly' for a trans 20yo — so the
+        UX copy is unchanged.
         """
         main = [_card("g1", ["Shelter", "Single Adult"])]
         fallback = [_card("afc", ["Shelter", "Youth", "LGBTQ Young Adult"])]
@@ -1108,13 +1114,19 @@ class TestCrossBoroughFallback:
                 f"(citywide). See docs/design/POPULATION_FALLBACK_SPEC.md §Scope."
             )
 
-    def test_note_still_reads_naturally_for_cross_borough(self):
-        """The 'further away' framing in the note needs to land as
-        honestly informative even when the card is in a different
-        borough. 'Further away' is literally true (Manhattan is far
-        from Queens) so no rewrite is strictly needed — but check
-        that the user-facing phrasing doesn't accidentally imply
-        'further away but in your borough.'"""
+    def test_intro_reads_naturally_for_cross_borough(self):
+        """The new fallback intro ('Here are some {label} services that
+        may be helpful, plus N option(s) nearby') must read honestly
+        when the fallback card is in a different borough than the user.
+        Ali Forney is in Manhattan; a Brooklyn user gets it via the
+        citywide fallback. The intro should:
+
+          1. Surface the population-specific framing ("may be helpful"
+             + the label), and
+          2. NOT promise the fallback card itself is nearby or in the
+             user's borough — the word "nearby" attaches to the main
+             proximity results, not the citywide fallback section.
+        """
         main = [_card("gen", ["Shelter", "Single Adult"])]
         fallback = [_card("afc", ["Shelter", "LGBTQ Young Adult"],
                           name="Ali Forney Center")]
@@ -1124,6 +1136,14 @@ class TestCrossBoroughFallback:
         }
         result, _ = _run_execute_with_mock(slots, main, fallback)
         response = result["response"]
-        assert "further away" in response
-        # Don't promise the card is in Brooklyn — it isn't
-        assert "in Brooklyn" not in response or response.count("in Brooklyn") <= 1  # main-query framing is fine
+
+        # Fallback intro fired with the expected framing + label.
+        assert "may be helpful" in response
+        assert "LGBTQ-friendly" in response
+
+        # Don't promise the fallback card is in Brooklyn — it isn't.
+        assert "in Brooklyn" not in response
+        # Don't promise the LGBTQ-friendly card itself is nearby — the
+        # "nearby" word in the intro attaches to the main results.
+        assert "LGBTQ-friendly services nearby" not in response
+        assert "LGBTQ-friendly services that may be helpful" in response
