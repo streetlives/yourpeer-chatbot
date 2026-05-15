@@ -122,6 +122,17 @@ export interface ChatMessage {
    * the backend can dedupe. Omitted on bot messages.
    */
   requestId?: string;
+  /**
+   * Origin of this user message:
+   *   • "typed"        — keyboard input via the chat input field
+   *   • "quick_reply"  — tap on a bot-emitted button pill
+   * Forwarded to the backend on every send for analytics and to drive
+   * the confirmation-skip optimization for pure-tap sessions (see
+   * `_pure_tap_session` in backend orchestrator). Optional on the type
+   * because legacy persisted messages from before this field was added
+   * may not have it; missing is treated identically to "typed" on the
+   * backend. Only meaningful on user-role messages. */
+  source?: "typed" | "quick_reply";
 }
 
 export type FeedbackRating = "up" | "down";
@@ -250,6 +261,21 @@ export interface AdminStats {
   session_duration?: SessionDuration;
   repetition_rate?: RepetitionRate;
   llm_metrics?: LlmMetrics;
+  /**
+   * Tap-vs-type breakdown and confirmation-skip-optimization
+   * effectiveness. Three sections:
+   *   - turns:             per-turn origin distribution
+   *   - sessions:          per-session pure-tap classification
+   *   - confirmation_skip: how many confirmation prompts the
+   *                        pure-tap optimization skipped
+   * Optional because backend builds prior to May 2026 don't compute it
+   * (so the deserialized stats payload from an older server omits the
+   * key entirely; we render fallback "no-data" rows in that case).
+   * Backend source: `audit_log._compute_navigation`. See also
+   * `_pure_tap_session` in backend orchestrator for the runtime flag
+   * that drives the skip optimization this measures.
+   */
+  navigation?: NavigationMetrics;
   // Overview headline metrics (pre-computed)
   task_completion_rate: number | null;
   avg_turns_to_result: number | null;
@@ -329,6 +355,54 @@ export interface LlmMetrics {
   by_model?: Record<string, number>;
 }
 
+/**
+ * Tap-vs-type navigation pattern + confirmation-skip-optimization
+ * metrics. See `audit_log._compute_navigation` for the computation.
+ *
+ * The `unknown` / `incomplete_signal` buckets catch turns and sessions
+ * from clients (or pre-feature audit data) that don't carry the
+ * `source` field. They shrink to zero once the source field is fully
+ * rolled out and old data ages out of the audit window. The
+ * `*_rate` denominators intentionally exclude them so the surfaced
+ * percentages reflect the measurable population only.
+ */
+export interface NavigationMetrics {
+  turns: {
+    /** Turns submitted via keyboard. */
+    typed: number;
+    /** Turns submitted via quick-reply button tap. */
+    quick_reply: number;
+    /** Turns with no source field (legacy data or pre-feature clients). */
+    unknown: number;
+    /** typed + quick_reply (denominator for quick_reply_rate). */
+    classified: number;
+    /** quick_reply / classified. Null when classified is zero. */
+    quick_reply_rate: number | null;
+  };
+  sessions: {
+    /** Sessions where every turn was quick_reply. */
+    pure_tap: number;
+    /** Sessions where every turn was typed. */
+    pure_typed: number;
+    /** Sessions with both typed and quick_reply turns. */
+    mixed: number;
+    /** Sessions with at least one turn that had no source field. */
+    incomplete_signal: number;
+    /** pure_tap + pure_typed + mixed (denominator for pure_tap_rate). */
+    classified: number;
+    /** pure_tap / classified. The headline behavioral number. */
+    pure_tap_rate: number | null;
+  };
+  confirmation_skip: {
+    /** Turns logged under category "confirmation_skipped_pure_tap". */
+    skipped: number;
+    /** Turns logged under "confirmation" or "confirmation_nudge". */
+    shown: number;
+    /** skipped / (skipped + shown). The friction-reduction headline. */
+    skip_rate: number | null;
+  };
+}
+
 export interface ConversationSummary {
   session_id: string;
   turn_count: number;
@@ -337,6 +411,16 @@ export interface ConversationSummary {
   crisis_detected: boolean;
   final_slots: Record<string, string>;
   last_seen: string;
+  /**
+   * Session-level navigation classification, mirroring the per-session
+   * buckets in `NavigationMetrics.sessions`:
+   *   • true  — every turn arrived as a quick-reply tap (pure-tap session)
+   *   • false — at least one turn was typed
+   *   • null  — at least one turn had no source field (incomplete signal,
+   *             typically pre-feature data)
+   * Optional because pre-May-2026 backends don't compute it.
+   */
+  pure_tap_session?: boolean | null;
 }
 
 export interface AuditEvent {
@@ -353,6 +437,15 @@ export interface AuditEvent {
   slots?: Record<string, string | null>;
   services_count?: number;
   quick_replies?: string[];
+  /**
+   * Origin of a user turn ("typed" or "quick_reply"). Set on
+   * `type: "conversation_turn"` events emitted on or after May 2026
+   * (audit_log._compute_navigation). Absent for pre-feature data and
+   * for non-turn event types. Renderers should treat absent as
+   * "unknown" rather than collapsing to a default — see
+   * transcript-drawer's per-User-bubble badge.
+   */
+  source?: "typed" | "quick_reply";
   rating?: string;
   comment?: string;
   context?: {

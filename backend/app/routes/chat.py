@@ -83,6 +83,7 @@ async def chat(request: ChatRequest, raw: Request):
             latitude=request.latitude,
             longitude=request.longitude,
             request_id=request_id,
+            source=request.source,
         )
         # Make sure the (possibly new) session_id is returned to the client
         result["session_id"] = session_id

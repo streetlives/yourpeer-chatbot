@@ -1,4 +1,4 @@
-from typing import Optional, List
+from typing import Optional, List, Literal
 from pydantic import BaseModel, Field
 
 
@@ -7,6 +7,15 @@ class ChatRequest(BaseModel):
     session_id: Optional[str] = None
     latitude: Optional[float] = Field(None, ge=-90, le=90)
     longitude: Optional[float] = Field(None, ge=-180, le=180)
+    # How the user submitted this message:
+    #   • "typed"        — keyboard input via the chat input field
+    #   • "quick_reply"  — tap on a bot-emitted button pill
+    # None is allowed for legacy clients that pre-date this field; the
+    # backend treats unknown source the same as "typed" (conservative
+    # default — the confirmation-skip optimization only fires when we're
+    # certain every message in the session came from a tap). Pydantic
+    # enforces the literal values when the field IS provided.
+    source: Optional[Literal["typed", "quick_reply"]] = None
 
 
 class ServiceCard(BaseModel):

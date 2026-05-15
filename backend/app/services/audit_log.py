@@ -87,6 +87,14 @@ def log_conversation_turn(
     slots=None, category="", services_count=0, quick_replies=None,
     follow_up_needed=False, request_id=None, tone=None, **kwargs,
 ):
+    # Resolve message origin: explicit `source=` kwarg wins, otherwise
+    # fall back to the per-request ContextVar set by generate_reply.
+    # Pop from kwargs so the later `for k, v in kwargs.items()` loop
+    # doesn't re-insert a None value that would shadow the ContextVar
+    # lookup. None stays out of the event entirely (clean omission for
+    # legacy non-chatbot callers / pre-feature audit data).
+    explicit_source = kwargs.pop("source", None)
+    resolved_source = explicit_source if explicit_source is not None else _message_source_ctx.get(None)
     event = {
         "type": "conversation_turn",
         "timestamp": _now_iso(),
@@ -101,6 +109,8 @@ def log_conversation_turn(
         "request_id": request_id,
         "tone": tone,
     }
+    if resolved_source is not None:
+        event["source"] = resolved_source
     # Store additional fields (confidence, etc.) from kwargs
     for k, v in kwargs.items():
         if v is not None and k not in event:
@@ -306,6 +316,21 @@ def get_conversations_summary(limit=50) -> list:
             last_turn = turns[-1] if turns else {}
             queries_in_session = [e for e in events if e.get("type") == "query_execution"]
             max_services = max((t.get("services_count", 0) for t in turns), default=0)
+            # Session-level navigation classification. Mirrors the
+            # per-session bucketing in `_compute_navigation`: True iff
+            # every classified turn was a quick-reply tap, False iff
+            # any turn was typed, None when the signal is incomplete
+            # (any turn missing the source field — usually pre-feature
+            # data). Surfaced so the admin can sort/filter the
+            # conversations list by navigation pattern without
+            # re-aggregating per-turn data on the frontend.
+            turn_sources = {t.get("source") for t in turns}
+            if not turn_sources or None in turn_sources:
+                pure_tap_session = None
+            elif turn_sources == {"quick_reply"}:
+                pure_tap_session = True
+            else:
+                pure_tap_session = False
             summaries.append({
                 "session_id": session_id,
                 "turn_count": len(turns),
@@ -315,6 +340,7 @@ def get_conversations_summary(limit=50) -> list:
                 "categories": categories,
                 "final_slots": last_turn.get("slots", {}),
                 "last_seen": events[-1].get("timestamp", ""),
+                "pure_tap_session": pure_tap_session,
             })
             if len(summaries) >= limit:
                 break
@@ -459,6 +485,7 @@ def get_stats() -> dict:
     confidence = _compute_confidence(turns)
     recovery = _compute_recovery_rates(turns, sess_cats)
     session_metrics = _compute_session_metrics(turns)
+    navigation = _compute_navigation(turns)
     no_result_svc = _compute_no_result_by_service(queries)
     time_of_day = _compute_time_of_day(all_events)
     post_results_eng = _compute_post_results_engagement(turns, queries)
@@ -534,6 +561,11 @@ def get_stats() -> dict:
         "recovery_rates": recovery,
         # --- P1 metrics (Run 23+) ---
         "session_metrics": session_metrics,
+        # Tap-vs-type breakdown + confirmation-skip-optimization
+        # effectiveness. New in May 2026 alongside the
+        # `_pure_tap_session` skip feature. See `_compute_navigation`
+        # for the three sections (per-turn, per-session, skip rate).
+        "navigation": navigation,
         "no_result_by_service": no_result_svc,
         "time_of_day": time_of_day,
         "post_results_engagement": post_results_eng,
@@ -809,6 +841,135 @@ def _compute_session_metrics(turns: list) -> dict:
         "bounce_count": bounces,
         "total_sessions": total_sessions,
         "distribution": buckets,
+    }
+
+
+# ---------------------------------------------------------------------------
+# P1: NAVIGATION PATTERN (TAP vs TYPE)
+# ---------------------------------------------------------------------------
+
+def _compute_navigation(turns: list) -> dict:
+    """Tap-vs-type breakdown and confirmation-skip optimization metrics.
+
+    Two angles, both surfaced from the per-turn ``source`` field set by
+    ``log_conversation_turn`` (originating from the ``ChatRequest.source``
+    wire field and the orchestrator's ContextVar):
+
+    * Per-turn distribution — how individual messages arrive
+      ("typed" vs "quick_reply"). The ``unknown`` bucket catches turns
+      that pre-date the source field (legacy data) or come from clients
+      that don't send it.
+
+    * Per-session classification — whether the WHOLE conversation was
+      pure-tap, pure-typed, or mixed. Sessions are the unit users
+      actually care about: the confirmation-skip optimization is
+      triggered at the session level (via ``_pure_tap_session``), and
+      "what fraction of users only ever tap" is the headline number.
+
+    Plus the optimization's effectiveness:
+
+    * ``skip_rate`` — of all confirmation prompts the bot would have
+      shown, what share got skipped because the session was pure-tap.
+      Skipped turns are logged under category
+      ``"confirmation_skipped_pure_tap"`` (orchestrator); shown ones
+      under ``"confirmation"`` (initial gate) or ``"confirmation_nudge"``
+      (re-prompt after a non-yes response). ``confirm_yes`` and similar
+      RESPONSE categories are NOT counted here — this metric measures
+      friction reduction at the PROMPT stage, not the user's reaction.
+
+    The "unknown" turn bucket and "incomplete_signal" session bucket
+    will shrink to zero once the source field is fully rolled out and
+    pre-feature data ages out of the audit window. Rate denominators
+    intentionally exclude them so the surfaced rates reflect the
+    measurable population only.
+    """
+    # --- Per-turn breakdown ---
+    typed = 0
+    quick_reply = 0
+    unknown = 0
+    for t in turns:
+        src = t.get("source")
+        if src == "typed":
+            typed += 1
+        elif src == "quick_reply":
+            quick_reply += 1
+        else:
+            unknown += 1
+
+    classified_turns = typed + quick_reply
+    quick_reply_rate = (
+        round(quick_reply / classified_turns, 2) if classified_turns else None
+    )
+
+    # --- Per-session classification ---
+    # Collect the set of source values seen per session. We bucket on
+    # the SET (not on whether the session has any specific value): a
+    # session is "pure_tap" iff its set is exactly {"quick_reply"},
+    # "pure_typed" iff {"typed"}, "mixed" iff both present and no
+    # unknowns, and "incomplete_signal" iff any turn had no source.
+    # Treating "any unknown" as incomplete-signal matches the runtime
+    # behavior of ``_pure_tap_session``: the flag flips to False on
+    # unknown-source turns too, so analytics should match.
+    session_sources: dict[str, set] = {}
+    for t in turns:
+        sid = t.get("session_id", "")
+        if not sid:
+            continue
+        src = t.get("source")
+        session_sources.setdefault(sid, set()).add(src)
+
+    pure_tap = 0
+    pure_typed = 0
+    mixed = 0
+    incomplete = 0
+    for srcs in session_sources.values():
+        if None in srcs:
+            incomplete += 1
+        elif srcs == {"quick_reply"}:
+            pure_tap += 1
+        elif srcs == {"typed"}:
+            pure_typed += 1
+        else:
+            mixed += 1
+
+    classified_sessions = pure_tap + pure_typed + mixed
+    pure_tap_rate = (
+        round(pure_tap / classified_sessions, 2) if classified_sessions else None
+    )
+
+    # --- Skip-optimization effectiveness ---
+    # Confirmation PROMPT categories only — counting confirm_yes / deny
+    # / change_* would conflate "bot asked for confirmation" with "user
+    # responded to confirmation" and the skip rate would lose meaning.
+    skipped = sum(1 for t in turns if t.get("category") == "confirmation_skipped_pure_tap")
+    shown = sum(1 for t in turns
+                if t.get("category") in ("confirmation", "confirmation_nudge"))
+    confirmation_total = skipped + shown
+    skip_rate = (
+        round(skipped / confirmation_total, 2) if confirmation_total else None
+    )
+
+    return {
+        "turns": {
+            "typed": typed,
+            "quick_reply": quick_reply,
+            "unknown": unknown,
+            "classified": classified_turns,
+            "quick_reply_rate": quick_reply_rate,
+        },
+        "sessions": {
+            "pure_tap": pure_tap,
+            "pure_typed": pure_typed,
+            "mixed": mixed,
+            "incomplete_signal": incomplete,
+            "classified": classified_sessions,
+            "pure_tap_rate": pure_tap_rate,
+        },
+        "confirmation_skip": {
+            "skipped": skipped,
+            "shown": shown,
+            "skip_rate": skip_rate,
+        },
     }
 
 
@@ -1258,6 +1419,38 @@ def set_session_id_context(session_id: str) -> None:
     each request's context starts fresh).
     """
     _session_id_ctx.set(session_id)
+
+
+# Per-request message-origin context.
+#
+# The chatbot orchestrator dispatches a single user message through
+# many handler layers, and every layer ends its branch with a call to
+# `_log_turn(...)` for the audit log. There are ~55 such call sites
+# (one per category × outcome combination). Adding `source=` to all of
+# them would mean touching every handler module on every signature
+# change — too invasive for a single observability field.
+#
+# Mirroring the `_session_id_ctx` pattern above: `generate_reply` sets
+# this once at the top of the turn, and `log_conversation_turn` reads
+# it as a fallback when the caller didn't pass `source` explicitly.
+# Default is None so non-chatbot callers (tests, scripts) record turns
+# without a source field, matching pre-feature behavior.
+_message_source_ctx: ContextVar[Optional[str]] = ContextVar(
+    "audit_log_message_source", default=None,
+)
+
+
+def set_message_source_context(source: Optional[str]) -> None:
+    """Set the per-request message origin ("typed" / "quick_reply" / None)
+    seen by `log_conversation_turn` as a fallback when callers don't pass
+    `source=` explicitly.
+
+    Called once at the top of `generate_reply` so every handler's
+    `_log_turn(...)` exit point picks it up without explicit plumbing.
+    Per-coroutine semantics: concurrent requests don't see each other's
+    source values. Pass None to clear (rare).
+    """
+    _message_source_ctx.set(source)
 
 
 def record_llm_call(

@@ -44,6 +44,13 @@ function extractDomain(url: string): string | null {
 
 // Review preview thresholds.
 //
+// The card width is `w-[280px]` at every viewport (see ServiceCard /
+// LocationCard root className). Inside the card, the review block has
+// `p-4` outer padding (32px) and `px-3` review padding (24px), leaving
+// ~224px of text width. At `text-xs` (12px) italic with the system
+// sans-serif stack, that fits ~32–34 chars per line, varying with the
+// specific glyphs and where word breaks fall.
+//
 // On mobile, vertical space is precious — every line on the service
 // card matters because users have to scroll past N cards to evaluate
 // options, and reviews that take 3+ lines compound into a real cost.
@@ -52,22 +59,60 @@ function extractDomain(url: string): string | null {
 // Directions / Website) below the fold of a typical viewport, so we
 // cap desktop at 3 lines too.
 //
-// Both mobile and desktop card widths wrap reviews at ~35 chars/line.
-// The difference is the line-clamp ceiling: mobile clamps at 2 lines,
-// desktop at 3.
+// The thresholds below are sized so that
+//     preview text (slice + "…") + " Read more"
+// fits inside the line-clamp ceiling for the WORST-case word break,
+// not just the average. Earlier numbers (60/95) were sized for the
+// average case and overflowed in practice — a review ending in a
+// long final word ("…provided furniture giftcards") wrapped to four
+// lines on a 280px card, and `line-clamp-3` then truncated the
+// suffix mid-word, leaving "Read..." on line 3 with "more" hidden on
+// the cut-off line 4. The May 2026 audit traced that to roughly
+// ~5–8 chars of word-break waste per line not being accounted for.
 //
-// Mobile: 60 chars ≈ 2 lines at 280px card width (px-3 padding, text-xs,
-// ~36 chars/line). Keeping the char count below the visual clamp means
-// line-clamp-2 is a safety net only.
+// Budget math (line-clamp-3 desktop case, conservative):
+//   • 3 lines × ~33 chars/line ≈ 99 chars of total visual capacity
+//   • Subtract " Read more" (10) + "…" (1–2) on the last line ≈ ~87
+//   • Subtract ~3 chars/line of word-break waste × 3 lines ≈ ~9 chars
+//   • Safe preview budget ≈ 78 chars → round down to 80
+// Mobile (line-clamp-2) uses 2/3 of that ≈ 50.
 //
-// Desktop: 95 chars ≈ 2.5 lines, leaves room on line 3 for the
-// " Read more" suffix without line-clamp-3's ellipsis truncating it.
-// At 117 chars (the previous threshold) the truncated preview wrapped
-// to 4 lines, which is what we're tightening.
-const REVIEW_TRUNCATE_AT_MOBILE = 60;
-const REVIEW_TRUNCATE_TO_MOBILE = 57;
-const REVIEW_TRUNCATE_AT_DESKTOP = 95;
-const REVIEW_TRUNCATE_TO_DESKTOP = 92;
+// The `AT` value is the threshold at which truncation kicks in; `TO`
+// is the slice length (3 chars less, to make room for the explicit
+// "…" the renderer appends). They differ so a review of exactly `AT`
+// chars renders verbatim rather than being clipped to lose 3 chars
+// unnecessarily.
+const REVIEW_TRUNCATE_AT_MOBILE = 50;
+const REVIEW_TRUNCATE_TO_MOBILE = 47;
+const REVIEW_TRUNCATE_AT_DESKTOP = 80;
+const REVIEW_TRUNCATE_TO_DESKTOP = 77;
+
+/**
+ * Truncate review text for the inline preview. Backs the slice up to
+ * the previous word boundary if cutting at `maxLen` would split a word,
+ * so the appended "…" lands cleanly rather than mid-token ("provid…").
+ *
+ * The backtrack is rejected when it would discard more than ~20% of
+ * the slice — at that point the original word-boundary cut is too far
+ * back to be worth losing the context, and a mid-word cut with the
+ * appended "…" reads acceptably (the trailing "…" already signals
+ * truncation).
+ *
+ * Returns the prefix WITHOUT the trailing "…"; the caller appends it.
+ */
+function truncateReviewPreview(text: string, maxLen: number): string {
+  if (text.length <= maxLen) return text;
+  // If the slice point lands inside a word, walk back to the last space.
+  const nextChar = text[maxLen];
+  if (nextChar && /\S/.test(nextChar)) {
+    const candidate = text.slice(0, maxLen);
+    const lastSpace = candidate.lastIndexOf(" ");
+    if (lastSpace >= maxLen * 0.8) {
+      return candidate.slice(0, lastSpace).trimEnd();
+    }
+  }
+  return text.slice(0, maxLen).trimEnd();
+}
 
 /**
  * Hook returning the right truncation threshold for the current viewport.
@@ -343,19 +388,21 @@ export function ServiceCard({ service, isActive, index, total, reviewTruncate }:
           that opens the detail dialog so users can read the rest.
 
           Two-layer truncation:
-            1. Character-count truncate (REVIEW_TRUNCATE_AT_MOBILE/DESKTOP)
-               cuts the preview text at a natural prose length.
-            2. CSS line-clamp-2 on mobile is a defensive cap: if the
-               truncated text still wraps to more than 2 lines (long
-               unbreakable words, very narrow viewports, etc.), clamp
-               kicks in and shows ellipsis at line 2. sm:line-clamp-none
-               restores normal text flow on desktop where vertical
-               space is plentiful. */}
+            1. Character-count truncate (REVIEW_TRUNCATE_AT_MOBILE/DESKTOP
+               via truncateReviewPreview()) cuts the preview text at a
+               natural prose length on a word boundary.
+            2. CSS line-clamp is a defensive cap if the truncated text
+               still wraps further than expected (long unbreakable
+               words, narrower-than-budgeted glyphs): `line-clamp-2` on
+               mobile and `sm:line-clamp-3` on desktop. The character-
+               count layer is sized so the clamp rarely fires; when it
+               does, the " Read more" suffix uses `whitespace-nowrap`
+               below so the affordance doesn't get split mid-word. */}
       {service.review_highlight && (() => {
         const { at, to } = reviewTruncate;
         const truncated = service.review_highlight.length > at;
         const preview = truncated
-          ? service.review_highlight.slice(0, to) + "…"
+          ? truncateReviewPreview(service.review_highlight, to) + "…"
           : service.review_highlight;
         const baseCls = "text-xs text-neutral-500 dark:text-neutral-400 leading-relaxed bg-neutral-50 border border-neutral-100 rounded-lg px-3 py-2 italic dark:bg-neutral-700/60 dark:border-neutral-700";
         if (!truncated) {
@@ -375,7 +422,13 @@ export function ServiceCard({ service, isActive, index, total, reviewTruncate }:
           >
             <span aria-hidden="true">💬 </span>
             {preview}
-            <span className="ml-1 not-italic font-medium text-amber-700 dark:text-amber-400">
+            {/* whitespace-nowrap keeps "Read more" together as one
+                wrap-unit. Without it, line-clamp can split the suffix
+                ("Read..." visible on the clamped line with "more"
+                pushed to the hidden next line). The tightened
+                threshold above is the primary defense; this is the
+                belt-and-suspenders. */}
+            <span className="ml-1 not-italic font-medium text-amber-700 dark:text-amber-400 whitespace-nowrap">
               Read more
             </span>
           </button>
@@ -869,7 +922,7 @@ export function LocationCard({ services, isActive, index, total, reviewTruncate 
         const { at, to } = reviewTruncate;
         const truncated = review.length > at;
         const preview = truncated
-          ? review.slice(0, to) + "…"
+          ? truncateReviewPreview(review, to) + "…"
           : review;
         const baseCls = "text-xs text-neutral-500 dark:text-neutral-400 leading-relaxed bg-neutral-50 border border-neutral-100 rounded-lg px-3 py-2 italic dark:bg-neutral-700/60 dark:border-neutral-700";
         if (!truncated) {
@@ -889,7 +942,8 @@ export function LocationCard({ services, isActive, index, total, reviewTruncate 
           >
             <span aria-hidden="true">💬 </span>
             {preview}
-            <span className="ml-1 not-italic font-medium text-amber-700 dark:text-amber-400">
+            {/* whitespace-nowrap — see ServiceCard above for rationale. */}
+            <span className="ml-1 not-italic font-medium text-amber-700 dark:text-amber-400 whitespace-nowrap">
               Read more
             </span>
           </button>

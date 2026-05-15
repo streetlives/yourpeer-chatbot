@@ -543,7 +543,7 @@ export function ChatContainer() {
               <ChatMessageBoundary key={msg.id}>
                 <ChatMessage
                   message={msg}
-                  onQuickReply={send}
+                  onQuickReply={(value) => send(value, "quick_reply")}
                   onRetry={retry}
                   onCancel={cancelQueued}
                   isLatestBot={msg.id === latestBotId}
@@ -570,7 +570,7 @@ export function ChatContainer() {
         </div>
       )}
 
-      <ChatStatus error={error} />
+      <ChatStatus error={error} isLoading={isLoading} />
 
       {/* ChatInput: stay enabled when offline so messages can queue.
           Only disable during active send (isLoading) to prevent

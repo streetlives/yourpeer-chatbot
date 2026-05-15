@@ -137,6 +137,26 @@ export function TranscriptDrawer({
   const queryCount = ordered.filter((e) => e.type === "query_execution").length;
   const crisisCount = ordered.filter((e) => e.type === "crisis_detected").length;
 
+  // Session-level navigation classification, derived from the per-turn
+  // `source` field. Mirrors the per-session bucketing in
+  // `audit_log._compute_navigation` so the drawer header agrees with
+  // the conversation-summary endpoint without a round-trip. Surfaced
+  // as a single label in the meta line (rather than a badge or chip)
+  // because it's metadata about HOW the user navigated, not an
+  // outcome — outcomes live in the conversation-table row.
+  const turnEvents = ordered.filter((e) => e.type === "conversation_turn");
+  const turnSources = new Set(turnEvents.map((e) => e.source));
+  let navLabel: string | null = null;
+  if (turnEvents.length > 0 && !turnSources.has(undefined)) {
+    if (turnSources.size === 1 && turnSources.has("quick_reply")) {
+      navLabel = "pure-tap";
+    } else if (turnSources.size === 1 && turnSources.has("typed")) {
+      navLabel = "typed";
+    } else {
+      navLabel = "mixed";
+    }
+  }
+
   return (
     <Dialog.Root open onOpenChange={(open) => !open && onClose()}>
       <Dialog.Portal>
@@ -165,6 +185,7 @@ export function TranscriptDrawer({
                   {turnCount} turn{turnCount !== 1 ? "s" : ""}
                   {queryCount > 0 && ` · ${queryCount} quer${queryCount !== 1 ? "ies" : "y"}`}
                   {crisisCount > 0 && ` · ${crisisCount} crisis event${crisisCount !== 1 ? "s" : ""}`}
+                  {navLabel && ` · ${navLabel}`}
                 </div>
               )}
             </div>
@@ -332,6 +353,24 @@ function TurnEvent({ e, diff }: { e: AuditEvent; diff: SlotDiff | undefined }) {
   if (e.services_count) meta.push(`${e.services_count} service(s) delivered`);
   if (e.quick_replies?.length) meta.push(`buttons: ${e.quick_replies.join(", ")}`);
 
+  // Per-turn origin badge ("tap" or "typed"). Rendered next to the
+  // "User" label so the admin can see at a glance which navigation
+  // mode produced each message — useful when scanning a transcript
+  // to diagnose why the confirmation-skip optimization did or didn't
+  // fire on a given turn. Absent when the event predates the source
+  // field (pre-May-2026 audit data) — no badge in that case rather
+  // than guessing.
+  const sourceBadge =
+    e.source === "quick_reply" ? (
+      <span className="ml-2 inline-block px-1.5 py-0 rounded text-[10px] font-semibold uppercase tracking-wide bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">
+        tap
+      </span>
+    ) : e.source === "typed" ? (
+      <span className="ml-2 inline-block px-1.5 py-0 rounded text-[10px] font-semibold uppercase tracking-wide bg-neutral-100 text-neutral-500 dark:bg-neutral-800 dark:text-neutral-400">
+        typed
+      </span>
+    ) : null;
+
   return (
     <div className="animate-in fade-in slide-in-from-bottom-1">
       {/* User turn */}
@@ -339,6 +378,7 @@ function TurnEvent({ e, diff }: { e: AuditEvent; diff: SlotDiff | undefined }) {
         <div className="bg-amber-50/60 dark:bg-amber-950/30 border-l-[3px] border-amber-400 dark:border-amber-700 px-3.5 py-2.5 rounded-r-lg mb-2">
           <div className="text-xs font-semibold text-amber-600 dark:text-amber-300 mb-1">
             User · {formatTimeOfDayWithSeconds(e.timestamp)}
+            {sourceBadge}
           </div>
           <div className="text-sm text-neutral-700 dark:text-neutral-200 whitespace-pre-wrap leading-relaxed">{e.user_message}</div>
         </div>

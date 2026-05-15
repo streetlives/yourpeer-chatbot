@@ -42,6 +42,7 @@ from app.services.slot_extraction_regex import (
 from app.services import slot_extraction
 
 from .context import MessageContext, _USE_LLM, _empty_reply
+from .execution import _execute_and_respond
 from .handlers import (
     _handle_bot_capability_question,
     _handle_bot_identity,
@@ -101,7 +102,30 @@ def generate_reply(
     latitude: float | None = None,
     longitude: float | None = None,
     request_id: str | None = None,
+    source: str | None = None,
 ) -> dict:
+    """Top-level message dispatch.
+
+    ``source`` indicates how the user submitted this message:
+      • ``"quick_reply"`` — tap on a bot-emitted button pill
+      • ``"typed"``       — keyboard input via the chat input field
+      • ``None``          — legacy clients pre-dating the field; treated
+                            as "typed" for the confirmation-skip
+                            optimization (conservative default), but
+                            preserved as None in audit logs so analytics
+                            can distinguish "user typed" from
+                            "client predates field."
+    Drives two downstream behaviors:
+      1. Audit log per-turn ``source`` field (admin analytics:
+         tap-vs-type ratio, navigation patterns).
+      2. The session-level ``_pure_tap_session`` slot, which is True iff
+         every message in this session was a quick-reply tap. When True,
+         the canonical confirmation gate below (search-detail confirmation
+         "Yes, search") is skipped because the user's selections are all
+         canonical button values — the prompt is friction without value.
+         Triggered by user feedback that tapping "Yes, search" after
+         already tapping service-type and location pills felt repetitive.
+    """
     if not session_id:
         session_id = str(uuid.uuid4())
     if not request_id:
@@ -118,8 +142,17 @@ def generate_reply(
     # crisis Stage 2, post-results classify, filter-keyword extract,
     # conversational reply) all pick it up without signature changes.
     # See May 2026 admin-metrics investigation.
-    from app.services.audit_log import set_session_id_context
+    from app.services.audit_log import (
+        set_session_id_context,
+        set_message_source_context,
+    )
     set_session_id_context(session_id)
+    # Same pattern for the message-origin field: every `_log_turn(...)`
+    # exit point across ~55 handler branches picks up `source` from this
+    # contextvar without each handler having to plumb it explicitly.
+    # See audit_log.set_message_source_context and the
+    # `log_conversation_turn` resolution logic for the read side.
+    set_message_source_context(source)
 
     logger.info(f"[req:{request_id}] Session {session_id}: processing message")
 
@@ -173,6 +206,22 @@ def generate_reply(
 
     # Store browser geolocation coords in session if provided.
     _apply_session_geo(session_id, existing, latitude, longitude)
+
+    # --- PURE-TAP SESSION TRACKING ---
+    # `_pure_tap_session` is True iff every user message in this session
+    # was a quick-reply tap. Defaults to True (via .get(..., True)) so
+    # fresh sessions start optimistic; flips permanently to False the
+    # first time we see a typed message (or a message with unknown
+    # source — legacy clients are treated as typed for the skip
+    # decision). Once False, stays False until session reset. Read by
+    # the confirmation gate below to decide whether the "Yes, search"
+    # prompt is friction worth skipping. Persisted only on the
+    # transition to False to keep the audit-log slot history clean
+    # (the optimistic default doesn't need a write).
+    if source != "quick_reply":
+        if existing.get("_pure_tap_session", True):
+            existing["_pure_tap_session"] = False
+            save_session_slots(session_id, existing)
 
     # --- EARLY SLOT EXTRACTION (regex + semantic, before LLM gate) ---
     early_extracted, _extraction_source = _run_early_extraction(message, session_id)
@@ -730,6 +779,88 @@ def generate_reply(
         and has_new_slots
         and not _is_low_confidence_other_routing
     ):
+        # Pure-tap optimization: skip the "Yes, search" confirmation when
+        # service AND location were both supplied via quick-reply taps in
+        # the same session and the current turn is also a tap. User
+        # research found the confirmation prompt repetitive once both
+        # pills had already been tapped; the slot values came from
+        # canonical bot-emitted buttons so there's no parsing
+        # uncertainty to verify.
+        #
+        # Three invariants this code upholds (each is a separate guard
+        # below, with code comments naming the rule it enforces):
+        #
+        # INVARIANT 1 — "service AND location both came from taps."
+        #   Enforced by `_pure_tap_session=True` (no typed/unknown-source
+        #   message has occurred in this session, so any slot fill must
+        #   have come from a tap) AND explicit slot-presence checks below
+        #   (service_type set, and either a concrete location or the
+        #   geolocation-ready combo of NEAR_ME + coords). The explicit
+        #   slot-presence check is what makes this skip narrower than
+        #   `is_enough_to_answer`: org-name-only searches (which also
+        #   satisfy `is_enough_to_answer`) deliberately do NOT skip,
+        #   because the user spec named service+location as the trigger.
+        #
+        # INVARIANT 2 — "Start over should completely reset this."
+        #   `_handle_reset` in handlers/meta.py calls clear_session(),
+        #   which wipes _SESSION_STATE[session_id] and the persisted row.
+        #   After reset, the next message's get_session_slots returns {},
+        #   `_pure_tap_session` defaults back to True via .get(default).
+        #   Nothing to do here — the guarantee comes from clear_session
+        #   being thorough. Test: tap service → type "start over" →
+        #   tap service → tap location → SKIPS (fresh streak).
+        #
+        # INVARIANT 3 — "Text inputs should never skip confirmation."
+        #   Enforced by both: (a) any typed message flips
+        #   `_pure_tap_session` to False permanently (~line 221), AND
+        #   (b) the current turn must have source=="quick_reply". Belt
+        #   and suspenders: layer (a) covers "user typed earlier in the
+        #   session, then taps", layer (b) covers "user types the final
+        #   message that happens to fully fill slots."
+        #
+        # Other unaffected paths:
+        #   • Low-confidence routing — the existing
+        #     `_is_low_confidence_other_routing` guard above already
+        #     excludes the "snapped to 'other'" branch.
+        #   • Crisis flows route through _handle_crisis / the
+        #     confirm_yes branch of _handle_pending_confirmation before
+        #     reaching this gate; their own auto-execute logic is
+        #     unaffected.
+        #   • Mid-flow change-location, additive-intent, topic-shift,
+        #     and re-nudge confirmations live in handlers/confirmation.py
+        #     and are NOT skipped — each has its own reason to confirm
+        #     that the tap signal doesn't address.
+        _is_pure_tap_streak = merged.get("_pure_tap_session", True)
+        _current_is_tap = source == "quick_reply"
+        _has_service = bool(merged.get("service_type"))
+        # Location is "real" iff a concrete borough/neighborhood was set
+        # OR the geolocation-ready combination (NEAR_ME sentinel +
+        # browser coords) is present. NEAR_ME alone (no coords) is the
+        # mid-flow state where the bot is still resolving location; it
+        # does NOT qualify because the user hasn't actually picked a
+        # location yet.
+        _has_location = bool(
+            (merged.get("location") and merged.get("location") != NEAR_ME_SENTINEL)
+            or _geolocation_ready
+        )
+        _service_and_location_both_tapped = (
+            _is_pure_tap_streak and _has_service and _has_location
+        )
+        if _service_and_location_both_tapped and _current_is_tap:
+            merged.pop("_pending_confirmation", None)
+            merged.pop("_queue_offer_pending", None)
+            merged.pop("_queued_services_original", None)
+            save_session_slots(session_id, merged)
+            result = _execute_and_respond(
+                session_id, message, merged, request_id=request_id,
+            )
+            _log_turn(
+                session_id, redacted_message, result,
+                "confirmation_skipped_pure_tap",
+                request_id=request_id, tone=tone, source=source,
+            )
+            return result
+
         merged["_pending_confirmation"] = True
         merged.pop("_queue_offer_pending", None)
         merged.pop("_queued_services_original", None)

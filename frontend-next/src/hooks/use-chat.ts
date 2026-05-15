@@ -106,6 +106,7 @@ export function useChat() {
       userMsgId: string,
       text: string,
       requestId: string,
+      source?: "typed" | "quick_reply",
     ): Promise<boolean> => {
       if (!isNetworkError(err)) return false;
 
@@ -137,6 +138,7 @@ export function useChat() {
         sessionId,
         queuedAt: Date.now(),
         requestId,
+        source,
       });
 
       if (result.accepted) {
@@ -170,7 +172,18 @@ export function useChat() {
   );
 
   const send = useCallback(
-    async (text: string) => {
+    async (text: string, source: "typed" | "quick_reply" = "typed") => {
+      // ``source`` distinguishes how this message was produced — keyboard
+      // input vs quick-reply pill tap. Forwarded to the backend on every
+      // wire call (raw send, offline queue, retry path) and also stamped
+      // on the chat-store message so the UI / persisted history retain
+      // the origin. Default is "typed" because most non-tap call sites
+      // (ChatInput onSubmit) won't pass anything; chat-container passes
+      // "quick_reply" explicitly when wiring `onQuickReply`. The special
+      // trigger branches below (GEOLOCATION_TRIGGER, CRISIS_GEO_TRIGGER)
+      // both originate from quick-reply taps, so this function is always
+      // called with source="quick_reply" for those paths — the branches
+      // just relay it on each internal sendChatMessage and enqueue.
       const message = text.trim();
       if (!message) return;
 
@@ -213,6 +226,7 @@ export function useChat() {
           text: "Use my location",
           status: "sending",
           requestId,
+          source,
         });
         setLoading(true);
 
@@ -256,7 +270,7 @@ export function useChat() {
 
         try {
           const data = await withRetry(() =>
-            sendChatMessage("near me", sessionId, coords, requestId),
+            sendChatMessage("near me", sessionId, coords, requestId, source),
           );
           removeMessage(searchProgressId);
           if (data.session_id) setSessionId(data.session_id);
@@ -280,7 +294,7 @@ export function useChat() {
           if (errMessage(err).includes("403") && sessionId) {
             try {
               useChatStore.getState().setSessionId(null);
-              const data = await sendChatMessage("near me", null, coords, requestId);
+              const data = await sendChatMessage("near me", null, coords, requestId, source);
               if (data.session_id) setSessionId(data.session_id);
               updateMessage(userMsgId, { status: "sent" });
               const botMsg: ChatMessage = {
@@ -307,7 +321,7 @@ export function useChat() {
           // deduped by the backend idempotency cache on flush.
           // This path only runs if geolocation itself succeeded
           // (offline coords from cache) but the backend call failed.
-          if (await handleNetworkError(err, userMsgId, "near me", requestId)) {
+          if (await handleNetworkError(err, userMsgId, "near me", requestId, source)) {
             setLoading(false);
             return;
           }
@@ -343,6 +357,7 @@ export function useChat() {
           text: "Yes, search nearby",
           status: "sending",
           requestId,
+          source,
         });
         setLoading(true);
 
@@ -368,7 +383,7 @@ export function useChat() {
 
         try {
           const data = await withRetry(() =>
-            sendChatMessage("Yes, search", sessionId, coordsToSend, requestId),
+            sendChatMessage("Yes, search", sessionId, coordsToSend, requestId, source),
           );
           removeMessage(searchProgressId);
           if (data.session_id) setSessionId(data.session_id);
@@ -390,7 +405,7 @@ export function useChat() {
           if (errMessage(err).includes("403") && sessionId) {
             try {
               useChatStore.getState().setSessionId(null);
-              const data = await sendChatMessage("Yes, search", null, coordsToSend, requestId);
+              const data = await sendChatMessage("Yes, search", null, coordsToSend, requestId, source);
               if (data.session_id) setSessionId(data.session_id);
               updateMessage(userMsgId, { status: "sent" });
               const botMsg: ChatMessage = {
@@ -445,6 +460,7 @@ export function useChat() {
         text: message,
         status: "sending",
         requestId,
+        source,
       });
 
       setLoading(true);
@@ -453,7 +469,7 @@ export function useChat() {
         const coords = hasCoords ? { latitude: latitude!, longitude: longitude! } : null;
         // Auto-retry once with 1.5s backoff for transient failures (not 429/403)
         const data = await withRetry(() =>
-          sendChatMessage(message, sessionId, coords, requestId),
+          sendChatMessage(message, sessionId, coords, requestId, source),
         );
         if (data.session_id) setSessionId(data.session_id);
 
@@ -479,7 +495,7 @@ export function useChat() {
           try {
             useChatStore.getState().setSessionId(null);
             const coords = hasCoords ? { latitude: latitude!, longitude: longitude! } : null;
-            const data = await sendChatMessage(message, null, coords, requestId);
+            const data = await sendChatMessage(message, null, coords, requestId, source);
             if (data.session_id) setSessionId(data.session_id);
             updateMessage(userMsgId, { status: "sent" });
             const botMsg: ChatMessage = {
@@ -500,7 +516,7 @@ export function useChat() {
         }
 
         // Network error (offline, DNS) — enqueue via shared helper.
-        if (await handleNetworkError(err, userMsgId, message, requestId)) {
+        if (await handleNetworkError(err, userMsgId, message, requestId, source)) {
           setLoading(false);
           return;
         }
@@ -581,6 +597,16 @@ export function useChat() {
       // legacy messages (persisted from before requestId was added).
       const retryRequestId = originalFailedMsg?.requestId ?? generateRequestId();
 
+      // Replay the same origin signal we'd have sent on the original
+      // attempt. The GEOLOCATION_TRIGGER retry branch below originated
+      // from a "Use my location" pill tap by definition, so it defaults
+      // to "quick_reply" when the original message predates the source
+      // field. Normal retries fall back to undefined (legacy treatment
+      // on the backend = "typed"), which is safe — retrying a typed
+      // message stays typed.
+      const retrySource: "typed" | "quick_reply" | undefined =
+        originalFailedMsg?.source;
+
       // Geolocation retry — re-run location request + API call
       if (originalText === GEOLOCATION_TRIGGER) {
         setLoading(true);
@@ -613,7 +639,7 @@ export function useChat() {
 
         try {
           const data = await withRetry(() =>
-            sendChatMessage("near me", sessionId, geoResult, retryRequestId),
+            sendChatMessage("near me", sessionId, geoResult, retryRequestId, retrySource ?? "quick_reply"),
           );
           removeMessage(searchProgressId);
           if (data.session_id) setSessionId(data.session_id);
@@ -637,7 +663,7 @@ export function useChat() {
           // failed message (if we have one) so its status transitions
           // to "pending" rather than orphaning the old failed state.
           const queueId = originalFailedMsg?.id ?? nextMsgId();
-          if (await handleNetworkError(err, queueId, "near me", retryRequestId)) {
+          if (await handleNetworkError(err, queueId, "near me", retryRequestId, retrySource ?? "quick_reply")) {
             setLoading(false);
             return;
           }
@@ -668,7 +694,7 @@ export function useChat() {
       try {
         const coords = hasCoords ? { latitude: latitude!, longitude: longitude! } : null;
         const data = await withRetry(() =>
-          sendChatMessage(originalText, sessionId, coords, retryRequestId),
+          sendChatMessage(originalText, sessionId, coords, retryRequestId, retrySource),
         );
         if (data.session_id) setSessionId(data.session_id);
 
@@ -694,12 +720,12 @@ export function useChat() {
         // original failed message's ID so its status goes to
         // "pending" rather than orphaning the old failed state.
         if (originalFailedMsg) {
-          if (await handleNetworkError(err, originalFailedMsg.id, originalText, retryRequestId)) {
+          if (await handleNetworkError(err, originalFailedMsg.id, originalText, retryRequestId, retrySource)) {
             setLoading(false);
             return;
           }
         } else {
-          if (await handleNetworkError(err, nextMsgId(), originalText, retryRequestId)) {
+          if (await handleNetworkError(err, nextMsgId(), originalText, retryRequestId, retrySource)) {
             setLoading(false);
             return;
           }
@@ -817,6 +843,7 @@ export function useChat() {
             queued.sessionId,
             queued.coords,
             queued.requestId,
+            queued.source,
           );
 
           // A second check, now that the response has landed but
