@@ -5,19 +5,15 @@
 // https://opensource.org/licenses/MIT.
 
 /**
- * Theme toggle button. Cycles through system → light → dark → system.
+ * Theme toggle button. Switches between light and dark only.
  *
- * Icon reflects the CURRENT choice (not the resolved theme):
- *   - system: monitor icon (follows OS)
+ * Icon reflects the resolved theme (what the user sees on screen):
  *   - light: sun icon
  *   - dark: moon icon
  *
- * Why show the choice, not the resolved theme: a user on "system" who
- * sees a sun icon would reasonably expect "tap = go dark". But on
- * this button a tap goes to "light" (forcing light mode, even if OS
- * is dark). Showing the choice clarifies: "tapping this leaves
- * system-auto mode." The tooltip and aria-label both name the
- * current choice explicitly.
+ * Default is "system" (follows OS) with no stored preference. The first
+ * tap persists the opposite of the current appearance; later taps flip
+ * light ↔ dark. There is no UI path back to system-auto mode.
  *
  * Button is hydration-guarded: server render emits a placeholder
  * (same dimensions, different content) so the layout doesn't shift
@@ -29,18 +25,17 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Monitor, Moon, Sun } from "lucide-react";
+import { Moon, Sun } from "lucide-react";
 import { useTheme } from "@/hooks/use-theme";
 
 export function ThemeToggle({ className = "" }: { className?: string }) {
-  const { choice, cycle } = useTheme();
+  const { resolved, cycle } = useTheme();
 
-  // Guard against hydration mismatch: on first render, choice is
-  // always "system" (the useState default). The real stored choice
+  // Guard against hydration mismatch: on first render, resolved is
+  // always "light" (the useState default). The real resolved theme
   // only appears after the mount effect in useTheme runs. Rendering
-  // the icon based on `choice` without this guard would show a
-  // monitor icon briefly even for a user who has "dark" stored —
-  // jarring during page load.
+  // the icon based on `resolved` without this guard would show a sun
+  // briefly even for a user in dark mode — jarring during page load.
   //
   // The placeholder matches button dimensions exactly so nothing
   // shifts when the real icon swaps in.
@@ -49,7 +44,7 @@ export function ThemeToggle({ className = "" }: { className?: string }) {
   useEffect(() => setMounted(true), []);
 
   const { Icon, label } = mounted
-    ? choiceToIcon(choice)
+    ? resolvedToIcon(resolved)
     : { Icon: PlaceholderIcon, label: "Loading theme" };
 
   return (
@@ -75,7 +70,7 @@ export function ThemeToggle({ className = "" }: { className?: string }) {
         "focus-visible:ring-amber-500 dark:focus-visible:ring-amber-300",
         "focus-visible:ring-offset-2 focus-visible:ring-offset-white",
         "dark:focus-visible:ring-offset-neutral-900",
-        // Transition so the cycle doesn't feel abrupt
+        // Transition so the toggle doesn't feel abrupt
         "transition-colors",
         className,
       ].join(" ")}
@@ -85,22 +80,16 @@ export function ThemeToggle({ className = "" }: { className?: string }) {
   );
 }
 
-function choiceToIcon(choice: "light" | "dark" | "system") {
-  if (choice === "light") {
+function resolvedToIcon(resolved: "light" | "dark") {
+  if (resolved === "light") {
     return {
       Icon: Sun,
       label: "Theme: light (tap to switch to dark)",
     };
   }
-  if (choice === "dark") {
-    return {
-      Icon: Moon,
-      label: "Theme: dark (tap to follow system)",
-    };
-  }
   return {
-    Icon: Monitor,
-    label: "Theme: follow system (tap to switch to light)",
+    Icon: Moon,
+    label: "Theme: dark (tap to switch to light)",
   };
 }
 

@@ -57,9 +57,11 @@ checklist.
 **Sign out.** The header has a Sign out button next to the theme
 toggle.
 
-**Theme.** The theme toggle (system → light → dark → system) sits in
-the header and is shared with the chat UI — a preference set in
-either surface persists across both.
+**Theme.** The theme toggle in the header switches between light and
+dark only. Default is follow-the-OS (no stored preference until the
+user taps); the first tap locks the opposite of the current
+appearance. The toggle is shared with the chat UI — a preference set
+in either surface persists across both.
 
 ---
 
@@ -673,7 +675,7 @@ authoritative sources for each section:
 | Section | File |
 |---|---|
 | Tab structure | `frontend-next/src/components/admin/admin-nav.tsx` |
-| Layout / header / theme toggle | `frontend-next/src/app/admin/layout.tsx` |
+| Layout / header / theme toggle | `frontend-next/src/app/admin/admin-shell.tsx`, `frontend-next/src/components/theme-toggle.tsx` |
 | Auth flow | `frontend-next/src/components/admin/admin-auth-guard.tsx`, `login-form.tsx`, `logout-button.tsx`, `src/app/api/admin/[...slug]/route.ts` |
 | Overview tab | `frontend-next/src/app/admin/overview/page.tsx`, `system-health.tsx`, `operations-charts.tsx`, `event-feed.tsx`, `stat-card.tsx`, `stat-card-detail-dialog.tsx`, `src/lib/admin/stat-card-definitions.ts` |
 | Metrics tab structure | `frontend-next/src/app/admin/metrics/page.tsx`, `metrics-section.tsx`, `metric-row.tsx`, `metrics-sticky-nav.tsx` |

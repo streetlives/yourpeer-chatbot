@@ -34,7 +34,7 @@ import {
   systemPrefersDark,
   resolveTheme,
   applyResolvedTheme,
-  nextChoice,
+  toggleExplicitChoice,
 } from "@/lib/theme";
 
 export function useTheme(): {
@@ -44,7 +44,7 @@ export function useTheme(): {
   resolved: ResolvedTheme;
   /** Set an explicit theme choice. */
   setChoice: (choice: ThemeChoice) => void;
-  /** Cycle forward: system → light → dark → system. */
+  /** Toggle light ↔ dark; from system, picks opposite of resolved. */
   cycle: () => void;
 } {
   // SSR-safe defaults on first render. The real state is loaded in
@@ -133,7 +133,8 @@ export function useTheme(): {
     // closed-over `choice` state — avoids a stale-closure bug if the
     // user clicks rapidly during a render cycle.
     setChoiceState((prev) => {
-      const next = nextChoice(prev);
+      const currentResolved = resolveTheme(prev);
+      const next = toggleExplicitChoice(prev, currentResolved);
       writeStoredChoice(next);
       const newResolved = resolveTheme(next);
       setResolved(newResolved);

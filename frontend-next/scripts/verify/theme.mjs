@@ -61,7 +61,7 @@ const {
   systemPrefersDark,
   resolveTheme,
   applyResolvedTheme,
-  nextChoice,
+  toggleExplicitChoice,
   THEME_STORAGE_KEY,
   DARK_CLASS,
 } = mod;
@@ -252,24 +252,28 @@ test("applyResolvedTheme('light') removes .dark from <html>", () => {
   assert.equal(classList.has(DARK_CLASS), false);
 });
 
-// --- nextChoice ---
+// --- toggleExplicitChoice ---
 
-test("nextChoice cycles system → light", () => {
-  assert.equal(nextChoice("system"), "light");
+test("toggleExplicitChoice from system + dark → light", () => {
+  assert.equal(toggleExplicitChoice("system", "dark"), "light");
 });
 
-test("nextChoice cycles light → dark", () => {
-  assert.equal(nextChoice("light"), "dark");
+test("toggleExplicitChoice from system + light → dark", () => {
+  assert.equal(toggleExplicitChoice("system", "light"), "dark");
 });
 
-test("nextChoice cycles dark → system", () => {
-  assert.equal(nextChoice("dark"), "system");
+test("toggleExplicitChoice flips light → dark", () => {
+  assert.equal(toggleExplicitChoice("light", "light"), "dark");
 });
 
-test("nextChoice is cyclic (3 clicks returns to start)", () => {
-  assert.equal(nextChoice(nextChoice(nextChoice("system"))), "system");
-  assert.equal(nextChoice(nextChoice(nextChoice("light"))), "light");
-  assert.equal(nextChoice(nextChoice(nextChoice("dark"))), "dark");
+test("toggleExplicitChoice flips dark → light", () => {
+  assert.equal(toggleExplicitChoice("dark", "dark"), "light");
+});
+
+test("toggleExplicitChoice ping-pongs light ↔ dark", () => {
+  assert.equal(toggleExplicitChoice("light", "light"), "dark");
+  assert.equal(toggleExplicitChoice("dark", "dark"), "light");
+  assert.equal(toggleExplicitChoice("light", "light"), "dark");
 });
 
 // --- integration ---
@@ -280,8 +284,8 @@ test("end-to-end: system-user toggles to light", () => {
   assert.equal(readStoredChoice(), "system");
   assert.equal(resolveTheme("system"), "dark");
 
-  // User clicks toggle → next is "light"
-  const next = nextChoice("system");
+  // User clicks toggle → opposite of resolved dark → "light"
+  const next = toggleExplicitChoice("system", "dark");
   assert.equal(next, "light");
   writeStoredChoice(next);
   applyResolvedTheme(resolveTheme(next));
@@ -291,9 +295,22 @@ test("end-to-end: system-user toggles to light", () => {
   assert.equal(classList.has(DARK_CLASS), false);
 });
 
+test("end-to-end: system-user on light OS toggles to dark", () => {
+  const { store, classList } = installStubs({ systemDark: false });
+  assert.equal(readStoredChoice(), "system");
+  assert.equal(resolveTheme("system"), "light");
+
+  const next = toggleExplicitChoice("system", "light");
+  assert.equal(next, "dark");
+  writeStoredChoice(next);
+  applyResolvedTheme(resolveTheme(next));
+
+  assert.equal(store[THEME_STORAGE_KEY], "dark");
+  assert.equal(classList.has(DARK_CLASS), true);
+});
+
 test("end-to-end: choice persists across 'reload'", () => {
-  const { store } = installStubs();
-  console.log('store', store)
+  installStubs();
   writeStoredChoice("dark");
   // Simulate reload: same store, re-read
   const reloaded = readStoredChoice();

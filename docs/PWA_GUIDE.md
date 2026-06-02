@@ -287,9 +287,12 @@ system also automatically retries once with a 1.5-second delay
 before showing any error, so most transient failures resolve without
 the user noticing.
 
-**Dark mode.** Light, dark, or system-following theme. Default is
-"follow the OS preference," which most users on iOS or Android have
-already configured. A toggle in the app header lets users override.
+**Dark mode.** Default follows the OS preference (most users on iOS or
+Android already configured system-wide dark mode). A header toggle
+switches only between light and dark; the sun/moon icon reflects what
+is on screen. The first tap from default locks the opposite mode;
+later taps flip between the two. There is no UI to return to
+follow-system once overridden.
 
 ## What's not built yet
 

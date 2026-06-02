@@ -140,15 +140,19 @@ export function applyResolvedTheme(resolved: ResolvedTheme): void {
 }
 
 /**
- * Cycle the theme choice forward. Order: system → light → dark → system.
+ * Toggle between explicit light and dark. Used by the theme-toggle button.
  *
- * Forward-only cycling is simpler for the toggle button (one action,
- * predictable next state) than a dropdown with three explicit options.
- * The button's visual state always reveals the current choice, so
- * users who want to skip a step can just tap again.
+ * When the stored choice is "system" (default — follows OS), the first tap
+ * persists the opposite of the currently-resolved theme so the button
+ * matches what the user sees on screen. Subsequent taps flip light ↔ dark.
+ * There is no UI path back to "system" once overridden.
  */
-export function nextChoice(current: ThemeChoice): ThemeChoice {
-  if (current === "system") return "light";
-  if (current === "light") return "dark";
-  return "system";
+export function toggleExplicitChoice(
+  choice: ThemeChoice,
+  resolved: ResolvedTheme,
+): ThemeChoice {
+  if (choice === "system") {
+    return resolved === "dark" ? "light" : "dark";
+  }
+  return choice === "light" ? "dark" : "light";
 }
