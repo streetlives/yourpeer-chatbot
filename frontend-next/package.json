@@ -24,30 +24,30 @@
     "verify": "npm run verify:redaction && npm run verify:pending && npm run verify:pii && npm run verify:theme && npm run verify:time && npm run verify:bucket-keys && npm run verify:contract && npm run verify:backend-url && npm run verify:globals-css && npm run verify:safe-html && npm run verify:format-phone && npm run verify:locations-contract && npm run verify:locations-sort-cycle && npm run verify:restore"
   },
   "dependencies": {
-    "@radix-ui/react-dialog": "^1.1.5",
-    "@radix-ui/react-tooltip": "^1.1.8",
-    "idb-keyval": "^6.2.1",
+    "@radix-ui/react-dialog": "^1.1.18",
+    "@radix-ui/react-tooltip": "^1.2.11",
+    "idb-keyval": "^6.2.6",
     "lucide-react": "^0.474.0",
-    "next": "^16.2.6",
-    "react": "19.2.6",
-    "react-dom": "19.2.6",
+    "next": "^16.2.10",
+    "react": "19.2.7",
+    "react-dom": "19.2.7",
     "tailwindcss-animate": "^1.0.7",
-    "zustand": "^5.0.8"
+    "zustand": "^5.0.14"
   },
   "devDependencies": {
     "@tailwindcss/forms": "^0.5.7",
     "@types/node": "^25",
-    "@types/react": "19.2.14",
+    "@types/react": "19.2.17",
     "@types/react-dom": "19.2.3",
     "eslint": "^9.39.4",
-    "eslint-config-next": "^16.2.6",
+    "eslint-config-next": "^16.2.10",
     "postcss": "^8",
     "tailwind-scrollbar-hide": "^1.1.7",
     "tailwindcss": "^3.4.3",
     "typescript": "^5.7.2"
   },
   "overrides": {
-    "@types/react": "19.2.14",
+    "@types/react": "19.2.17",
     "@types/react-dom": "19.2.3"
   },
   "engines": {
