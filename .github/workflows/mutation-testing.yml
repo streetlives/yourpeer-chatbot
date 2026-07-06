@@ -227,7 +227,7 @@ jobs:
       DATABASE_URL: postgresql://test:test@localhost/test_ci
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-python@v6
         with:
