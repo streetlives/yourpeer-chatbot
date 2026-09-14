@@ -24,15 +24,15 @@
     "verify": "npm run verify:redaction && npm run verify:pending && npm run verify:pii && npm run verify:theme && npm run verify:time && npm run verify:bucket-keys && npm run verify:contract && npm run verify:backend-url && npm run verify:globals-css && npm run verify:safe-html && npm run verify:format-phone && npm run verify:locations-contract && npm run verify:locations-sort-cycle && npm run verify:restore"
   },
   "dependencies": {
-    "@radix-ui/react-dialog": "^1.1.5",
-    "@radix-ui/react-tooltip": "^1.1.8",
+    "@radix-ui/react-dialog": "^1.1.23",
+    "@radix-ui/react-tooltip": "^1.2.16",
     "idb-keyval": "^6.2.1",
     "lucide-react": "^0.474.0",
     "next": "^16.2.6",
     "react": "19.2.6",
     "react-dom": "19.2.6",
     "tailwindcss-animate": "^1.0.7",
-    "zustand": "^5.0.8"
+    "zustand": "^5.0.15"
   },
   "devDependencies": {
     "@tailwindcss/forms": "^0.5.7",
