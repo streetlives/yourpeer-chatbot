@@ -27,6 +27,7 @@ import threading
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 from sqlalchemy import create_engine, text
+from sqlalchemy.engine import make_url
 from sqlalchemy.pool import QueuePool
 from dotenv import load_dotenv
 
@@ -97,8 +98,11 @@ def _get_engine():
                 "DATABASE_URL is not set. Add it to your .env file.\n"
                 "Format: postgresql://user:password@host:port/streetlives"
             )
+        url = make_url(DATABASE_URL)
+        if url.drivername == "postgresql":
+            url = url.set(drivername="postgresql+psycopg2")
         _engine = create_engine(
-            DATABASE_URL,
+            url,
             poolclass=QueuePool,
             pool_size=3,            # 3 persistent connections (was 5)
             max_overflow=5,         # up to 8 total under burst (was 10→15)
